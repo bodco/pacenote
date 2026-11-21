@@ -1,7 +1,7 @@
 """Pacenote 0.8.5 (owner: "summaries that never drop details, so the context is not lost"): full notes of one call,
 written once after the call, which later preparations read instead of the whole transcript (rules/notes.yaml).
 
-  python -m livetips_m0.callnotes --md <transcript.md> [--model claude-sonnet-5-5] [--lang auto|uk|en]
+  python -m livetips_m0.callnotes --md <transcript.md> [--model claude-sonnet-5-5] [--lang auto|<code>]
 
 Writes <stem>.notes.md next to the transcript. Two guards against lost details:
 1. The transcript is read in parts (about 25,000 characters each, on line breaks), each part gets its notes, then
@@ -22,12 +22,11 @@ import sys
 import time
 from pathlib import Path
 
-from . import call_layout
+from . import call_language, call_layout
 from typing import List
 
 PART_CHARS = 25_000
-LANGS = {"uk": "Ukrainian", "en": "English", "pl": "Polish", "de": "German", "es": "Spanish", "fr": "French",
-         "it": "Italian", "pt": "Portuguese", "nl": "Dutch", "cs": "Czech", "sk": "Slovak", "hu": "Hungarian"}
+LANGS = call_language.NAMES
 
 
 def call_lang(text: str, default: str = "uk") -> str:
@@ -38,6 +37,24 @@ def call_lang(text: str, default: str = "uk") -> str:
         return collections.Counter(tags).most_common(1)[0][0]
     m = re.search(r"^- (?:Languages|Мови):[^\n=]*=\s*([a-z]{2})", text, re.M)
     return m.group(1) if m else default
+
+def notes_lang(md: Path, text: str, lang: str = "auto", meta: dict = None) -> str:
+    """PB-32 (FB2, D56): `auto` is the call's output language (rules/output_language.yaml): the PM's choice for this call,
+    else the dominant language of the call (the line-tag majority until the recorder stores one), never the interface
+    language. An explicit code is taken as given."""
+    c = call_language.normalize(lang)
+    if c:
+        return c
+    return call_language.output_language(md.parent / md.name.replace(".named.md", ".md"), text, meta)
+
+
+def _written_in(md: Path, artifact: str, lang: str) -> None:
+    """PB-32: remember the language an artifact was written in (the per-call sidecar); never fails the notes."""
+    try:
+        call_language.write_sidecar(md.parent / md.name.replace(".named.md", ".md"), artifact=artifact, written_in=lang)
+    except Exception as e:  # noqa: BLE001
+        print("language sidecar: " + str(e)[:200], file=sys.stderr)
+
 
 PART_SYS = """You take notes of one part of a work call for the project manager (the PM, "Я" or "Me" in the transcript).
 These notes replace the transcript for later preparations, so nothing that matters may be lost. Write in {LANG};
@@ -204,7 +221,7 @@ def parse_meeting(notes: str) -> dict:
 
 def make_meeting(md: Path, notes: str, transcript: str, lang: str, ask, names: str = "") -> str:
     """One request: the readable ## Meeting notes from the full notes and the transcript with times."""
-    L = LANGS.get(lang, "Ukrainian")
+    L = call_language.language_name(lang)
     sec = ask(MEETING_SYS.replace("{LANG}", L).replace("{NAMES}", names),
               f"Call file: {md.name}.\n\n# FULL NOTES\n{notes[:60000]}\n\n# TRANSCRIPT\n{transcript[:150000]}", 5000)
     i = sec.find(MEETING_HEAD)
@@ -292,7 +309,8 @@ def names_block(aliases: List[str], config: str) -> str:
     return "\n".join(out)
 
 
-def make_meeting_only(md: Path, model: str, lang: str, provider=None, aliases: List[str] = None, config: str = "") -> dict:
+def make_meeting_only(md: Path, model: str, lang: str, provider=None, aliases: List[str] = None, config: str = "",
+                      meta: dict = None) -> dict:
     """0.9.5.2: Make meeting notes for a call whose notes have no ## Meeting notes section (one request, about $0.05)."""
     from .oneshot import provider_from_env
     from .cost import cost_usd
@@ -309,11 +327,11 @@ def make_meeting_only(md: Path, model: str, lang: str, provider=None, aliases: L
     out = call_layout.place(md.name[:-3].replace(".named", "") + ".notes.md", md.parent)
     named = call_layout.place(md.name[:-3] + ".named.md", md.parent) if not md.name.endswith(".named.md") else md
     text = (named if named.exists() else md).read_text(encoding="utf-8", errors="replace")
-    if not lang or lang == "auto":
-        lang = call_lang(text)
+    lang = notes_lang(md, text, lang, meta)
     notes = out.read_text(encoding="utf-8")
     notes = put_meeting(notes, make_meeting(md, notes, text, lang, ask, names_block(aliases or [], config)))
     _write_then_check(out, md, notes, text, lang, ask)
+    _written_in(md, "meeting_notes", lang)
     _register_tasks(md, notes, aliases)
     return {"ok": True, "path": str(out), "coverage": None, "cost_usd": round(usd[0], 4), "parts": 0, "error": None}
 
@@ -364,7 +382,7 @@ def _sheet_check(md: Path, notes: str, text: str, lang: str, ask) -> str:
 
 
 def make_notes(md: Path, model: str, lang: str, provider=None, aliases: List[str] = None, config: str = "",
-               rewrite: bool = False) -> dict:
+               rewrite: bool = False, meta: dict = None) -> dict:
     from .oneshot import provider_from_env
     from .cost import cost_usd
     prov = provider or provider_from_env()
@@ -381,9 +399,8 @@ def make_notes(md: Path, model: str, lang: str, provider=None, aliases: List[str
     named = call_layout.place(md.name[:-3] + ".named.md", md.parent) if not md.name.endswith(".named.md") else md
     src = named if named.exists() else md
     text = src.read_text(encoding="utf-8", errors="replace")
-    if not lang or lang == "auto":
-        lang = call_lang(text)
-    L = LANGS.get(lang, "Ukrainian")
+    lang = notes_lang(md, text, lang, meta)
+    L = call_language.language_name(lang)
     title = re.sub(r"^\d{4}-\d\d-\d\d-\d{4}-", "", md.stem.split(".")[0]).replace("-", " ")
     ps = parts(text)
     names = names_block(aliases or [], config)
@@ -408,6 +425,8 @@ def make_notes(md: Path, model: str, lang: str, provider=None, aliases: List[str
         print("meeting notes: " + str(e)[:200], file=sys.stderr)
     out = call_layout.place(md.name[:-3].replace(".named", "") + ".notes.md", md.parent)
     _write_then_check(out, md, notes, text, lang, ask)
+    _written_in(md, "notes", lang)
+    _written_in(md, "meeting_notes", lang)
     _register_tasks(md, notes, aliases, rewrite)
     return {"ok": True, "path": str(out), "coverage": coverage_line(c), "cost_usd": round(usd[0], 4), "parts": len(ps),
             "error": None}
@@ -417,7 +436,7 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--md", required=True)
     ap.add_argument("--model", default="claude-sonnet-5-5")
-    ap.add_argument("--lang", default="auto", help="auto: the language the call was held in")
+    ap.add_argument("--lang", default="auto", help="auto: the call's output language (PB-32); or a code such as uk, en, pl")
     ap.add_argument("--aliases", default="", help="the PM's names, comma separated")
     ap.add_argument("--project-config", default="")
     ap.add_argument("--meeting", action="store_true",
