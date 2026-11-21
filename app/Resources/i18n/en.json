@@ -4316,11 +4316,12 @@
  "call.outlang.label": "Output language",
  "call.outlang.regenerate": "Regenerate",
  "call.outlang.running": "Writing again in the chosen language...",
- "call.outlang.help": "Writes the notes, Summary, Recap, the Notion text and the follow-up draft again in the chosen language. The transcript does not change.",
+ "call.outlang.help": "Writes the notes, Summary, Recap and the follow-up draft again in the chosen language and adds the Summary, Recap and meeting notes to the Notion page again. The transcript does not change.",
  "call.outlang.art.notes": "Notes",
  "call.outlang.art.followup": "Follow-up",
  "call.outlang.art.notion": "Notion",
  "call.outlang.outOfDate": "out of date",
+ "call.outlang.notionFailed": "The Notion page was not rewritten: {why}",
  "call.outlang.confirm.title": "Write this long call again in {lang}?",
  "call.outlang.confirm.body": "The call is longer than an hour, so this can cost more than usual. The transcript does not change."
 }

@@ -4,8 +4,8 @@ import LiveTipsCore
 
 /// PB-32 (FB2, D56, S6): the call page's Output language. Shown only for a call with two or three languages that each
 /// have 10% of it. Choosing a language only remembers it for this call (<stem>.outlang.json); nothing is rewritten and
-/// nothing is sent until Regenerate. Regenerate writes the notes (full notes, Summary, Recap), the Notion text that
-/// follows them and an existing follow-up draft again in that language; a call over an hour asks first.
+/// nothing is sent until Regenerate. Regenerate writes the notes (full notes, Summary, Recap), the Notion Summary, Recap and
+/// meeting notes (wrapup_notion) and an existing follow-up draft again in that language; a call over an hour asks first.
 @MainActor
 final class OutputLanguageModel: ObservableObject {
     private static var all: [String: OutputLanguageModel] = [:]
@@ -64,19 +64,39 @@ final class OutputLanguageModel: ObservableObject {
 
     func regenerate() {
         guard canRegenerate else { return }
-        let code = current
         running = true; failed = nil
         let job = NotesRewrite.of(file)
         job.start()          // full notes, Summary and Recap in the output language; the Notion sections follow (CallEngine)
         Task { @MainActor in
             while job.running { try? await Task.sleep(nanoseconds: 500_000_000) }
             if let err = job.failed { self.failed = err; self.running = false; self.refresh(); return }
-            if CallPageSync.of(self.file).notionURL != nil { CallLanguage.writeSidecar(transcript: self.file, artifact: "notion", writtenIn: code) }
+            if CallPageSync.of(self.file).notionURL != nil { await self.rewriteNotionPage() }
             let fu = FollowUpModel.of(self.file)
-            if fu.hasDraft, !CallLanguage.readSidecar(transcript: self.file).followUpUsesClientLanguage { fu.write(replacingDraft: true) }
+            if fu.hasDraft, !CallLanguage.readSidecar(transcript: self.file).followUpUsesClientLanguage {
+                fu.write(replacingDraft: true)
+                while fu.busy { try? await Task.sleep(nanoseconds: 500_000_000) }     // the follow-up records its language when it is done
+            }
             self.running = false
             self.refresh()
         }
+    }
+
+    /// The page's Summary, Recap and Meeting notes: the same wrapup_notion run as after a call (the existing path). wrapup_notion
+    /// records the Notion language in the sidecar itself, after Notion took the write; a failure leaves "out of date" and shows here.
+    private func rewriteNotionPage() async {
+        let c = AppConfig.load(from: AppPaths.config)
+        let appRoot = c.effectiveAppRoot(appSupport: AppPaths.support.path)
+        let (proj, ws) = PyTool.project(of: file)
+        var args = ["--md", file, "--lt", c.engine.python, (appRoot as NSString).appendingPathComponent("bin/lt"), "--model", c.models.analysis]
+        args += proj != nil ? NotionTargets.projectArgs(c, proj) : NotionTargets.workspaceArgs(c, ws, kind: "meetings")
+        if !c.notionMeetingsDB.isEmpty { args += ["--meetings-db", c.notionMeetingsDB] }
+        let title = CallPageView.title(file)
+        if !title.isEmpty { args += ["--title", title] }
+        let r: [String: Any] = await withCheckedContinuation { k in
+            PyTool.run("wrapup_notion", args, notion: true) { k.resume(returning: $0) }
+        }
+        if let usd = r["cost_usd"] as? Double, usd > 0 { SpendDays.add(usd); CallHistory.shared.addCost(file: file, usd) }
+        if (r["ok"] as? Bool) != true { failed = L("call.outlang.notionFailed", ["why": (r["error"] as? String) ?? ""]) }
     }
 }
 
@@ -131,6 +151,7 @@ struct OutputLanguageBar: View {
                 Button(L("call.outlang.regenerate")) { model.regenerate() }
                 Button(L("common.cancel"), role: .cancel) {}
             } message: { Text(L("call.outlang.confirm.body")) }
+            .onReceive(FollowUpModel.of(file).$busy) { busy in if !busy { model.refresh() } }     // also a follow-up written from its tab
             .onReceive(NotificationCenter.default.publisher(for: NotesRewrite.finished)) { n in
                 if (n.object as? String) == file { model.refresh() }
             }

@@ -4316,11 +4316,12 @@
  "call.outlang.label": "Мова результату",
  "call.outlang.regenerate": "Згенерувати знову",
  "call.outlang.running": "Пишу знову обраною мовою...",
- "call.outlang.help": "Пише нотатки, Підсумок, Recap, текст у Notion і чернетку листа знову обраною мовою. Транскрипт не змінюється.",
+ "call.outlang.help": "Пише нотатки, Підсумок, Recap і чернетку листа знову обраною мовою та знову додає Підсумок, Recap і нотатки зустрічі на сторінку Notion. Транскрипт не змінюється.",
  "call.outlang.art.notes": "Нотатки",
  "call.outlang.art.followup": "Лист",
  "call.outlang.art.notion": "Notion",
  "call.outlang.outOfDate": "застаріло",
+ "call.outlang.notionFailed": "Сторінку Notion не переписано: {why}",
  "call.outlang.confirm.title": "Написати цей довгий дзвінок знову мовою {lang}?",
  "call.outlang.confirm.body": "Дзвінок довший за годину, тож це може коштувати більше, ніж зазвичай. Транскрипт не змінюється."
 }

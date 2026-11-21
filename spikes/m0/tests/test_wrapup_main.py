@@ -43,7 +43,7 @@ def call(tmp_path, monkeypatch):
         return {}
     monkeypatch.setattr(W, "notion", notion)
     base = ["--md", str(md), "--project-config", str(cfg), "--lt", "py", "lt", "--project-name", "Demo"]
-    return types.SimpleNamespace(md=md, base=base, calls=calls, state=state, seen=seen, tmp=tmp_path)
+    return types.SimpleNamespace(md=md, base=base, calls=calls, state=state, seen=seen, tmp=tmp_path, notion=notion)
 
 
 def out(capsys):
