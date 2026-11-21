@@ -619,10 +619,13 @@ def _empty_page(text: str) -> bool:
 
 
 def fetch(the_plan: dict, out_dir=None, delay: float = 1.0, getter=http_get, sleep=time.sleep, start_n: int = 1,
-          id_prefix: str = "w", *, cancel_path=None) -> dict:
+          id_prefix: str = "w", progress=None, cancel=None, *, cancel_path=None) -> dict:
     """Reads the planned pages one by one (robots.txt and the limits again at each step), then depth-2 links found on
     them while pages are left. Each read page is a `web_page` source with its own URL; the report lists every page:
-    read / empty / blocked / error / skipped / duplicate, with what was taken."""
+    read / empty / blocked / error / skipped / duplicate, with what was taken.
+    `progress(obj)`: called with {"stage": "start", url, path, n} before a page is fetched and {"stage": "page", row,
+    source} for every row added to the report. `cancel()` or the file `cancel_path`: stop before the next
+    request (checked again after the crawl wait and before a finished response is kept); what was read stays."""
     lim = the_plan.get("limits") or {}
     depth = max(0, min(int(lim.get("depth", DEFAULT_DEPTH)), DEFAULT_DEPTH))
     max_pages = max(1, min(int(lim.get("max_pages", DEFAULT_MAX_PAGES)), MAX_PAGES))
@@ -638,13 +641,32 @@ def fetch(the_plan: dict, out_dir=None, delay: float = 1.0, getter=http_get, sle
     hashes = {}
     sources = []
     attempted = 0
-    cancel = Path(cancel_path).expanduser() if cancel_path else None
+    cancel_file = Path(cancel_path).expanduser() if cancel_path else None
+
+    def stopped():
+        return bool((cancel and cancel()) or (cancel_file and cancel_file.exists()))
+
     out_path = Path(out_dir).expanduser() if out_dir else None
     if out_path:
         out_path.mkdir(parents=True, exist_ok=True)
     wait = max(float(delay), 0.0)
     first = True
-    while queue and not (cancel and cancel.exists()):
+    sent = len(report)      # the pages that were never ticked are not progress
+    by_id = {}
+
+    def flush():
+        nonlocal sent
+        if progress:
+            for r in report[sent:]:
+                progress({"stage": "page", "row": r, "source": by_id.get(r.get("source_id"))})
+        sent = len(report)
+
+    cancelled = False
+    while queue:
+        flush()
+        if stopped():
+            cancelled = True
+            break
         p = queue.pop(0)
         url = p["url"]
         row = {"url": url, "path": p.get("path") or urllib.parse.urlsplit(url).path, "depth": p.get("depth", 0),
@@ -662,11 +684,14 @@ def fetch(the_plan: dict, out_dir=None, delay: float = 1.0, getter=http_get, sle
         if not first:
             cd = robots.delay(url) if respect else None
             sleep(max(wait, float(cd or 0)))
-        if cancel and cancel.exists():
+        if stopped():                           # Cancel can arrive during the crawl wait
             queue.insert(0, p)
+            cancelled = True
             break
         first = False
         attempted += 1
+        if progress:
+            progress({"stage": "start", "url": url, "path": row["path"], "n": attempted})
         try:
             status, final, ctype, body = getter(url)
         except AddressRefused as e:
@@ -675,6 +700,10 @@ def fetch(the_plan: dict, out_dir=None, delay: float = 1.0, getter=http_get, sle
         except FetchError as e:
             report.append(dict(row, status="error", note=e.reason))
             continue
+        if stopped():                           # a response that finished after Cancel is not kept
+            queue.insert(0, p)
+            cancelled = True
+            break
         if status >= 400:
             report.append(dict(row, status="error", note=f"HTTP {status}", http=status))
             continue
@@ -718,6 +747,7 @@ def fetch(the_plan: dict, out_dir=None, delay: float = 1.0, getter=http_get, sle
             src["path"] = str(tp)
             rr["file"] = str(tp)
         sources.append(src)
+        by_id[sid] = src
         rr["source_id"] = sid
         report.append(rr)
         # depth 2: links of this page, same site, same rules
@@ -738,12 +768,17 @@ def fetch(the_plan: dict, out_dir=None, delay: float = 1.0, getter=http_get, sle
                     report.append(dict(nrow, status="skipped", note=why))
                     continue
                 queue.append(nrow)
+    flush()
     if queue:
-        report.extend(dict(p, status="skipped", note="cancelled") for p in queue)
+        report.extend(dict(p, status="skipped", note="cancelled", path=p.get("path") or urllib.parse.urlsplit(p["url"]).path)
+                      for p in queue)
     summary = {s: sum(1 for r in report if r.get("status") == s) for s in ("read", "empty", "blocked", "error", "skipped", "duplicate")}
     summary["tokens"] = sum(r.get("tokens", 0) for r in report if r.get("status") == "read")
-    return {"url": start, "pages": report, "sources": sources, "external": external, "summary": summary,
-            "user_agent": USER_AGENT, "fetched_at": _now()}
+    res = {"url": start, "pages": report, "sources": sources, "external": external, "summary": summary,
+           "user_agent": USER_AGENT, "fetched_at": _now()}
+    if cancelled:
+        res["cancelled"] = True
+    return res
 
 
 def external_sources(external, start_n: int = 1, id_prefix: str = "x"):
@@ -803,8 +838,8 @@ def _read(path):
 def cli(command: str, request_path=None, argv_url=None) -> int:
     import sys
 
-    def out(obj, code=0):
-        sys.stdout.write(json.dumps(obj, ensure_ascii=False, indent=1) + "\n")
+    def out(obj, code=0, compact=False):
+        sys.stdout.write(json.dumps(obj, ensure_ascii=False, indent=None if compact else 1) + "\n")
         return code
 
     try:
@@ -830,12 +865,21 @@ def cli(command: str, request_path=None, argv_url=None) -> int:
                          req.get("respect_robots", True), goal=req.get("goal") or "",
                          call_type=req.get("call_type") or "", audience=req.get("audience") or "", route=req.get("route"))
             if p is not None:
+                live = bool(req.get("progress"))
+
+                def line(o):
+                    sys.stdout.write(json.dumps({"progress": o}, ensure_ascii=False) + "\n")
+                    sys.stdout.flush()
+
                 f = fetch(p, req.get("out_dir"), float(req.get("delay", 1.0)), start_n=int(req.get("start_n", 1)),
-                          cancel_path=req.get("cancel_path"))
+                          progress=line if live else None, cancel_path=req.get("cancel_path"))
                 f["suggested"] = external_sources(f["external"])
                 if res:
                     f["captured"] = res
                 res = f
+                if live:
+                    # one line: the last JSON object of stdout is the report
+                    return out(res, compact=True)
             if not res:
                 return out({"error": "request needs plan, plan_path, url or captured"}, 3)
             return out(res)

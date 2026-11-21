@@ -1,0 +1,109 @@
+    private var process: Process?
+    private var cancelPath = ""
+    private var runID = UUID()
+
+    init(sourceID: String, url: String) { self.sourceID = sourceID; self.url = url }
+
+    func loadPlan(request: [String: Any]) {
+        phase = .planning; plan = nil; error = ""; report = nil
+        SheetCLI.run("webplan", request: request) { r in
+            if let p = r.json.flatMap({ SitePlan(json: $0) }), r.json?["error"] == nil {
+                self.plan = p
+                self.phase = .ready
+            } else {
+                self.error = SheetCLI.error(r) ?? L("sheet.ui.err.noResult")
+                self.phase = .failed
+            }
+        }
+    }
+
+    /// Reads the ticked pages into `outDir`, one `webfetch` per page (the contract of spec section 7 with a one-page plan and
+    /// `start_n`): the app knows the current page, a cancel ends only that page's process, and the pages read stay.
+    /// `done` gets the report once.
+    func read(outDir: String, done onDone: @escaping (SiteReadReport) -> Void) {
+        guard let plan, phase == .ready || phase == .finished, plan.tickedCount > 0 else { return }
+        guard !SheetShots.active else { error = L("sheet.ui.err.noEngine"); phase = .failed; return }
+        try? FileManager.default.createDirectory(atPath: outDir, withIntermediateDirectories: true)
+        cancelPath = (outDir as NSString).appendingPathComponent(".cancel")
+        try? FileManager.default.removeItem(atPath: cancelPath)
+        phase = .reading; cancelling = false; lostOnCancel = false; done = 0; total = plan.tickedCount; report = nil
+        pageStates = [:]; currentPath = ""
+        runID = UUID()
+        readPage(0, of: plan.ticked, plan: plan, outDir: outDir, acc: SiteReadReport(), run: runID, onDone)
+    }
+
+    private func readPage(_ i: Int, of pages: [SitePlanPage], plan: SitePlan, outDir: String, acc: SiteReadReport, run: UUID, _ onDone: @escaping (SiteReadReport) -> Void) {
+        guard run == runID else { return }
+        if cancelling || i >= pages.count { return finish(acc, pages: pages, onDone) }
+        let page = pages[i]
+        done = i; currentPath = page.path
+        var acc = acc
+        let req = SiteResearch.fetchRequest(plan: plan, outDir: outDir, cancelPath: cancelPath, startN: i + 1, only: page.url)
+        let path = (SheetCLI.stateDir as NSString).appendingPathComponent("webfetch-\(UUID().uuidString.prefix(8)).request.json")
+        guard SheetCLI.writeRequest(req, to: path), let p = SheetCLI.process("webfetch", ["--request", path]) else {
+            error = L("sheet.ui.err.noEngine"); phase = .failed; return
+        }
+        let o = Pipe()
+        p.standardOutput = o; p.standardError = FileHandle.nullDevice
+        process = p
+        DispatchQueue.global().async {
+            var r = SheetCLI.Result(code: 127, json: nil, lines: [], text: "")
+            if (try? p.run()) != nil {
+                let out = o.fileHandleForReading.readDataToEndOfFile()
+                p.waitUntilExit()
+                r = SheetCLI.parse(out, code: p.terminationStatus)
+            }
+            try? FileManager.default.removeItem(atPath: path)
+            DispatchQueue.main.async { MainActor.assumeIsolated {
+                guard run == self.runID else { return }
+                self.process = nil
+                // a page cut off by Cancel is discarded: it has no state and no source
+                if !self.cancelling { self.take(r, page: page, into: &acc) }
+                self.done = i + 1
+                if self.cancelling || i + 1 >= pages.count { return self.finish(acc, pages: pages, onDone) }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1) { MainActor.assumeIsolated { self.readPage(i + 1, of: pages, plan: plan, outDir: outDir, acc: acc, run: run, onDone) } }
+            } }
+        }
+    }
+
+    /// One page's answer: its sources join the report; its state and reason come from the report (the sidecar's `pages` row,
+    /// else its sources), a failed run is an error with the engine's message.
+    private func take(_ r: SheetCLI.Result, page: SitePlanPage, into acc: inout SiteReadReport) {
+        guard let j = r.json, let rep = SiteReadReport(json: j) else {
+            pageStates[page.url] = ("error", SheetCLI.error(r) ?? L("sheet.ui.err.noResult"))
+            return
+        }
+        acc.merge(rep)
+        if let st = rep.states[page.url] ?? rep.states.values.first { pageStates[page.url] = st; return }
+        if let c = rep.children.first { pageStates[page.url] = (c.used == "not_used" ? "empty" : "read", c.reason ?? ""); return }
+        let k = ["blocked", "error", "duplicate", "skipped", "empty"].first { (rep.counts[$0] ?? 0) > 0 } ?? "error"
+        pageStates[page.url] = (k, "")
+    }
+
+    private func finish(_ acc: SiteReadReport, pages: [SitePlanPage], _ onDone: (SiteReadReport) -> Void) {
+        process = nil
+        try? FileManager.default.removeItem(atPath: cancelPath)
+        var rep = acc
+        for p in pages where pageStates[p.url] == nil { pageStates[p.url] = ("stopped", "") }
+        var c: [String: Int] = [:]
+        for (_, v) in pageStates where v.state != "stopped" { let k = SiteResearch.stateKey(v.state); c[k, default: 0] += 1 }
+        rep.counts = c
+        if cancelling && rep.children.isEmpty {
+            lostOnCancel = true; phase = .ready
+        } else {
+            report = rep; done = c["read"] ?? 0; phase = .finished
+            onDone(rep)
+        }
+    }
+
+    /// Stops at once for the person: the page being read is ended (its partial result is dropped), the pages already read
+    /// are kept. Only the process of this read is ended, never one of a later read.
+    func cancel() {
+        guard phase == .reading else { return }
+        cancelling = true
+        FileManager.default.createFile(atPath: cancelPath, contents: Data())
+        if let p = process, p.isRunning { p.terminate() }
+    }
+
+    func close() { if phase != .reading { phase = .ready } }
+}

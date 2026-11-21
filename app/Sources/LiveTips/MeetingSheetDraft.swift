@@ -45,6 +45,8 @@ struct DraftSource: Identifiable, Equatable {
     // 0.10.0 (Meeting Sheet, folders): a folder's own days (nil = Settings > Meeting Sheet) and its counts from the check
     var days: Int?
     var folder: SheetFolderInfo?
+    // PB-37 (G6, Research this website): a page read from a site points to the site's link; the site row counts its pages
+    var parentURI: String?
 }
 
 @MainActor
@@ -80,6 +82,8 @@ final class SheetDraft: ObservableObject {
     @Published var note = ""
     @Published var keptLink: Set<String> = []
     @Published var job: SheetJob?
+    /// PB-37 (G6): the research panel of each website source (by source id)
+    @Published var research: [String: SiteResearchSession] = [:]
     /// The series had a Quick setup before (Quick says "Same as last time"); false = first time in the series.
     @Published var remembered = false
 
@@ -231,6 +235,70 @@ final class SheetDraft: ObservableObject {
 
     var hasLinkedIn: Bool { sources.contains { $0.type == "linkedin" || $0.type == "linkedin_manual" } }
 
+    // MARK: Research this website (PB-37, G6)
+
+    var effectiveGoal: String { goal.isEmpty ? Self.goalLine(model.cleanContext) : goal }
+
+    /// Plans the site of a `web` source: only its start page is read; nothing else is fetched before the person ticks pages.
+    func researchSite(sourceID: String) {
+        guard let s = sources.first(where: { $0.id == sourceID }), s.type == "web", let u = s.uri else { return }
+        let ses = research[sourceID] ?? SiteResearchSession(sourceID: sourceID, url: u)
+        research[sourceID] = ses
+        ses.loadPlan(request: SiteResearch.planRequest(url: u, goal: effectiveGoal, callType: model.callType, audience: model.audience, route: route))
+    }
+
+    /// Reads the ticked pages; each page becomes a child `web_page` source under the site row (one per page: a re-read replaces).
+    func readPages(sourceID: String) {
+        guard let ses = research[sourceID], let site = sources.first(where: { $0.id == sourceID }) else { return }
+        ses.read(outDir: siteFolder(for: ses.url)) { rep in
+            self.addResearched(rep, parent: site.id)
+        }
+    }
+
+    /// Pages read from this website (the child rows); a site with pages is not fetched again at build time.
+    func pagesRead(of s: DraftSource) -> Bool { SiteResearch.hasPagesRead(uri: s.uri, parentURI: s.parentURI, among: sources.map { ($0.uri, $0.parentURI) }) }
+
+    func cancelResearch(sourceID: String) { research[sourceID]?.cancel() }
+
+    func closeResearch(sourceID: String) { research[sourceID] = nil }
+
+    /// Page copies: a call folder's hidden `.work/web/<site>` (not searched, not a call file; see docs), else the app's state.
+    func siteFolder(for url: String) -> String {
+        let host = SiteResearch.host(url)
+        var base = (SheetCLI.stateDir as NSString).appendingPathComponent("web")
+        if let live = SheetFiles.liveFolder(model) {
+            let folder = CallLayout.folder(live: live, date: SheetFiles.dayFormat.string(from: model.callDate), slug: StartCallModel.slugify(model.effectiveTitle), create: true)
+            base = ((folder as NSString).appendingPathComponent(CallLayout.workDir) as NSString).appendingPathComponent("web")
+        }
+        return (base as NSString).appendingPathComponent(host)
+    }
+
+    func addResearched(_ rep: SiteReadReport, parent: String) {
+        guard let pi = sources.firstIndex(where: { $0.id == parent }) else { return }
+        let parentURI = sources[pi].uri
+        let keys = Set(rep.children.map { SiteResearch.key($0.uri) })
+        sources.removeAll { $0.parentURI != nil && $0.parentURI == parentURI && keys.contains(SiteResearch.key($0.uri ?? "")) }
+        let at = (sources.firstIndex(where: { $0.id == parent }) ?? sources.count - 1) + 1
+        let kids = rep.children.map { c in
+            DraftSource(id: "u" + c.id + String(UUID().uuidString.prefix(4)).lowercased(), type: "web_page", path: c.path, uri: c.uri, title: c.title, auto: false,
+                        why: c.why, checked: c.used != "not_used", access: c.used == "not_used" ? "denied" : "ok", reason: c.reason, tokens: c.tokens, parentURI: parentURI)
+        }
+        sources.insert(contentsOf: kids, at: min(at, sources.count))
+        for e in rep.suggested where !candidates.contains(where: { $0.uri == e.url }) && !sources.contains(where: { $0.uri == e.url }) {
+            candidates.append(DraftSource(type: SheetDraft.linkType(e.url), uri: e.url, title: e.text.isEmpty ? e.domain : e.text, auto: true,
+                                          why: [L("sheet.ui.web.linkedFrom", ["domain": SiteResearch.host(parentURI ?? "")])], checked: false, access: "pending"))
+        }
+        checkSize()
+    }
+
+    /// Removes a source and, for a website, the pages read from it.
+    func removeSource(id: String) {
+        guard let s = sources.first(where: { $0.id == id }) else { return }
+        let isSite = s.parentURI == nil
+        sources.removeAll { $0.id == id || (isSite && $0.parentURI != nil && $0.parentURI == s.uri) }
+        research[id] = nil
+    }
+
     // MARK: the request
 
     func request(out: String?) -> [String: Any] {
@@ -244,11 +312,13 @@ final class SheetDraft: ObservableObject {
             if !p.domain.isEmpty { d["domain"] = p.domain }
             return d
         }
-        let src: [[String: Any]] = sources.filter(\.checked).map { s -> [String: Any] in
+        // PB-37 (G6): a site whose pages were read is not fetched again at build time: its pages are the sources
+        let src: [[String: Any]] = sources.filter { s in s.checked && !pagesRead(of: s) }.map { s -> [String: Any] in
             var d: [String: Any] = ["id": s.id, "type": s.type, "title": s.title, "auto": s.auto]
             if let p = s.path { d["path"] = p }
             if let u = s.uri { d["uri"] = u }
             if let t = s.text { d["text"] = t }
+            if let parent = s.parentURI { d["parent_uri"] = parent }
             if !s.why.isEmpty { d["why"] = s.why }
             if s.type == SourceType.folder.rawValue, let days = s.days { d["days"] = days }     // 0.10.0 (Meeting Sheet, folders)
             if s.deck {
@@ -432,7 +502,7 @@ final class SheetDraft: ObservableObject {
             if let e = UpNext.shared.prepare(model) { return e }
         }
         job = SheetJobs.shared.follow(kind: SheetFiles.path(for: model) == nil ? "build" : "refresh", call: model)
-        let keep = sources.filter { $0.checked && $0.type != "text" }.map { s -> [String: String] in
+        let keep = sources.filter { $0.checked && $0.type != "text" && $0.parentURI == nil }.map { s -> [String: String] in
             var d = ["type": s.type, "title": s.title]
             if let p = s.path { d["path"] = p }
             if let days = s.days { d["days"] = "\(days)" }          // 0.10.0 (Meeting Sheet, folders): the folder's own days

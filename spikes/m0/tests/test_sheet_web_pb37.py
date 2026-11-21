@@ -81,18 +81,62 @@ def test_cancel_keeps_completed_pages(tmp_path):
     plan = web.plan(BASE, getter=get)
     hits.clear()
 
-    def getter(url):
-        result = get(url)
-        if url == BASE + "/about":
-            cancel.touch()
-        return result
+    waits = []
 
-    report = web.fetch(plan, tmp_path / "pages", getter=getter, sleep=lambda _: None, cancel_path=cancel)
+    def sleep(_):
+        waits.append(1)
+        if len(waits) == 2:         # Cancel arrives once /about is stored, while the next page is waiting
+            cancel.touch()
+
+    report = web.fetch(plan, tmp_path / "pages", getter=get, sleep=sleep, cancel_path=cancel)
     assert hits == ["/robots.txt", "/", "/about"]
     assert {row["status"] for row in report["pages"]} == {"read", "skipped"}
     assert any(row.get("note") == "cancelled" for row in report["pages"])
     assert len(report["sources"]) == 2
     assert all(Path(source["path"]).is_file() for source in report["sources"])
+
+
+def test_cancel_during_the_crawl_wait_starts_no_request(tmp_path):
+    cancel = tmp_path / "cancel"
+    hits = []
+    get = site_getter(SITE, hits)
+    plan = web.plan(BASE, getter=get)
+    hits.clear()
+    report = web.fetch(plan, tmp_path / "pages", getter=get, sleep=lambda _: cancel.touch(), cancel_path=cancel)
+    assert hits == ["/robots.txt", "/"]
+    assert len(report["sources"]) == 1 and report["cancelled"] is True
+    assert any(row.get("note") == "cancelled" for row in report["pages"])
+
+
+def test_a_response_finished_after_cancel_is_not_kept(tmp_path):
+    flag = []
+    hits = []
+    get = site_getter(SITE, hits)
+    plan = web.plan(BASE, getter=get)
+
+    def getter(url):
+        result = get(url)
+        if url == BASE + "/about":
+            flag.append(1)
+        return result
+
+    report = web.fetch(plan, tmp_path / "pages", getter=getter, sleep=lambda _: None, cancel=lambda: bool(flag))
+    assert [s["uri"] for s in report["sources"]] == [BASE + "/"]
+    assert len(list((tmp_path / "pages").glob("*.txt"))) == 1
+
+
+def test_a_second_run_never_overwrites_the_first_runs_stored_page(tmp_path):
+    pages = {"/p?id=1": page("One", LOREM * 2 + "alpha"), "/p?id=2": page("Two", LOREM * 2 + "bravo")}
+    get = site_getter(pages, [])
+
+    def run(path):
+        the_plan = {"url": BASE + "/", "limits": {"respect_robots": False, "depth": 1},
+                    "pages": [{"url": BASE + path, "planned": True, "depth": 1}]}
+        return web.fetch(the_plan, tmp_path, delay=0, getter=get, sleep=lambda _: None)
+
+    first, second = run("/p?id=1")["sources"][0]["path"], run("/p?id=2")["sources"][0]["path"]
+    assert first != second
+    assert "alpha" in Path(first).read_text() and "bravo" in Path(second).read_text()
 
 
 @pytest.fixture
