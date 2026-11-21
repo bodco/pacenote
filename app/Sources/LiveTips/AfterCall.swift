@@ -25,15 +25,19 @@ final class FollowUpModel: ObservableObject {
     private var answeredLanguageOffer = false
     private var preferredLanguage: String?
     private var draftLanguage: String?
-    private var lastWritten = ""                     // the text as Pacenote wrote it, to log the PM's hand edits
+    private var lastWritten: String?                     // the text as Pacenote wrote it, to log the PM's hand edits
     var onChange: (() -> Void)?
 
     init(file: String) { self.file = file }
 
     var title: String { CallPageView.title(file) }
     var project: String { CallHistory.shared.records.first { $0.file == file }?.project ?? "" }
+    private var draftText: String { subject + "\n" + body }
+
+    var hasDraft: Bool { draftLanguage != nil || !subject.isEmpty || !body.isEmpty }
+
     var languageOffer: String? {
-        guard !answeredLanguageOffer,
+        guard !busy, !hasDraft, !answeredLanguageOffer,
               let client = PyTool.project(of: file).project?.clientLanguage,
               let code = CallLanguage.hint(fromClientLanguage: client),
               code != FollowUpWindow.language(of: file) else { return nil }
@@ -41,9 +45,10 @@ final class FollowUpModel: ObservableObject {
     }
 
     func answerLanguageOffer(_ language: String?) {
+        guard languageOffer != nil else { return }
         answeredLanguageOffer = true
         preferredLanguage = language
-        if language != nil || (subject.isEmpty && body.isEmpty) { write(language: language) }
+        write()
     }
 
     /// The PM's recurring follow-up corrections (rules/learning.yaml > standing).
@@ -51,9 +56,11 @@ final class FollowUpModel: ObservableObject {
         Learning.prompt(Learning.standing(EditLog.all(), kinds: ["followup_instruction", "followup_edit"]))
     }
 
-    func write(language: String? = nil) {
-        guard !busy else { return }
-        let target = language ?? preferredLanguage ?? FollowUpWindow.language(of: file)
+    func write(replacingDraft: Bool = false) {
+        guard !busy, !hasDraft || replacingDraft else { return }
+        logHandEdits()
+        let target = preferredLanguage ?? FollowUpWindow.language(of: file)
+        let usesClientLanguage = preferredLanguage != nil
         UsageLog.log("followup_written")
         busy = true; error = ""; onChange?()
         let c = AppConfig.load(from: AppPaths.config)
@@ -67,8 +74,9 @@ final class FollowUpModel: ObservableObject {
             self.busy = false
             if (r["ok"] as? Bool) == true {
                 self.draftLanguage = r["lang"] as? String ?? target
-                CallLanguage.writeSidecar(transcript: self.file, artifact: "followup", writtenIn: self.draftLanguage)
-                self.subject = r["subject"] as? String ?? ""; self.body = r["body"] as? String ?? ""; self.lastWritten = self.body
+                CallLanguage.writeSidecar(transcript: self.file, artifact: "followup", writtenIn: self.draftLanguage,
+                                          followUpUsesClientLanguage: usesClientLanguage)
+                self.subject = r["subject"] as? String ?? ""; self.body = r["body"] as? String ?? ""; self.lastWritten = self.draftText
             } else { self.error = L("followup.failed", ["err": r["error"] as? String ?? ""]) }
             self.onChange?()
         }
@@ -90,7 +98,7 @@ final class FollowUpModel: ObservableObject {
             guard let self = self else { return }
             self.busy = false
             if (r["ok"] as? Bool) == true {
-                self.subject = r["subject"] as? String ?? self.subject; self.body = r["body"] as? String ?? self.body; self.lastWritten = self.body
+                self.subject = r["subject"] as? String ?? self.subject; self.body = r["body"] as? String ?? self.body; self.lastWritten = self.draftText
             } else { self.error = L("followup.failed", ["err": r["error"] as? String ?? ""]) }
             self.onChange?()
         }
@@ -98,15 +106,15 @@ final class FollowUpModel: ObservableObject {
 
     /// The PM changed the text by hand: only the lines removed and added go to the log (as for the brief).
     func logHandEdits() {
-        guard !lastWritten.isEmpty, body != lastWritten else { return }
+        guard let lastWritten, draftText != lastWritten else { return }
         let a = lastWritten.components(separatedBy: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
-        let b = body.components(separatedBy: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        let b = draftText.components(separatedBy: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
         let removed = a.filter { !Set(b).contains($0) }.prefix(20).map { String($0.prefix(300)) }
         let added = b.filter { !Set(a).contains($0) }.prefix(20).map { String($0.prefix(300)) }
         if !removed.isEmpty || !added.isEmpty {
             EditLog.add(kind: "followup_edit", title: title, project: project, file: file, fields: ["removed": Array(removed), "added": Array(added)])
         }
-        lastWritten = body
+        self.lastWritten = draftText
     }
 
     func copy() {

@@ -953,6 +953,7 @@
  "followup.copy": "Копіювати",
  "followup.failed": "Не вдалося написати чернетку: {err}",
  "followup.mail": "Відкрити в Пошті",
+ "followup.confirmRewrite": "Замінити поточну чернетку?",
  "followup.note": "Відредагуйте чернетку, потім скопіюйте або відкрийте її в Пошті.",
  "followup.subject": "Тема",
  "followup.title": "Лист-підсумок: {title}",

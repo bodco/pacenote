@@ -143,7 +143,7 @@ def sidecar_path(transcript) -> Path:
 
 
 def read_sidecar(transcript) -> dict:
-    """{'output_language': code|None, 'set_by': str|None, 'artifacts': {name: code}}; never raises."""
+    """Read the output language, artifact languages and optional client-language choice; never raises."""
     out = {"output_language": None, "set_by": None, "artifacts": {}}
     try:
         d = json.loads(sidecar_path(transcript).read_text("utf-8"))
@@ -156,10 +156,13 @@ def read_sidecar(transcript) -> dict:
     arts = d.get("artifacts")
     if isinstance(arts, dict):
         out["artifacts"] = {k: c for k, v in arts.items() if k in ARTIFACTS and (c := normalize(v))}
+    if d.get("followup_uses_client_language") is True:
+        out["followup_uses_client_language"] = True
     return out
 
 
-def write_sidecar(transcript, output_language=None, artifact=None, written_in=None) -> dict:
+def write_sidecar(transcript, output_language=None, artifact=None, written_in=None, *,
+                  followup_uses_client_language=False) -> dict:
     """Set the PM's choice (`output_language`) and/or record the language an artifact was written in. Atomic; keeps
     what is already there; returns what was written."""
     cur = read_sidecar(transcript)
@@ -169,8 +172,15 @@ def write_sidecar(transcript, output_language=None, artifact=None, written_in=No
             cur["output_language"], cur["set_by"] = c, "user"
     if artifact in ARTIFACTS and normalize(written_in):
         cur["artifacts"][artifact] = normalize(written_in)
+        if artifact == "followup":
+            if followup_uses_client_language:
+                cur["followup_uses_client_language"] = True
+            else:
+                cur.pop("followup_uses_client_language", None)
     body = {k: v for k, v in (("output_language", cur["output_language"]), ("set_by", cur["set_by"])) if v}
     body["artifacts"] = cur["artifacts"]
+    if cur.get("followup_uses_client_language"):
+        body["followup_uses_client_language"] = True
     p = sidecar_path(transcript)
     p.parent.mkdir(parents=True, exist_ok=True)
     tmp = p.with_name(p.name + ".tmp")
@@ -179,10 +189,11 @@ def write_sidecar(transcript, output_language=None, artifact=None, written_in=No
     return cur
 
 
-def stale_artifacts(artifacts: dict, output_language) -> list:
+def stale_artifacts(artifacts: dict, output_language, followup_uses_client_language=False) -> list:
     """Artifacts written in another language than the output language ('out of date'), in the fixed artifact order."""
     out = normalize(output_language)
-    return [a for a in ARTIFACTS if a in artifacts and out and normalize(artifacts[a]) != out]
+    return [a for a in ARTIFACTS if a in artifacts and out and normalize(artifacts[a]) != out
+            and not (a == "followup" and followup_uses_client_language)]
 
 
 def output_language(transcript, transcript_text: str = "", meta: Optional[dict] = None, start_langs=None,

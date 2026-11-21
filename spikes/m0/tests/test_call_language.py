@@ -130,3 +130,20 @@ def test_no_long_dash_in_the_new_files():
     for f in ("rules/output_language.yaml", "spikes/m0/livetips_m0/call_language.py",
               "app/Sources/LiveTipsCore/CallLanguage.swift", "Fixtures/output_language_cases.json"):
         assert "\u2014" not in (APP / f).read_text("utf-8"), f
+
+
+def test_intentional_client_followup_is_fresh_until_replaced(tmp_path):
+    t = _call(tmp_path)
+    CL.write_sidecar(t, output_language="en", artifact="notes", written_in="uk")
+    CL.write_sidecar(t, artifact="followup", written_in="uk", followup_uses_client_language=True)
+    CL.write_sidecar(t, output_language="fr")
+    sidecar = CL.read_sidecar(t)
+    assert sidecar["artifacts"]["followup"] == "uk"
+    assert CL.stale_artifacts(
+        sidecar["artifacts"], sidecar["output_language"], sidecar["followup_uses_client_language"]
+    ) == ["notes"]
+
+    CL.write_sidecar(t, artifact="followup", written_in="uk")
+    sidecar = CL.read_sidecar(t)
+    assert "followup_uses_client_language" not in sidecar
+    assert CL.stale_artifacts(sidecar["artifacts"], sidecar["output_language"]) == ["notes", "followup"]

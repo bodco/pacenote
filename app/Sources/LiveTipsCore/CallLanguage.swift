@@ -122,6 +122,11 @@ public enum CallLanguage {
     public struct Sidecar: Equatable {
         public var outputLanguage: String?
         public var setBy: String?
+        public var followUpUsesClientLanguage = false
+        public var staleArtifacts: [String] {
+            CallLanguage.staleArtifacts(artifacts, outputLanguage: outputLanguage,
+                                        followUpUsesClientLanguage: followUpUsesClientLanguage)
+        }
         public var artifacts: [String: String]
         public init(outputLanguage: String? = nil, setBy: String? = nil, artifacts: [String: String] = [:]) {
             self.outputLanguage = outputLanguage; self.setBy = setBy; self.artifacts = artifacts
@@ -138,19 +143,25 @@ public enum CallLanguage {
         for (k, v) in (d["artifacts"] as? [String: Any]) ?? [:] where artifacts.contains(k) {
             if let c = normalize(v as? String) { s.artifacts[k] = c }
         }
+        s.followUpUsesClientLanguage = d["followup_uses_client_language"] as? Bool == true
         return s
     }
 
     /// Set the PM's choice (`outputLanguage`) and/or record the language an artifact was written in. Atomic; keeps what
     /// is already there; returns what is stored now (nil when the file could not be written).
     @discardableResult
-    public static func writeSidecar(transcript: String, outputLanguage: String? = nil, artifact: String? = nil, writtenIn: String? = nil) -> Sidecar? {
+    public static func writeSidecar(transcript: String, outputLanguage: String? = nil, artifact: String? = nil, writtenIn: String? = nil,
+                                    followUpUsesClientLanguage: Bool = false) -> Sidecar? {
         var cur = readSidecar(transcript: transcript)
         if let c = normalize(outputLanguage) { cur.outputLanguage = c; cur.setBy = "user" }
-        if let a = artifact, artifacts.contains(a), let c = normalize(writtenIn) { cur.artifacts[a] = c }
+        if let a = artifact, artifacts.contains(a), let c = normalize(writtenIn) {
+            cur.artifacts[a] = c
+            if a == "followup" { cur.followUpUsesClientLanguage = followUpUsesClientLanguage }
+        }
         var body: [String: Any] = ["artifacts": cur.artifacts]
         if let c = cur.outputLanguage { body["output_language"] = c }
         if let b = cur.setBy { body["set_by"] = b }
+        if cur.followUpUsesClientLanguage { body["followup_uses_client_language"] = true }
         let path = sidecarPath(transcript: transcript)
         do {
             try FileManager.default.createDirectory(atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
@@ -160,9 +171,13 @@ public enum CallLanguage {
     }
 
     /// Artifacts written in another language than the output language ("out of date"), in the fixed artifact order.
-    public static func staleArtifacts(_ written: [String: String], outputLanguage: String?) -> [String] {
+    public static func staleArtifacts(_ written: [String: String], outputLanguage: String?,
+                                      followUpUsesClientLanguage: Bool = false) -> [String] {
         guard let out = normalize(outputLanguage) else { return [] }
-        return artifacts.filter { a in written[a].map { normalize($0) != out } ?? false }
+        return artifacts.filter { a in
+            guard !(a == "followup" && followUpUsesClientLanguage) else { return false }
+            return written[a].map { normalize($0) != out } ?? false
+        }
     }
 
     /// The whole chain for a call with a transcript: sidecar choice > dominant (adapter) > the rest.

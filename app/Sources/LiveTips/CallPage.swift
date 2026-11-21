@@ -1750,12 +1750,35 @@ struct FollowUpView: View {
     @State private var instruction = ""
     @State private var offeredLanguage: String?
     @State private var showLanguageOffer = false
+    @State private var confirmRewrite = false
     @Environment(\.pnTheme) private var t
 
     init(file: String, page: Bool = false) { self.file = file; self.page = page; self.model = FollowUpModel.of(file) }
 
     var body: some View {
-        if page { pageBody } else { panelBody }
+        Group {
+            if page { pageBody } else { panelBody }
+        }
+        .onAppear {
+            guard !model.busy, !model.hasDraft else { return }
+            if let language = model.languageOffer {
+                offeredLanguage = language
+                showLanguageOffer = true
+            } else if model.error.isEmpty {
+                model.write()
+            }
+        }
+        .alert(L("followup.languageOffer", ["lang": offeredLanguage.map { code in
+            Locale(identifier: L10n.lang).localizedString(forLanguageCode: code) ?? code
+        } ?? ""]), isPresented: $showLanguageOffer) {
+            Button(L("followup.useClientLanguage")) { model.answerLanguageOffer(offeredLanguage) }
+            Button(L("followup.keepOutputLanguage"), role: .cancel) { model.answerLanguageOffer(nil) }
+        }
+        .confirmationDialog(L("followup.confirmRewrite"), isPresented: $confirmRewrite, titleVisibility: .visible) {
+            Button(L("followup.again"), role: .destructive) { model.write(replacingDraft: true) }
+            Button(L("common.cancel"), role: .cancel) {}
+        }
+        .onDisappear { model.logHandEdits() }
     }
 
     private var lessons: Int { Learning.standing(EditLog.all(), kinds: ["followup_instruction", "followup_edit"]).count }
@@ -1774,8 +1797,8 @@ struct FollowUpView: View {
                 Text(t.caps ? L("followup.subject").uppercased() : L("followup.subject"))
                     .font(t.homeMono(11, t.labelWeight)).tracking(t.style == .classic ? 0 : t.lblTrack * 11).foregroundStyle(PN.C.text3)
                     .padding(.top, 4)
-                TextField("", text: $model.subject).labelsHidden().pageField(36)
-                TextEditor(text: $model.body).font(t.homeText(15)).lineSpacing(3)
+                TextField("", text: $model.subject).labelsHidden().pageField(36).disabled(model.busy)
+                TextEditor(text: $model.body).font(t.homeText(15)).lineSpacing(3).disabled(model.busy)
                     .scrollContentBackground(.hidden)
                     .padding(.horizontal, 12).padding(.vertical, 10)
                     .frame(minHeight: 280)
@@ -1792,33 +1815,11 @@ struct FollowUpView: View {
                     Button(L("after.openMail")) { model.openMail() }.buttonStyle(.pnBar).disabled(model.body.isEmpty).fixedSize()
                     Text(L("after.neverSends")).font(t.homeText(13)).foregroundStyle(PN.C.text3).padding(.leading, 6)
                     Spacer()
-                    HomeLink(L("followup.again")) { model.write() }.disabled(model.busy).fixedSize()
+                    HomeLink(L("followup.again")) { confirmRewrite = true }.disabled(model.busy).fixedSize()
                 }
                 .padding(.top, 4)
             }
         }
-        .onAppear {
-            guard !model.busy else { return }
-            if let language = model.languageOffer {
-                offeredLanguage = language
-                showLanguageOffer = true
-            } else if model.body.isEmpty && model.error.isEmpty {
-                model.write()
-            }
-        }
-        .onChange(of: model.busy) { _, busy in
-            if !busy, let language = model.languageOffer {
-                offeredLanguage = language
-                showLanguageOffer = true
-            }
-        }
-        .alert(L("followup.languageOffer", ["lang": offeredLanguage.map { code in
-            Locale(identifier: L10n.lang).localizedString(forLanguageCode: code) ?? code
-        } ?? ""]), isPresented: $showLanguageOffer) {
-            Button(L("followup.useClientLanguage")) { model.answerLanguageOffer(offeredLanguage) }
-            Button(L("followup.keepOutputLanguage"), role: .cancel) { model.answerLanguageOffer(nil) }
-        }
-        .onDisappear { model.logHandEdits() }
     }
 
     private var panelBody: some View {
@@ -1828,13 +1829,12 @@ struct FollowUpView: View {
                 HStack(spacing: 8) { PNSpinner(size: 16); Text(L("followup.writing")).foregroundStyle(PN.C.text2) }
             }
             if !model.error.isEmpty { Text(model.error).font(PN.Font.caption).foregroundStyle(PN.C.danger) }
-            // 0.8.7 (J1): the draft is written as soon as the panel opens; no Write draft button
             let n = Learning.standing(EditLog.all(), kinds: ["followup_instruction", "followup_edit"]).count
             if n > 0 && model.body.isEmpty { Text(L("after.lessons", ["n": "\(n)"])).font(PN.Font.caption).foregroundStyle(PN.C.text3) }
             if !model.body.isEmpty || !model.subject.isEmpty {
                 Text(L("followup.subject")).font(PN.Font.caption.weight(.semibold)).foregroundStyle(PN.C.text3)
-                TextField("", text: $model.subject).textFieldStyle(.roundedBorder).labelsHidden()
-                TextEditor(text: $model.body).font(PN.Font.body).frame(minHeight: 260)
+                TextField("", text: $model.subject).textFieldStyle(.roundedBorder).labelsHidden().disabled(model.busy)
+                TextEditor(text: $model.body).font(PN.Font.body).frame(minHeight: 260).disabled(model.busy)
                     .overlay(RoundedRectangle(cornerRadius: PN.Radius.s).stroke(PN.C.text3.opacity(0.3)))
                 HStack(spacing: 8) {
                     TextField("", text: $instruction, prompt: Text(L("after.instruct"))).textFieldStyle(.roundedBorder)
@@ -1847,15 +1847,13 @@ struct FollowUpView: View {
                     Button(L("after.copy")) { model.copy() }.buttonStyle(.pnPrimary).disabled(model.body.isEmpty).fixedSize()
                     Button(L("after.openMail")) { model.openMail() }.buttonStyle(.pnSecondary).disabled(model.body.isEmpty).fixedSize()
                     Spacer()
-                    Button(L("followup.again")) { model.write() }.buttonStyle(.pnTertiary).disabled(model.busy).fixedSize()
+                    Button(L("followup.again")) { confirmRewrite = true }.buttonStyle(.pnTertiary).disabled(model.busy).fixedSize()
                 }
                 Text(L("after.neverSends")).font(PN.Font.caption).foregroundStyle(PN.C.text3)
             }
         }
         .padding(20)
         .background(PN.C.bg)
-        .onAppear { if model.body.isEmpty && !model.busy && model.error.isEmpty { model.write() } }
-        .onDisappear { model.logHandEdits() }
     }
 }
 

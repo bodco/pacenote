@@ -4806,6 +4806,14 @@ func outputLanguageS1() {
     expect(s == CallLanguage.Sidecar(outputLanguage: "en", setBy: "user", artifacts: ["notes": "uk"]), "outlang sidecar: round trip keeps fields")
     expect(CallLanguage.sidecarPath(transcript: t).hasSuffix("/.work/2026-11-21-1000-sync.app.outlang.json"), "outlang sidecar: in .work")
     expect(CallLanguage.outputLanguage(transcript: t, text: "", meta: ["dominant_language": "uk"]) == "en", "outlang: the explicit choice wins")
+    CallLanguage.writeSidecar(transcript: t, artifact: "followup", writtenIn: "uk", followUpUsesClientLanguage: true)
+    CallLanguage.writeSidecar(transcript: t, outputLanguage: "fr")
+    let clientDraft = CallLanguage.readSidecar(transcript: t)
+    expect(clientDraft.artifacts["followup"] == "uk" && clientDraft.staleArtifacts == ["notes"],
+           "outlang sidecar: client-language follow-up remains current")
+    CallLanguage.writeSidecar(transcript: t, artifact: "followup", writtenIn: "uk")
+    expect(CallLanguage.readSidecar(transcript: t).staleArtifacts == ["notes", "followup"],
+           "outlang sidecar: a normal follow-up can become stale again")
     try? "{".write(toFile: CallLanguage.sidecarPath(transcript: t), atomically: true, encoding: .utf8)
     expect(CallLanguage.readSidecar(transcript: t) == CallLanguage.Sidecar(), "outlang sidecar: half-written is nothing")
 }

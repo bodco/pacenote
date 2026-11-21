@@ -950,6 +950,7 @@
  "call.page.notRaised": "not raised",
  "call.page.skipped": "Skipped",
  "followup.again": "Write again",
+ "followup.confirmRewrite": "Replace the current draft?",
  "followup.copy": "Copy",
  "followup.failed": "The draft could not be written: {err}",
  "followup.mail": "Open in Mail",

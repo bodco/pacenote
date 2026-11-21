@@ -6,7 +6,8 @@ Pacenote. Earlier versions are described in the commit messages and in
 ## Unreleased
 
 - Follow-up email drafts use the call's output language. If the project's client language differs, the Follow-up
-  tab offers that language once per call while the app is open.
+  tab and inspector offer that language before the first draft. Write again asks before replacing the draft.
+  A draft intentionally written in the client’s language stays current when the call’s output language changes.
 
 ## 0.26.4 (2026-11-20)
 
