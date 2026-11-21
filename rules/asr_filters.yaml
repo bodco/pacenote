@@ -11,7 +11,8 @@ echo_window_s: 1.5                  # speakers instead of headphones: a mic line
 never_languages: [ru]
 # PB-30 (D56): the call language. Several languages: the main one is the most spoken so far (seconds of speech since
 # the call start) after lang_warmup_s; before that the first language of the set. A language outside the set is
-# decoded in the main one and the line is marked translated_from. Russian is never written: redone in the main one.
+# decoded in the main one and the line is marked translated_from. Russian is never written: redone in the main one,
+# and a line still Russian or in a wrong script is translated in the background (recorder/src/translate.py).
 lang_warmup_s: 60
 lang_foreign_min: 0.5               # detector probability from which a language outside the set is recognised
 # Whisper stop-phrases on silence: dropped only for a short line in near-silence (the same words in a normal voice stay).

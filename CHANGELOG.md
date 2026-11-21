@@ -13,6 +13,12 @@ Pacenote. Earlier versions are described in the commit messages and in
   main language, also a short "Пока."; even when English is the main one). A short reply in another language keeps
   its own language. On a one-language call the language is forced (no detection), so no marker. Whisper's stop-phrases on silence ("Дякую за перегляд!", "Thank you for watching", "Bye") are dropped when
   the line is short and its speech is near-silent; the same words in a normal voice are kept. The transcript line format is unchanged. Rules: `rules/asr_filters.yaml`.
+  A marked line that is still Russian or in a wrong script is translated in the background (a local model through
+  Ollama first, else the AI route from Settings > AI (once the app passes its command to the recorder); text only, never audio; the live recorder never waits, 15 s per
+  request): the translation replaces the line in the transcript when the call ends, and `.timing.jsonl` keeps the
+  original and `translated_from`. With no route the marked line stays. A short out-of-set phrase now uses the call's
+  main language (not the previous line's); "Субтитри зроблені спільнотою" and "Subtitles by" are dropped only on
+  near-silence, like the other stop-phrases.
 
 ## 0.26.4 (2026-11-20)
 

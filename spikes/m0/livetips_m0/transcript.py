@@ -71,6 +71,8 @@ def load_call(md_path: Path, me_label: str) -> List[Line]:
     timing = load_timing(call_layout.sidecar(str(md_path), ".timing.jsonl"))
     pool: Dict[tuple, List[dict]] = {}
     for rec in timing:
+        if rec.get("event"):
+            continue                              # PB-30: a "translated" event, not a line's timing
         pool.setdefault((rec.get("t"), rec.get("ch")), []).append(rec)
     for ln in lines:
         recs = pool.get((ln.t, ln.speaker))

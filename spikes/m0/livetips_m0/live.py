@@ -239,6 +239,8 @@ class LiveRun:
         for raw in self.t_tm.read():
             try:
                 r = json.loads(raw)
+                if r.get("event"):
+                    continue                      # PB-30: a "translated" event, not a line's timing
                 self.timing.setdefault((r.get("t"), r.get("ch")), []).append(r)
             except ValueError:
                 pass

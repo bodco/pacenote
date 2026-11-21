@@ -3,6 +3,8 @@ main one being the most spoken; a language outside the set and Russian are redon
 (translated_from); Whisper stop-phrases on near-silence are dropped. Whisper itself is replaced by a scripted fake."""
 import importlib.util
 import sys
+import threading
+import time
 from pathlib import Path
 
 import numpy as np
@@ -342,3 +344,169 @@ def test_short_russian_replies_through_the_recorder_path(T):
         w = make(T, ["uk", "en"], says={"uk": reply}, probs={"uk": 0.9, "en": 0.05})
         res, _ = run(T, w, seg_of(T, 0.05, 1.0))
         assert res[2] == "ru" and w.mlx_whisper.calls == ["uk", "uk"]
+
+
+# ---- review round 5: the language of short out-of-set speech, stop-phrases through the recorder path --------------
+
+def test_short_french_segment_uses_the_dominant_language_not_the_previous_line(T):
+    w = make(T, ["uk", "en"], says={"en": "I would like a coffee please", "uk": "Я хотів би каву"},
+             probs={"uk": 0.05, "en": 0.15, "fr": 0.7})
+    res, share = run(T, w, seg_of(T, 0.05, 1.0), dominant="en", last="uk")
+    assert res == ("I would like a coffee please", "en", "fr")      # English is dominant; the previous line was Ukrainian
+    assert w.mlx_whisper.calls == ["en"] and share.secs == {"en": 100.0}
+
+
+def test_unclear_short_segment_still_keeps_the_previous_language_when_it_differs_from_the_dominant(T):
+    w = make(T, ["uk", "en"], says={"uk": "Так", "en": "Yes"}, probs={"uk": 0.4, "en": 0.35})
+    res, _ = run(T, w, seg_of(T, 0.05, 1.0), dominant="en", last="uk")
+    assert res[1] == "uk"                                           # unclear: the previous language, as before
+
+
+def test_listed_subtitle_stop_phrases_survive_a_normal_voice_and_die_on_near_silence(T):
+    for phrase in ("Субтитри зроблені спільнотою", "Subtitles by"):
+        res, _ = run(T, make(T, ["uk"], says={"uk": phrase}), seg_of(T, 0.05, 1.0), langs=["uk"])
+        assert res is not None and res[0] == phrase                 # said at a normal volume: a real line
+        res, _ = run(T, make(T, ["uk"], says={"uk": phrase}), seg_of(T, 0.002, 1.0), langs=["uk"])
+        assert res is None                                          # near-silence: the Whisper credit line
+    res, _ = run(T, make(T, ["uk"], says={"uk": "Субтитри зроблені спільнотою Amara.org"}), seg_of(T, 0.05), langs=["uk"])
+    assert res is None                                              # a credit with a site is never speech
+
+
+# ---- review round 5: the translation fallback (background, never on the live path) -------------------------------
+
+def writer_with(T, tmp_path, lines):
+    w = T.Writer(tmp_path / "c.md", dict(T.DEFAULTS), "# call\n", them_speech=lambda: None)
+    for ln in lines:
+        w.add(ln)
+    return w
+
+
+def worker_for(T, translate, w, done=None, maxlen=16):
+    import translate as TR
+    applied = done if done is not None else []
+
+    def apply(j, new):
+        if w.replace(j["line"], new):
+            applied.append((j["text"], new))
+    return TR.TranslateWorker(translate, apply, T.translation_ok, maxlen=maxlen)
+
+
+def job_of(ln, src="ru"):
+    return {"text": ln.text, "src": src, "dst": "uk", "line": ln}
+
+
+def test_russian_line_goes_through_the_recorder_path_then_the_translation_replaces_it_in_the_final_transcript(T, tmp_path):
+    wh = make(T, ["uk", "en"], says={"uk": "Это очень хорошо"}, probs={"uk": 0.9, "en": 0.05})
+    res, _ = run(T, wh, seg_of(T, 0.05, 3.0))
+    text, lang, tf = res
+    assert (text, lang, tf) == ("Это очень хорошо", "uk", "ru") and T.needs_translation(text, lang, tf)
+    ln = T.Line("them", 1000.0, lang, text, translated_from=tf)
+    w = writer_with(T, tmp_path, [ln])
+    assert "(uk): Это очень хорошо" in (tmp_path / "c.md").read_text(encoding="utf-8")   # the live line, marked
+    wk = worker_for(T, lambda t, s, d: "Це дуже добре", w)
+    wk.start()
+    wk.submit(job_of(ln))
+    wk.stop(5.0)
+    w.close("--- end ---\n")
+    body = (tmp_path / "c.md").read_text(encoding="utf-8")
+    assert "Співрозмовник (uk): Це дуже добре" in body and "Это очень" not in body
+    assert body.rstrip().endswith("--- end ---")                    # the footer stays last
+    assert ln.translated_from == "ru" and ln.text == "Це дуже добре"
+
+
+def test_a_translation_that_is_still_russian_or_empty_is_not_used(T, tmp_path):
+    ln = T.Line("them", 1000.0, "uk", "Это очень хорошо", translated_from="ru")
+    w = writer_with(T, tmp_path, [ln])
+    for bad in ("Это очень хорошо", "", "   ", "That is very good"):
+        done = []
+        wk = worker_for(T, lambda t, s, d, bad=bad: bad, w, done)
+        wk.start()
+        wk.submit(job_of(ln))
+        wk.stop(5.0)
+        assert done == []
+    w.close("")
+    assert "Это очень хорошо" in (tmp_path / "c.md").read_text(encoding="utf-8")
+
+
+def test_no_translation_route_keeps_the_marked_line(T, tmp_path):
+    import translate as TR
+    tr = TR.Translator({"ollama_url": "http://127.0.0.1:9", "translate_timeout_s": 1.0})   # no Ollama, no command
+    assert tr.translate("Это очень хорошо", "ru", "uk") is None
+    ln = T.Line("them", 1000.0, "uk", "Это очень хорошо", translated_from="ru")
+    w = writer_with(T, tmp_path, [ln])
+    wk = worker_for(T, tr.translate, w)
+    wk.start()
+    wk.submit(job_of(ln))
+    wk.stop(5.0)
+    w.close("")
+    assert "(uk): Это очень хорошо" in (tmp_path / "c.md").read_text(encoding="utf-8") and ln.translated_from == "ru"
+
+
+def test_the_command_route_translates_and_a_failing_or_slow_one_gives_nothing(T):
+    import translate as TR
+    ok = "import sys,json; r=json.loads(sys.stdin.read()); print(json.dumps({'text': 'UK:' + r['text'] + r['src'] + r['dst']}))"
+    base = {"ollama_url": "http://127.0.0.1:9", "translate_timeout_s": 10.0}
+    assert TR.Translator(dict(base, translate_cmd=[sys.executable, "-c", ok])).translate("Hi", "ru", "uk") == "UK:Hiruuk"
+    assert TR.Translator(dict(base, translate_cmd=[sys.executable, "-c", "raise SystemExit(1)"])).translate("x", "ru", "uk") is None
+    slow = TR.Translator(dict(base, translate_timeout_s=0.5, translate_cmd=[sys.executable, "-c", "import time; time.sleep(5)"]))
+    assert slow.translate("x", "ru", "uk") is None                  # the request has its own deadline
+
+
+def test_a_slow_translator_blocks_neither_submit_nor_the_writer(T, tmp_path):
+    gate, started = threading.Event(), threading.Event()
+
+    def slow(text, src, dst):
+        started.set()
+        gate.wait(10)
+        return "Це дуже добре"
+    ln = T.Line("them", 1000.0, "uk", "Это очень хорошо", translated_from="ru")
+    w = writer_with(T, tmp_path, [ln])
+    wk = worker_for(T, slow, w)
+    wk.start()
+    wk.submit(job_of(ln))
+    assert started.wait(5)
+    nxt = T.Line("them", 1005.0, "uk", "Наступна фраза")
+    w.add(nxt)                                                      # the live path goes on while the translator is stuck
+    for i in range(40):
+        wk.submit({"text": f"x{i}", "src": "ru", "dst": "uk", "line": nxt})
+    assert len(wk.jobs) <= 16                                       # bounded: the oldest waiting lines are dropped
+    body = (tmp_path / "c.md").read_text(encoding="utf-8")
+    assert "Это очень хорошо" in body and "Наступна фраза" in body
+    gate.set()
+    wk.stop(5.0)
+    w.close("")
+    assert "(uk): Це дуже добре" in (tmp_path / "c.md").read_text(encoding="utf-8")
+
+
+def test_stop_does_not_wait_longer_than_the_drain_time_and_a_late_translation_changes_nothing(T, tmp_path):
+    gate = threading.Event()
+    ln = T.Line("them", 1000.0, "uk", "Это очень хорошо", translated_from="ru")
+    w = writer_with(T, tmp_path, [ln])
+    wk = worker_for(T, lambda t, s, d: gate.wait(10) and "Це добре", w)
+    wk.start()
+    wk.submit(job_of(ln))
+    t0 = time.monotonic()
+    wk.stop(0.3)
+    assert time.monotonic() - t0 < 3.0
+    w.close("")
+    gate.set()
+    assert w.replace(ln, "late") is False
+    assert "Это очень хорошо" in (tmp_path / "c.md").read_text(encoding="utf-8")
+
+
+def test_a_held_mic_line_is_translated_in_memory_before_it_is_written(T, tmp_path):
+    ln = T.Line("me", 1000.0, "uk", "Это очень хорошо", translated_from="ru")
+    w = T.Writer(tmp_path / "c.md", dict(T.DEFAULTS), "", them_speech=lambda: T.now())   # the other side talks: the line waits
+    w.add(ln)
+    assert w.held_me and not ln.row
+    assert w.replace(ln, "Це дуже добре")
+    w.close("")
+    assert "(uk): Це дуже добре" in (tmp_path / "c.md").read_text(encoding="utf-8")
+
+
+def test_only_russian_or_wrong_script_lines_are_sent_to_translation(T):
+    assert T.needs_translation("Это очень хорошо", "uk", "ru")
+    assert T.needs_translation("I would like a coffee", "uk", "und")
+    assert not T.needs_translation("I would like a coffee please", "en", "fr")   # French speech forced into English
+    assert not T.needs_translation("Це дуже добре", "uk", None)
+    assert T.translation_ok("Це дуже добре", "uk") and not T.translation_ok("Это очень хорошо", "uk")

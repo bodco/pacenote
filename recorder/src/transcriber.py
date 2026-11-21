@@ -41,6 +41,7 @@ import numpy as np
 # Optional semantic layer (Ollama embeddings). Without it everything works on keywords as before.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import call_layout
+import translate as TR
 try:
     import semantic as SEM
     SEM_ERR = None
@@ -68,6 +69,13 @@ DEFAULTS = {
     "lang_foreign_min": 0.5,    # PB-30: a language outside the set is recognised from this detector probability
     "silence_max_s": 2.5,       # PB-30 (rules/asr_filters.yaml > silence_stop_phrases): only lines this short ...
     "silence_rms": 0.0035,      # ... whose speech frames are this quiet (well under the VAD floor) are dropped
+    "translate": True,          # PB-30: a line Whisper wrote in another language is translated in the background
+    "translate_timeout_s": 15.0,  # ... each request (local model, then the PM's AI route) has this deadline
+    "translate_queue": 16,      # ... lines waiting for a translation; when behind the oldest stays marked
+    "translate_drain_s": 20.0,  # ... at the end of the call the recorder waits this long for the queued ones
+    "translate_model": "",      # ... local model (default: LT_LOCAL_MODEL, else gemma4:26b)
+    "translate_cmd": [],        # ... the tips engine's text command, e.g. [python, "-m", "livetips_m0.translate_text"]
+    "translate_dir": "",        # ... its PYTHONPATH (the folder that contains livetips_m0/)
     "vad_mode": 2,              # webrtcvad aggressiveness 0..3
     "end_silence": 0.7,         # s of silence that closes a segment
     "max_segment": 9.0,         # s, hard cut for long monologues (12 until 2026-10-23: the trigger line of
@@ -181,8 +189,9 @@ DICT_RULES: list = []         # 0.10.0: the PM's dictionary, "heard as" variants
 def clean_text(text: str, prompt_words: set[str]) -> str:
     """Remove Whisper artefacts. Returns "" when nothing real is left."""
     text = (text or "").strip()
-    parts = re.split(r"(?<=[.!?…])\s+", text)
-    text = " ".join(p for p in parts if p and not any(rx.search(p) for rx in HALLUCINATION_PATTERNS)).strip()
+    if norm(text) not in SILENCE_STOP_PHRASES:     # PB-30: a listed stop-phrase is judged by loudness in asr_segment()
+        parts = re.split(r"(?<=[.!?…])\s+", text)
+        text = " ".join(p for p in parts if p and not any(rx.search(p) for rx in HALLUCINATION_PATTERNS)).strip()
     if not text or norm(text) in HALLUCINATIONS:
         return ""
     # Repetition loop ("Маша, Льоша, Маша, Льоша, ..." or "сьому сьому сьому"): collapse repeats;
@@ -347,7 +356,7 @@ def asr_segment(whisper, seg: "Segment", cfg: dict, lang_share: LangShare, last_
     else:
         # The PM's mic switches only between own languages (e.g. uk <-> en), never to ru by mistake.
         allowed = me_set if seg.channel == "me" and me_set else None
-        lang, heard, foreign = whisper.choose(seg.audio, allowed, last_lang[seg.channel] if short else main)
+        lang, heard, foreign = whisper.choose(seg.audio, allowed, main, last_lang[seg.channel] if short else main)
         if lang is None and short:
             lang = last_lang[seg.channel]           # no detector: a short segment keeps the channel's language
     auto = lang is None                             # Whisper picks the language: what it says is the evidence
@@ -359,6 +368,17 @@ def asr_segment(whisper, seg: "Segment", cfg: dict, lang_share: LangShare, last_
         return None                                 # "Дякую за перегляд!", "Bye." on near-silence
     lang_share.add(None if translated_from else (heard or (lang if auto else None)), seg.speech_s)
     return text, lang, translated_from
+
+
+def needs_translation(text: str, lang: str, translated_from: str | None) -> bool:
+    """PB-30 (D56): a marked line whose text is Russian or in a wrong script is translated in the background. A line the
+    main language was forced onto (French speech written in English) is only marked."""
+    return bool(translated_from) and (is_russian(text) or script_mismatch(text, lang))
+
+
+def translation_ok(new: str, dst: str) -> bool:
+    """A translation is used only when it is real text in the target language, never Russian."""
+    return bool(norm(new)) and not is_russian(new) and not script_mismatch(new, dst)
 
 
 def now() -> float:
@@ -675,10 +695,12 @@ class Whisper:
             self.detector = None
             log(f"restricted language detection unavailable ({e!r}); using whisper auto + check")
 
-    def choose(self, audio: np.ndarray, allowed: list[str] | None = None, main: str | None = None) -> tuple[str | None, str | None, str | None]:
+    def choose(self, audio: np.ndarray, allowed: list[str] | None = None, main: str | None = None,
+               keep: str | None = None) -> tuple[str | None, str | None, str | None]:
         """PB-30 (D56): -> (language to decode with, language heard, foreign language the audio was detected in).
-        One language: forced. Several: a language of the set is written as spoken (the main one, the most spoken so
-        far, wins ties and unclear cases); one outside the set is decoded in the main language and reported as foreign."""
+        One language: forced. Several: a language of the set is written as spoken; one outside the set is decoded in
+        the main language (the most spoken so far) and reported as foreign. `keep` (default: main) is the language an
+        unclear segment stays in: for a short one the channel's previous language."""
         allowed = allowed or self.langs
         if len(allowed) == 1:
             return allowed[0], allowed[0], None
@@ -686,6 +708,7 @@ class Whisper:
             return (None if allowed is self.langs else allowed[0]), None, None
         probs = self.detector(audio)
         base = main if main in allowed else allowed[0]
+        keep = keep if keep in allowed else base
         best = max(allowed, key=lambda l: probs.get(l, 0.0))
         top = max(probs, key=probs.get) if probs else best
         if top not in allowed and probs.get(top, 0.0) >= self.foreign_min and probs[top] > probs.get(best, 0.0):
@@ -693,8 +716,8 @@ class Whisper:
                 return base, None, None        # Ukrainian heard as ru/be/bg: the main (Cyrillic) language, not a translation
             return base, None, top             # else the main language, even when it is English, and the source is kept
         # The main language wins unless another one is clearly likelier: short or noisy phrases stay in it.
-        if best != base and probs.get(best, 0.0) < self.bias * probs.get(base, 0.0):
-            return base, None, None            # the bias overrode what the detector preferred: nothing was clearly heard
+        if best != keep and probs.get(best, 0.0) < self.bias * probs.get(keep, 0.0):
+            return keep, None, None            # the bias overrode what the detector preferred: nothing was clearly heard
         return best, best, None
 
     def pick_language(self, audio: np.ndarray, allowed: list[str] | None = None) -> str | None:
@@ -760,7 +783,7 @@ class FakeWhisper:
     def pick_language(self, audio, allowed=None):
         return (allowed or self.langs)[0]
 
-    def choose(self, audio, allowed=None, main=None):
+    def choose(self, audio, allowed=None, main=None, keep=None):
         lang = self.pick_language(audio, allowed)
         return lang, lang, None
 
@@ -787,6 +810,7 @@ class Line:
     created: float = field(default_factory=now)
     sid: str | None = None    # speaker cluster of a system-channel line ("S2"), None = no speaker tag
     translated_from: str | None = None   # PB-30: the language the speech was in when Whisper wrote it in another one
+    row: str = ""             # the transcript row as written (set by Writer._write); a translation replaces it by this key
 
 
 def hold_me_line(last_them_speech: float | None, line_t: float, window: float = 4.0) -> bool:
@@ -806,6 +830,8 @@ class Writer:
         self.held_me: list[Line] = []
         self.lines = 0
         self.last_line_at = None
+        self.replaced: list[tuple[str, str]] = []   # PB-30: (row as written, row after translation), applied in close()
+        self.closed = False
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "a", encoding="utf-8") as f:
             f.write(header)
@@ -860,12 +886,45 @@ class Writer:
                 keep.append(m)
         self.held_me = keep
 
-    def _write(self, line: Line) -> None:
+    def _row(self, line: Line) -> str:
         label = self.cfg["me_label"] if line.channel == "me" else self.cfg["them_label"]
         if line.channel == "them" and line.sid:
             label += f" [{line.sid}]"
+        return f"[{hhmmss(line.t)}] {label} ({line.lang}): {line.text}"
+
+    def replace(self, line: Line, text: str) -> bool:
+        """PB-30: a background translation replaces the line text. A line still held is changed in memory; a written
+        one is rewritten in close(), so a reader that follows the file by offset never sees an earlier row change."""
+        with self.lock:
+            if self.closed:
+                return False
+            old = line.row
+            line.text = text
+            if old:
+                self.replaced.append((old, self._row(line)))
+            return True
+
+    def _rewrite(self) -> None:
+        """Apply the translations to the file (atomic); a row that is no longer there is left alone."""
+        if not self.replaced:
+            return
+        todo = list(self.replaced)
+        out = []
+        for raw in self.path.read_text(encoding="utf-8").split("\n"):
+            for i, (old, new) in enumerate(todo):
+                if raw == old:
+                    raw = new
+                    del todo[i]
+                    break
+            out.append(raw)
+        tmp = self.path.with_name(self.path.name + ".tr.tmp")
+        tmp.write_text("\n".join(out), encoding="utf-8")
+        os.replace(tmp, self.path)
+
+    def _write(self, line: Line) -> None:
+        line.row = self._row(line)
         with open(self.path, "a", encoding="utf-8") as f:
-            f.write(f"[{hhmmss(line.t)}] {label} ({line.lang}): {line.text}\n")
+            f.write(line.row + "\n")
             f.flush()
             os.fsync(f.fileno())
         self.lines += 1
@@ -874,6 +933,11 @@ class Writer:
     def close(self, footer: str) -> None:
         with self.lock:
             self._release(force=True)
+            try:
+                self._rewrite()
+            except OSError as e:
+                log(f"translate: rewrite failed ({e!r}); the marked lines stay")
+            self.closed = True
             with open(self.path, "a", encoding="utf-8") as f:
                 f.write(footer)
 
@@ -5284,6 +5348,24 @@ def main() -> int:
     recent: list[tuple[float, str, str]] = []   # (t, channel, text) of the last ~2 min, for SOS
     recent_lock = threading.Lock()
 
+    def apply_translation(j: dict, new: str) -> None:
+        """The translation replaces the line text (the file at the end of the call); the sidecar keeps the original."""
+        new = apply_dictionary(new, DICT_RULES)
+        if not writer.replace(j["line"], new):
+            return
+        try:
+            with open(call_layout.sidecar_of(out, ".timing.jsonl"), "a", encoding="utf-8") as tf:
+                tf.write(json.dumps({"event": "translated", "t": j["t"], "ch": j["ch"], "translated_from": j["src"],
+                                     "original": j["text"], "text": new}, ensure_ascii=False) + "\n")
+        except OSError:
+            pass
+
+    tr_worker = None
+    if cfg.get("translate", True):
+        tr_worker = TR.TranslateWorker(TR.Translator(cfg).translate, apply_translation, translation_ok,
+                                       maxlen=int(cfg.get("translate_queue", 16)), log=log)
+        tr_worker.start()
+
     def process(seg: Segment) -> None:
         job = None
         if (seg.channel == "them" and spk["worker"] is not None
@@ -5312,6 +5394,9 @@ def main() -> int:
                 log(f"speakers: {e!r}")
         line_obj = Line(seg.channel, seg.t_start, lang, text, sid=sid, translated_from=translated_from)
         writer.add(line_obj)
+        if tr_worker is not None and needs_translation(text, lang, translated_from):
+            tr_worker.submit({"text": text, "src": translated_from, "dst": lang, "line": line_obj,
+                              "t": hhmmss(seg.t_start), "ch": seg.channel})
         if sid:
             try:
                 tracker.after_line(sid)
@@ -5865,6 +5950,8 @@ def main() -> int:
     deadline = now() + 60
     while segq.unfinished_tasks and now() < deadline:
         time.sleep(0.3)
+    if tr_worker is not None:
+        tr_worker.stop(float(cfg.get("translate_drain_s", 20.0)))    # the footer stays the last row
     writer.close(f"\n--- {L('кінець запису', 'end of recording')} {hhmmss(now())} ---\n")
     sheet_live.save_state(out)               # 0.10.0 (Meeting Sheet, phase 7): for the after-call check
     if spk["worker"] is not None:
