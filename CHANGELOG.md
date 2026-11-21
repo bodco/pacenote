@@ -3,6 +3,16 @@
 Pacenote. Earlier versions are described in the commit messages and in
 [docs/en/live-tips.md](docs/en/live-tips.md), section 14.
 
+## Unreleased
+
+- **The call language is kept in the transcript (2026-11-21, PB-30, FB1):** with Ukrainian + English, English speech
+  of the other side no longer comes out translated to Ukrainian, mixed, or in Icelandic or Russian. With two or more
+  languages, each line is written in the language spoken; the main one is the language spoken most so far (after the
+  first minute of the call), not the first in the list. A language outside the set is written in the main language
+  and the line is marked `translated_from` in the call's `.timing.jsonl`; Russian is never written (redone in the
+  main language). Whisper's stop-phrases on silence ("Дякую за перегляд!", "Thank you.") are dropped when the line is
+  short and the audio near-silent. The transcript line format is unchanged. Rules: `rules/asr_filters.yaml`.
+
 ## 0.26.4 (2026-11-20)
 
 - **A new organization project includes the person who made it (2026-11-20):** in New project > start a new

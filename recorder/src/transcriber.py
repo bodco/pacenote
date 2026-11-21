@@ -62,8 +62,12 @@ DEFAULTS = {
     "them_label": "Співрозмовник",
     "me_lang": "uk",            # language of the PM's own mic; "auto" = pick from langs
     "me_langs": [],             # optional: languages the PM may switch between (e.g. uk+en); mic picks among them
-    "langs": ["uk", "en"],      # allowed languages in this meeting, the first one is the main one
+    "langs": ["uk", "en"],      # allowed languages in this meeting, the first one is the main one until the warm-up ends
     "lang_bias": 2.0,           # another allowed language wins only if it is this many times likelier than the main one
+    "lang_warmup_s": 60.0,      # PB-30 (D56): s of the call before the main language is the one most spoken so far
+    "lang_foreign_min": 0.5,    # PB-30: a language outside the set is recognised from this detector probability
+    "silence_max_s": 2.5,       # PB-30 (rules/asr_filters.yaml > silence_stop_phrases): only lines this short ...
+    "silence_rms": 0.01,        # ... in audio this quiet are dropped as a stop-phrase hallucination
     "vad_mode": 2,              # webrtcvad aggressiveness 0..3
     "end_silence": 0.7,         # s of silence that closes a segment
     "max_segment": 9.0,         # s, hard cut for long monologues (12 until 2026-10-23: the trigger line of
@@ -235,6 +239,78 @@ def fix_lang_by_script(text: str, lang: str, langs: list[str]) -> str:
             if l not in CYRILLIC_LANGS:
                 return l
     return lang
+
+
+RU_ONLY_LETTERS = re.compile(r"[ыэъё]", re.I)
+UK_ONLY_LETTERS = re.compile(r"[іїєґ]", re.I)
+RU_ONLY_WORDS = {   # common Russian words that Ukrainian does not share (PB-30: "Russian never")
+    "это", "что", "как", "его", "они", "мы", "только", "есть", "был", "была", "были", "когда", "если", "уже",
+    "нет", "очень", "сегодня", "хорошо", "спасибо", "привет", "здравствуйте", "можно", "нужно", "чтобы",
+    "потому", "меня", "тебя", "этот", "эта", "эти", "который", "которые", "сейчас", "тоже", "ещё", "еще",
+}
+
+
+def is_russian(text: str) -> bool:
+    """PB-30 (D56): the text is Russian: Cyrillic, and either letters only Russian has (ы э ъ ё) or enough words only
+    Russian has. Ukrainian letters (і ї є ґ) with no Russian ones mean Ukrainian."""
+    letters = re.findall(r"[^\W\d_]", text)
+    if len(letters) < 3 or sum(1 for c in letters if "Ѐ" <= c <= "ӿ") / len(letters) < 0.7:
+        return False
+    words = re.findall(r"[^\W\d_]+", text.lower())
+    ratio = sum(w in RU_ONLY_WORDS for w in words) / max(1, len(words))
+    if RU_ONLY_LETTERS.search(text):
+        return not UK_ONLY_LETTERS.search(text) or ratio >= 0.3
+    return ratio >= 0.2
+
+
+def script_mismatch(text: str, lang: str) -> bool:
+    """The text is in another script than `lang` (Latin letters on a Cyrillic language or the other way round)."""
+    letters = re.findall(r"[^\W\d_]", text)
+    if len(letters) < 3:
+        return False
+    cyr = sum(1 for c in letters if "Ѐ" <= c <= "ӿ") / len(letters)
+    return cyr <= 0.1 if lang in CYRILLIC_LANGS else cyr >= 0.7
+
+
+class LangShare:
+    """PB-30 (D56): which allowed language is spoken most. The share is seconds of speech since the call start; during
+    the warm-up (and with one language) the first language of the set is the main one."""
+
+    def __init__(self, langs: list[str], warmup_s: float = 60.0):
+        self.warmup_s = warmup_s
+        self.reset(langs)
+
+    def reset(self, langs: list[str]) -> None:
+        self.langs = list(langs) or ["uk"]
+        self.secs: dict[str, float] = {}
+        self.t0: float | None = None
+
+    def add(self, lang: str | None, secs: float) -> None:
+        if lang in self.langs:
+            self.secs[lang] = self.secs.get(lang, 0.0) + max(0.0, secs)
+
+    def dominant(self, t: float) -> str:
+        if self.t0 is None:
+            self.t0 = t
+        if len(self.langs) == 1 or t - self.t0 < self.warmup_s or not any(self.secs.values()):
+            return self.langs[0]
+        return max(self.langs, key=lambda l: (self.secs.get(l, 0.0), -self.langs.index(l)))
+
+
+# rules/asr_filters.yaml > silence_stop_phrases (mirrored here, a test keeps the two in step)
+SILENCE_STOP_PHRASES = {
+    "дякую", "дякую за перегляд", "дякую за увагу", "дякуємо за перегляд", "дякую вам", "всім дякую",
+    "до побачення", "до зустрічі", "продовження буде", "так", "ага", "добре",
+    "thank you", "thanks", "thank you very much", "thanks for watching", "thank you for watching",
+    "bye", "bye bye", "you", "okay", "ok", "see you",
+}
+
+
+def silence_stop(text: str, speech_s: float, rms: float, cfg: dict) -> bool:
+    """PB-30 (D56 point 5): a Whisper stop-phrase ("Дякую за перегляд!") on a short line in near-silence is not speech.
+    The same words in a normal voice are kept."""
+    return (norm(text) in SILENCE_STOP_PHRASES and speech_s <= float(cfg.get("silence_max_s", 2.5))
+            and rms < float(cfg.get("silence_rms", 0.01)))
 
 
 def now() -> float:
@@ -513,6 +589,7 @@ class Whisper:
         self.repo = cfg["model"]
         self.langs = [l for l in cfg["langs"] if l] or ["uk"]
         self.bias = float(cfg.get("lang_bias") or 1.0)
+        self.foreign_min = float(cfg.get("lang_foreign_min") or 0.5)
         self.max_no_speech = float(cfg.get("max_no_speech") or 0.85)
         self.detector = None
         # Warm up and download the model on first run.
@@ -544,22 +621,40 @@ class Whisper:
             self.detector = None
             log(f"restricted language detection unavailable ({e!r}); using whisper auto + check")
 
-    def pick_language(self, audio: np.ndarray, allowed: list[str] | None = None) -> str | None:
+    def choose(self, audio: np.ndarray, allowed: list[str] | None = None, main: str | None = None) -> tuple[str | None, str | None, str | None]:
+        """PB-30 (D56): -> (language to decode with, language heard, foreign language the audio was detected in).
+        One language: forced. Several: a language of the set is written as spoken (the main one, the most spoken so
+        far, wins ties and unclear cases); one outside the set is decoded in the main language and reported as foreign."""
         allowed = allowed or self.langs
         if len(allowed) == 1:
-            return allowed[0]
+            return allowed[0], allowed[0], None
         if self.detector is None:
-            return None if allowed is self.langs else allowed[0]
+            return (None if allowed is self.langs else allowed[0]), None, None
         probs = self.detector(audio)
-        base = allowed[0]
+        base = main if main in allowed else allowed[0]
         best = max(allowed, key=lambda l: probs.get(l, 0.0))
-        # The first language is the main one: switch away only on a clear win, so short or
-        # noisy phrases stay in the main language instead of flipping to another one.
+        top = max(probs, key=probs.get) if probs else best
+        if top not in allowed and probs.get(top, 0.0) >= self.foreign_min and probs[top] > probs.get(best, 0.0):
+            sib = next((l for l in allowed if l in CYRILLIC_LANGS), None)
+            if top in CYRILLIC_LANGS and sib:
+                return sib, None, None         # Ukrainian heard as ru/be/bg: the set's Cyrillic language, not a translation
+            return base, None, top
+        # The main language wins unless another one is clearly likelier: short or noisy phrases stay in it.
         if best != base and probs.get(best, 0.0) < self.bias * probs.get(base, 0.0):
-            return base
-        return best
+            best = base
+        return best, best, None
+
+    def pick_language(self, audio: np.ndarray, allowed: list[str] | None = None) -> str | None:
+        return self.choose(audio, allowed)[0]
 
     def transcribe(self, audio: np.ndarray, language: str | None, prompt: str | None) -> tuple[str, str]:
+        return self.decode(audio, language, prompt)[:2]
+
+    def decode(self, audio: np.ndarray, language: str | None, prompt: str | None, main: str | None = None,
+               foreign: str | None = None) -> tuple[str, str, str | None]:
+        """-> (text, language tag, language the line was translated from or None). `main` is the language a line
+        that Whisper heard in another language is redone in (the most spoken one; default: first of the set)."""
+        main = main if main in self.langs else self.langs[0]
         res = self.mlx_whisper.transcribe(
             audio, path_or_hf_repo=self.repo, language=language, initial_prompt=prompt or None,
             condition_on_previous_text=False, temperature=(0.0, 0.2, 0.4),
@@ -569,12 +664,12 @@ class Whisper:
         lang = res.get("language") or language or "?"
         if language is None and lang not in self.langs:
             # Auto picked something outside the allowed set (typical: Ukrainian heard as Russian
-            # is fine, but "be", "pl", "pt" are not). Redo with the first allowed language.
-            return self.transcribe(audio, self.langs[0], prompt)
+            # is fine, but "be", "pl", "pt" are not). Redo with the main language.
+            return self.decode(audio, main, prompt, main, foreign or lang)
         parts = []
         segs = res.get("segments", [])
         if segs and min(x.get("no_speech_prob", 0) for x in segs) > self.max_no_speech:
-            return "", lang   # Whisper itself is sure there is no speech
+            return "", lang, None   # Whisper itself is sure there is no speech
         for s in segs:
             nsp, lp = s.get("no_speech_prob", 0), s.get("avg_logprob", 0)
             if nsp > 0.6 and lp < -0.8:
@@ -584,11 +679,21 @@ class Whisper:
             parts.append(s.get("text", "").strip())
         text = " ".join(p for p in parts if p).strip()
         lang = fix_lang_by_script(text, lang, self.langs)
-        if language != self.langs[0] and (lang not in self.langs or (lang == "en" and NOT_ENGLISH.search(text))):
+        if language != main and "ru" not in self.langs and is_russian(text):
+            return self.decode(audio, main, prompt, main, foreign or "ru")   # PB-30: Russian never
+        if language != main and (lang not in self.langs or (lang == "en" and NOT_ENGLISH.search(text))):
             # 0.8.5 (owner): Ukrainian heard as another language came out as Polish ("Dostup do ... w Tobie jest"):
             # a line outside the allowed set, or "English" with letters English never has, is redone in the main one.
-            return self.transcribe(audio, self.langs[0], prompt)
-        return text, lang
+            return self.decode(audio, main, prompt, main, foreign or lang)
+        if not text:
+            return text, lang, None
+        if language == main and "ru" not in self.langs and is_russian(text):
+            foreign = foreign or "ru"
+        elif not (foreign or script_mismatch(text, lang)):
+            return text, lang, None
+        # TODO(PB-30): no translation model yet; a line still in a foreign script after the redo stays as Whisper wrote
+        # it and is only marked (translated_from, "und" when the language is unknown).
+        return text, lang, foreign or "und"
 
 
 class FakeWhisper:
@@ -599,6 +704,14 @@ class FakeWhisper:
 
     def pick_language(self, audio, allowed=None):
         return (allowed or self.langs)[0]
+
+    def choose(self, audio, allowed=None, main=None):
+        lang = self.pick_language(audio, allowed)
+        return lang, lang, None
+
+    def decode(self, audio, language, prompt, main=None, foreign=None):
+        text, lang = self.transcribe(audio, language, prompt)
+        return text, lang, None
 
     def transcribe(self, audio, language, prompt):
         import hashlib
@@ -618,6 +731,7 @@ class Line:
     written: bool = False
     created: float = field(default_factory=now)
     sid: str | None = None    # speaker cluster of a system-channel line ("S2"), None = no speaker tag
+    translated_from: str | None = None   # PB-30: the language the speech was in when Whisper wrote it in another one
 
 
 def hold_me_line(last_them_speech: float | None, line_t: float, window: float = 4.0) -> bool:
@@ -5046,6 +5160,7 @@ def main() -> int:
 
     last_lang = {"me": cfg["me_lang"] if cfg["me_lang"] != "auto" else cfg["langs"][0],
                  "them": cfg["langs"][0]}
+    lang_share = LangShare(cfg["langs"], float(cfg.get("lang_warmup_s", 60.0)))
     prompt = cfg.get("prompt")
     prompt_words = set(re.findall(r"\w+", (prompt or "").lower()))
     global PROMPT_HEAD
@@ -5120,22 +5235,29 @@ def main() -> int:
                 and seg.speech_s >= float(cfg.get("speaker_min_s", 1.0))):
             job = spk["worker"].submit(seg.audio)   # runs in parallel with the ASR below
         me_set = cfg["me_langs"] if len(cfg["me_langs"]) > 1 else None
+        dom = lang_share.dominant(seg.t_start)      # PB-30 (D56): the language most spoken so far is the main one
+        heard = foreign = None
+        main = dom
         if seg.channel == "me" and cfg["me_lang"] != "auto" and not me_set:
-            lang = cfg["me_lang"]
+            lang = main = cfg["me_lang"]
         elif seg.duration < cfg["sticky_short"]:
             lang = last_lang[seg.channel]
         elif seg.channel == "me" and me_set:
             # The PM switches only between own languages (e.g. uk <-> en), never to ru by mistake.
-            lang = whisper.pick_language(seg.audio, me_set)
+            lang, heard, foreign = whisper.choose(seg.audio, me_set, dom)
         else:
-            lang = whisper.pick_language(seg.audio)
+            lang, heard, foreign = whisper.choose(seg.audio, None, dom)
         t_asr0 = time.time()
         maybe_glossary()
-        text, lang = whisper.transcribe(seg.audio, lang, pcell[0])
+        text, lang, translated_from = whisper.decode(seg.audio, lang, pcell[0], main, foreign)
         t_asr1 = time.time()
         text = clean_text(text, pwords[0])
         if not text or not norm(text):
             return
+        rms = float(np.sqrt(np.mean(np.square(seg.audio)))) if len(seg.audio) else 0.0
+        if silence_stop(text, seg.speech_s, rms, cfg):
+            return                                         # PB-30 (D56 point 5): "Дякую!" on near-silence
+        lang_share.add(heard, seg.speech_s)
         text = apply_dictionary(text, DICT_RULES)          # 0.10.0: the PM's dictionary, before anything sees the line
         last_lang[seg.channel] = lang
         sid = None
@@ -5150,7 +5272,7 @@ def main() -> int:
                     sid = tracker.observe(hhmmss(seg.t_start), seg.t_start, seg.t_end, emb, seg.duration, text)
             except Exception as e:  # noqa: BLE001
                 log(f"speakers: {e!r}")
-        line_obj = Line(seg.channel, seg.t_start, lang, text, sid=sid)
+        line_obj = Line(seg.channel, seg.t_start, lang, text, sid=sid, translated_from=translated_from)
         writer.add(line_obj)
         if sid:
             try:
@@ -5216,7 +5338,9 @@ def main() -> int:
                     "queued_s": round(t_asr0 - seg.t_end, 2),
                     "asr_s": round(t_asr1 - t_asr0, 2),
                     "written": dt.datetime.fromtimestamp(t_asr1).strftime("%H:%M:%S.%f")[:-3],
-                    "chars": len(text)}, ensure_ascii=False) + "\n")
+                    "chars": len(text),
+                    # PB-30: set only when the line was written in another language than spoken (UI: "translated from")
+                    **({"translated_from": translated_from} if translated_from else {})}, ensure_ascii=False) + "\n")
         except Exception:  # noqa: BLE001
             pass
 
@@ -5355,6 +5479,7 @@ def main() -> int:
                 me, me_langs, langs = LANG_SETS[val]
                 cfg.update(me_lang=me, me_langs=me_langs, langs=langs)
                 whisper.langs = list(langs)
+                lang_share.reset(langs)             # PB-30: the share of spoken languages starts again
                 last_lang["me"], last_lang["them"] = me, langs[0]
                 status.update(call_lang=val, me_lang=me, me_langs=me_langs, langs=langs)
                 newp = cfg.get("prompt_" + val) or (None if val == "en" else cfg.get("prompt"))
