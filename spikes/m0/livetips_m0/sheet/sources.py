@@ -272,7 +272,20 @@ def check(s: dict, req: dict, texts: Dict[str, str], route: str, windows: dict) 
             s["fix_actions"] = list(LINKEDIN_FIXES)
         elif t in ("web", "web_page"):
             text = s.get("text") or ""
-            if text.strip():
+            stored = os.path.expanduser(s.get("path") or "")
+            if not text.strip() and stored:
+                # PB-37 (G6): a page of a researched site is read from its stored copy on every route, never fetched
+                # again (the text must be the same on every route; the Claude routes get a Read line)
+                if os.path.isfile(stored):
+                    text = readers.read(stored).get("text", "")
+                if text.strip():
+                    s["access"] = "ok"
+                    s["modified_at"] = s.get("modified_at") or _mtime(stored)
+                else:
+                    s["access"] = "denied"
+                    s["access_reason"] = "the stored copy of the page is missing or empty"
+                    s["fix_action"] = "retry"
+            elif text.strip():
                 s["access"] = "ok"
             else:
                 allowed = web_allowed(s.get("uri") or "")
