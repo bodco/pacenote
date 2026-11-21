@@ -3,6 +3,8 @@
 The recorder runs `python -m livetips_m0.translate_text` and sends {"text", "src", "dst"} on stdin; the answer is one
 JSON line {"text": "..."} on stdout. Text only, never audio. The route, the auto-switch and the spend ledger are the
 app's own (routing.provider_from_env, job "translate"; LT_AI_ROUTE etc. come from the environment the app sets).
+The text may go only to the AIs the PM allowed for live tips: the same chain and exclusions (background=True), and
+nothing runs unless the recorder was launched with LT_TRANSLATE_ROUTE=1 (the app's per-call permission).
 Exit code 1 and no output: no route answered, the recorder keeps the marked line.
 """
 import json
@@ -14,8 +16,12 @@ MODEL = "claude-haiku-5-5"      # the cheapest of the Claude models; LT_TRANSLAT
 
 
 def translate(text: str, src: str, dst: str, provider=None) -> str:
-    from .routing import provider_from_env
-    prov = provider or provider_from_env("translate", timeout=12.0)
+    from .routing import chain_allowed, provider_from_env
+    if provider is None and os.environ.get("LT_TRANSLATE_ROUTE") != "1":
+        raise RuntimeError("translation through the AI route is not allowed for this call")
+    prov = provider or provider_from_env("translate", timeout=12.0, background=True)
+    if getattr(prov, "preferred", None) and not chain_allowed(prov.preferred, "tips"):
+        raise RuntimeError("the live tips route is not usable for text of a call: " + str(prov.preferred))
     s = "the language it is in" if src == "und" else NAMES.get(src, src)
     system = (f"Translate the user's text from {s} to {NAMES.get(dst, dst)}. Keep names, numbers and "
               "product terms as they are. Answer with the translation only, no quotes, no comments.")

@@ -261,8 +261,8 @@ final class PrompterController: NSObject, NSWindowDelegate, WKScriptMessageHandl
             if !lines.isEmpty, let d = try? JSONSerialization.data(withJSONObject: lines), let js = String(data: d, encoding: .utf8) {
                 push("window.addTranscript && window.addTranscript(" + js + ")")
             }
-            // after the rows above: a translation finds its row in the pane
-            let ev = (translations?.newLines() ?? []).filter { $0.contains("\"translated\"") && isJSONObject($0) }
+            // after the rows above: a translation finds its row in the pane, by the line's seq
+            let ev = (translations?.newLines() ?? []).filter { isJSONObject($0) }      // timing rows give the rows their seq
             if !ev.isEmpty { push("window.updateTranscript && window.updateTranscript([" + ev.joined(separator: ",") + "])") }
         }
         // 2026-10-28 (owner): the full preparation for the Preparation pane, again when it changes.

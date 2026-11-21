@@ -5,6 +5,8 @@ there). The recorder writes the marked line at once (translated_from set). A wor
 1. the app's local model (Ollama), when it is running and has the model;
 2. the PM's configured AI route, through a small command in the tips engine (livetips_m0.translate_text, text only,
    never audio; the route settings, the auto-switch and the spend ledger are the engine's own).
+The permission is per launch: the app sets LT_TRANSLATE_ROUTE=1 in the recorder's environment only for a call that may
+use the AI; without it the command is ignored whatever config.json says, and only the local model is used.
 No route, a timeout or a bad answer: the marked line stays as it is. `submit()` never blocks; each request has a
 deadline of its own; the queue is bounded (the oldest waiting line is dropped, so it stays marked).
 """
@@ -40,7 +42,9 @@ class Translator:
         self.timeout = float(cfg.get("translate_timeout_s", 15.0))
         self.url = str(cfg.get("ollama_url") or "http://127.0.0.1:11434").rstrip("/")
         self.model = str(cfg.get("translate_model") or os.environ.get("LT_LOCAL_MODEL") or DEFAULT_LOCAL_MODEL)
-        self.cmd = [str(c) for c in (cfg.get("translate_cmd") or [])]
+        # the command runs only when the app launched this recorder with the call's permission (LT_TRANSLATE_ROUTE=1);
+        # config.json alone is never enough (a stale command from an earlier call), and no flag means local only
+        self.cmd = [str(c) for c in (cfg.get("translate_cmd") or [])] if os.environ.get("LT_TRANSLATE_ROUTE") == "1" else []
         self.cmd_dir = str(cfg.get("translate_dir") or "")
         self._up_until = 0.0
         self._up = False

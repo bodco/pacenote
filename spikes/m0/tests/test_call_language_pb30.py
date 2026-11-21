@@ -442,8 +442,9 @@ def test_no_translation_route_keeps_the_marked_line(T, tmp_path):
     assert "(uk): Это очень хорошо" in (tmp_path / "c.md").read_text(encoding="utf-8") and ln.translated_from == "ru"
 
 
-def test_the_command_route_translates_and_a_failing_or_slow_one_gives_nothing(T):
+def test_the_command_route_translates_and_a_failing_or_slow_one_gives_nothing(T, monkeypatch):
     import translate as TR
+    monkeypatch.setenv("LT_TRANSLATE_ROUTE", "1")      # the app's permission for this launch
     ok = "import sys,json; r=json.loads(sys.stdin.read()); print(json.dumps({'text': 'UK:' + r['text'] + r['src'] + r['dst']}))"
     base = {"ollama_url": "http://127.0.0.1:9", "translate_timeout_s": 10.0}
     assert TR.Translator(dict(base, translate_cmd=[sys.executable, "-c", ok])).translate("Hi", "ru", "uk") == "UK:Hiruuk"

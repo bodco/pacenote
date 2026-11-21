@@ -73,6 +73,7 @@ def test_with_ollama_down_the_configured_route_translates_and_gets_the_apps_rout
         "import json, os, sys\n"
         "req = json.loads(sys.stdin.read())\n"
         "print(json.dumps({'text': 'UK:' + req['text'] + ':' + os.environ.get('LT_AI_ROUTE', '') + ':' + os.environ.get('CLAUDE_API', '')}))\n")
+    monkeypatch.setenv("LT_TRANSLATE_ROUTE", "1")              # the app's permission for this launch
     monkeypatch.setenv("LT_AI_ROUTE", "api")                     # what the app puts in the recorder's environment
     monkeypatch.setenv("CLAUDE_API", "KEY-VALUE")                # the value is not logged here; it reaches the command only
     cfg = {"ollama_url": "http://127.0.0.1:9", "translate_timeout_s": 10.0,       # nothing listens there
@@ -90,6 +91,7 @@ def test_without_a_configured_route_and_without_ollama_nothing_is_sent_anywhere(
 def test_an_unusable_local_answer_is_not_returned_the_configured_route_is_asked(monkeypatch):
     import transcriber as T
     import translate as TR
+    monkeypatch.setenv("LT_TRANSLATE_ROUTE", "1")
     tr = TR.Translator({"translate_cmd": ["x"]}, T.translation_ok)
     calls = []
     monkeypatch.setattr(tr, "_ollama_up", lambda: True)
@@ -102,6 +104,7 @@ def test_an_unusable_local_answer_is_not_returned_the_configured_route_is_asked(
 def test_a_usable_local_answer_does_not_call_the_route(monkeypatch):
     import transcriber as T
     import translate as TR
+    monkeypatch.setenv("LT_TRANSLATE_ROUTE", "1")
     tr = TR.Translator({"translate_cmd": ["x"]}, T.translation_ok)
     monkeypatch.setattr(tr, "_ollama_up", lambda: True)
     monkeypatch.setattr(tr, "_ollama", lambda text, src, dst: "Це дуже добре")

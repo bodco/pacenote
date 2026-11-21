@@ -210,11 +210,12 @@ final class CallEngine {
         p.executableURL = URL(fileURLWithPath: c.engine.python)
         p.arguments = [(appRoot as NSString).appendingPathComponent("src/transcriber.py"), "--from-control"]
         p.currentDirectoryURL = URL(fileURLWithPath: appRoot)
-        if TranslateRoute.enabled(allowed: translateRoute, python: c.engine.sidecarPython, dir: c.engine.sidecarDir) {
-            var env = AIRoute.env(job: "tips", config: c)     // "translate" has no route of its own: it follows the tips way
-            env["PYTHONDONTWRITEBYTECODE"] = "1"
-            p.environment = env
-        }
+        // the permission is set on every launch: a call that may not use the AI gets no key or route setting at all
+        let translateOn = TranslateRoute.enabled(allowed: translateRoute, python: c.engine.sidecarPython, dir: c.engine.sidecarDir)
+        var recEnv = TranslateRoute.recorderEnv(allowed: translateOn, base: ProcessInfo.processInfo.environment,
+                                                route: translateOn ? AIRoute.env(job: "tips", config: c) : [:])   // "translate" follows the tips way
+        if translateOn { recEnv["PYTHONDONTWRITEBYTECODE"] = "1" }
+        p.environment = recEnv
         // 0.24.1 (F7): every run starts with a header (versions, Python and packages, macOS, time zone)
         AppLog.header("recorder.log", "call start", extra: AppLog.runtimeExtra + [("ready", startReady ? "yes" : "no")])
         AppLog.app("call: start (ready=\(startReady))")

@@ -170,6 +170,7 @@ test('transcript: a translation changes the shown row in place and keeps its mar
   const { f, get } = make();
   f.addTranscript(['[10:31:02] Emily C. [S1] (uk): Это очень хорошо', '[10:31:09] Me (uk): Добре']);
   const before = f.transcript[0];
+  f.updateTranscript([{ t: '10:31:02', ch: 'them', seq: 1 }, { t: '10:31:09', ch: 'me', seq: 2 }]);
   f.updateTranscript([{ event: 'translated', seq: 1, t: '10:31:02', ch: 'them', translated_from: 'ru', original: 'Это очень хорошо', text: 'Це дуже добре' },
                       { event: 'translated', t: '10:59:59', original: 'nothing', text: 'x' }]);
   const s = get();
@@ -179,6 +180,21 @@ test('transcript: a translation changes the shown row in place and keeps its mar
   assert.strictEqual(s.transcript[0].translatedFrom, 'ru');
   assert.strictEqual(s.transcript[0].speakerId, 'S1');
   assert.strictEqual(s.transcript[1].text, 'Добре');
+});
+
+test('transcript: a translation finds its row by the line seq, also for two speakers and a row read late (PB-30 round 7)', () => {
+  const { f } = make();
+  f.addTranscript(['[10:31:02] Me (uk): Это', '[10:31:02] Emily C. [S1] (uk): Это', '[10:31:02] Mike [S2] (uk): Это']);   // same second and words
+  f.updateTranscript([{ t: '10:31:02', ch: 'me', seq: 1 }, { t: '10:31:02', ch: 'them', seq: 2 }, { t: '10:31:02', ch: 'them', seq: 3 }]);
+  f.updateTranscript([{ event: 'translated', seq: 3, t: '10:31:02', ch: 'them', translated_from: 'ru', original: 'Это', text: 'Це' }]);
+  assert.deepStrictEqual(f.transcript.map((x) => x.text), ['Это', 'Это', 'Це']);          // the second "them" speaker, not the mic row or S1
+  assert.strictEqual(f.transcript[0].translatedFrom, undefined);
+  f.updateTranscript([{ event: 'translated', seq: 5, t: '10:31:20', ch: 'me', translated_from: 'ru', original: 'Хорошо', text: 'Добре' }]);
+  assert.strictEqual(f.transcript.length, 3);                                             // no row yet: kept, nothing changes
+  f.updateTranscript([{ t: '10:31:20', ch: 'me', seq: 5 }]);                              // the timing row before the transcript row
+  f.addTranscript(['[10:31:20] Me (uk): Хорошо']);
+  assert.strictEqual(f.transcript[3].text, 'Добре');                                      // applied when the row arrived
+  assert.strictEqual(f.transcript[3].translatedFrom, 'ru');
 });
 
 test('presentation steps from slides; a skippable step', () => {

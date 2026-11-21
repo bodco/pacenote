@@ -903,7 +903,7 @@ class Writer:
             if self.closed:
                 return None
             old = line.row
-            line.text = text
+            line.text = " ".join(text.split())      # a row is one line; a break would leave an untagged tail
             if old:
                 self.replaced.append((old, self._row(line)))
             return old
@@ -5354,7 +5354,7 @@ def main() -> int:
 
     def apply_translation(j: dict, new: str) -> None:
         """The translation replaces the line text (the file at the end of the call); the sidecar keeps the original."""
-        new = apply_dictionary(new, DICT_RULES)
+        new = apply_dictionary(" ".join(new.split()), DICT_RULES)   # one line: a break would split the transcript row
         shown = writer.replace(j["line"], new)   # the row already in the file (and so in the live transcript), if any
         if not shown:                            # closed, or a held line: it goes out translated
             return

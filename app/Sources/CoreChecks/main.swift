@@ -4765,6 +4765,13 @@ func translateRoutePB30() {
         expect((off["translate_cmd"] as? [String])?.isEmpty == true && (off["translate_dir"] as? String) == "", "PB-30: no route, no engine or no AI for this call: empty")
     }
     expect(TranslateRoute.enabled(allowed: true, python: "/py", dir: "/d") && !TranslateRoute.enabled(allowed: false, python: "/py", dir: "/d"), "PB-30: enabled follows the call's permission")
+    // PB-30 round 7: the permission is per launch; a restricted call gets no key or route setting, even an inherited one
+    let base = ["PATH": "/usr/bin", "CLAUDE_API": "dummy", "OPENAI_API_KEY": "dummy", "LT_AI_ROUTE": "api", "LT_AI_CHAIN": "[]"]
+    let denied = TranslateRoute.recorderEnv(allowed: false, base: base, route: ["CLAUDE_API": "other", "LT_AI_ROUTE": "code"])
+    expect(denied["LT_TRANSLATE_ROUTE"] == "0" && denied["PATH"] == "/usr/bin", "PB-30: a restricted call: the permission is 0, the rest of the environment stays")
+    expect(denied["CLAUDE_API"] == nil && denied["OPENAI_API_KEY"] == nil && denied["LT_AI_ROUTE"] == nil && denied["LT_AI_CHAIN"] == nil, "PB-30: a restricted call: an inherited key and route setting are dropped")
+    let granted = TranslateRoute.recorderEnv(allowed: true, base: base, route: ["CLAUDE_API": "k", "LT_AI_ROUTE": "code"])
+    expect(granted["LT_TRANSLATE_ROUTE"] == "1" && granted["CLAUDE_API"] == "k" && granted["LT_AI_ROUTE"] == "code", "PB-30: an allowed call: the permission is 1 and the tips route reaches the recorder")
 }
 translateRoutePB30()
 print("core checks: \(passed) passed, \(failures) failed")

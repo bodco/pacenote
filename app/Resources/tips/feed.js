@@ -523,28 +523,58 @@
         // An older line with a typed name and no cluster: the name is the speaker.
         const key = 'n:' + m[2];
         if (!this.speakers[key]) this.speakers[key] = { name: clean(m[2]), side: '' };
-        this.transcript.push({ speakerId: key, text: m[5], t: m[1] });
+        this.transcript.push({ speakerId: key, text: m[5], t: m[1], ch: 'them' });
         continue;
       }
       if (m[3] && !this.speakers[m[3]]) this.speakers[m[3]] = { name: '', side: '', label: this.tr('speakerN', { n: m[3].replace(/^S/i, '') }) };
-      this.transcript.push({ speakerId: sid, text: m[5], t: m[1] });
+      this.transcript.push({ speakerId: sid, text: m[5], t: m[1], ch: sid === 'me' ? 'me' : 'them' });
     }
     if (this.transcript.length > 600) this.transcript = this.transcript.slice(-600);
+    this.updateTranscript([]);      // a translation that came before its row
     this.emit();
   };
 
+  /** PB-30: the recorder's `.timing.jsonl` rows (each carries the line's `seq`, in the order the rows were written) give
+   *  the transcript rows their seq: the oldest row of the same time and channel without one. A timing row whose
+   *  transcript row is not read yet waits (at most 50). */
+  Feed.prototype.pairSeq = function () {
+    const q = this.unpairedTiming || (this.unpairedTiming = []);
+    for (let i = 0; i < q.length;) {
+      const r = q[i];
+      const item = this.transcript.find((x) => x.seq == null && x.t === r.t && x.ch === (r.ch === 'me' ? 'me' : 'them'));
+      if (!item) { i++; continue; }
+      item.seq = +r.seq;
+      q.splice(i, 1);
+    }
+    if (q.length > 50) q.splice(0, q.length - 50);
+  };
+
   /** PB-30: a background translation (a "translated" event of the recorder) changes the text of a row already shown, in
-   *  place: the same item, found by its time and original text; `translatedFrom` marks it. A row not found stays as is. */
+   *  place: the row with the event's `seq` (the same channel and time are checked too; an event without a seq, from an
+   *  older recorder, goes by channel, time and original text). A row not shown yet keeps the event waiting (at most 50).
+   *  `events` may also hold the plain timing rows: they only give rows their seq. */
   Feed.prototype.updateTranscript = function (events) {
-    let changed = false;
+    const pending = this.pendingTranslations || (this.pendingTranslations = []);
+    const timing = this.unpairedTiming || (this.unpairedTiming = []);
     for (const e of events || []) {
-      if (!e || e.event !== 'translated' || !e.text) continue;
-      const item = this.transcript.find((x) => x.t === e.t && x.text === e.original && !x.translatedFrom);
-      if (!item) continue;
+      if (!e) continue;
+      if (e.event === 'translated') { if (e.text) pending.push(e); }
+      else if (e.seq != null && e.t) timing.push(e);
+    }
+    this.pairSeq();
+    let changed = false;
+    for (let i = 0; i < pending.length;) {
+      const e = pending[i], ch = e.ch === 'me' ? 'me' : 'them';
+      const item = e.seq != null
+        ? this.transcript.find((x) => x.seq === +e.seq && x.t === e.t && x.ch === ch && !x.translatedFrom)
+        : this.transcript.find((x) => x.t === e.t && x.ch === ch && x.text === e.original && !x.translatedFrom);
+      if (!item) { i++; continue; }
       item.text = String(e.text);
       item.translatedFrom = String(e.translated_from || 'und');
+      pending.splice(i, 1);
       changed = true;
     }
+    if (pending.length > 50) pending.splice(0, pending.length - 50);
     if (changed) this.emit();
   };
 
