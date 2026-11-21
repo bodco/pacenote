@@ -362,6 +362,14 @@ final class CallEngine {
         return ["uk", "en"].contains(r) ? r : "en"
     }
 
+    /// PB-32 S5 (D56, owner answer 3A): the languages the tips window may switch between. Only a mixed call (two or
+    /// more of uk/en chosen in Start call) has a switch; a one-language call has none, whatever the interface language is.
+    nonisolated static func tipsLangs(_ req: [String: Any]) -> [String] {
+        var out: [String] = []
+        for l in (req["langs"] as? [String]) ?? [] where ["uk", "en"].contains(l) && !out.contains(l) { out.append(l) }
+        return out.count >= 2 ? out : []
+    }
+
     func startSidecar(file: String, status: EngineStatus, fromStart: Bool = true) {
         let c = config
         guard !c.engine.sidecarPython.isEmpty, !c.engine.sidecarDir.isEmpty else { return }

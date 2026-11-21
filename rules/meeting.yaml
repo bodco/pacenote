@@ -22,10 +22,12 @@ mode:
 timers:
   checkpoints: [two_thirds, five_minutes_left]
 tips_language:
-  # 0.8.5 (owner): tips, cards and labels in the meeting's main language; the window's switch (setting tips_lang)
-  # changes it to the interface language and back when the two differ. The phrase to say follows answer_lang as before.
+  # 0.8.5 (owner): tips, cards and labels in the meeting's main language. PB-32 (D56, owner answer 3A): the interface
+  # language is never an input and there is no switch for a one-language call; a mixed call (two or more of uk/en in
+  # Start call) keeps the window's switch (setting tips_lang), which cycles through the call's languages.
+  # The phrase to say follows answer_lang as before.
   default: the call's main language (me_lang)
-  switch: setting tips_lang = uk | en, shown only when the interface language differs
+  switch: setting tips_lang = uk | en, shown only for a mixed call
 tips:
   # 0.8.5 (owner): a Tips switch in Call settings, before Proactive tips, for any call
   setting: tips = on | off (status field "tips")
