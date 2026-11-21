@@ -20,6 +20,11 @@ Pacenote. Earlier versions are described in the commit messages and in
   gone for a one-language call; a call with two or three languages shows **Output language** (only those languages,
   this call only). A Sheet or brief can now be written in any language of Start call, not only English and Ukrainian.
 
+- **The tips language switch only appears on a mixed call (2026-11-21, PB-32 S5):** the UK/EN button in the tips window
+  showed whenever the call language differed from the interface language. A one-language call now has no switch: tips
+  stay in the call language. A call with two languages in Start call keeps the switch, and it cycles through those
+  languages.
+
 ## 0.26.4 (2026-11-20)
 
 - **A new organization project includes the person who made it (2026-11-20):** in New project > start a new
