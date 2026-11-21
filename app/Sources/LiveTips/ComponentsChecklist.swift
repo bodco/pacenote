@@ -154,6 +154,9 @@ struct ComponentsChecklist: View {
                     Text(ComponentCatalog.format(oc.sizes[c.id] ?? ComponentCatalog.estimate(c.id)))
                         .font(PN.Font.caption).foregroundStyle(PN.C.text3).frame(width: 64, alignment: .trailing)
                     if case .installing = oc.state(c.id) { ComponentAction(id: c.id) }
+                    if submitted, picked.contains(c.id), c.id == "local_model", case .failed = oc.state(c.id) {
+                        ComponentAction(id: c.id)
+                    }
                 }
                 .padding(.vertical, compact ? 4 : 6)
                 if submitted && picked.contains(c.id) { ComponentStateLine(id: c.id) }

@@ -1494,6 +1494,7 @@ Before installing, review the estimated download size and available disk space. 
 Whisper and bge-m3 handle speech recognition and search on your Mac. The optional Ollama model keeps AI processing
 on your Mac, with lower output quality than cloud AI. While a download is running, choose **Cancel** to stop it and
 remove its partial files. You can retry from **Setup** or **Settings > Components**.
+If an Ollama download fails, choose **Retry** to resume using the files already downloaded.
 
 **Settings > Components (0.16.0).** How much Pacenote takes on this Mac (measured) and what is free. Optional parts
 show their size and Remove... or Install; Remove... says what changes and frees the space it measured. Removing the

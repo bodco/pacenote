@@ -49,8 +49,10 @@ final class OptionalComponents: ObservableObject {
         case "ollama": return llm.installed ? .installed(llm.running ? L("comp.running") : "") : .missing
         case "local_model":
             if llm.pulling != nil { return .installing(llm.progress) }
-            if llm.models.contains(LocalLLM.model) { return .installed(LocalLLM.model) }
-            return LocalLLM.onDisk(LocalLLM.model) ? .installed(llm.running ? LocalLLM.model : L("comp.startToUse")) : .missing
+            let model = LocalLLM.model
+            if llm.models.contains(model) { return .installed(model) }
+            if LocalLLM.onDisk(model) { return .installed(llm.running ? model : L("comp.startToUse")) }
+            return llm.failedPull == model ? .failed(llm.note) : .missing
         default: return states[id] ?? .unknown
         }
     }

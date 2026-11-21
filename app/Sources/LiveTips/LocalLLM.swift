@@ -20,6 +20,7 @@ final class LocalLLM: ObservableObject {
     @Published private(set) var pulling: String? = nil
     @Published private(set) var progress: Double = 0    // 0...1 while pulling
     @Published private(set) var note = ""
+    @Published private(set) var failedPull: String?
     @Published private(set) var stopping = false
     private var pullTask: Task<Void, Never>?
     private var pullRequest: URLSessionDataTask?
@@ -116,6 +117,7 @@ final class LocalLLM: ObservableObject {
         let baseline = existing ?? (fm.fileExists(atPath: blobs.path) ? nil : [])
         if !running { start() }
         pulling = name
+        failedPull = nil
         progress = 0
         note = L("local.pull.starting")
         var req = URLRequest(url: URL(string: Self.url + "/api/pull")!)
@@ -146,21 +148,24 @@ final class LocalLLM: ObservableObject {
                 }
             } catch { problem = error.localizedDescription }
 
-            if Task.isCancelled || !succeeded {
+            if Task.isCancelled {
                 // Cleanup needs its own task because networking in the cancelled pull task would cancel immediately.
                 let cleaned = await Task {
                     let deleted = await self.deleteModel(name, attempts: 2, timeout: 5)
                     guard let baseline else { return false }
-                    let filesRemoved = await Task.detached { Self.cleanBlobs(blobs, existing: baseline, digests: digests) }.value
+                    let filesRemoved = await Task.detached {
+                        await DownloadPlan.recheckOllamaCleanup {
+                            Self.cleanBlobs(blobs, existing: baseline, digests: digests)
+                        }
+                    }.value
                     return deleted && filesRemoved
                 }.value
-                if Task.isCancelled {
-                    note = L(cleaned ? "download.cancelled" : "download.cleanupFailed")
-                } else {
-                    let error = problem ?? L("download.incomplete")
-                    note = L("local.pull.failed", ["err": error])
-                    AnalyticsTracker.shared.error("local_llm", Analytics.errorCode(message: error), provider: "local")
-                }
+                note = L(cleaned ? "download.cancelled" : "download.cleanupFailed")
+            } else if !succeeded {
+                let error = problem ?? L("download.incomplete")
+                note = L("local.pull.failed", ["err": error])
+                failedPull = name
+                AnalyticsTracker.shared.error("local_llm", Analytics.errorCode(message: error), provider: "local")
             } else {
                 Self.model = name
                 note = L("local.pull.done")
@@ -190,8 +195,8 @@ final class LocalLLM: ObservableObject {
         throw URLError(.cannotConnectToHost)
     }
 
-    private nonisolated static func cleanBlobs(_ directory: URL, existing: Set<String>, digests: Set<String>) -> Bool {
-        if digests.isEmpty { return true }
+    private nonisolated static func cleanBlobs(_ directory: URL, existing: Set<String>, digests: Set<String>) -> Int? {
+        if digests.isEmpty { return 0 }
         let fm = FileManager.default
         let manifests = directory.deletingLastPathComponent().appendingPathComponent("manifests")
         var referenced = Set<String>()
@@ -199,28 +204,29 @@ final class LocalLLM: ObservableObject {
             var unreadable = false
             guard let entries = fm.enumerator(at: manifests, includingPropertiesForKeys: [.isRegularFileKey],
                                               options: [.skipsHiddenFiles], errorHandler: { _, _ in unreadable = true; return false })
-            else { return false }
+            else { return nil }
             for case let url as URL in entries {
-                guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey]) else { return false }
+                guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey]) else { return nil }
                 guard values.isRegularFile == true else { continue }
                 guard let data = try? Data(contentsOf: url),
                       let manifest = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-                      let layers = manifest["layers"] as? [[String: Any]] else { return false }
+                      let layers = manifest["layers"] as? [[String: Any]] else { return nil }
                 let entries = layers + [manifest["config"] as? [String: Any] ?? [:]]
                 referenced.formUnion(entries.compactMap { ($0["digest"] as? String)?.replacingOccurrences(of: ":", with: "-") })
             }
-            if unreadable { return false }
+            if unreadable { return nil }
         }
         guard let files = try? fm.contentsOfDirectory(atPath: directory.path) else {
-            return !fm.fileExists(atPath: directory.path)
+            return fm.fileExists(atPath: directory.path) ? nil : 0
         }
+        let candidates = DownloadPlan.ollamaCleanup(files: files, existing: existing, digests: digests, referenced: referenced)
         var ok = true
-        for file in DownloadPlan.ollamaCleanup(files: files, existing: existing, digests: digests, referenced: referenced) {
+        for file in candidates {
             let path = directory.appendingPathComponent(file)
             do { try fm.removeItem(at: path) }
             catch { if fm.fileExists(atPath: path.path) { ok = false } }
         }
-        return ok
+        return ok ? candidates.count : nil
     }
 
     // MARK: 0.16.0 (D3): size and removal (Settings > Components)

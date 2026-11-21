@@ -5,6 +5,19 @@ public enum DownloadPlan {
         steps.contains("whisper")
     }
 
+    /// Ollama can keep writing briefly after the pull connection closes.
+    /// A scan returns the number of cleanup candidates, or nil on a filesystem error.
+    public static func recheckOllamaCleanup(_ scan: () -> Int?) async -> Bool {
+        var quietScans = 0
+        for _ in 0..<6 {
+            do { try await Task.sleep(nanoseconds: 500_000_000) }
+            catch { return false }
+            quietScans = scan() == 0 ? quietScans + 1 : 0
+            if quietScans == 2 { return true }
+        }
+        return false
+    }
+
     /// Ollama names a blob by its digest and its partial chunks by numeric suffix.
     public static func ollamaCleanup(files: [String], existing: Set<String>,
                                      digests: Set<String>, referenced: Set<String>) -> [String] {

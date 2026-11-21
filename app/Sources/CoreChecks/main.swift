@@ -4777,5 +4777,29 @@ func downloadCancellation() {
     expect(!DownloadPlan.requiresAppleSilicon(["localai", "local_model"]), "ONNX and Ollama can run on Intel")
 }
 downloadCancellation()
+func ollamaCleanupRechecksLatePartials() async throws {
+    let fm = FileManager.default
+    let directory = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try fm.createDirectory(at: directory, withIntermediateDirectories: false)
+    defer { try? fm.removeItem(at: directory) }
+
+    let hash = String(repeating: "a", count: 64)
+    let partial = directory.appendingPathComponent("sha256-\(hash)-partial")
+    var scans = 0
+    let cleaned = await DownloadPlan.recheckOllamaCleanup {
+        scans += 1
+        do {
+            let files = try fm.contentsOfDirectory(atPath: directory.path)
+            let matches = DownloadPlan.ollamaCleanup(files: files, existing: [], digests: ["sha256:\(hash)"], referenced: [])
+            for match in matches { try fm.removeItem(at: directory.appendingPathComponent(match)) }
+            // Ollama can create a partial after the first directory listing.
+            if scans == 1 { try Data().write(to: partial) }
+            return matches.count
+        } catch { return nil }
+    }
+    expect(cleaned, "cancel cleanup reaches a quiet directory")
+    expect(!fm.fileExists(atPath: partial.path), "cancel removes a partial created after the first scan")
+}
+try await ollamaCleanupRechecksLatePartials()
 print("core checks: \(passed) passed, \(failures) failed")
 exit(failures == 0 ? 0 : 1)
