@@ -67,7 +67,7 @@ DEFAULTS = {
     "lang_warmup_s": 60.0,      # PB-30 (D56): s of the call before the main language is the one most spoken so far
     "lang_foreign_min": 0.5,    # PB-30: a language outside the set is recognised from this detector probability
     "silence_max_s": 2.5,       # PB-30 (rules/asr_filters.yaml > silence_stop_phrases): only lines this short ...
-    "silence_rms": 0.01,        # ... in audio this quiet are dropped as a stop-phrase hallucination
+    "silence_rms": 0.0035,      # ... whose speech frames are this quiet (well under the VAD floor) are dropped
     "vad_mode": 2,              # webrtcvad aggressiveness 0..3
     "end_silence": 0.7,         # s of silence that closes a segment
     "max_segment": 9.0,         # s, hard cut for long monologues (12 until 2026-10-23: the trigger line of
@@ -260,11 +260,20 @@ def is_russian(text: str) -> bool:
     ratio = sum(w in RU_ONLY_WORDS for w in words) / max(1, len(words))
     if RU_ONLY_LETTERS.search(text):
         return not UK_ONLY_LETTERS.search(text) or ratio >= 0.3
-    return ratio >= 0.2
+    hits = sum(w in RU_ONLY_WORDS for w in words)
+    return ratio >= 0.2 and (len(words) >= 3 or hits >= 2)   # "уже" alone is also Ukrainian
+
+
+PRODUCT_NAMES = {"slack", "jira", "zoom", "teams", "notion", "github", "gitlab", "confluence", "figma", "google",
+                 "excel", "outlook", "salesforce", "hubspot", "trello", "asana", "linear", "pacenote"}
 
 
 def script_mismatch(text: str, lang: str) -> bool:
-    """The text is in another script than `lang` (Latin letters on a Cyrillic language or the other way round)."""
+    """The text is in another script than `lang` (Latin letters on a Cyrillic language or the other way round).
+    On a line that has Cyrillic, capitalized Latin words and known product names (Slack, Jira) are not counted."""
+    if lang in CYRILLIC_LANGS and re.search(r"[Ѐ-ӿ]", text):
+        text = " ".join(w for w in re.findall(r"[^\W\d_]+", text)
+                        if not (re.fullmatch(r"[A-Za-z]+", w) and (w[0].isupper() or w.lower() in PRODUCT_NAMES)))
     letters = re.findall(r"[^\W\d_]", text)
     if len(letters) < 3:
         return False
@@ -299,18 +308,26 @@ class LangShare:
 
 # rules/asr_filters.yaml > silence_stop_phrases (mirrored here, a test keeps the two in step)
 SILENCE_STOP_PHRASES = {
-    "дякую", "дякую за перегляд", "дякую за увагу", "дякуємо за перегляд", "дякую вам", "всім дякую",
-    "до побачення", "до зустрічі", "продовження буде", "так", "ага", "добре",
-    "thank you", "thanks", "thank you very much", "thanks for watching", "thank you for watching",
-    "bye", "bye bye", "you", "okay", "ok", "see you",
+    "дякую за перегляд", "дякуємо за перегляд", "продовження буде", "субтитри зроблені спільнотою", "subtitles by",
+    "thank you for watching", "thanks for watching",
 }
 
 
 def silence_stop(text: str, speech_s: float, rms: float, cfg: dict) -> bool:
     """PB-30 (D56 point 5): a Whisper stop-phrase ("Дякую за перегляд!") on a short line in near-silence is not speech.
-    The same words in a normal voice are kept."""
+    `rms` is the loudness of the speech frames only. The same words in a normal voice are kept."""
     return (norm(text) in SILENCE_STOP_PHRASES and speech_s <= float(cfg.get("silence_max_s", 2.5))
-            and rms < float(cfg.get("silence_rms", 0.01)))
+            and rms < float(cfg.get("silence_rms", 0.0035)))
+
+
+def drop_silence_stop(seg: "Segment", text: str, cfg: dict) -> bool:
+    """True when `text` decoded from `seg` is a stop-phrase hallucination on near-silence (logged at debug level)."""
+    rms = seg.voiced_rms if seg.voiced_rms >= 0 else (
+        float(np.sqrt(np.mean(np.square(seg.audio)))) if len(seg.audio) else 0.0)
+    if silence_stop(text, seg.speech_s, rms, cfg):
+        log(f"debug: dropped stop-phrase {text!r} ({seg.speech_s:.1f} s, rms {rms:.4f})")
+        return True
+    return False
 
 
 def now() -> float:
@@ -420,6 +437,7 @@ class Segment:
     t_end: float
     audio: np.ndarray
     voiced_s: float = -1.0   # s of speech frames in the segment (-1 = unknown: use the duration)
+    voiced_rms: float = -1.0  # RMS over the speech frames only (-1 = unknown: use the whole audio)
 
     @property
     def speech_s(self) -> float:
@@ -450,6 +468,7 @@ class Segmenter:
         self.paused = False           # 2026-10-27: Pause in the tips window stops the transcript too (both sides)
         self.last_feed: float | None = None   # wall time of the last chunk from audiocap (also while muted)
         self.voiced = 0               # speech frames in the open segment
+        self.voiced_sq = 0.0          # sum of squares of those frames (PB-30: loudness of the voice, not of the padding)
         self.noise_dropped = 0        # segments dropped as noise (low share of speech or too quiet)
         self.last_speech_at: float | None = None   # wall time of the last speech frame (mic_hold)
         self.last_nonzero: float | None = None     # wall time of the last chunk with a non-zero sample
@@ -527,12 +546,14 @@ class Segmenter:
                 self.silence = 0.0
                 self.cur = list(self.pre)
                 self.voiced = 1
+                self.voiced_sq = float(np.mean(frame * frame))
                 self.seg_start_sample = self.samples - (len(self.pre) - 1) * FRAME
                 self.pre = []
             return
         self.cur.append(frame)
         if speech:
             self.voiced += 1
+            self.voiced_sq += float(np.mean(frame * frame))
         self.silence = 0.0 if speech else self.silence + fd
         length = len(self.cur) * fd
         if self.silence >= self.cfg["end_silence"] or length >= self.cfg["max_segment"] or (
@@ -543,6 +564,7 @@ class Segmenter:
         audio = np.concatenate(self.cur) if self.cur else np.zeros(0, dtype=np.float32)
         frames = max(1, len(self.cur))
         voiced, self.voiced = self.voiced, 0
+        voiced_sq, self.voiced_sq = self.voiced_sq, 0.0
         self.cur = []
         self.in_speech = False
         self.silence = 0.0
@@ -555,7 +577,8 @@ class Segmenter:
                 self.noise_dropped += 1
                 return
             start = self.wall(self.seg_start_sample)
-            self.out.put(Segment(self.channel, start, start + len(audio) / SR, audio, voiced * FRAME / SR))
+            v_rms = float(np.sqrt(voiced_sq / voiced)) if voiced else -1.0
+            self.out.put(Segment(self.channel, start, start + len(audio) / SR, audio, voiced * FRAME / SR, v_rms))
 
     def flush(self) -> None:
         if self.in_speech:
@@ -5254,10 +5277,9 @@ def main() -> int:
         text = clean_text(text, pwords[0])
         if not text or not norm(text):
             return
-        rms = float(np.sqrt(np.mean(np.square(seg.audio)))) if len(seg.audio) else 0.0
-        if silence_stop(text, seg.speech_s, rms, cfg):
-            return                                         # PB-30 (D56 point 5): "Дякую!" on near-silence
-        lang_share.add(heard, seg.speech_s)
+        if drop_silence_stop(seg, text, cfg):
+            return                                         # PB-30 (D56 point 5): "Дякую за перегляд!" on near-silence
+        lang_share.add(heard or (None if foreign else lang), seg.speech_s)   # sticky-short and forced count too
         text = apply_dictionary(text, DICT_RULES)          # 0.10.0: the PM's dictionary, before anything sees the line
         last_lang[seg.channel] = lang
         sid = None

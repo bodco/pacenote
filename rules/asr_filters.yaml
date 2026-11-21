@@ -16,28 +16,12 @@ lang_warmup_s: 60
 lang_foreign_min: 0.5               # detector probability from which a language outside the set is recognised
 # Whisper stop-phrases on silence: dropped only for a short line in near-silence (the same words in a normal voice stay).
 silence_max_s: 2.5
-silence_rms: 0.01
+silence_rms: 0.0035                 # RMS of the speech frames only, well under the VAD speech floor
 silence_stop_phrases:
-  - "дякую"
   - "дякую за перегляд"
-  - "дякую за увагу"
   - "дякуємо за перегляд"
-  - "дякую вам"
-  - "всім дякую"
-  - "до побачення"
-  - "до зустрічі"
   - "продовження буде"
-  - "так"
-  - "ага"
-  - "добре"
-  - "thank you"
-  - "thanks"
-  - "thank you very much"
+  - "субтитри зроблені спільнотою"
+  - "subtitles by"
   - "thanks for watching"
   - "thank you for watching"
-  - "bye"
-  - "bye bye"
-  - "you"
-  - "okay"
-  - "ok"
-  - "see you"

@@ -143,12 +143,63 @@ def test_russian_as_detected_language_uses_the_ukrainian_of_the_set(T):
 # ---- silence stop-phrases ---------------------------------------------------------------------------------------
 
 def test_stop_phrase_on_near_silence_is_dropped_but_not_in_a_normal_voice(T):
-    cfg = {"silence_max_s": 2.5, "silence_rms": 0.01}
-    assert T.silence_stop("Дякую за перегляд!", 1.2, 0.004, cfg)
-    assert T.silence_stop("Thank you.", 0.9, 0.002, cfg)
-    assert not T.silence_stop("Дякую!", 1.2, 0.05, cfg)             # a real "thanks" in a normal voice
-    assert not T.silence_stop("Дякую за перегляд!", 6.0, 0.004, cfg)    # long: not a hallucination of this kind
-    assert not T.silence_stop("Дякую за вашу відповідь", 1.2, 0.004, cfg)   # not a stop-phrase
+    cfg = {"silence_max_s": 2.5, "silence_rms": 0.0035}
+    assert T.silence_stop("Дякую за перегляд!", 1.2, 0.002, cfg)
+    assert T.silence_stop("Thank you for watching.", 0.9, 0.001, cfg)
+    assert not T.silence_stop("Дякую за перегляд!", 1.2, 0.05, cfg)         # normal voice
+    assert not T.silence_stop("Дякую за перегляд!", 6.0, 0.002, cfg)        # long: not a hallucination of this kind
+    assert not T.silence_stop("Дякую за вашу відповідь", 1.2, 0.002, cfg)   # not a stop-phrase
+    for reply in ("Так.", "Thanks.", "Okay", "Добре", "Дякую", "Bye"):      # ordinary replies are never stop-phrases
+        assert not T.silence_stop(reply, 0.6, 0.001, cfg)
+
+
+def padded(T, voice_rms, voiced_s=0.6, pad_s=1.5):
+    """A segment as the Segmenter makes it: quiet lead-in and the end_silence padding around a short quiet voice."""
+    n_voice, n_pad = int(voiced_s * T.SR), int(pad_s * T.SR)
+    audio = np.concatenate([np.zeros(n_pad // 2), np.full(n_voice, voice_rms), np.zeros(n_pad // 2)]).astype(np.float32)
+    return T.Segment("them", 1000.0, 1000.0 + len(audio) / T.SR, audio, voiced_s, voice_rms)
+
+
+def test_quiet_short_reply_inside_a_padded_segment_survives(T):
+    cfg = dict(T.DEFAULTS)
+    seg = padded(T, 0.006)                  # above the VAD speech floor; whole-audio RMS would be ~0.003
+    assert np.sqrt(np.mean(seg.audio ** 2)) < 0.0035
+    for reply in ("Thanks.", "Так.", "Okay."):
+        assert not T.drop_silence_stop(seg, reply, cfg)
+
+
+def test_hallucinated_stop_phrase_on_near_silence_is_dropped_by_the_wiring_helper(T):
+    cfg = dict(T.DEFAULTS)
+    assert T.drop_silence_stop(padded(T, 0.002), "Дякую за перегляд!", cfg)
+    assert not T.drop_silence_stop(padded(T, 0.05), "Дякую за перегляд!", cfg)
+    unknown = T.Segment("them", 1.0, 2.0, np.full(T.SR, 0.002, dtype=np.float32))   # no voiced_rms: whole audio
+    assert T.drop_silence_stop(unknown, "Thank you for watching", cfg)
+
+
+def test_segmenter_records_the_rms_of_the_voiced_frames_only(T):
+    import queue
+    q = queue.Queue()
+    sg = T.Segmenter("them", dict(T.DEFAULTS), q)
+    sg.vad.is_speech = lambda f: float(np.max(np.abs(f))) > 0.004     # deterministic VAD
+    voice = np.full(int(0.9 * T.SR), 0.2, dtype=np.float32)
+    sg.feed(np.concatenate([np.zeros(T.SR // 2, dtype=np.float32), voice, np.zeros(2 * T.SR, dtype=np.float32)]))
+    seg = q.get_nowait()
+    assert seg.voiced_rms == pytest.approx(0.2, rel=0.01)
+    assert np.sqrt(np.mean(seg.audio ** 2)) < 0.15
+
+
+def test_ukrainian_uzhe_is_not_russian_but_two_russian_words_are(T):
+    assert not T.is_russian("Вже уже")
+    assert not T.is_russian("Ми уже все зробили")                   # one hit in 4 words, no ы э ъ ё
+    assert T.is_russian("Это уже было")
+
+
+def test_latin_product_names_do_not_mark_a_ukrainian_line(T):
+    assert not T.script_mismatch("Давайте відкриємо Slack і Jira", "uk")
+    assert not T.script_mismatch("Завдання в jira та slack", "uk")
+    assert not T.script_mismatch("Запишемо це в Confluence", "uk")
+    assert T.script_mismatch("I would like a coffee please", "uk")
+    assert not T.script_mismatch("Mike and Emily", "en")
 
 
 def test_stop_phrases_in_code_match_the_rules_file(T):

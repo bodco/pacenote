@@ -3254,12 +3254,12 @@ address", `references/sweep.md`, `references/presentation.md`).
    names and numbers deserve a glance. With two languages (Ukrainian + English) each speaker stays in the
    language spoken. This is a real difference from note takers that write a foreign language in Latin letters.
    With several languages the main one is the language spoken most so far (seconds of speech since the call start,
-   counted after the first minute; before that the first of the set), not simply the first in the list. A language
+   short and forced-language lines included, counted after the first minute; before that the first of the set), not simply the first in the list. A language
    outside the set (say French on an Ukrainian + English call) is written in the main language, and Russian is
    never written (the line is redone in the main language); such a line is marked `translated_from` in the call's
-   `.timing.jsonl`, the transcript line format stays the same. Whisper's stop-phrases on silence ("Thank you.",
-   "Дякую за перегляд!") are dropped when the line is short and the audio is near-silent (`silence_stop_phrases` in
-   `rules/asr_filters.yaml`). There is no translation model yet: a line still in a foreign script is only marked.
+   `.timing.jsonl`, the transcript line format stays the same. Whisper's stop-phrases on silence ("Thank you for watching",
+   "Дякую за перегляд!") are dropped when the line is short and its speech is near-silent (`silence_stop_phrases` in
+   `rules/asr_filters.yaml`); ordinary short replies such as "Thanks" or "Так" are never dropped. There is no translation model yet: a line still in a foreign script is only marked.
 53. **Planned at 0.5.8, built since.** Calendars (0.6.6, section 14.1c), the offer to start tips when a call
    app takes the microphone (0.8, section 14.1d) and call notes in the project folder after every call, also
    without Notion (0.8.5, section 14.2). Pacenote never starts recording by itself.
