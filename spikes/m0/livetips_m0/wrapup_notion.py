@@ -26,7 +26,7 @@ import urllib.request
 import uuid
 from pathlib import Path
 
-from . import call_layout
+from . import call_language, call_layout
 
 NOTION = "https://api.notion.com/v1"
 NOTION_VERSION = "2025-09-03"
@@ -79,7 +79,7 @@ def _head_value(head, prefixes, default=""):
 
 
 def header_info(md: Path) -> dict:
-    """Title, start and timezone from the transcript header and the recorder's state."""
+    """Title, start and timezone from the transcript header and the recorder's state (the language: call_language)."""
     head = md.read_text(encoding="utf-8").splitlines()[:12]
     title = next((l[len("# Live transcript:"):].strip() for l in head if l.startswith("# Live transcript:")), md.stem)
     start = _head_value(head, ("- Початок:", "- Start:"))
@@ -88,10 +88,7 @@ def header_info(md: Path) -> dict:
     except ValueError:
         t0 = dt.datetime.fromtimestamp(md.stat().st_ctime).astimezone()
     tz = os.environ.get("LT_TIMEZONE") or "Europe/Kiev"
-    # 2026-10-26 (owner): the page is written in the call's language ("- Мови: Я = en, дозволені = en").
-    langs = next((l.split("=")[-1].strip() for l in head if l.startswith("- Мови:") or l.startswith("- Languages:")), "uk")
-    lang = "en" if langs.split("+")[0].strip() == "en" else "uk"
-    return {"title": title, "start": t0, "tz": "Europe/Kiev" if tz in ("Europe/Kyiv", "Europe/Uzhgorod") else tz, "lang": lang}
+    return {"title": title, "start": t0, "tz": "Europe/Kiev" if tz in ("Europe/Kyiv", "Europe/Uzhgorod") else tz}
 
 
 TXT = {
@@ -203,7 +200,7 @@ def claude_wrapup(transcript: str, brief: str, model: str, lang: str = "uk", pro
     from .routing import provider_from_env
     prov = provider or provider_from_env("after", timeout=180.0)
     user = (f"PREP BRIEF (may be empty):\n{brief[:14000]}\n\n" if brief else "") + f"TRANSCRIPT:\n{transcript[:120000]}"
-    c = prov.complete(model=model, system=[{"text": SYSTEM.replace("{LANG}", TXT[lang]["write"])}], user=user,
+    c = prov.complete(model=model, system=[{"text": SYSTEM.replace("{LANG}", call_language.language_name(lang))}], user=user,
                       max_tokens=2500, cache_ttl=None)
     if c.error:
         raise RuntimeError("summary request failed: " + str(c.error)[:200])
@@ -724,8 +721,12 @@ def run(a, res: dict) -> int:
         return 0
     stats, plain, brief = call_material(a)
     info = call_info(a)
-    lang = info.get("lang", "uk")
-    w = claude_wrapup(plain, brief, a.model, lang)
+    # PB-32 (FB2, D56): the page text is in the call's output language; static labels exist for en and uk, other
+    # languages get English labels (rules/output_language.yaml).
+    out_lang = call_language.output_language(a.md.parent / a.md.name.replace(".named.md", ".md"),
+                                             a.md.read_text(encoding="utf-8", errors="replace"))
+    lang = out_lang if out_lang in TXT else "en"
+    w = claude_wrapup(plain, brief, a.model, out_lang)
     m = wait_meeting(a.md, a.wait_notes)       # 0.9.5.2: the Meeting notes of the call notes
     if m:
         blocks = meeting_blocks(m, a.md, stats, bool(brief), lang)
@@ -743,6 +744,10 @@ def run(a, res: dict) -> int:
         res.update(write_to_page(page, sc, ids, a, w, blocks, plain, info, lang))
     else:
         res.update(create_page(sc, ids, a, w, blocks, plain, info, lang))
+    try:
+        call_language.write_sidecar(a.md.parent / a.md.name.replace(".named.md", ".md"), artifact="notion", written_in=out_lang)
+    except Exception:  # noqa: BLE001  the page is written; the language note is optional
+        pass
     return None
 
 

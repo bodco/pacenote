@@ -353,10 +353,13 @@ final class CallEngine {
     }
 
     /// 0.8.5 (rules/meeting.yaml > tips_language): tips and cards in the meeting's main language, not the window's.
+    /// PB-32 (D56): with no language chosen in Start call the resolver decides; the interface language (`ui`, kept so
+    /// callers do not change) is never an input.
     nonisolated static func tipsLang(_ req: [String: Any], ui: String) -> String {
         if let m = req["me_lang"] as? String, ["uk", "en"].contains(m) { return m }
         if let l = (req["langs"] as? [String])?.first, ["uk", "en"].contains(l) { return l }
-        return ui == "uk" ? "uk" : "en"
+        let r = CallLanguage.resolve()
+        return ["uk", "en"].contains(r) ? r : "en"
     }
 
     func startSidecar(file: String, status: EngineStatus, fromStart: Bool = true) {

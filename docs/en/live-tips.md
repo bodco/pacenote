@@ -2069,7 +2069,7 @@ People need something else: short notes they can read in a minute and send on. S
 - **Copy** copies the notes with their headings and lists (Markdown as text and the same as rich text), so a paste
   into Notion, Google Docs, Word, Mail or Slack keeps them. **Export** opens the export (below).
 
-The notes are written in the call's language, with the people and terms of the project config to fix garbled names.
+The notes (and the Summary, Recap and the Notion meeting page) are written in the call's output language: your choice for the call, else the dominant language of the call, never the interface language. A language without app labels (for example Polish) gets text in it with English headings. They use the people and terms of the project config to fix garbled names.
 They are one more request after the full notes, on the "After the call" way (about $0.05 to $0.10 a call with
 Sonnet; free on this Mac), and are kept as the `## Meeting notes` section at the top of `<call>.notes.md`
 (rules/notes.yaml, schema 2). A call held before 0.9.5.2 shows **Make meeting notes** (one request, about $0.05 to $0.10; a call

@@ -3,6 +3,15 @@
 Pacenote. Earlier versions are described in the commit messages and in
 [docs/en/live-tips.md](docs/en/live-tips.md), section 14.
 
+## Unreleased
+
+- **Call notes, Summary, Recap and the Notion page follow the language of the call (PB-32, FB2):** they were written
+  in the language most transcript lines were tagged with, so a Ukrainian call tagged mostly `en` by mistake got English
+  notes, and the Notion page knew only English and Ukrainian. They now use one call language: your choice for the
+  call, else the dominant language of the call, never the interface language. A call in another language (Polish,
+  German...) gets the text in it with English headings and labels. Notes already written are not changed. The tips
+  window no longer falls back to the interface language when the call has no language set.
+
 ## 0.26.4 (2026-11-20)
 
 - **A new organization project includes the person who made it (2026-11-20):** in New project > start a new
