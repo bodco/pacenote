@@ -396,7 +396,7 @@ final class SheetJobs: ObservableObject {
 
 @MainActor
 enum SheetRoutes {
-    static let all = [AIRoute.code, AIRoute.codex, AIRoute.agy, AIRoute.api, AIRoute.openai, AIRoute.gemini, AIRoute.local]
+    static let all = [AIRoute.code, AIRoute.codex, AIRoute.api, AIRoute.openai, AIRoute.gemini, AIRoute.local]
 
     /// Settings > AI > Preparation.
     static var preferred: String { SettingsWindow.model.config.ai.prep }
@@ -413,7 +413,6 @@ enum SheetRoutes {
         case AIRoute.openai: if !runner.hasOpenAIKey { return L("sheet.ui.route.noKey", ["route": AIRoute.name(r)]) }
         case AIRoute.gemini: if !runner.hasGeminiKey { return L("sheet.ui.route.noKey", ["route": AIRoute.name(r)]) }
         case AIRoute.codex: if CodexAccount.cliPath == nil { return L("sheet.ui.route.notSet", ["route": AIRoute.name(r)]) }
-        case AIRoute.agy: if AgyAccount.cliPath == nil { return L("sheet.ui.route.notSet", ["route": AIRoute.name(r)]) }
         default: break
         }
         if AIRoute.isDown(r) { return L("sheet.ui.route.down", ["route": AIRoute.name(r)]) }
@@ -429,7 +428,7 @@ enum SheetRoutes {
     static func window(_ r: String) -> Int {
         switch r {
         case AIRoute.codex, AIRoute.openai: return 272_000
-        case AIRoute.gemini, AIRoute.agy: return 1_000_000
+        case AIRoute.gemini: return 1_000_000
         case AIRoute.local: return 64_000
         default: return 200_000
         }

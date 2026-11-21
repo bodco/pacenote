@@ -25,7 +25,7 @@ enum WhatsNewStore {
     static var facts: Set<String> {
         var f = Set<String>()
         let prep = SettingsWindow.model.config.ai.prep
-        f.insert("provider:" + ([AIRoute.codex, AIRoute.openai].contains(prep) ? "chatgpt" : ["gemini", "agy"].contains(prep) ? "gemini" : "claude"))
+        f.insert("provider:" + ([AIRoute.codex, AIRoute.openai].contains(prep) ? "chatgpt" : prep == AIRoute.gemini ? "gemini" : "claude"))
         if UserDefaults.standard.object(forKey: "moduleTracker") as? Bool ?? true { f.insert("module:tracker") }
         f.insert("os:\(ProcessInfo.processInfo.operatingSystemVersion.majorVersion)")
         let oc = OptionalComponents.shared

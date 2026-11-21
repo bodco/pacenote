@@ -57,7 +57,6 @@ struct PacenoteReadyCard: View {
     @ObservedObject private var acct = PacenoteAccount.shared
     @ObservedObject private var runner = PrepRunner.shared
     @ObservedObject private var codex = CodexAccount.shared
-    @ObservedObject private var agy = AgyAccount.shared
     @ObservedObject private var setup = SetupWindow.model
     @State private var mic = AVCaptureDevice.authorizationStatus(for: .audio)
     @State private var sysAudio = SystemAudioPermission.granted()
@@ -145,7 +144,7 @@ struct PacenoteReadyCard: View {
                     .foregroundStyle(todo == 0 ? PN.C.turn : PN.C.onMe)
                 Text(todo == 0 ? L("ready.title") : L("ready.title.todo", ["n": "\(todo)"])).font(PN.sys(15, .semibold))
                 Spacer()
-                Button(L("ready.check")) { refresh(); Task { await setup.checkAll() }; runner.refreshAuth(); codex.refresh(); agy.refresh() }
+                Button(L("ready.check")) { refresh(); Task { await setup.checkAll() }; runner.refreshAuth(); codex.refresh() }
                     .buttonStyle(.pnTertiary).disabled(setup.busy)
             }
             .accessibilityElement(children: .combine)
@@ -181,7 +180,6 @@ struct AIUsesSection: View {
     @ObservedObject var model: SettingsModel
     @ObservedObject private var runner = PrepRunner.shared
     @ObservedObject private var codex = CodexAccount.shared
-    @ObservedObject private var agy = AgyAccount.shared
 
     /// One AI for every job, or the preparation (and notes) and the tips apart.
     static func usesText(_ r: AppConfig.AIRoutes, _ conn: Set<String>) -> String {
@@ -227,7 +225,6 @@ struct AIProviderCard: View {
     @ObservedObject var model: SettingsModel
     @ObservedObject private var runner = PrepRunner.shared
     @ObservedObject private var codex = CodexAccount.shared
-    @ObservedObject private var agy = AgyAccount.shared
     @State private var open = false
 
     private var key: SecretStore.Key { provider == "claude" ? .claudeAPIKey : provider == "chatgpt" ? .openaiAPIKey : .geminiAPIKey }
@@ -236,7 +233,7 @@ struct AIProviderCard: View {
         switch provider {
         case "claude": return PrepRunner.claudePath != nil && runner.loggedIn == true
         case "chatgpt": return CodexAccount.cliPath != nil && codex.signedIn == true
-        default: return AgyAccount.cliPath != nil && agy.signedIn == true
+        default: return false
         }
     }
     private var status: String {
@@ -294,14 +291,16 @@ struct AIProviderCard: View {
                     CodexAccountRow()
                     KeyRow(title: L("keys.openai.title"), hint: L("keys.openai.hint"), key: .openaiAPIKey, model: model)
                 default:
-                    AgyAccountRow()
                     KeyRow(title: L("keys.gemini.title"), hint: L("keys.gemini.hint"), key: .geminiAPIKey, model: model)
+                        .id("ai.gemini.key")
                 }
                 Text(L("ai.access.footer." + provider)).font(PN.Font.caption).foregroundStyle(PN.C.text3)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .onChange(of: model.highlight) { _, id in if id == anchor { open = true } }
+        .onChange(of: model.highlight, initial: true) { _, id in
+            if id == anchor || (provider == "gemini" && id == "ai.gemini.key") { open = true }
+        }
     }
 }
 

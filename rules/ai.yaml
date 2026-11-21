@@ -42,19 +42,6 @@ routes:
     the limit). Errors name only the status and a string code, never the message. 0.10.0: an outage (402,
     quota_exceeded, failed_precondition, 401/403) moves the job down the chain below. Available for tips, after-call jobs and the preparation
     (livetips_m0.geminiprep). With tips on Gemini the deep folder lookup follows the preparation's way (deep_lookup).
-  agy: |
-    0.9.3 (owner, 2026-11-05): the Gemini account through Google's Antigravity CLI (agy), for the preparation and the
-    after-the-call jobs only: a request takes 20-30 s however small (measured 2026-11-05), too slow for tips. One
-    print-mode run per request (livetips_m0.agy_provider): the prompt on stdin, --output-format json, --sandbox,
-    --disable-slash-commands, --model <agy id, default gemini-3.8-flash-medium>, an empty temporary working folder (agy
-    reads files in its working folder without asking), no API key in the environment (the signed-in account pays).
-    Reading outside the folder, writing and shell commands are denied in print mode; a denied action with no answer
-    is an error, as is a status other than SUCCESS. agy keeps every conversation under ~/.gemini/antigravity-cli
-    (brain/<id>, annotations/<id>.pbtxt); Pacenote removes the ones it made, by id, and nothing else. No API price
-    (paid by the plan). 0.10.0: switches through the chain below like every AI; never a step for tips.
-    Settings shows a red warning when it is chosen: Google's Antigravity terms (antigravity.google/terms, read
-    2026-11-05) forbid using the service through third-party software, with suspension of the account as the stated
-    consequence, and let Google use and review Interactions (Telemetry off does not stop storage).
   gemini_fallback: |
     Replaced in 0.10.0 by the chain below (the setting is no longer shown or read when the app sends a chain).
     0.9.3 (owner): plan B, off by default (Settings > AI > Automatic switching). With it on and a Gemini key set, a job
@@ -150,15 +137,14 @@ economy: |
   From the next call or job (EconomyPlan.apply in LiveTipsCore/Spending.swift through AIRoute.effective: CallEngine
   config, AIRoute.env, sidecarBlock, PrepRunner): tips on the cheapest model of their way (api/code Haiku, openai
   gpt-6-luna, gemini gemini-3.5-flash-lite; classify untouched); prep and after: api -> code, openai -> codex when that
-  account's tool is installed (a signed-out account falls back through auto-switch); gemini never to agy (Antigravity's
-  terms); no account: after on the cheaper model (openai gpt-6-luna, gemini flash-lite; the Claude after-call models
-  are fixed in the engine modules and stay), prep unchanged. Point 4 in economy (EconomyPlan.prepFeatures): tools yes,
+  account's tool is installed (a signed-out account falls back through auto-switch); without an account: after on
+  the cheaper model (openai gpt-6-luna, gemini flash-lite; the Claude after-call models are fixed in the engine
+  modules and stay), prep unchanged. Point 4 in economy (EconomyPlan.prepFeatures): tools yes,
   the checker on Haiku only, no parallel subagents. The monthly limits per provider apply on top (checked after).
 ask_model: |
   2026-11-06 (owner): a typed question is answered by the preparation's way and model (Settings > AI) when that way
-  answers in seconds: a Claude API key, the OpenAI API or the Gemini API. A Claude or ChatGPT account and the Gemini
-  account keep typed questions on the tips model. The preparation's way out: the tips model answers. HELP NOW stays
-  on the tips model (speed first). The quick answer searches the project folder and the added folders; HELP NOW
+  answers in seconds: a Claude API key, the OpenAI API or the Gemini API. Claude and ChatGPT accounts keep typed
+  questions on the tips model. The preparation's way out: the tips model answers. HELP NOW stays on the tips model (speed first). The quick answer searches the project folder and the added folders; HELP NOW
   searches them for the other side's last question.
 fallback: |
   0.10.0: the model on this Mac is the last step of the chain below for the preparation, after-call jobs and typed
@@ -173,11 +159,11 @@ chain: |
   0.10.0 (owner, 2026-11-12): one fallback chain for every job (LiveTipsCore/AIChain.swift, livetips_m0.routing:
   chain_order, RoutedProvider with a chain; Settings > AI > If an AI is out). The AI chosen for the job first, then the
   other connected AIs in the order the PM sets (a reorderable list with a checkbox each; default: Claude account,
-  ChatGPT account, Claude API, OpenAI API, Gemini API, Gemini account (agy), model on this Mac). Connected AIs are in
+  ChatGPT account, Claude API, OpenAI API, Gemini API, model on this Mac). Connected AIs are in
   it by default: sending call text to another provider when the chosen one is out is fine (owner 12.11; the 0.9.3
   "plan B is the PM's explicit privacy choice, off by default" rule is gone). The model on this Mac is always the last
   step for the preparation (Meeting Sheet build), after-call jobs and typed questions, never for live tips (19-59 s);
-  agy never for tips (20-30 s a request). Tips use only cloud AIs; when all are out the instant cards and facts keep
+  Tips use only cloud AIs; when all are out the instant cards and facts keep
   working. "Switch to the next AI automatically" off: the chosen AI only, as before.
   What switches: a runtime outage, not only a static check: Codex "usage limit reached", a plan limit, out of credits,
   a 429 with a quota or limit code (insufficient_quota, quota_exceeded), a bad key (401/403), signed out, not installed.
@@ -200,7 +186,7 @@ chain: |
   of 2026-11-12: `codex exec --json` (0.167.0-alpha.3.2) printed no rate_limits (thread.started, turn.started, error,
   turn.failed at a reached limit); the session logs have them in token_count events. The APIs: "$X left of your $Y
   monthly limit" from Settings > AI > Spending limits and spend-ledger.jsonl (a provider does not give the balance
-  through a key); the model on this Mac "no limit"; agy "usage not reported". Never a key or a token in these files.
+  through a key); the model on this Mac "no limit". Never a key or a token in these files.
 prep_runs:
   rule: |
     0.8.5 (owner: compare preparations by time, price and quality): a full preparation (not a refresh) moves the
@@ -234,9 +220,6 @@ windows:
              chars_per_token: {latin: 4.0, cyrillic: 2.6}}
     openai: {model: gpt-6.1-sol, window: 1050000, input: 922000, reserve: 12000, chars_per_token: {latin: 4.0, cyrillic: 2.6}}
     gemini: {model: gemini-3.8-flash, window: 1048576, reserve: 12000, chars_per_token: {latin: 4.0, cyrillic: 2.8}}
-    agy:    {model: gemini-3.8-flash-medium, window: 1048576, reserve: 12000, unverified: true,
-             note: "the Gemini account through Antigravity CLI; the API model's window is assumed",
-             chars_per_token: {latin: 4.0, cyrillic: 2.8}}
     local:  {model: gemma4:26b, window: 65536, reserve: 8000, note: "Ollama num_ctx of livetips_m0.localprep",
              unverified: true, chars_per_token: {latin: 3.8, cyrillic: 2.4}}
   models:

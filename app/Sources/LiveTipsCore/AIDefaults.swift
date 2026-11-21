@@ -11,7 +11,7 @@ public enum AIDefaults {
     /// preparation and after the call: the accounts first (no per-token bill), then the keys, then the slow ones.
     public static func preference(job: String) -> [String] {
         job == "tips" ? ["api", "openai", "gemini", "code", "codex"]
-                      : ["code", "codex", "api", "openai", "gemini", "agy", "local"]
+                      : ["code", "codex", "api", "openai", "gemini", "local"]
     }
 
     /// The AI the job uses: the chosen one while it is connected (and allowed for the job), else the first connected

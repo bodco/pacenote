@@ -6,7 +6,7 @@
   refresh(req) -> the same against the existing sheet: new / changed / gone facts (diff), the user's edits kept
                   (merge.protect_edits), a new version.
 
-Routes: packed (local, codex = ChatGPT account, openai, gemini, agy) get the sources inline through the providers the
+Routes: packed (local, codex = ChatGPT account, openai, gemini) get the sources inline through the providers the
 old preparation used; the Claude routes (code = Claude Code on the plan, api = the same with the key) run `claude -p`
 with Read/Grep/Glob over the sources only and WebFetch only to the sources' hosts; the manifest is what it opened.
 Progress goes to stdout as JSON lines {"progress", "stage", "source_id"?, "pass"?}; the last line {"done": true, ...}.
@@ -44,7 +44,7 @@ from . import size as Z
 from . import sources as SRC
 from . import standup as SU
 
-PACKED = ("local", "codex", "openai", "gemini", "agy", "fake")
+PACKED = ("local", "codex", "openai", "gemini", "fake")
 CLAUDE = ("code", "api")
 OUT_TOKENS = 16000
 # 0.10.0 (bench 12.11): blocks of attributes, where one label has one value; only there two values are a conflict
@@ -97,7 +97,8 @@ class Asker:
         self.calls = 0
         # 0.10.0 (AI chain, owner 12.11): the next AIs of the chain (the app sends the connected, enabled ones in the
         # PM's order) and the switches made during this build (shown in the build views and the report)
-        self.chain = [Z.route_key(r) for r in (req.get("chain") or []) if r and Z.route_key(r) != self.route]
+        chain = [Z.route_key(r) for r in (req.get("chain") or []) if r and r.lower() not in Z.RETIRED_GEMINI_ROUTES]
+        self.chain = [r for r in chain if r != self.route]
         self.tried = [self.route]
         self.switches: List[dict] = []
         self.on_switch: Optional[Callable[[dict], None]] = None
@@ -126,9 +127,6 @@ class Asker:
             return bool(os.environ.get("OPENAI_API_KEY"))
         if r == "gemini":
             return bool(os.environ.get("GEMINI_API_KEY"))
-        if r == "agy":
-            from ..agy_provider import find_agy_cli
-            return bool(find_agy_cli())
         return r == "local"
 
     def switch(self, error: str, reason: str) -> Optional[str]:
@@ -203,13 +201,6 @@ class Asker:
                 raise RuntimeError("No Gemini API key: add it in Settings > AI > Gemini")
             self.model = job_model("prep", m)
             self.provider = GeminiProvider(key, timeout=t, model=self.model)
-        elif r == "agy":
-            from ..agy_provider import AgyProvider, find_agy_cli, job_model
-            cli = find_agy_cli()
-            if not cli:
-                raise RuntimeError("Antigravity CLI is not installed: see Settings > AI > Gemini")
-            self.model = job_model("prep", m)
-            self.provider = AgyProvider(cli, timeout=t, model=self.model)
         elif r == "local":
             from ..providers import OllamaProvider
             self.model = m or "gemma4:26b"
@@ -960,8 +951,11 @@ def _wanted(b: dict, only: set) -> bool:
 def build(req: dict, refresh: bool = False, emit=say, responder: Optional[Callable[[str, str], str]] = None) -> dict:
     t0 = time.time()
     rules = P.load_rules()
-    route = Z.route_key(req.get("route") or "codex")
+    chosen = req.get("route") or "codex"
+    route = Z.route_key(chosen)
     req = dict(req, route=route)
+    if chosen.lower() in Z.RETIRED_GEMINI_ROUTES:
+        req["model"] = (req.get("models") or {}).get("gemini")
     lang = req.get("language") or "en"
     call_langs = req.get("languages") or [lang]
     sett = R.settings_of(rules, req.get("settings"))

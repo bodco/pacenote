@@ -2,7 +2,7 @@ import AppKit
 import LiveTipsCore
 import SwiftUI
 
-/// 0.24.1 (F1, decision 10): connecting a Claude, ChatGPT or Gemini account. The account's command line tool is
+/// 0.24.1 (F1, decision 10): connecting a Claude or ChatGPT account. The account's command line tool is
 /// installed at that moment (Claude Code, Codex; never from the components list), then its sign-in runs as a child
 /// process of the app: no Terminal. The browser opens for the sign-in (OAuth cannot do without it); if the tool asks
 /// for a code, a field in the app writes it to the tool's input. After the tool exits the account is checked again
@@ -23,12 +23,11 @@ final class AccountLogin: ObservableObject {
         switch kind {
         case "claude": return PrepRunner.claudePath
         case "codex": return CodexAccount.cliPath
-        case "agy": return AgyAccount.cliPath
         default: return nil
         }
     }
 
-    /// The setup.sh step that installs the tool; agy has none yet (no pinned official binary): "not installable".
+    /// The setup.sh step that installs the account tool.
     static func installStep(_ kind: String) -> String? { ["claude", "codex"].contains(kind) ? kind : nil }
 
     func connect(_ kind: String) {
@@ -56,16 +55,10 @@ final class AccountLogin: ObservableObject {
         var env: [String: String]
         switch kind {
         case "codex": env = CodexCLI.environment(base)
-        case "agy": env = AgyCLI.environment(base)
         default: env = base; env.removeValue(forKey: "ANTHROPIC_API_KEY"); env.removeValue(forKey: "ANTHROPIC_AUTH_TOKEN")
         }
         env["BROWSER"] = "open"          // the tools that read BROWSER open the default browser
         p.environment = env
-        if kind == "agy" {               // agy asks to trust the folder it starts in: an empty temporary one
-            let d = (NSTemporaryDirectory() as NSString).appendingPathComponent("pacenote-agy-\(UUID().uuidString.prefix(8))")
-            try? FileManager.default.createDirectory(atPath: d, withIntermediateDirectories: true)
-            p.currentDirectoryURL = URL(fileURLWithPath: d)
-        }
         p.standardOutput = out; p.standardError = out; p.standardInput = inp
         out.fileHandleForReading.readabilityHandler = { [weak self] h in
             let d = h.availableData
@@ -112,7 +105,6 @@ final class AccountLogin: ObservableObject {
         AppLog.app("account connect \(kind): the tool exited rc=\(rc)")
         switch kind {
         case "codex": CodexAccount.shared.refresh()
-        case "agy": AgyAccount.shared.refresh()
         default: PrepRunner.shared.refreshAuth()
         }
         phase[kind] = rc == 0 ? .done : .failed(L("acct.failed"))
@@ -162,16 +154,14 @@ struct AccountLoginStatus: View {
 
 /// One row per account: its state, one Connect button that installs the tool if needed and signs in from the app.
 struct AccountConnectRow: View {
-    let kind: String           // claude, codex, agy
+    let kind: String           // claude, codex
     @ObservedObject var login = AccountLogin.shared
     @ObservedObject var prep = PrepRunner.shared
     @ObservedObject var codex = CodexAccount.shared
-    @ObservedObject var agy = AgyAccount.shared
 
     var signedIn: Bool? {
         switch kind {
         case "codex": return CodexAccount.cliPath == nil ? false : codex.signedIn
-        case "agy": return AgyAccount.cliPath == nil ? false : agy.signedIn
         default: return PrepRunner.claudePath == nil ? false : prep.loggedIn
         }
     }
@@ -187,19 +177,14 @@ struct AccountConnectRow: View {
                 Spacer()
                 if signedIn != true && [.idle, .done].contains(login.state(kind)) || isFailed {
                     Button(L("acct.connect")) { login.connect(kind) }.buttonStyle(.pnSecondary)
-                        .disabled(kind == "agy" && AgyAccount.cliPath == nil)
                 }
             }
             AccountLoginStatus(kind: kind)
-            if kind == "agy" && AgyAccount.cliPath == nil {
-                Text(L("acct.agy.notInstallable")).font(PN.Font.caption).foregroundStyle(PN.C.text3)
-            }
         }
         .padding(10).background(PN.C.surface, in: RoundedRectangle(cornerRadius: PN.Radius.m))
         .onAppear {
             switch kind {
             case "codex": codex.refresh()
-            case "agy": agy.refresh()
             default: prep.refreshAuth()
             }
         }

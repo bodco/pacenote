@@ -10,6 +10,7 @@ import LiveTipsCore
 struct Notice: Identifiable, Equatable {
     enum Action: Equatable {
         case url(String, title: String)      // Open in Notion, Open in Drive
+        case geminiKey
         case settings(String)                // a Settings tab
         case retry                           // the closure kept by the center
         case finder(String)                  // a file or folder
@@ -25,6 +26,7 @@ struct Notice: Identifiable, Equatable {
     var actionTitle: String? {
         switch action {
         case .url(_, let t): return t
+        case .geminiKey: return L("notice.geminiKey")
         case .settings: return L("common.openSettings")
         case .retry: return L("notice.tryAgain")
         case .finder: return L("notice.showInFinder")
@@ -110,6 +112,10 @@ final class NoticeCenter: ObservableObject {
         dismiss(id)
         switch a {
         case .url(let u, _): if let link = URL(string: u) { NSWorkspace.shared.open(link) }
+        case .geminiKey:
+            SettingsWindow.show(tab: "ai")
+            SettingsWindow.model.highlight = nil
+            DispatchQueue.main.async { SettingsWindow.model.highlight = "ai.gemini.key" }
         case .settings(let tab): SettingsWindow.show(tab: tab)
         case .retry: retry?()
         case .finder(let p): NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: p)])

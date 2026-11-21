@@ -602,10 +602,10 @@ def test_unanswered_ask_starts_the_deep_lookup_and_slow_prep_way_keeps_tips_mode
         return '{"gist": "Not in the brief", "phrase": "Let me check.", "level": "info", "topic": "ask"}'
     proj = tmp_path / "proj"
     proj.mkdir()
-    eng, clock = _meeting_engine(tmp_path, resp, project_root=str(proj), ai={"routes": {"prep": "agy", "tips": "openai"}}, deep_lookup=True)
+    eng, clock = _meeting_engine(tmp_path, resp, project_root=str(proj), ai={"routes": {"prep": "codex", "tips": "openai"}}, deep_lookup=True)
     started = []
     eng._start_deep = lambda q, kind: started.append((q, kind))
-    assert not eng._ask_on_prep()            # the Gemini account takes 20-30 s: questions stay on the tips model
+    assert not eng._ask_on_prep()            # account calls are slower, so questions stay on the tips model
     eng.on_request("ask", "who tests the pilot?")
     end = time.monotonic() + 5
     while time.monotonic() < end and any(not f.done() for f in eng.futures):

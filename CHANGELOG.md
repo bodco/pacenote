@@ -3,6 +3,13 @@
 Pacenote. Earlier versions are described in the commit messages and in
 [docs/en/live-tips.md](docs/en/live-tips.md), section 14.
 
+## Unreleased
+
+- **Gemini now requires an API key.** Pacenote removed Google account sign-in through Antigravity CLI because
+  Google's terms prohibit access through third-party apps and Google can suspend accounts. If you selected
+  that route, Pacenote switches the saved choice to Gemini API and shows a one-time notice with a link to
+  the Gemini key in Settings > AI. The fallback chain keeps the other providers in their existing order.
+
 ## 0.26.4 (2026-11-20)
 
 - **A new organization project includes the person who made it (2026-11-20):** in New project > start a new

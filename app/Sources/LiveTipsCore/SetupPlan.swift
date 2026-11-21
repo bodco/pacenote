@@ -104,7 +104,7 @@ public enum CLILogin {
         switch kind {
         case "claude": return ["auth", "login"]
         case "codex": return ["-c", "forced_login_method=\"chatgpt\"", "login"]
-        default: return []          // agy: the sign-in is its first run
+        default: return []
         }
     }
 
@@ -148,7 +148,7 @@ public enum CallReadiness {
         case blocked([String])          // the missing steps that block, in install order
     }
 
-    public static let accountRoutes: Set<String> = ["code", "codex", "agy"]
+    public static let accountRoutes: Set<String> = ["code", "codex"]
 
     /// `missing`: the base steps not in place; `connected`: the AIs that can run now; `routes`: the AI of each job.
     public static func check(missing: [String], connected: Set<String>, routes: [String]) -> Verdict {

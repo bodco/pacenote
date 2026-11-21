@@ -92,7 +92,7 @@ final class SheetDraft: ObservableObject {
         remembered = mem != nil
         let preset = lib.preset(presetID)
         mode = mem.map { SheetMode(rawValue: $0.mode) } ?? SheetPrefs.shared.mode(for: model, preset: preset)
-        if let r = mem?.route, !r.isEmpty { route = r }
+        if let r = mem?.route, !r.isEmpty { route = AppConfig.AIRoutes.migratedRoute(r) }
         language = mem?.language ?? (model.language.hasPrefix("uk") && model.audience != "client" ? "uk" : "en")
         applyPreset(presetID)
         goal = Self.goalLine(model.cleanContext)

@@ -1536,7 +1536,8 @@ struct SheetSizeStep: View {
     }
 
     private var whatToDo: some View {
-        let big = [AIRoute.gemini, AIRoute.agy].first { SheetRoutes.ready($0) && $0 != draft.route }
+        let big = AIRoute.gemini
+        let canSuggestGemini = SheetRoutes.ready(big) && big != draft.route
         return VStack(alignment: .leading, spacing: 0) {
             PrepSectionHead(number: nil, title: L("sheet.ui.s4.whatToDo"))
             Text(L("sheet.ui.s4.tooMuchSub")).font(th.homeText(14)).foregroundStyle(PN.C.text2)
@@ -1544,7 +1545,7 @@ struct SheetSizeStep: View {
             option("passes", on: draft.plan == "passes") { draft.plan = "passes" }
             option("compress", on: draft.plan == "compress") { draft.plan = "compress" }
             option("remove", on: false) { draft.step = 3 }
-            if let big {
+            if canSuggestGemini {
                 option("bigger", on: false, args: ["route": AIRoute.name(big)]) { draft.route = big; draft.plan = "one"; draft.checkSize() }
             }
             Text(draft.plan.isEmpty ? L("sheet.ui.s4.pickPlan") : L("sheet.ui.s4.plan." + draft.plan))

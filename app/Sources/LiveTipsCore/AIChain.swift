@@ -2,7 +2,7 @@ import Foundation
 
 /// 0.10.0 (AI chain, owner 12.11): one fallback chain for every job. The AI chosen for the job goes first, then the
 /// other connected AIs in the order the PM sets in Settings > AI (a reorderable list with on/off checkboxes). Live
-/// tips never go to the model on this Mac (19-59 s) or to the Gemini account (agy, 20-30 s a request); for the
+/// tips never go to the model on this Mac (19-59 s); for the
 /// preparation, after-call jobs and typed questions the model on this Mac is always the last step. Shared with
 /// livetips_m0.routing (LT_AI_CHAIN, sidecar-config ai.chain). Pure, for CoreChecks.
 public enum AIChain {
@@ -12,8 +12,8 @@ public enum AIChain {
         public init(_ route: String, on: Bool = true) { self.route = route; self.on = on }
     }
 
-    /// Claude account, ChatGPT account, Claude API, OpenAI API, Gemini API, Gemini account (agy), model on this Mac.
-    public static let defaultOrder = ["code", "codex", "api", "openai", "gemini", "agy", "local"]
+    /// Claude account, ChatGPT account, Claude API, OpenAI API, Gemini API, model on this Mac.
+    public static let defaultOrder = ["code", "codex", "api", "openai", "gemini", "local"]
     public static let jobs = ["tips", "prep", "after"]
 
     public static func defaults(localOn: Bool = true) -> [Entry] {
@@ -28,9 +28,9 @@ public enum AIChain {
         return out
     }
 
-    /// Live tips never run on the model on this Mac or on the Gemini account: too slow for a call.
+    /// Live tips never run on the model on this Mac: too slow for a call.
     public static func allowed(_ route: String, job: String) -> Bool {
-        job == "tips" ? !["local", "agy"].contains(route) : true
+        defaultOrder.contains(route) && (job != "tips" || route != "local")
     }
 
     /// The order a job tries its AIs: the chosen one first (even when it is not connected: the caller says why it

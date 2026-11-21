@@ -67,7 +67,7 @@ public enum Economy {
 /// 0.9.6 Б1 (owner, 2026-11-06): economy mode v1 = the least API money, the plans of the accounts pay where they can.
 /// From the next call or job: live tips on the cheapest model of their way, the preparation and the after-the-call
 /// jobs on the Claude account instead of the Claude key and on the ChatGPT account instead of the OpenAI key when that
-/// account can run; Gemini never moves to the Gemini account (Antigravity's terms). Without an account the
+/// account can run. For API routes without an account option, the
 /// after-the-call jobs take the cheaper model of their way; the preparation is not made cheaper. The monthly limits
 /// per provider apply on top (they are checked after this plan). Pure: the app passes which accounts can run.
 public enum EconomyPlan {

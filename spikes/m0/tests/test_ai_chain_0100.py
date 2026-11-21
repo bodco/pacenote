@@ -8,11 +8,12 @@ from pathlib import Path
 
 from livetips_m0 import codex_provider as CP
 from livetips_m0.providers import Completion, FakeProvider, Provider
+from livetips_m0.sheet.build import Asker
 from livetips_m0.routing import (RouteState, RoutedProvider, account_usage_claude, account_usage_codex, chain_from,
                                  chain_order, note_account_usage, out_reason, provider_from_cfg, reset_time)
 
-ALL = {"code", "codex", "api", "openai", "gemini", "agy", "local"}
-CHAIN = ["code", "codex", "api", "openai", "gemini", "agy", "local"]
+ALL = {"code", "codex", "api", "openai", "gemini", "local"}
+CHAIN = ["code", "codex", "api", "openai", "gemini", "local"]
 CODEX_LIMIT = ("You’ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit "
                "https://chatgpt.com/settings/usage to purchase more credits or try again at 12:48 PM.")
 
@@ -36,12 +37,21 @@ def ask(rp):
 
 
 def test_chain_order_matches_the_app():
-    assert chain_order("prep", "api", CHAIN, ALL) == ["api", "code", "codex", "openai", "gemini", "agy", "local"]
+    assert chain_order("prep", "api", CHAIN, ALL) == ["api", "code", "codex", "openai", "gemini", "local"]
     assert chain_order("tips", "api", CHAIN, ALL) == ["api", "code", "codex", "openai", "gemini"]
     assert chain_order("after", "code", ["local", "gemini"], ALL) == ["code", "gemini", "local"]   # local always last
     assert chain_order("after", "code", CHAIN, ALL, auto=False) == ["code"]
     assert chain_order("tips", "openai", CHAIN, {"openai", "api"}) == ["openai", "api"]
     assert chain_from('["code","x","api"]') == ["code", "api"] and chain_from(None) is None and chain_from("[]") == []
+
+
+def test_legacy_gemini_route_uses_the_api_and_drops_the_account_from_the_chain(tmp_path):
+    rp = RoutedProvider("prep", "agy", {"gemini": ok(), "code": ok()},
+                        state=RouteState(str(tmp_path / "routes.json")), chain=chain_from(["agy", "code"]))
+    assert rp.order() == ["gemini", "code"]
+    assert ask(rp).route == "gemini"
+    assert Asker("code", {"chain": ["agy", "openai"]}).chain == ["openai"]
+    assert Asker("agy", {}).route == "gemini"
 
 
 def test_reset_times():
@@ -98,9 +108,8 @@ def test_plain_rate_limit_does_not_switch_and_tips_never_go_local(tmp_path):
     c = ask(rp)
     assert c.error and c.route == "openai" and not st.is_down("openai")
     local = ok()
-    tips = RoutedProvider("tips", "api", {"api": Failing("BadRequestError: credit balance is too low"), "local": local,
-                                          "agy": ok()}, state=RouteState(str(tmp_path / "t.json")), chain=CHAIN,
-                          background=True)
+    tips = RoutedProvider("tips", "api", {"api": Failing("BadRequestError: credit balance is too low"), "local": local},
+                          state=RouteState(str(tmp_path / "t.json")), chain=CHAIN, background=True)
     c = ask(tips)
     assert c.error and local.calls == [] and tips.order() == ["api"]
 
