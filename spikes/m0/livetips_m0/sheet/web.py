@@ -701,6 +701,7 @@ def fetch(the_plan: dict, out_dir=None, delay: float = 1.0, getter=http_get, sle
                "parent_uri": start, "checked_at": _now()}
         if st == "empty":
             src["reason"] = "the page is empty or a placeholder"
+            src["empty"] = True                 # PB-37B: kept in the report, never given to the model
         elif page_cut:
             # 0.10.0 (Meeting Sheet, hardening): never a silent cut
             src["used"] = "truncated"
@@ -711,7 +712,7 @@ def fetch(the_plan: dict, out_dir=None, delay: float = 1.0, getter=http_get, sle
         if out_path:
             base = f"{_slug(domain_of(url))}-{_slug(urllib.parse.urlsplit(url).path or 'home', 40) or 'home'}"
             tp, k = out_path / (base + ".txt"), 2
-            while tp.exists() and any(r.get("file") == str(tp) for r in report):
+            while tp.exists():                      # PB-37B: a stored copy is never overwritten, not even by an earlier run
                 tp, k = out_path / (f"{base}-{k}.txt"), k + 1
             tp.write_text(f"{title}\n{url}\n\n{text}\n", encoding="utf-8")
             src["path"] = str(tp)

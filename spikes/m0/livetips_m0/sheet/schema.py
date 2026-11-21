@@ -222,7 +222,7 @@ def _source(v, s, p):
     v.typ(s, "id", str, p)
     v.typ(s, "n", int, p)
     v.enum(s, "type", SOURCE_TYPES, p)
-    for k in ("uri", "path", "title", "access_reason", "reason", "modified_at", "parent"):
+    for k in ("uri", "path", "title", "access_reason", "reason", "modified_at", "parent", "parent_uri"):
         v.typ(s, k, str, p)
     for k in ("size_tokens", "chars", "pass", "days"):
         v.typ(s, k, int, p)
