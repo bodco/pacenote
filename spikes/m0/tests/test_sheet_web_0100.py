@@ -323,6 +323,79 @@ def test_web_fetch_pages_become_sources_with_a_report(site, tmp_path):
     assert li["type"] == "linkedin" and li["access"] == "pending" and li["fix_action"] == "open_in_browser"
 
 
+def _fake_site(pages):
+    """A getter over {path: html}: no network, no robots.txt (limits.respect_robots false)."""
+    def getter(url):
+        return 200, url, "text/html", W.Body(pages[urllib_path(url)])
+    return getter
+
+
+def urllib_path(url):
+    import urllib.parse
+    s = urllib.parse.urlsplit(url)
+    return s.path + ("?" + s.query if s.query else "")
+
+
+def _plan(urls):
+    return {"url": "https://lumenfield.example/", "limits": {"respect_robots": False, "depth": 1},
+            "pages": [{"url": u, "planned": True, "depth": 1} for u in urls]}
+
+
+def test_web_fetch_pages_with_the_same_file_name_get_their_own_files(tmp_path):
+    long_a = "/products/" + "x" * 60 + "-first"
+    long_b = "/products/" + "x" * 60 + "-second"
+    pages = {"/p?id=1": page("One", LOREM * 2 + "alpha"), "/p?id=2": page("Two", LOREM * 2 + "bravo"),
+             long_a: page("Long A", LOREM * 2 + "charlie"), long_b: page("Long B", LOREM * 2 + "delta")}
+    urls = ["https://lumenfield.example" + p for p in pages]
+    r = W.fetch(_plan(urls), tmp_path, delay=0, getter=_fake_site(pages), sleep=lambda s: None)
+    files = [s["path"] for s in r["sources"]]
+    assert len(files) == 4 and len(set(files)) == 4
+    texts = [Path(f).read_text() for f in files]
+    for word in ("alpha", "bravo", "charlie", "delta"):
+        assert sum(word in t for t in texts) == 1
+
+
+def test_web_fetch_one_call_marks_a_duplicate_and_waits_the_crawl_delay(tmp_path):
+    pages = {"/about": page("About", LOREM * 2), "/about-us": page("About", LOREM * 2), "/team": page("Team", LOREM * 2 + "unique")}
+    urls = ["https://lumenfield.example" + p for p in pages]
+    slept = []
+    r = W.fetch(_plan(urls), tmp_path, delay=1, getter=_fake_site(pages), sleep=slept.append)
+    st = {x["path"]: x["status"] for x in r["pages"]}
+    assert st == {"/about": "read", "/about-us": "duplicate", "/team": "read"}
+    assert len(r["sources"]) == 2 and slept == [1.0, 1.0]
+
+
+def test_web_fetch_progress_lines_and_cancel(tmp_path):
+    pages = {"/a": page("A", LOREM * 2 + "a"), "/b": page("B", LOREM * 2 + "b"), "/c": page("C", LOREM * 2 + "c")}
+    urls = ["https://lumenfield.example" + p for p in pages]
+    got = []
+    stop = []
+
+    def progress(o):
+        got.append(o)
+        if o["stage"] == "page" and o["row"]["path"] == "/a":
+            stop.append(1)                                   # Cancel arrives while /b is next
+    r = W.fetch(_plan(urls), tmp_path, delay=0, getter=_fake_site(pages), sleep=lambda s: None, progress=progress,
+                cancel=lambda: bool(stop))
+    assert [x["path"] for x in got if x["stage"] == "start"] == ["/a"]
+    done = [x for x in got if x["stage"] == "page"]
+    assert [x["row"]["path"] for x in done] == ["/a"] and done[0]["source"]["uri"].endswith("/a")
+    assert r["cancelled"] is True and [s["uri"][-2:] for s in r["sources"]] == ["/a"]
+
+
+def test_cli_webfetch_progress_is_json_lines_and_the_report_is_the_last(site, tmp_path, capsys):
+    from livetips_m0.sheet import __main__ as M
+    base, _h = site
+    p = W.plan(base + "/", max_pages=3)
+    req = tmp_path / "f.json"
+    req.write_text(json.dumps({"plan": p, "out_dir": str(tmp_path / "pages"), "delay": 0, "progress": True,
+                               "cancel_path": str(tmp_path / ".cancel")}))
+    assert M.main(["webfetch", "--request", str(req)]) == 0
+    lines = [json.loads(l) for l in capsys.readouterr().out.splitlines()]
+    assert all("progress" in l for l in lines[:-1]) and "pages" in lines[-1] and "progress" not in lines[-1]
+    assert sum(1 for l in lines[:-1] if l["progress"]["stage"] == "start") == 3
+
+
 def test_web_fetch_depth_one_and_ticks(site):
     base, h = site
     p = W.plan(base + "/", depth=1)

@@ -4792,12 +4792,8 @@ func siteResearchPB37C() {
     let rq = SiteResearch.planRequest(url: "https://example-company.com", goal: "intro", callType: "sales", audience: "client", route: "api")
     expect(rq["max_pages"] as? Int == 30 && rq["goal"] as? String == "intro" && rq["call_type"] as? String == "sales" && rq["audience"] as? String == "client" && rq["route"] as? String == "api" && rq["respect_robots"] as? Bool == true, "site plan: webplan request fields")
     let fr = SiteResearch.fetchRequest(plan: plan, outDir: "/tmp/w", cancelPath: "/tmp/w/.cancel")
-    expect(fr["out_dir"] as? String == "/tmp/w" && fr["cancel_path"] as? String == "/tmp/w/.cancel" && fr["plan"] != nil, "site plan: webfetch request fields")
-
-    let one = SiteResearch.fetchRequest(plan: plan, outDir: "/tmp/w", cancelPath: "/tmp/w/.cancel", startN: 3, only: plan.ticked[1].url)
-    let op = one["plan"] as? [String: Any]
-    expect((op?["pages"] as? [[String: Any]] ?? []).filter { $0["planned"] as? Bool == true }.map { $0["url"] as? String } == [plan.ticked[1].url]
-           && (op?["limits"] as? [String: Any])?["max_pages"] as? Int == 1 && one["start_n"] as? Int == 3, "site plan: a one-page webfetch request")
+    expect(fr["out_dir"] as? String == "/tmp/w" && fr["cancel_path"] as? String == "/tmp/w/.cancel" && fr["plan"] != nil && fr["progress"] as? Bool == true, "site plan: webfetch request fields (one call, progress lines)")
+    expect(SiteResearch.progressStart(["progress": ["stage": "start", "path": "/team", "n": 2]])?.path == "/team" && SiteResearch.progressStart(["progress": ["stage": "start", "path": "/team", "n": 2]])?.n == 2 && SiteResearch.progressStart(["progress": ["stage": "page"]]) == nil && SiteResearch.progressStart(["summary": [:]]) == nil, "site plan: the current page from a progress line")
 
     var blocked = json
     blocked["start"] = ["status": "blocked", "note": "robots.txt does not allow this page"]
@@ -4834,11 +4830,14 @@ func siteResearchPB37C() {
     expect(built == ["c", "t", "o"], "site research: the start page child is built, the read site row is not, an unread site stays")
     expect(SiteResearch.hasPagesRead(uri: site, parentURI: nil, among: [(uri: site, parentURI: site)]) && !SiteResearch.hasPagesRead(uri: site, parentURI: nil, among: [(uri: site, parentURI: nil)]), "site research: a one-page run counts as read")
 
-    // page by page: reports merge, a page read twice is one child, counts add up
-    var acc = SiteReadReport()
-    acc.merge(SiteReadReport(json: ["sources": [["uri": site, "path": "/tmp/w/a.txt"]], "summary": ["read": 1, "tokens": 10], "pages": [["url": site, "status": "read"]]])!)
-    acc.merge(SiteReadReport(json: ["sources": [["uri": "https://www.example-company.com", "path": "/tmp/w/b.txt"], ["uri": "https://example-company.com/team", "path": "/tmp/w/c.txt"]], "summary": ["read": 2, "tokens": 20]])!)
-    expect(acc.children.count == 2 && acc.counts["read"] == 3 && acc.tokens == 30 && acc.states[site]?.state == "read", "site report: merging page reports")
+    // the sidecar ended before its report: what was read comes from the progress lines
+    let pl: [[String: Any]] = [
+        ["progress": ["stage": "start", "path": "/", "n": 1]],
+        ["progress": ["stage": "page", "row": ["url": site, "status": "read", "tokens": 10], "source": ["uri": site, "path": "/tmp/w/a.txt", "size_tokens": 10]]],
+        ["progress": ["stage": "page", "row": ["url": site + "about-us", "status": "duplicate", "note": "same text as " + site], "source": NSNull()]]]
+    let salv = SiteReadReport(progress: pl, url: site)
+    expect(salv?.children.count == 1 && salv?.counts["read"] == 1 && salv?.counts["duplicate"] == 1 && salv?.tokens == 10 && salv?.states[site + "about-us"]?.state == "duplicate", "site report: rebuilt from progress lines")
+    expect(SiteReadReport(progress: [pl[0]], url: site) == nil, "site report: no page reported, no report")
 
     // one source per page: the same page written two ways is one key
     expect(SiteResearch.key("https://www.Example-Company.com/team/#x") == SiteResearch.key("https://example-company.com/team") && SiteResearch.key("https://example-company.com/") == "example-company.com", "site research: page key ignores www, case, fragment and slash")

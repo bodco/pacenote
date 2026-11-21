@@ -106,17 +106,15 @@ public struct SitePlan: Equatable {
 
     /// The pages the sidecar reads: only the ticked ones are planned, and the limit is exactly their count, so a page
     /// found while reading (depth 2) never pushes the total above what the person agreed to.
-    /// `only`: one page (the app reads page by page, so it knows the current page, cancels between pages and keeps what was read).
-    public func fetchPlan(only: String? = nil) -> [String: Any] {
+    public func fetchPlan() -> [String: Any] {
         let rows: [[String: Any]] = pages.map { p in
-            let on = p.ticked && (only == nil || p.url == only)
-            var d: [String: Any] = ["url": p.url, "path": p.path, "depth": p.depth, "kind": p.kind, "planned": on,
-                                    "note": on ? "" : (p.planned ? "not ticked" : p.note)]
+            var d: [String: Any] = ["url": p.url, "path": p.path, "depth": p.depth, "kind": p.kind, "planned": p.ticked,
+                                    "note": p.ticked ? "" : (p.planned ? "not ticked" : p.note)]
             if let s = p.score { d["score"] = s }
             return d
         }
         return ["url": url, "domain": domain,
-                "limits": ["same_site": true, "depth": depth, "max_pages": only != nil ? 1 : max(1, tickedCount), "respect_robots": respectRobots] as [String: Any],
+                "limits": ["same_site": true, "depth": depth, "max_pages": max(1, tickedCount), "respect_robots": respectRobots] as [String: Any],
                 "pages": rows,
                 "external": external.map { ["url": $0.url, "domain": $0.domain, "text": $0.text] }]
     }
@@ -184,13 +182,20 @@ public struct SiteReadReport: Equatable {
         self.children = children; self.suggested = suggested; self.counts = counts; self.tokens = tokens; self.states = states
     }
 
-    /// Adds the report of one more page (the app reads page by page): one child per page, one suggestion per site.
-    public mutating func merge(_ o: SiteReadReport) {
-        for c in o.children where !children.contains(where: { SiteResearch.key($0.uri) == SiteResearch.key(c.uri) }) { children.append(c) }
-        for e in o.suggested where !suggested.contains(where: { $0.url == e.url }) { suggested.append(e) }
-        for (k, v) in o.counts { counts[k, default: 0] += v }
-        tokens += o.tokens
-        states.merge(o.states) { _, new in new }
+    /// What was read, rebuilt from the progress lines (`stage: "page"`: the page's row and its source) when the sidecar
+    /// was ended before it printed the report. nil when no page was reported.
+    public init?(progress lines: [[String: Any]], url: String) {
+        var rows: [[String: Any]] = [], sources: [[String: Any]] = []
+        for l in lines {
+            guard let p = l["progress"] as? [String: Any], p["stage"] as? String == "page", let r = p["row"] as? [String: Any] else { continue }
+            rows.append(r)
+            if let s = p["source"] as? [String: Any] { sources.append(s) }
+        }
+        guard !rows.isEmpty else { return nil }
+        var sum: [String: Any] = [:]
+        for k in ["read", "empty", "blocked", "error", "skipped", "duplicate"] { sum[k] = rows.filter { $0["status"] as? String == k }.count }
+        sum["tokens"] = rows.filter { $0["status"] as? String == "read" }.reduce(0) { $0 + ($1["tokens"] as? Int ?? 0) }
+        self.init(json: ["url": url, "sources": sources, "pages": rows, "summary": sum])
     }
 
     public static func == (a: SiteReadReport, b: SiteReadReport) -> Bool {
@@ -215,9 +220,17 @@ public enum SiteResearch {
          "goal": goal, "call_type": callType, "audience": audience, "route": route]
     }
 
-    /// `webfetch` request. `cancel_path`: a file the app creates to stop; the sidecar looks for it between pages.
-    public static func fetchRequest(plan: SitePlan, outDir: String, cancelPath: String, startN: Int = 1, only: String? = nil) -> [String: Any] {
-        ["plan": plan.fetchPlan(only: only), "out_dir": outDir, "delay": 1.0, "start_n": startN, "cancel_path": cancelPath]
+    /// `webfetch` request: one call for all ticked pages. `progress`: the sidecar prints one JSON line per page
+    /// (`{"progress": {"stage": "start" | "page", ...}}`) and the report as the last line. `cancel_path`: a file the app
+    /// creates to stop; the sidecar looks for it between pages and still returns the report of what it read.
+    public static func fetchRequest(plan: SitePlan, outDir: String, cancelPath: String) -> [String: Any] {
+        ["plan": plan.fetchPlan(), "out_dir": outDir, "delay": 1.0, "cancel_path": cancelPath, "progress": true]
+    }
+
+    /// The page being fetched, from a progress line ("start"); nil for any other line.
+    public static func progressStart(_ line: [String: Any]) -> (path: String, n: Int)? {
+        guard let p = line["progress"] as? [String: Any], p["stage"] as? String == "start", let path = p["path"] as? String else { return nil }
+        return (path, p["n"] as? Int ?? 0)
     }
 
     /// USD per million input tokens of the route's usual preparation model, from `spikes/m0/livetips_m0/cost.py`

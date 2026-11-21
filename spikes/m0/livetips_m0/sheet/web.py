@@ -507,10 +507,12 @@ def _empty_page(text: str) -> bool:
 
 
 def fetch(the_plan: dict, out_dir=None, delay: float = 1.0, getter=http_get, sleep=time.sleep, start_n: int = 1,
-          id_prefix: str = "w") -> dict:
+          id_prefix: str = "w", progress=None, cancel=None) -> dict:
     """Reads the planned pages one by one (robots.txt and the limits again at each step), then depth-2 links found on
     them while pages are left. Each read page is a `web_page` source with its own URL; the report lists every page:
-    read / empty / blocked / error / skipped / duplicate, with what was taken."""
+    read / empty / blocked / error / skipped / duplicate, with what was taken.
+    `progress(obj)`: called with {"stage": "start", url, path, n} before a page is fetched and {"stage": "page", row,
+    source} for every row added to the report. `cancel()`: true = stop before the next page; what was read stays."""
     lim = the_plan.get("limits") or {}
     depth = int(lim.get("depth", DEFAULT_DEPTH))
     max_pages = int(lim.get("max_pages", DEFAULT_MAX_PAGES))
@@ -531,7 +533,22 @@ def fetch(the_plan: dict, out_dir=None, delay: float = 1.0, getter=http_get, sle
         out_path.mkdir(parents=True, exist_ok=True)
     wait = max(float(delay), 0.0)
     first = True
+    sent = len(report)      # the pages that were never ticked are not progress
+    by_id = {}
+
+    def flush():
+        nonlocal sent
+        if progress:
+            for r in report[sent:]:
+                progress({"stage": "page", "row": r, "source": by_id.get(r.get("source_id"))})
+        sent = len(report)
+
+    cancelled = False
     while queue:
+        flush()
+        if cancel and cancel():
+            cancelled = True
+            break
         p = queue.pop(0)
         url = p["url"]
         row = {"url": url, "path": p.get("path") or urllib.parse.urlsplit(url).path, "depth": p.get("depth", 0),
@@ -546,6 +563,8 @@ def fetch(the_plan: dict, out_dir=None, delay: float = 1.0, getter=http_get, sle
             cd = robots.delay(url) if respect else None
             sleep(max(wait, float(cd or 0)))
         first = False
+        if progress:
+            progress({"stage": "start", "url": url, "path": row["path"], "n": read + 1})
         try:
             status, final, ctype, body = getter(url)
         except FetchError as e:
@@ -594,6 +613,7 @@ def fetch(the_plan: dict, out_dir=None, delay: float = 1.0, getter=http_get, sle
             src["path"] = str(tp)
             rr["file"] = str(tp)
         sources.append(src)
+        by_id[sid] = src
         rr["source_id"] = sid
         report.append(rr)
         # depth 2: links of this page, same site, same rules
@@ -614,10 +634,14 @@ def fetch(the_plan: dict, out_dir=None, delay: float = 1.0, getter=http_get, sle
                     report.append(dict(nrow, status="skipped", note=why))
                     continue
                 queue.append(nrow)
+    flush()
     summary = {s: sum(1 for r in report if r.get("status") == s) for s in ("read", "empty", "blocked", "error", "skipped", "duplicate")}
     summary["tokens"] = sum(r.get("tokens", 0) for r in report if r.get("status") == "read")
-    return {"url": start, "pages": report, "sources": sources, "external": external, "summary": summary,
-            "user_agent": USER_AGENT, "fetched_at": _now()}
+    res = {"url": start, "pages": report, "sources": sources, "external": external, "summary": summary,
+           "user_agent": USER_AGENT, "fetched_at": _now()}
+    if cancelled:
+        res["cancelled"] = True
+    return res
 
 
 def external_sources(external, start_n: int = 1, id_prefix: str = "x"):
@@ -677,8 +701,8 @@ def _read(path):
 def cli(command: str, request_path=None, argv_url=None) -> int:
     import sys
 
-    def out(obj, code=0):
-        sys.stdout.write(json.dumps(obj, ensure_ascii=False, indent=1) + "\n")
+    def out(obj, code=0, compact=False):
+        sys.stdout.write(json.dumps(obj, ensure_ascii=False, indent=None if compact else 1) + "\n")
         return code
 
     try:
@@ -701,11 +725,22 @@ def cli(command: str, request_path=None, argv_url=None) -> int:
                 p = plan(req["url"], req.get("depth", DEFAULT_DEPTH), req.get("max_pages", DEFAULT_MAX_PAGES),
                          req.get("respect_robots", True))
             if p is not None:
-                f = fetch(p, req.get("out_dir"), float(req.get("delay", 1.0)), start_n=int(req.get("start_n", 1)))
+                live = bool(req.get("progress"))
+                cp = req.get("cancel_path")
+
+                def line(o):
+                    sys.stdout.write(json.dumps({"progress": o}, ensure_ascii=False) + "\n")
+                    sys.stdout.flush()
+
+                f = fetch(p, req.get("out_dir"), float(req.get("delay", 1.0)), start_n=int(req.get("start_n", 1)),
+                          progress=line if live else None, cancel=(lambda: Path(cp).expanduser().exists()) if cp else None)
                 f["suggested"] = external_sources(f["external"])
                 if res:
                     f["captured"] = res
                 res = f
+                if live:
+                    # one line: the last JSON object of stdout is the report
+                    return out(res, compact=True)
             if not res:
                 return out({"error": "request needs plan, plan_path, url or captured"}, 3)
             return out(res)
