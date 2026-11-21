@@ -158,6 +158,71 @@ def test_schema_accepts_parent_uri_and_old_sources_without_it():
     assert v.errors
 
 
+def _stored(tmp_path, name, title, url, body):
+    p = tmp_path / name
+    p.write_text(f"{title}\n{url}\n\n{body}\n", encoding="utf-8")
+    return p
+
+
+def test_empty_page_is_kept_in_the_report_but_not_given_to_the_model(tmp_path):
+    url = "https://lumenfield.example/soon"
+    p = _stored(tmp_path, "soon.txt", "Soon", url, "Coming soon")
+    for flagged in (True, False):                          # from fetch (explicit status) and from the copy alone
+        s = {"id": "s3", "type": "web_page", "uri": url, "title": "Soon", "path": str(p)}
+        if flagged:
+            s["empty"] = True
+        texts = {}
+        SRC.check(s, {}, texts, "local", {})
+        assert s["id"] not in texts and s["size_tokens"] == 0 and s["empty"] is True
+        assert s["access"] == "ok" and "empty" in s["access_reason"]
+        assert B.claude_files([s], texts, str(tmp_path / "cache")) == {}      # no Read line either
+
+
+def test_build_skips_an_empty_stored_page_and_lists_it(tmp_path):
+    root, a, b = _project(tmp_path)
+    url = "https://lumenfield.example/soon"
+    p = _stored(tmp_path, "soon.txt", "Soon", url, "")
+    asked = []
+
+    def responder(system, user):
+        asked.append(user)
+        return json.dumps(ANSWER)
+
+    req = _req(root, a, b, route="local", sources=[
+        {"id": "s1", "path": str(a)}, {"id": "s2", "path": str(b)},
+        {"id": "s3", "type": "web_page", "uri": url, "title": "Soon", "path": str(p), "empty": True}])
+    res = B.build(req, emit=quiet, responder=responder)
+    assert res.get("done"), res
+    assert url not in "\n".join(asked)
+    sheet = json.loads(Path(res["sheet"]).read_text(encoding="utf-8"))
+    row = [s for s in sheet["sources"] if s["id"] == "s3"][0]
+    assert row["used"] == "skipped" and "empty" in row["reason"]
+
+
+def test_two_researches_in_one_folder_keep_their_own_copies(tmp_path):
+    out = tmp_path / "pages"
+    bodies = {"/a/b": "First page about Emily Parker, VP Engineering at Lumenfield. " * 5,
+              "/a-b": "Second page about Mike Stone, head of sales at Lumenfield. " * 5}
+
+    def getter(url, **kw):
+        path = url.split("lumenfield.example", 1)[1]
+        return 200, url, "text/html", "<html><title>T</title><body><main><p>" + bodies[path] + "</p></main></body></html>"
+
+    def one(path, n, prefix):
+        url = "https://lumenfield.example" + path
+        plan = {"url": url, "pages": [{"url": url, "path": path, "depth": 0, "planned": True}],
+                "limits": {"depth": 0, "max_pages": 1, "respect_robots": False}}
+        return W.fetch(plan, out, delay=0, sleep=lambda s: None, getter=getter, start_n=n, id_prefix=prefix)["sources"][0]
+
+    s1, s2 = one("/a/b", 1, "w"), one("/a-b", 1, "v")
+    assert s1["path"] != s2["path"]
+    t1, t2 = {}, {}
+    SRC.check(dict(s1), {}, t1, "local", {})
+    SRC.check(dict(s2), {}, t2, "local", {})
+    assert "Emily Parker" in "".join(t1.values()) and "Mike Stone" not in "".join(t1.values())
+    assert "Mike Stone" in "".join(t2.values()) and "Emily Parker" not in "".join(t2.values())
+
+
 def test_pb37_routes_files_have_no_long_dash():
     root = Path(__file__).resolve().parents[1]
     for f in (Path(__file__), root / "livetips_m0/sheet/sources.py", root / "livetips_m0/sheet/prompt.py"):
