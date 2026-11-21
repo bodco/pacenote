@@ -106,15 +106,17 @@ public struct SitePlan: Equatable {
 
     /// The pages the sidecar reads: only the ticked ones are planned, and the limit is exactly their count, so a page
     /// found while reading (depth 2) never pushes the total above what the person agreed to.
-    public func fetchPlan() -> [String: Any] {
+    /// `only`: one page (the app reads page by page, so it knows the current page, cancels between pages and keeps what was read).
+    public func fetchPlan(only: String? = nil) -> [String: Any] {
         let rows: [[String: Any]] = pages.map { p in
-            var d: [String: Any] = ["url": p.url, "path": p.path, "depth": p.depth, "kind": p.kind, "planned": p.ticked,
-                                    "note": p.ticked ? "" : (p.planned ? "not ticked" : p.note)]
+            let on = p.ticked && (only == nil || p.url == only)
+            var d: [String: Any] = ["url": p.url, "path": p.path, "depth": p.depth, "kind": p.kind, "planned": on,
+                                    "note": on ? "" : (p.planned ? "not ticked" : p.note)]
             if let s = p.score { d["score"] = s }
             return d
         }
         return ["url": url, "domain": domain,
-                "limits": ["same_site": true, "depth": depth, "max_pages": max(1, tickedCount), "respect_robots": respectRobots] as [String: Any],
+                "limits": ["same_site": true, "depth": depth, "max_pages": only != nil ? 1 : max(1, tickedCount), "respect_robots": respectRobots] as [String: Any],
                 "pages": rows,
                 "external": external.map { ["url": $0.url, "domain": $0.domain, "text": $0.text] }]
     }
@@ -177,6 +179,20 @@ public struct SiteReadReport: Equatable {
         states = st
     }
 
+    public init(children: [SiteChild] = [], suggested: [SiteExternal] = [], counts: [String: Int] = [:], tokens: Int = 0,
+                states: [String: (state: String, note: String)] = [:]) {
+        self.children = children; self.suggested = suggested; self.counts = counts; self.tokens = tokens; self.states = states
+    }
+
+    /// Adds the report of one more page (the app reads page by page): one child per page, one suggestion per site.
+    public mutating func merge(_ o: SiteReadReport) {
+        for c in o.children where !children.contains(where: { SiteResearch.key($0.uri) == SiteResearch.key(c.uri) }) { children.append(c) }
+        for e in o.suggested where !suggested.contains(where: { $0.url == e.url }) { suggested.append(e) }
+        for (k, v) in o.counts { counts[k, default: 0] += v }
+        tokens += o.tokens
+        states.merge(o.states) { _, new in new }
+    }
+
     public static func == (a: SiteReadReport, b: SiteReadReport) -> Bool {
         a.children == b.children && a.suggested == b.suggested && a.counts == b.counts && a.tokens == b.tokens
     }
@@ -200,8 +216,8 @@ public enum SiteResearch {
     }
 
     /// `webfetch` request. `cancel_path`: a file the app creates to stop; the sidecar looks for it between pages.
-    public static func fetchRequest(plan: SitePlan, outDir: String, cancelPath: String, startN: Int = 1) -> [String: Any] {
-        ["plan": plan.fetchPlan(), "out_dir": outDir, "delay": 1.0, "start_n": startN, "cancel_path": cancelPath]
+    public static func fetchRequest(plan: SitePlan, outDir: String, cancelPath: String, startN: Int = 1, only: String? = nil) -> [String: Any] {
+        ["plan": plan.fetchPlan(only: only), "out_dir": outDir, "delay": 1.0, "start_n": startN, "cancel_path": cancelPath]
     }
 
     /// USD per million input tokens of the route's usual preparation model, from `spikes/m0/livetips_m0/cost.py`
@@ -231,6 +247,13 @@ public enum SiteResearch {
         while p.count > 1 && p.hasSuffix("/") { p.removeLast() }
         let host = h.lowercased().hasPrefix("www.") ? String(h.lowercased().dropFirst(4)) : h.lowercased()
         return host + (p == "/" ? "" : p) + (c.query.map { "?" + $0 } ?? "")
+    }
+
+    /// A website row (no parent) whose pages were read: its pages are the sources, so it is not fetched again.
+    /// A child never counts, even the start page that has the same URL as the site.
+    public static func hasPagesRead(uri: String?, parentURI: String?, among rows: [(uri: String?, parentURI: String?)]) -> Bool {
+        guard parentURI == nil, let uri else { return false }
+        return rows.contains { $0.parentURI == uri }
     }
 
     public static func host(_ url: String) -> String { URLComponents(string: url)?.host ?? url }

@@ -256,7 +256,7 @@ final class SheetDraft: ObservableObject {
     }
 
     /// Pages read from this website (the child rows); a site with pages is not fetched again at build time.
-    func pagesRead(of s: DraftSource) -> Bool { s.uri != nil && sources.contains { $0.parentURI == s.uri } }
+    func pagesRead(of s: DraftSource) -> Bool { SiteResearch.hasPagesRead(uri: s.uri, parentURI: s.parentURI, among: sources.map { ($0.uri, $0.parentURI) }) }
 
     func cancelResearch(sourceID: String) { research[sourceID]?.cancel() }
 
@@ -294,7 +294,8 @@ final class SheetDraft: ObservableObject {
     /// Removes a source and, for a website, the pages read from it.
     func removeSource(id: String) {
         guard let s = sources.first(where: { $0.id == id }) else { return }
-        sources.removeAll { $0.id == id || ($0.parentURI != nil && $0.parentURI == s.uri) }
+        let isSite = s.parentURI == nil
+        sources.removeAll { $0.id == id || (isSite && $0.parentURI != nil && $0.parentURI == s.uri) }
         research[id] = nil
     }
 

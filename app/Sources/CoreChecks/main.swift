@@ -4794,6 +4794,11 @@ func siteResearchPB37C() {
     let fr = SiteResearch.fetchRequest(plan: plan, outDir: "/tmp/w", cancelPath: "/tmp/w/.cancel")
     expect(fr["out_dir"] as? String == "/tmp/w" && fr["cancel_path"] as? String == "/tmp/w/.cancel" && fr["plan"] != nil, "site plan: webfetch request fields")
 
+    let one = SiteResearch.fetchRequest(plan: plan, outDir: "/tmp/w", cancelPath: "/tmp/w/.cancel", startN: 3, only: plan.ticked[1].url)
+    let op = one["plan"] as? [String: Any]
+    expect((op?["pages"] as? [[String: Any]] ?? []).filter { $0["planned"] as? Bool == true }.map { $0["url"] as? String } == [plan.ticked[1].url]
+           && (op?["limits"] as? [String: Any])?["max_pages"] as? Int == 1 && one["start_n"] as? Int == 3, "site plan: a one-page webfetch request")
+
     var blocked = json
     blocked["start"] = ["status": "blocked", "note": "robots.txt does not allow this page"]
     expect(SitePlan(json: blocked)?.startStatus == "blocked" && SitePlan(json: ["error": "x"]) == nil, "site plan: a blocked start and an error answer")
@@ -4820,6 +4825,20 @@ func siteResearchPB37C() {
     expect(report.children[1].parentURI == "https://example-company.com/" && report.children[1].why == ["page of example-company.com (team)"], "site report: the parent defaults to the site, why kept")
     expect(report.suggested.first?.url == "https://other.example.org/x" && report.suggested.first?.domain == "other.example.org", "site report: other sites are suggested, not read")
     expect(SiteReadReport(json: ["error": "boom"]) == nil, "site report: an error answer is no report")
+
+    // PB-37C fix: the start page child has the site's URL; it must stay a build source, the site row must not
+    let site = "https://example-company.com/"
+    let srcRows: [(id: String, uri: String?, parent: String?)] = [("s", site, nil), ("c", site, site), ("t", "https://example-company.com/team", site), ("o", "https://other.example.org/", nil)]
+    let among = srcRows.map { (uri: $0.uri, parentURI: $0.parent) }
+    let built = srcRows.filter { SiteResearch.hasPagesRead(uri: $0.uri, parentURI: $0.parent, among: among) == false }.map { $0.id }
+    expect(built == ["c", "t", "o"], "site research: the start page child is built, the read site row is not, an unread site stays")
+    expect(SiteResearch.hasPagesRead(uri: site, parentURI: nil, among: [(uri: site, parentURI: site)]) && !SiteResearch.hasPagesRead(uri: site, parentURI: nil, among: [(uri: site, parentURI: nil)]), "site research: a one-page run counts as read")
+
+    // page by page: reports merge, a page read twice is one child, counts add up
+    var acc = SiteReadReport()
+    acc.merge(SiteReadReport(json: ["sources": [["uri": site, "path": "/tmp/w/a.txt"]], "summary": ["read": 1, "tokens": 10], "pages": [["url": site, "status": "read"]]])!)
+    acc.merge(SiteReadReport(json: ["sources": [["uri": "https://www.example-company.com", "path": "/tmp/w/b.txt"], ["uri": "https://example-company.com/team", "path": "/tmp/w/c.txt"]], "summary": ["read": 2, "tokens": 20]])!)
+    expect(acc.children.count == 2 && acc.counts["read"] == 3 && acc.tokens == 30 && acc.states[site]?.state == "read", "site report: merging page reports")
 
     // one source per page: the same page written two ways is one key
     expect(SiteResearch.key("https://www.Example-Company.com/team/#x") == SiteResearch.key("https://example-company.com/team") && SiteResearch.key("https://example-company.com/") == "example-company.com", "site research: page key ignores www, case, fragment and slash")
