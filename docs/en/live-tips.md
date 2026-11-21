@@ -1484,11 +1484,16 @@ another device and back makes the browser reconnect its audio; the "Can't hear t
 
 **Setup (0.16.0).** Seven steps: Welcome (before, during and after a call), Permissions, Folder, AI (Claude or
 ChatGPT, and "If your AI is out": the other provider, the model on this Mac, then the rules only), What to install
-(the required parts ticked and locked, already installing in the background; the optional ones unticked: the local
+(the required parts ticked and locked, ready to install after confirmation; the optional ones unticked: the local
 AI model, 16 GB, in the free Ollama app; the call agent, offered only with Claude; the link downloader), Your calls
 (Quick or Expert, tips when useful or only when you ask, call recording off, sound, or sound and screen, the consent
 line) and Ready (the menu bar, the keys, Help improve Pacenote, Try a practice call or Open Home). Every step only sets
 what Settings already has. Help > Welcome tour runs it again.
+
+Before installing, review the estimated download size and available disk space. Whisper needs Apple silicon.
+Whisper and bge-m3 handle speech recognition and search on your Mac. The optional Ollama model keeps AI processing
+on your Mac, with lower output quality than cloud AI. While a download is running, choose **Cancel** to stop it and
+remove its partial files. You can retry from **Setup** or **Settings > Components**.
 
 **Settings > Components (0.16.0).** How much Pacenote takes on this Mac (measured) and what is free. Optional parts
 show their size and Remove... or Install; Remove... says what changes and frees the space it measured. Removing the

@@ -59,15 +59,7 @@ struct ComponentStatePill: View {
     }
 }
 
-enum DiskSpace {
-    static var free: Int64 {
-        let v = (try? URL(fileURLWithPath: NSHomeDirectory()).resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]))?.volumeAvailableCapacityForImportantUsage ?? 0
-        return Int64(v)
-    }
-}
-
-/// Onboarding step 5 "What to install" (and, compact, the add-ons item of What's new): the required parts, ticked
-/// and locked, already installing; the optional ones with what they are for and their size, nothing ticked.
+/// Onboarding step 5 and the compact add-ons card in What's New.
 struct ComponentsChecklist: View {
     var provider: String = "claude"
     var compact = false
@@ -76,6 +68,8 @@ struct ComponentsChecklist: View {
     @ObservedObject var llm = LocalLLM.shared
     @ObservedObject var setup = SetupWindow.model
     @State private var picked: Set<String> = []
+    @State private var submitted = false
+    @State private var installingSelection = false
 
     static let chosenKey = "addonsChosen"
 
@@ -83,14 +77,17 @@ struct ComponentsChecklist: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if !compact { requiredCard }
+            if !compact {
+                requiredCard
+                SetupLoader(model: setup)
+            }
             optionalCard
             HStack(spacing: 12) {
                 Text(summaryLine).font(PN.Font.caption).foregroundStyle(PN.C.text2)
                 Spacer()
                 Button { install() } label: { Text(cta).frame(minWidth: 160) }
                     .buttonStyle(.pnPrimary).keyboardShortcut(compact ? nil : .defaultAction)
-                    .disabled(oc.duringCall && !picked.isEmpty)
+                    .disabled(installingSelection || hasDownloads || (oc.duringCall && !chosen.isEmpty) || (!compact && setup.busy))
             }
             if !compact {
                 Text(L("cl.later")).font(PN.Font.caption).foregroundStyle(PN.C.text3)
@@ -152,17 +149,18 @@ struct ComponentsChecklist: View {
                             }
                         }
                     }
-                    .toggleStyle(.pnCheckbox).disabled(installed || !allowed)
+                    .toggleStyle(.pnCheckbox).disabled(installed || !allowed || submitted || (!compact && !setup.allRequiredOK))
                     Spacer()
                     Text(ComponentCatalog.format(oc.sizes[c.id] ?? ComponentCatalog.estimate(c.id)))
                         .font(PN.Font.caption).foregroundStyle(PN.C.text3).frame(width: 64, alignment: .trailing)
+                    if case .installing = oc.state(c.id) { ComponentAction(id: c.id) }
                 }
                 .padding(.vertical, compact ? 4 : 6)
+                if submitted && picked.contains(c.id) { ComponentStateLine(id: c.id) }
             }
-            if picked.contains("local_model") && !compact {
-                let free = DiskSpace.free
-                Text(L("comp.onb.space", ["free": String(format: "%.0f", Double(free) / 1e9)])).font(PN.Font.caption)
-                    .foregroundStyle(free < 25_000_000_000 ? PN.C.danger : PN.C.onMe).padding(.bottom, 8)
+            if picked.contains("local_model") {
+                Text(L("download.localOllama")).font(PN.Font.caption).foregroundStyle(PN.C.text3)
+                    .fixedSize(horizontal: false, vertical: true).padding(.bottom, 8)
             }
         }
         .padding(.horizontal, compact ? 0 : 16)
@@ -180,22 +178,38 @@ struct ComponentsChecklist: View {
     var chosen: [String] { offered.map(\.id).filter { picked.contains($0) && !oc.isInstalled($0) } }
 
     var summaryLine: String {
-        let s = ComponentCatalog.summary(picked: chosen, sizes: oc.sizes)
+        let s = ComponentCatalog.summary(picked: submitted ? [] : chosen, sizes: oc.sizes)
         let free = ComponentCatalog.format(DiskSpace.free)
         return s.count == 0 ? L("cl.sum.none", ["free": free])
             : L("cl.sum", ["n": "\(s.count)", "size": ComponentCatalog.format(s.bytes), "free": free])
     }
 
+    var hasDownloads: Bool {
+        offered.contains { if case .installing = oc.state($0.id) { return true }; return false }
+    }
+
     var cta: String {
-        let n = chosen.count
-        if compact { return n == 0 ? L("cl.cta.none.compact") : L("cl.cta.compact", ["n": "\(n)", "size": ComponentCatalog.format(ComponentCatalog.summary(picked: chosen, sizes: oc.sizes).bytes)]) }
-        return n == 0 ? L("cl.cta.none") : L("cl.cta", ["n": "\(n)"])
+        if !submitted && !chosen.isEmpty { return L("download.installSelected") }
+        return submitted ? L("download.continue") : L(compact ? "cl.cta.none.compact" : "cl.cta.none")
     }
 
     func install() {
-        for id in ["link_downloader", "local_model", "agent"] where chosen.contains(id) { oc.install(id) }
-        UserDefaults.standard.set(true, forKey: Self.chosenKey)
-        UsageLog.log("addons_chosen", ["n": chosen.count, "where": compact ? "whatsnew" : "onboarding"])
+        if !submitted && !chosen.isEmpty {
+            let ids = chosen
+            submitted = true
+            UserDefaults.standard.set(true, forKey: Self.chosenKey)
+            UsageLog.log("addons_chosen", ["n": ids.count, "where": compact ? "whatsnew" : "onboarding"])
+            installingSelection = true
+            Task {
+                for id in ids { await oc.installAndWait(id) }
+                installingSelection = false
+            }
+            return
+        }
+        if !submitted {
+            UserDefaults.standard.set(true, forKey: Self.chosenKey)
+            UsageLog.log("addons_chosen", ["n": 0, "where": compact ? "whatsnew" : "onboarding"])
+        }
         done()
     }
 }

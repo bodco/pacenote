@@ -4761,5 +4761,21 @@ func callSpeakersB3() {
     expect(!CallSpeakers.notesStale(editedAt: 1500, notesWritten: Date(timeIntervalSince1970: 1600)), "rewrite: notes written again are fresh")
 }
 callSpeakersB3()
+func downloadCancellation() {
+    let first = String(repeating: "a", count: 64)
+    let second = String(repeating: "b", count: 64)
+    let live = "sha256-\(first)"
+    let shared = "sha256-\(second)"
+    let files = [live, live + "-partial", live + "-partial-0", live + "-partial-backup",
+                 shared, shared + "-partial", "sha256-other-partial"]
+    let cleanup = DownloadPlan.ollamaCleanup(files: files, existing: [live + "-partial-0"],
+        digests: ["sha256:\(first)", "sha256:\(second)", "../outside"], referenced: [shared])
+    expect(cleanup == [live, live + "-partial"], "cancel cleans only new, unshared files for the active pull")
+    expect(DownloadPlan.ollamaCleanup(files: files, existing: [], digests: [], referenced: []).isEmpty,
+           "cancel before the first progress event leaves unrelated blobs alone")
+    expect(DownloadPlan.requiresAppleSilicon(["whisper"]), "MLX Whisper requires Apple silicon")
+    expect(!DownloadPlan.requiresAppleSilicon(["localai", "local_model"]), "ONNX and Ollama can run on Intel")
+}
+downloadCancellation()
 print("core checks: \(passed) passed, \(failures) failed")
 exit(failures == 0 ? 0 : 1)

@@ -599,17 +599,19 @@ struct LocalStatus: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
-                if !local.installed {
-                    EmptyView()                              // 0.8.6 (E): the Ollama component row offers Install
+                if let p = local.pulling {
+                    ProgressView(value: local.progress).frame(maxWidth: 160)
+                    Text(p + " · " + local.note).font(PN.Font.caption).foregroundStyle(PN.C.text3)
+                    Button(L(local.stopping ? "download.stopping" : "common.cancel")) { local.cancelPull() }
+                        .buttonStyle(.pnTertiary).disabled(local.stopping)
+                } else if !local.installed {
+                    EmptyView()
                 } else if !local.running {
                     Text(L("local.notRunning")).font(PN.Font.caption).foregroundStyle(PN.C.text3)
                     Spacer()
                     Button(L("local.start")) { local.start() }.buttonStyle(.pnTertiary)
-                } else if let p = local.pulling {
-                    ProgressView(value: local.progress).frame(maxWidth: 160)
-                    Text(p + " · " + local.note).font(PN.Font.caption).foregroundStyle(PN.C.text3)
                 } else if !local.hasSuggested {
-                    Text(local.models.isEmpty ? L("local.noModels") : L("local.ready")).font(PN.Font.caption).foregroundStyle(PN.C.text3)
+                    Text(local.note.isEmpty ? L(local.models.isEmpty ? "local.noModels" : "local.ready") : local.note).font(PN.Font.caption).foregroundStyle(PN.C.text3)
                 } else {
                     Text(local.note.isEmpty ? L("local.ready") : local.note).font(PN.Font.caption).foregroundStyle(PN.C.text3)
                 }

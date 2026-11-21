@@ -20,6 +20,14 @@ final class LocalLLM: ObservableObject {
     @Published private(set) var pulling: String? = nil
     @Published private(set) var progress: Double = 0    // 0...1 while pulling
     @Published private(set) var note = ""
+    @Published private(set) var stopping = false
+    private var pullTask: Task<Void, Never>?
+    private var pullRequest: URLSessionDataTask?
+    private var confirming = false
+
+    private nonisolated static var modelDirectory: URL {
+        URL(fileURLWithPath: ProcessInfo.processInfo.environment["OLLAMA_MODELS"] ?? (NSHomeDirectory() + "/.ollama/models"))
+    }
 
     /// The chosen local model, shared by the preparation and the after-the-call jobs (one key since 0.8.5).
     static var model: String {
@@ -84,44 +92,135 @@ final class LocalLLM: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) { self.refresh() }
     }
 
+    func cancelPull() {
+        guard let pullTask, !stopping else { return }
+        stopping = true
+        note = L("download.stopping")
+        pullTask.cancel()
+        pullRequest?.cancel()
+    }
+
     /// Downloads a model through Ollama with progress; it then shows in every local model list.
-    func install(_ name: String = suggested) {
-        guard pulling == nil else { return }
+    func install(_ name: String = suggested) async {
+        guard pulling == nil, !confirming, !Self.onDisk(name), !models.contains(name), !searchModels.contains(name) else { return }
+        confirming = true
+        defer { confirming = false }
+        let bytes = name == Self.suggested ? ComponentCatalog.estimate("local_model") : nil
+        guard await DownloadPreflight.confirm(steps: ["local_model"], bytes: bytes,
+            free: DiskSpace.free(at: Self.modelDirectory), purpose: L("download.localOllama")) else { return }
+
+        guard !Self.onDisk(name), !models.contains(name), !searchModels.contains(name) else { return }
+        let blobs = Self.modelDirectory.appendingPathComponent("blobs")
+        let fm = FileManager.default
+        let existing = try? Set(fm.contentsOfDirectory(atPath: blobs.path))
+        let baseline = existing ?? (fm.fileExists(atPath: blobs.path) ? nil : [])
         if !running { start() }
-        pulling = name; progress = 0; note = L("local.pull.starting")
+        pulling = name
+        progress = 0
+        note = L("local.pull.starting")
         var req = URLRequest(url: URL(string: Self.url + "/api/pull")!)
         req.httpMethod = "POST"; req.timeoutInterval = 6 * 3600
         req.httpBody = try? JSONSerialization.data(withJSONObject: ["name": name, "stream": true])
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        Task.detached {
-            var err: String? = nil
+
+        let task = Task {
+            var digests = Set<String>()
+            var succeeded = false
+            var problem: String?
             do {
-                // Ollama may need a few seconds to come up after start()
-                var bytes: URLSession.AsyncBytes? = nil
-                for _ in 0..<10 {
-                    if let (b, _) = try? await URLSession.shared.bytes(for: req) { bytes = b; break }
-                    try await Task.sleep(nanoseconds: 1_500_000_000)
+                let bytes = try await Self.pullStream(req)
+                pullRequest = bytes.task
+                defer { bytes.task.cancel(); pullRequest = nil }
+                try Task.checkCancellation()
+                for try await line in bytes.lines {
+                    try Task.checkCancellation()
+                    guard let event = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any] else { continue }
+                    if let error = event["error"] as? String { problem = error; break }
+                    if let digest = event["digest"] as? String { digests.insert(digest) }
+                    let total = (event["total"] as? NSNumber)?.doubleValue ?? 0
+                    let done = (event["completed"] as? NSNumber)?.doubleValue ?? 0
+                    let status = event["status"] as? String ?? ""
+                    if status == "success" { succeeded = true; break }
+                    if total > 0 { progress = min(1, done / total) }
+                    note = total > 0 ? String(format: "%.1f / %.1f GB", done / 1e9, total / 1e9) : status
                 }
-                guard let lines = bytes?.lines else { throw NSError(domain: "ollama", code: 1, userInfo: [NSLocalizedDescriptionKey: "Ollama does not answer"]) }
-                for try await line in lines {
-                    guard let o = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any] else { continue }
-                    if let e = o["error"] as? String { err = e; break }
-                    let total = (o["total"] as? NSNumber)?.doubleValue ?? 0, done = (o["completed"] as? NSNumber)?.doubleValue ?? 0
-                    let status = o["status"] as? String ?? ""
-                    await MainActor.run {
-                        if total > 0 { self.progress = done / total }
-                        self.note = total > 0 ? String(format: "%.1f / %.1f GB", done / 1e9, total / 1e9) : status
-                    }
+            } catch { problem = error.localizedDescription }
+
+            if Task.isCancelled || !succeeded {
+                // Cleanup needs its own task because networking in the cancelled pull task would cancel immediately.
+                let cleaned = await Task {
+                    let deleted = await self.deleteModel(name, attempts: 2, timeout: 5)
+                    guard let baseline else { return false }
+                    let filesRemoved = await Task.detached { Self.cleanBlobs(blobs, existing: baseline, digests: digests) }.value
+                    return deleted && filesRemoved
+                }.value
+                if Task.isCancelled {
+                    note = L(cleaned ? "download.cancelled" : "download.cleanupFailed")
+                } else {
+                    let error = problem ?? L("download.incomplete")
+                    note = L("local.pull.failed", ["err": error])
+                    AnalyticsTracker.shared.error("local_llm", Analytics.errorCode(message: error), provider: "local")
                 }
-            } catch { err = error.localizedDescription }
-            await MainActor.run {
-                self.pulling = nil
-                self.note = err.map { L("local.pull.failed", ["err": $0]) } ?? L("local.pull.done")
-                if err == nil { LocalLLM.model = name }
-                if let err { AnalyticsTracker.shared.error("local_llm", Analytics.errorCode(message: err), provider: "local") }   // S5
-                self.refresh()
+            } else {
+                Self.model = name
+                note = L("local.pull.done")
+            }
+            pulling = nil
+            pullTask = nil
+            stopping = false
+            refresh()
+        }
+        pullTask = task
+        await task.value
+    }
+
+    private static func pullStream(_ request: URLRequest) async throws -> URLSession.AsyncBytes {
+        // Retry connection errors while Ollama is starting, but never start a second accepted pull.
+        for attempt in 0..<10 {
+            try Task.checkCancellation()
+            do {
+                let (bytes, response) = try await URLSession.shared.bytes(for: request)
+                if (response as? HTTPURLResponse)?.statusCode == 200 { return bytes }
+                bytes.task.cancel()
+                throw URLError(.badServerResponse)
+            } catch let error as URLError where error.code == .cannotConnectToHost && attempt < 9 {
+                try await Task.sleep(nanoseconds: 1_500_000_000)
             }
         }
+        throw URLError(.cannotConnectToHost)
+    }
+
+    private nonisolated static func cleanBlobs(_ directory: URL, existing: Set<String>, digests: Set<String>) -> Bool {
+        if digests.isEmpty { return true }
+        let fm = FileManager.default
+        let manifests = directory.deletingLastPathComponent().appendingPathComponent("manifests")
+        var referenced = Set<String>()
+        if fm.fileExists(atPath: manifests.path) {
+            var unreadable = false
+            guard let entries = fm.enumerator(at: manifests, includingPropertiesForKeys: [.isRegularFileKey],
+                                              options: [.skipsHiddenFiles], errorHandler: { _, _ in unreadable = true; return false })
+            else { return false }
+            for case let url as URL in entries {
+                guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey]) else { return false }
+                guard values.isRegularFile == true else { continue }
+                guard let data = try? Data(contentsOf: url),
+                      let manifest = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+                      let layers = manifest["layers"] as? [[String: Any]] else { return false }
+                let entries = layers + [manifest["config"] as? [String: Any] ?? [:]]
+                referenced.formUnion(entries.compactMap { ($0["digest"] as? String)?.replacingOccurrences(of: ":", with: "-") })
+            }
+            if unreadable { return false }
+        }
+        guard let files = try? fm.contentsOfDirectory(atPath: directory.path) else {
+            return !fm.fileExists(atPath: directory.path)
+        }
+        var ok = true
+        for file in DownloadPlan.ollamaCleanup(files: files, existing: existing, digests: digests, referenced: referenced) {
+            let path = directory.appendingPathComponent(file)
+            do { try fm.removeItem(at: path) }
+            catch { if fm.fileExists(atPath: path.path) { ok = false } }
+        }
+        return ok
     }
 
     // MARK: 0.16.0 (D3): size and removal (Settings > Components)
@@ -142,19 +241,25 @@ final class LocalLLM: ObservableObject {
     /// Removes a downloaded model through Ollama (the same as `ollama rm`): starts Ollama if needed, then
     /// DELETE /api/delete. Ollama itself stays: the PM installed it and other apps may use it.
     func remove(_ name: String) async -> Bool {
-        guard pulling == nil else { return false }
+        guard pulling == nil, !confirming else { return false }
         if !running { start() }
+        let ok = await deleteModel(name, attempts: 15, timeout: 120)
+        refresh()
+        return ok
+    }
+
+    private func deleteModel(_ name: String, attempts: Int, timeout: TimeInterval) async -> Bool {
         var req = URLRequest(url: URL(string: Self.url + "/api/delete")!)
-        req.httpMethod = "DELETE"; req.timeoutInterval = 120
+        req.httpMethod = "DELETE"; req.timeoutInterval = timeout
         req.httpBody = try? JSONSerialization.data(withJSONObject: ["model": name, "name": name])
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        for _ in 0..<15 {
+        for attempt in 0..<attempts {
             if let (_, r) = try? await URLSession.shared.data(for: req), let code = (r as? HTTPURLResponse)?.statusCode {
-                if code == 200 { refresh(); return true }
-                if code == 404 { refresh(); return !Self.onDisk(name) }
+                if code == 200 { return true }
+                if code == 404 { return !Self.onDisk(name) }
                 return false
             }
-            try? await Task.sleep(nanoseconds: 2_000_000_000)      // Ollama may need a few seconds to come up
+            if attempt + 1 < attempts { try? await Task.sleep(nanoseconds: 2_000_000_000) }
         }
         return false
     }

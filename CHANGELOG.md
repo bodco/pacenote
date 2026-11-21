@@ -10,6 +10,10 @@ Pacenote. Earlier versions are described in the commit messages and in
   that route, Pacenote switches the saved choice to Gemini API and shows a one-time notice with a link to
   the Gemini key in Settings > AI. The fallback chain keeps the other providers in their existing order.
 
+- **Cancel setup and model downloads.** Pacenote shows the estimated download size and free disk space before
+  installing. Use Cancel during setup, add-on installation, or an Ollama model pull to stop the transfer and
+  clean up partial downloads.
+
 ## 0.26.4 (2026-11-20)
 
 - **A new organization project includes the person who made it (2026-11-20):** in New project > start a new
