@@ -11,6 +11,11 @@ Pacenote. Earlier versions are described in the commit messages and in
   call, else the dominant language of the call, never the interface language. A call in another language (Polish,
   German...) gets the text in it with English headings and labels. Notes already written are not changed. The tips
   window no longer falls back to the interface language when the call has no language set.
+- **Output language on the call page (PB-32, FB2):** a call with two or three languages (each at least 10% of the
+  call) shows an Output language menu and a Regenerate button under the status lines. Choosing a language only
+  remembers it for this call. Regenerate writes the notes, Summary, Recap, the Notion text and an existing follow-up
+  draft again in that language (it asks first for a call over one hour), and a line says which language each text
+  was written in and which is out of date. A one-language call shows nothing.
 - Follow-up email drafts use the call's output language. If the project's client language differs, the Follow-up
   tab and inspector offer that language before the first draft. Write again asks before replacing the draft.
   A draft intentionally written in the client's language stays current when the call’s output language changes.
