@@ -4756,5 +4756,59 @@ func callSpeakersB3() {
     expect(!CallSpeakers.notesStale(editedAt: 1500, notesWritten: Date(timeIntervalSince1970: 1600)), "rewrite: notes written again are fresh")
 }
 callSpeakersB3()
+
+/// PB-32 S1 (FB2, D56, rules/output_language.yaml): the output language resolver gives the same answers as the Python one
+/// on the shared fixture table (Fixtures/output_language_cases.json); the per-call sidecar.
+func outputLanguageS1() {
+    let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        .deletingLastPathComponent().appendingPathComponent("Fixtures/output_language_cases.json")
+    guard let data = try? Data(contentsOf: url), let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+        expect(false, "outlang: fixture table not found"); return
+    }
+    func rows(_ k: String) -> [[String: Any]] { (root[k] as? [[String: Any]]) ?? [] }
+    func str(_ v: Any?) -> String? { v as? String }
+    func list(_ v: Any?) -> [String] { (v as? [Any])?.compactMap { $0 as? String } ?? [] }
+    expect(rows("resolve").count >= 10 && rows("adapter").count >= 10, "outlang: the table is read")
+    for c in rows("resolve") {
+        let i = c["input"] as? [String: Any] ?? [:]
+        expect(CallLanguage.resolve(explicit: str(i["explicit"]), dominant: str(i["dominant"]), startLangs: list(i["start_langs"]),
+                                    clientLanguage: str(i["client_language"]) ?? "", settings: str(i["settings"]) ?? "") == str(c["expect"]),
+               "outlang resolve: \(c["name"] ?? "")")
+    }
+    for c in rows("hint") { expect(CallLanguage.hint(fromClientLanguage: str(c["text"])) == str(c["expect"]), "outlang hint: \(c["text"] ?? "")") }
+    for c in rows("adapter") {
+        let sp = CallLanguage.spoken(transcript: str(c["transcript"]) ?? "", meta: c["meta"] as? [String: Any])
+        expect(sp.dominant == str(c["dominant"]) && sp.languages() == list(c["languages"]), "outlang adapter: \(c["name"] ?? "")")
+    }
+    for c in rows("toggle") {
+        let sp = CallLanguage.spoken(transcript: str(c["transcript"]) ?? "", meta: c["meta"] as? [String: Any])
+        expect(CallLanguage.toggleLanguages(sp, startLangs: list(c["start_langs"]), afterCall: (c["after_call"] as? Bool) ?? true) == list(c["expect"]),
+               "outlang toggle: \(c["name"] ?? "")")
+    }
+    for c in rows("stale") {
+        let w = (c["artifacts"] as? [String: String]) ?? [:]
+        expect(CallLanguage.staleArtifacts(w, outputLanguage: str(c["output"])) == list(c["expect"]), "outlang stale: \(c["artifacts"] ?? "")")
+    }
+    expect(CallLanguage.name("uk") == "Ukrainian" && CallLanguage.name("sv") == "sv" && CallLanguage.name(nil) == "English", "outlang: names")
+    expect(!CallLanguage.isMulti(["uk"]) && CallLanguage.isMulti(["uk", "en"]), "outlang: one language shows no control")
+
+    // the sidecar: absent = nothing chosen, round trip in .work/, a half-written file is nothing
+    let base = NSTemporaryDirectory() + "outlang-\(UUID().uuidString)"
+    let dir = base + "/live/2026-11-21-sync"
+    try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(atPath: base) }
+    let t = dir + "/2026-11-21-1000-sync.app.md"
+    expect(CallLanguage.readSidecar(transcript: t) == CallLanguage.Sidecar(), "outlang sidecar: absent")
+    CallLanguage.writeSidecar(transcript: t, artifact: "notes", writtenIn: "uk")
+    CallLanguage.writeSidecar(transcript: t, outputLanguage: "EN")
+    CallLanguage.writeSidecar(transcript: t, outputLanguage: "auto", artifact: "nope", writtenIn: "uk")
+    let s = CallLanguage.readSidecar(transcript: t)
+    expect(s == CallLanguage.Sidecar(outputLanguage: "en", setBy: "user", artifacts: ["notes": "uk"]), "outlang sidecar: round trip keeps fields")
+    expect(CallLanguage.sidecarPath(transcript: t).hasSuffix("/.work/2026-11-21-1000-sync.app.outlang.json"), "outlang sidecar: in .work")
+    expect(CallLanguage.outputLanguage(transcript: t, text: "", meta: ["dominant_language": "uk"]) == "en", "outlang: the explicit choice wins")
+    try? "{".write(toFile: CallLanguage.sidecarPath(transcript: t), atomically: true, encoding: .utf8)
+    expect(CallLanguage.readSidecar(transcript: t) == CallLanguage.Sidecar(), "outlang sidecar: half-written is nothing")
+}
+outputLanguageS1()
 print("core checks: \(passed) passed, \(failures) failed")
 exit(failures == 0 ? 0 : 1)
