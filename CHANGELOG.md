@@ -3,6 +3,11 @@
 Pacenote. Earlier versions are described in the commit messages and in
 [docs/en/live-tips.md](docs/en/live-tips.md), section 14.
 
+## Unreleased
+
+- Follow-up email drafts use the call's output language. If the project's client language differs, the Follow-up
+  tab offers that language once per call while the app is open.
+
 ## 0.26.4 (2026-11-20)
 
 - **A new organization project includes the person who made it (2026-11-20):** in New project > start a new

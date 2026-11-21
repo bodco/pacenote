@@ -196,7 +196,7 @@ struct CallPageView: View {
                     fromRow(L("followup.from.notes"), "")
                     fromRow(L("page.tab.decisions"), "\(decisions(o).count)")
                     fromRow(L("followup.from.onYou"), "\(items.filter { $0.mine && $0.status != "done" }.count)")
-                    fromRow(L("followup.from.lang"), L("followup.from.langValue", ["lang": langName]))
+                    fromRow(L("followup.from.lang"), langName)
                 }
                 Text(L("followup.shortcut")).font(t.homeText(13)).foregroundStyle(PN.C.text3).fixedSize(horizontal: false, vertical: true)
             }
@@ -1726,7 +1726,7 @@ struct TranscriptView: View {
 
 // MARK: - Follow-up email
 
-/// Idea 04 (rules/followup.yaml): a draft in the client's language to edit, Copy or Open in Mail. Nothing is sent.
+/// Idea 04 (rules/followup.yaml): a draft in the call's output language to edit, Copy or Open in Mail. Nothing is sent.
 /// 0.8.7 (A3): the follow-up email is the call page's right panel, not a window.
 @MainActor
 enum FollowUpWindow {
@@ -1736,12 +1736,9 @@ enum FollowUpWindow {
         HomeNav.shared.followUp = file
     }
 
-    /// The client's language from the project config ("English", "Spanish", ...), English when it is not set.
     static func language(of file: String) -> String {
-        let l = (PyTool.project(of: file).project?.clientLanguage ?? "").lowercased()
-        for (k, v) in [("ukrain", "uk"), ("україн", "uk"), ("spanish", "es"), ("español", "es"), ("german", "de"), ("deutsch", "de"),
-                       ("french", "fr"), ("polish", "pl")] where l.hasPrefix(k) { return v }
-        return "en"
+        let text = (try? String(contentsOfFile: file, encoding: .utf8)) ?? ""
+        return CallLanguage.outputLanguage(transcript: file, text: text)
     }
 }
 
@@ -1751,6 +1748,8 @@ struct FollowUpView: View {
     var page = false
     @ObservedObject var model: FollowUpModel
     @State private var instruction = ""
+    @State private var offeredLanguage: String?
+    @State private var showLanguageOffer = false
     @Environment(\.pnTheme) private var t
 
     init(file: String, page: Bool = false) { self.file = file; self.page = page; self.model = FollowUpModel.of(file) }
@@ -1798,7 +1797,27 @@ struct FollowUpView: View {
                 .padding(.top, 4)
             }
         }
-        .onAppear { if model.body.isEmpty && !model.busy && model.error.isEmpty { model.write() } }
+        .onAppear {
+            guard !model.busy else { return }
+            if let language = model.languageOffer {
+                offeredLanguage = language
+                showLanguageOffer = true
+            } else if model.body.isEmpty && model.error.isEmpty {
+                model.write()
+            }
+        }
+        .onChange(of: model.busy) { _, busy in
+            if !busy, let language = model.languageOffer {
+                offeredLanguage = language
+                showLanguageOffer = true
+            }
+        }
+        .alert(L("followup.languageOffer", ["lang": offeredLanguage.map { code in
+            Locale(identifier: L10n.lang).localizedString(forLanguageCode: code) ?? code
+        } ?? ""]), isPresented: $showLanguageOffer) {
+            Button(L("followup.useClientLanguage")) { model.answerLanguageOffer(offeredLanguage) }
+            Button(L("followup.keepOutputLanguage"), role: .cancel) { model.answerLanguageOffer(nil) }
+        }
         .onDisappear { model.logHandEdits() }
     }
 
