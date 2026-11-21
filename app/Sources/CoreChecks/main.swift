@@ -4770,7 +4770,11 @@ func downloadCancellation() {
                  shared, shared + "-partial", "sha256-other-partial"]
     let cleanup = DownloadPlan.ollamaCleanup(files: files, existing: [live + "-partial-0"],
         digests: ["sha256:\(first)", "sha256:\(second)", "../outside"], referenced: [shared])
-    expect(cleanup == [live, live + "-partial"], "cancel cleans only new, unshared files for the active pull")
+    expect(cleanup == [live, live + "-partial", live + "-partial-0"],
+           "cancel cleans new blobs and partials from earlier attempts for the active pull")
+    expect(DownloadPlan.ollamaCleanup(files: files, existing: [live, live + "-partial", live + "-partial-0"],
+        digests: ["sha256:\(first)"], referenced: []) == [live + "-partial", live + "-partial-0"],
+        "cancel preserves complete blobs present at the start and removes matching partials")
     expect(DownloadPlan.ollamaCleanup(files: files, existing: [], digests: [], referenced: []).isEmpty,
            "cancel before the first progress event leaves unrelated blobs alone")
     expect(DownloadPlan.requiresAppleSilicon(["whisper"]), "MLX Whisper requires Apple silicon")

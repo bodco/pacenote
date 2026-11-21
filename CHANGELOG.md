@@ -13,6 +13,7 @@ Pacenote. Earlier versions are described in the commit messages and in
 - **Cancel setup and model downloads.** Pacenote shows the estimated download size and free disk space before
   installing. Use Cancel during setup, add-on installation, or an Ollama model pull to stop the transfer and
   clean up partial downloads. If an Ollama pull fails, Retry resumes from the partial files Ollama saved.
+  Cancelling a retry also removes partial files saved by earlier attempts for that pull.
 
 ## 0.26.4 (2026-11-20)
 

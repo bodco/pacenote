@@ -29,10 +29,9 @@ public enum DownloadPlan {
         }).subtracting(referenced)
 
         return files.filter { file in
-            guard !existing.contains(file) else { return false }
             let parts = file.components(separatedBy: "-partial")
             guard let blob = parts.first, blobs.contains(blob) else { return false }
-            if parts.count == 1 { return true }
+            if parts.count == 1 { return !existing.contains(file) }
             guard parts.count == 2, let suffix = parts.last else { return false }
             return suffix.isEmpty || (suffix.hasPrefix("-") && (Int(suffix.dropFirst()) ?? -1) >= 0)
         }
