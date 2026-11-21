@@ -88,14 +88,23 @@ def test_dominant_language_from_seconds_of_speech_after_warmup(T):
 
 # ---- en with a bit of French ------------------------------------------------------------------------------------
 
-def test_french_on_an_english_call_is_decoded_in_english_and_marked(T):
-    w = make(T, ["en"], says={"en": "I would like a coffee please"}, probs={})
-    text, lang, tf = w.decode(AUDIO, "en", None, "en", "fr")
-    assert (text, lang, tf) == ("I would like a coffee please", "en", "fr")
-    assert w.mlx_whisper.calls == ["en"]                           # forced, never autodetected
-    w = make(T, ["uk", "en"], probs={"uk": 0.05, "en": 0.15, "fr": 0.7})
+def test_french_on_a_several_language_call_is_decoded_in_the_main_language_and_marked(T):
+    w = make(T, ["uk", "en"], says={"en": "I would like a coffee please", "uk": "Я хотів би каву"},
+             probs={"uk": 0.05, "en": 0.15, "fr": 0.7})
     assert w.choose(AUDIO, None, "en") == ("en", None, "fr")       # outside the set: the main language, French reported
     assert w.choose(AUDIO, None, "uk") == ("uk", None, "fr")
+    lang, heard, foreign = w.choose(AUDIO, None, "en")             # the real choose() -> decode() sequence
+    assert w.decode(AUDIO, lang, None, "en", foreign) == ("I would like a coffee please", "en", "fr")
+    assert w.mlx_whisper.calls == ["en"]                           # forced, never autodetected
+
+
+def test_french_on_a_one_language_call_is_forced_and_not_marked(T):
+    # D56: a one-language call is forced, no autodetect, so there is no source-language evidence and no marker
+    w = make(T, ["en"], says={"en": "Je voudrais un cafe"}, probs={"fr": 0.9})
+    lang, heard, foreign = w.choose(AUDIO)
+    assert (lang, heard, foreign) == ("en", "en", None)
+    assert w.decode(AUDIO, lang, None, "en", foreign) == ("Je voudrais un cafe", "en", None)
+    assert w.mlx_whisper.calls == ["en"]
 
 
 def test_unclear_detection_is_not_a_foreign_language(T):
@@ -130,14 +139,27 @@ def test_russian_check(T):
     assert not T.is_russian("Так, давайте почнемо")
 
 
-def test_russian_that_survives_the_main_language_is_marked(T):
+def test_russian_on_the_first_main_language_decode_is_retried_once_then_marked(T):
     w = make(T, ["uk"], says={"uk": "Это очень хорошо"})
     assert w.decode(AUDIO, "uk", None, "uk")[2] == "ru"
+    assert w.mlx_whisper.calls == ["uk", "uk"]                     # one retry in the main language, then the marker
+    w = make(T, ["uk"], says={})
+    seq = iter(["Это очень хорошо", "Це дуже добре"])
+    w.mlx_whisper.transcribe = lambda *a, **k: {"language": "uk", "segments": [{
+        "text": next(seq), "no_speech_prob": 0.01, "avg_logprob": -0.2, "compression_ratio": 1.0}]}
+    assert w.decode(AUDIO, "uk", None, "uk") == ("Це дуже добре", "uk", "ru")   # the retry fixed the text; the source stays marked
 
 
-def test_russian_as_detected_language_uses_the_ukrainian_of_the_set(T):
+def test_russian_as_detected_language(T):
     w = make(T, ["uk", "en"], probs={"uk": 0.2, "en": 0.05, "ru": 0.7})
-    assert w.choose(AUDIO, None, "en") == ("uk", None, None)       # Ukrainian heard as ru: not a translation
+    assert w.choose(AUDIO, None, "uk") == ("uk", None, None)       # Ukrainian main, heard as ru: not a translation
+    assert w.choose(AUDIO, None, "en") == ("en", None, "ru")       # English main: the retry is in English, source kept
+
+
+def test_short_russian_replies_are_russian(T):
+    for t in ("Пока.", "Хорошо.", "Ладно"):
+        assert T.is_russian(t)
+    assert not T.is_russian("Добре.") and not T.is_russian("Поки.") and not T.is_russian("Уже.")
 
 
 # ---- silence stop-phrases ---------------------------------------------------------------------------------------
@@ -149,8 +171,11 @@ def test_stop_phrase_on_near_silence_is_dropped_but_not_in_a_normal_voice(T):
     assert not T.silence_stop("Дякую за перегляд!", 1.2, 0.05, cfg)         # normal voice
     assert not T.silence_stop("Дякую за перегляд!", 6.0, 0.002, cfg)        # long: not a hallucination of this kind
     assert not T.silence_stop("Дякую за вашу відповідь", 1.2, 0.002, cfg)   # not a stop-phrase
-    for reply in ("Так.", "Thanks.", "Okay", "Добре", "Дякую", "Bye"):      # ordinary replies are never stop-phrases
+    for reply in ("Так.", "Okay", "Добре", "Yes, sure", "Дякую, до зустрічі"):   # ordinary replies are never stop-phrases
         assert not T.silence_stop(reply, 0.6, 0.001, cfg)
+    for hallucination in ("Дякую.", "Bye.", "Thank you."):                  # only on near-silence
+        assert T.silence_stop(hallucination, 0.6, 0.001, cfg)
+        assert not T.silence_stop(hallucination, 0.6, 0.05, cfg)
 
 
 def padded(T, voice_rms, voiced_s=0.6, pad_s=1.5):
@@ -219,3 +244,93 @@ def test_line_record_has_the_translated_from_field_and_the_transcript_format_is_
     w._write(ln)
     row = (tmp_path / "c.md").read_text(encoding="utf-8").strip()
     assert row.endswith("Співрозмовник (uk): Привіт")              # old readers (LINE_RE: two-letter tag) still match
+
+
+# ---- the recorder path: asr_segment() = choose -> decode -> clean_text -> silence filter -> language share ----------
+
+class Scripted:
+    """The real Whisper.choose()/decode() on a fake mlx_whisper, wrapped so the path is the production one."""
+
+    def __init__(self, T, langs, says, probs):
+        self.w = make(T, langs, says, probs)
+
+    def __getattr__(self, name):
+        return getattr(self.w, name)
+
+
+def seg_of(T, rms, seconds=1.0, channel="them"):
+    audio = np.full(int(seconds * T.SR), rms, dtype=np.float32)
+    return T.Segment(channel, 1000.0, 1000.0 + seconds, audio, seconds, rms)
+
+
+def run(T, w, seg, langs=("uk", "en"), last="uk", dominant=None, me_langs=()):
+    cfg = dict(T.DEFAULTS, langs=list(langs), me_langs=list(me_langs))
+    share = T.LangShare(list(langs), warmup_s=0.0)
+    if dominant:
+        share.add(dominant, 100.0)
+        share.t0 = 0.0
+    res = T.asr_segment(w, seg, cfg, share, {"me": last, "them": last}, None, set())
+    return res, share
+
+
+def test_voiced_short_replies_survive_the_whole_cleanup_and_near_silent_ones_do_not(T):
+    for reply in ("Дякую.", "Bye.", "Thank you for watching.", "Thank you."):
+        w = make(T, ["uk"], says={"uk": reply})
+        res, _ = run(T, w, seg_of(T, 0.05), langs=["uk"])           # a normal voice: kept
+        assert res is not None and res[0] == reply
+        res, _ = run(T, make(T, ["uk"], says={"uk": reply}), seg_of(T, 0.002), langs=["uk"])
+        assert res is None                                           # near-silence: the Whisper stop-phrase
+
+
+def test_short_english_reply_after_a_ukrainian_line_stays_english_and_counts_as_english(T):
+    w = make(T, ["uk", "en"], says={"en": "Sure, go ahead", "uk": "Звісно, продовжуйте"},
+             probs={"uk": 0.05, "en": 0.9})
+    res, share = run(T, w, seg_of(T, 0.05, 1.0), last="uk")
+    assert res == ("Sure, go ahead", "en", None)
+    assert share.secs == {"en": 1.0}
+
+
+def test_short_unclear_segment_keeps_the_previous_language_and_does_not_count_as_evidence(T):
+    w = make(T, ["uk", "en"], says={"uk": "Так, добре", "en": "Yes"}, probs={"uk": 0.4, "en": 0.45})
+    res, share = run(T, w, seg_of(T, 0.05, 1.0), last="uk")
+    assert res == ("Так, добре", "uk", None)
+    # the decode was forced to the previous language; the detector evidence (uk, unclear) is what is credited
+    w = make(T, ["uk", "en"], says={"en": "Yes"}, probs={"uk": 0.4, "en": 0.45})
+    res, _ = run(T, w, seg_of(T, 0.05, 1.0), last="en")
+    assert res == ("Yes", "en", None)
+
+
+def test_short_segment_without_a_detector_keeps_the_previous_language_without_crediting_it(T):
+    w = make(T, ["uk", "en"], says={"uk": "Так, добре"}, probs=None)
+    res, share = run(T, w, seg_of(T, 0.05, 1.0), last="uk")
+    assert res == ("Так, добре", "uk", None) and share.secs == {}
+
+
+def test_french_on_a_several_language_call_through_the_recorder_path(T):
+    w = make(T, ["uk", "en"], says={"en": "I would like a coffee please"}, probs={"uk": 0.05, "en": 0.15, "fr": 0.7})
+    res, share = run(T, w, seg_of(T, 0.05, 3.0), dominant="en")
+    assert res == ("I would like a coffee please", "en", "fr")
+    assert share.secs == {"en": 100.0}                              # a French line is not credited to English
+
+
+def test_russian_with_english_dominant_is_retried_in_english_and_marked(T):
+    w = make(T, ["uk", "en"], says={"en": "That is very good, thanks", "uk": "Це дуже добре"},
+             probs={"uk": 0.2, "en": 0.05, "ru": 0.7})
+    res, _ = run(T, w, seg_of(T, 0.05, 3.0), dominant="en")
+    assert res == ("That is very good, thanks", "en", "ru")
+    assert w.mlx_whisper.calls == ["en"]                            # the dominant language, not the first Cyrillic one
+
+
+def test_russian_text_on_the_first_dominant_decode_is_retried_then_marked(T):
+    w = make(T, ["uk", "en"], says={"uk": "Это очень хорошо"}, probs={"uk": 0.9, "en": 0.05})
+    res, share = run(T, w, seg_of(T, 0.05, 3.0))
+    assert res == ("Это очень хорошо", "uk", "ru")
+    assert w.mlx_whisper.calls == ["uk", "uk"]
+    assert share.secs == {}                                         # marked lines are not language evidence
+
+
+def test_short_russian_replies_through_the_recorder_path(T):
+    for reply in ("Пока.", "Хорошо."):
+        w = make(T, ["uk", "en"], says={"uk": reply}, probs={"uk": 0.9, "en": 0.05})
+        res, _ = run(T, w, seg_of(T, 0.05, 1.0))
+        assert res[2] == "ru" and w.mlx_whisper.calls == ["uk", "uk"]

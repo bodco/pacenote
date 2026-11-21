@@ -3257,9 +3257,13 @@ address", `references/sweep.md`, `references/presentation.md`).
    short and forced-language lines included, counted after the first minute; before that the first of the set), not simply the first in the list. A language
    outside the set (say French on an Ukrainian + English call) is written in the main language, and Russian is
    never written (the line is redone in the main language); such a line is marked `translated_from` in the call's
-   `.timing.jsonl`, the transcript line format stays the same. Whisper's stop-phrases on silence ("Thank you for watching",
+   `.timing.jsonl`, the transcript line format stays the same. A short line after a line in another language is
+   written in the language the detector hears; only when it is unsure does it keep the previous language, and only
+   what was heard (not a forced choice) counts towards the main language. Russian (also a short "Пока.") is redone once in the main
+   language, even when that is English, and then marked. On a one-language call the language is forced with no
+   detection, so a foreign phrase is written as that language heard it and carries no `translated_from` marker. Whisper's stop-phrases on silence ("Thank you for watching",
    "Дякую за перегляд!") are dropped when the line is short and its speech is near-silent (`silence_stop_phrases` in
-   `rules/asr_filters.yaml`); ordinary short replies such as "Thanks" or "Так" are never dropped. There is no translation model yet: a line still in a foreign script is only marked.
+   `rules/asr_filters.yaml`, which also lists "Thank you", "Bye", "Дякую"); the same words in a normal voice ("Thanks", "Bye", "Так") are kept. There is no translation model yet: a line still in a foreign script is only marked.
 53. **Planned at 0.5.8, built since.** Calendars (0.6.6, section 14.1c), the offer to start tips when a call
    app takes the microphone (0.8, section 14.1d) and call notes in the project folder after every call, also
    without Notion (0.8.5, section 14.2). Pacenote never starts recording by itself.

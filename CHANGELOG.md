@@ -10,8 +10,9 @@ Pacenote. Earlier versions are described in the commit messages and in
   languages, each line is written in the language spoken; the main one is the language spoken most so far (after the
   first minute of the call), not the first in the list. A language outside the set is written in the main language
   and the line is marked `translated_from` in the call's `.timing.jsonl`; Russian is never written (redone in the
-  main language). Whisper's stop-phrases on silence ("Дякую за перегляд!", "Thank you for watching") are dropped when
-  the line is short and its speech is near-silent; ordinary short replies ("Так", "Thanks") are never dropped. The transcript line format is unchanged. Rules: `rules/asr_filters.yaml`.
+  main language, also a short "Пока."; even when English is the main one). A short reply in another language keeps
+  its own language. On a one-language call the language is forced (no detection), so no marker. Whisper's stop-phrases on silence ("Дякую за перегляд!", "Thank you for watching", "Bye") are dropped when
+  the line is short and its speech is near-silent; the same words in a normal voice are kept. The transcript line format is unchanged. Rules: `rules/asr_filters.yaml`.
 
 ## 0.26.4 (2026-11-20)
 

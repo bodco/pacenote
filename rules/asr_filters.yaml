@@ -25,3 +25,7 @@ silence_stop_phrases:
   - "subtitles by"
   - "thanks for watching"
   - "thank you for watching"
+  - "thank you"
+  - "thanks"
+  - "bye"
+  - "дякую"
