@@ -241,6 +241,13 @@ final class PrepRunner: ObservableObject {
         return c.filter(has).max { newest($0) < newest($1) }
     }
 
+    /// PB-32 (FB2, D56): the language of a brief or Sheet is the call language (the first language of Start call, else the
+    /// transcription language of Settings, else English), never the interface language.
+    static func outputLanguage(_ callLanguages: [String], explicit: String? = nil) -> String {
+        let own = AppConfig.load(from: AppPaths.config).callLanguage.split(separator: "+").first.map(String.init) ?? ""
+        return CallLanguage.resolve(explicit: explicit, startLangs: callLanguages, settings: own)
+    }
+
     struct Request {
         var title: String
         var date: Date
@@ -609,7 +616,7 @@ final class PrepRunner: ObservableObject {
             "config": r.config, "audience": r.audience, "call_type": r.callType, "languages": r.languages, "context": r.context,
             "files": r.folders.filter { !StartCallModel.isDir($0) }, "folders": r.folders.filter { StartCallModel.isDir($0) },
             "live": live, "notion": notion, "skill": skill, "base": base, "lt": [c.engine.python, lt], "model": runModel,
-            "url": Self.ollamaURL, "use_project_folder": r.useProjectFolder, "brief_lang": L10n.lang,
+            "url": Self.ollamaURL, "use_project_folder": r.useProjectFolder, "brief_lang": Self.outputLanguage(r.languages),
             "openai_model": c.ai.openaiPrep, "gemini_model": c.ai.geminiPrep, "agy_model": c.ai.agyPrep]
         if r.deck?.info != nil, FileManager.default.fileExists(atPath: CallLayout.sidecar(base, ".deck.json")) {
             req["deck"] = CallLayout.sidecar(base, ".deck.json")
@@ -638,7 +645,7 @@ final class PrepRunner: ObservableObject {
             if let pa = pa, paVerify {
                 let req = PrepAgent.verifyRequest(pa, base: base, root: r.root, extra: extraDirs, lt: [c.engine.python, lt], claude: exe,
                                                   route: route, stateDir: stateDir, python: c.engine.sidecarPython,
-                                                  engineDir: c.engine.sidecarDir, lang: L10n.lang)
+                                                  engineDir: c.engine.sidecarDir, lang: Self.outputLanguage(r.languages))
                 let reqPath = (stateDir as NSString).appendingPathComponent("prepverify-request.json")
                 if let d = try? JSONSerialization.data(withJSONObject: req) { try? d.write(to: URL(fileURLWithPath: reqPath)) }
                 digestEnv["LT_VERIFY"] = reqPath

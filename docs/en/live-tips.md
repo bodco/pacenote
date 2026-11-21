@@ -2227,6 +2227,10 @@ the call, best outcome, red lines, structure and roles, and more), and every fac
 replaces the brief: every call type except Transcript is prepared this way, and the tips during the call are built
 from the sheet. A brief made before 0.10.0 stays readable on its call's page, marked "Prepared before Meeting Sheet".
 
+**Language.** The sheet and the brief are written in the call language: the first language chosen in Start call, not
+the interface language. There is no language field for a one-language call. For a call with two or three languages,
+step 1 shows **Output language** with those languages; the choice applies to this call only.
+
 The upcoming call's page has the tabs **Setup**, **Meeting Sheet**, **Readiness**, **Sources**, **Versions**,
 **Tasks** and **Earlier**. The header shows the readiness pill and the buttons for the state: Get ready and Start
 without prep before a sheet exists; Start call, Refresh and Export once it does; Building N% and Stop while it builds.

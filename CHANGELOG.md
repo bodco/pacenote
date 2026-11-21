@@ -14,6 +14,11 @@ Pacenote. Earlier versions are described in the commit messages and in
 - Follow-up email drafts use the call's output language. If the project's client language differs, the Follow-up
   tab and inspector offer that language before the first draft. Write again asks before replacing the draft.
   A draft intentionally written in the client's language stays current when the call’s output language changes.
+- **The Meeting Sheet and the brief are written in the call language (2026-11-21, PB-32 S4):** the Sheet, Quick and
+  Expert prep and the brief no longer follow the interface language or a remembered Sheet language. They use the first
+  language chosen in Start call (else the Settings transcription language, else English). The "Sheet language" field is
+  gone for a one-language call; a call with two or three languages shows **Output language** (only those languages,
+  this call only). A Sheet or brief can now be written in any language of Start call, not only English and Ukrainian.
 
 ## 0.26.4 (2026-11-20)
 

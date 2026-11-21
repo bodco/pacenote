@@ -45,9 +45,9 @@ class Preparation:
     def contents(self):
         request = self.request
         codes = request.get("languages") or ["uk"]
-        language = prep.LANGS.get(codes[0], codes[0])
-        brief_language = prep.LANGS.get(request.get("brief_lang") or "uk", "Ukrainian")
-        languages = ", ".join(prep.LANGS.get(code, code) for code in codes)
+        language = prep.lang_name(codes[0])
+        brief_language = prep.lang_name(request.get("brief_lang") or "uk")
+        languages = ", ".join(prep.lang_name(code) for code in codes)
         prep.say(stage="pack")
         pack, sources, self.manifest, self.summary = prep.build_pack_ex(request, route=self.route)
         call = "Call: %s; when: %s; project: %s; audience: %s; type: %s; languages: %s" % (
@@ -100,7 +100,7 @@ class Preparation:
         from . import prepcontext
         request = self.request
         codes = request.get("languages") or ["uk"]
-        system = prep.SLIDES_SYS.format(CALL_LANG=prep.LANGS.get(codes[0], codes[0])) + prep.talk_rules(request.get("skill"))
+        system = prep.SLIDES_SYS.format(CALL_LANG=prep.lang_name(codes[0])) + prep.talk_rules(request.get("skill"))
         material = self.slides_material(brief)
         try:
             nums = [int(s.get("n")) for s in json.loads(Path(request["deck"]).read_text(encoding="utf-8")).get("slides", [])

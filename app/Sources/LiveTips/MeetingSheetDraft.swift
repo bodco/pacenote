@@ -62,7 +62,12 @@ final class SheetDraft: ObservableObject {
     @Published var candidateNote = ""
     @Published var goal = ""
     @Published var special = ""
-    @Published var language = "en"
+    /// PB-32 (FB2, D56): the PM's choice for this call, only for a call with two or three languages; never remembered.
+    @Published var outputLanguage: String?
+    /// The language the Sheet is written in: the choice, else the call language (not the interface language, not the series).
+    var language: String { PrepRunner.outputLanguage(callLanguages, explicit: outputLanguage) }
+    var callLanguages: [String] { CallLanguage.toggleLanguages(nil, startLangs: model.language.split(separator: "+").map(String.init), afterCall: false) }
+    var isMultiLanguage: Bool { CallLanguage.isMulti(callLanguages) }
     @Published var route = SheetRoutes.preferred
     @Published var remind = SheetPrefs.shared.remindMinutes
     @Published var withEvent = true
@@ -93,7 +98,6 @@ final class SheetDraft: ObservableObject {
         let preset = lib.preset(presetID)
         mode = mem.map { SheetMode(rawValue: $0.mode) } ?? SheetPrefs.shared.mode(for: model, preset: preset)
         if let r = mem?.route, !r.isEmpty { route = r }
-        language = mem?.language ?? (model.language.hasPrefix("uk") && model.audience != "client" ? "uk" : "en")
         applyPreset(presetID)
         goal = Self.goalLine(model.cleanContext)
         // 0.14.0 (D1 smoke): an internal call has no other side; a team member is found under any spelling
@@ -439,7 +443,7 @@ final class SheetDraft: ObservableObject {
             if let u = s.uri { d["uri"] = u }
             return d
         }
-        SheetSeriesMemory.shared.remember(model, .init(preset: presetID, mode: mode.rawValue, route: route, sources: keep, language: language, savedAt: Date()))
+        SheetSeriesMemory.shared.remember(model, .init(preset: presetID, mode: mode.rawValue, route: route, sources: keep, language: nil, savedAt: Date()))
         return nil
     }
 

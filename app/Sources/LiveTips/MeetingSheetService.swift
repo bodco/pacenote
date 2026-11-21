@@ -546,7 +546,7 @@ final class SheetLibrary: ObservableObject {
 @MainActor
 final class SheetSeriesMemory {
     static let shared = SheetSeriesMemory()
-    struct Entry: Codable { var preset: String; var mode: String; var route: String; var sources: [[String: String]]; var language: String; var savedAt: Date }
+    struct Entry: Codable { var preset: String; var mode: String; var route: String; var sources: [[String: String]]; var language: String?; var savedAt: Date }
     private var map: [String: Entry] = [:]
     private var path: URL { AppPaths.support.appendingPathComponent("sheet-series.json") }
 

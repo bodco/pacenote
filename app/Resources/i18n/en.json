@@ -2643,7 +2643,7 @@
  "sheet.ui.s1.goalPh": "Agree on a discovery call and learn the budget window.",
  "sheet.ui.s1.kind": "What kind of meeting is it?",
  "sheet.ui.s1.kindSub": "A preset only sets the starting blocks. You change them on the next step.",
- "sheet.ui.s1.language": "Sheet language",
+ "sheet.ui.s1.language": "Output language",
  "sheet.ui.s1.myPresets": "My presets",
  "sheet.ui.s1.name": "Meeting name",
  "sheet.ui.s1.ours": "Our side",

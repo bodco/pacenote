@@ -70,6 +70,17 @@ def test_brief_and_call_languages(call_request, language):
     assert expected in provider.calls[0]["user"]
 
 
+@pytest.mark.parametrize("code,name", [("fr", "French"), ("it", "Italian")])
+def test_packed_routes_name_the_new_call_languages(call_request, code, name):
+    call_request["brief_lang"] = code
+    call_request["languages"] = [code]
+    provider = Provider()
+    codexprep.Preparation(call_request, provider).contents()
+    assert "else in " + name + ";" in provider.calls[0]["system"][0]["text"]
+    assert "Ukrainian" not in provider.calls[0]["system"][0]["text"]
+    assert name in provider.calls[0]["user"]
+
+
 @pytest.mark.parametrize("error", [None, "Codex: usage limit reached"])
 def test_cli_reports_success_and_failure(call_request, monkeypatch, tmp_path, capsys, error):
     path = tmp_path / "request.json"
