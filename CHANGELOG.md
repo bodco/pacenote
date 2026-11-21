@@ -3,6 +3,16 @@
 Pacenote. Earlier versions are described in the commit messages and in
 [docs/en/live-tips.md](docs/en/live-tips.md), section 14.
 
+## Unreleased
+
+- **Research this website (2026-11-22, G6):** a link to a company's site now has a Research this website button in
+  Sources, in Expert and in Quick. It shows a plan first (pages ordered by the call goal, type and audience, 15 pages
+  by default and up to 30, a cost line for your AI route, and the reason for every page left out), then reads the
+  ticked pages one by one with progress and Cancel. Every AI route reads the same stored copy of a page. Copies are
+  kept in the hidden `.work/web/<host>` folder inside the call folder, which Google Drive may sync.
+- **Quick prep takes a link (2026-11-22, FB7):** the Sources line of Quick has a Link to add field, so a link no
+  longer needs Expert.
+
 ## 0.26.4 (2026-11-20)
 
 - **A new organization project includes the person who made it (2026-11-20):** in New project > start a new
