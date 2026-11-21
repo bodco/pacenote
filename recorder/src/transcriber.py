@@ -261,7 +261,7 @@ def is_russian(text: str) -> bool:
     if RU_ONLY_LETTERS.search(text):
         return not UK_ONLY_LETTERS.search(text) or ratio >= 0.3
     hits = sum(w in RU_ONLY_WORDS for w in words)
-    return ratio >= 0.2 and (len(words) >= 3 or hits >= 2)   # "уже" alone is also Ukrainian
+    return ratio >= 0.2 and hits >= 2   # one hit is not enough: "уже" is also Ukrainian
 
 
 PRODUCT_NAMES = {"slack", "jira", "zoom", "teams", "notion", "github", "gitlab", "confluence", "figma", "google",

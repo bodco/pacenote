@@ -181,8 +181,8 @@ def test_segmenter_records_the_rms_of_the_voiced_frames_only(T):
     q = queue.Queue()
     sg = T.Segmenter("them", dict(T.DEFAULTS), q)
     sg.vad.is_speech = lambda f: float(np.max(np.abs(f))) > 0.004     # deterministic VAD
-    voice = np.full(int(0.9 * T.SR), 0.2, dtype=np.float32)
-    sg.feed(np.concatenate([np.zeros(T.SR // 2, dtype=np.float32), voice, np.zeros(2 * T.SR, dtype=np.float32)]))
+    voice = np.full(30 * T.FRAME, 0.2, dtype=np.float32)               # whole frames: no half-voiced frame at the edges
+    sg.feed(np.concatenate([np.zeros(16 * T.FRAME, dtype=np.float32), voice, np.zeros(2 * T.SR, dtype=np.float32)]))
     seg = q.get_nowait()
     assert seg.voiced_rms == pytest.approx(0.2, rel=0.01)
     assert np.sqrt(np.mean(seg.audio ** 2)) < 0.15
