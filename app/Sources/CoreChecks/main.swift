@@ -4756,5 +4756,74 @@ func callSpeakersB3() {
     expect(!CallSpeakers.notesStale(editedAt: 1500, notesWritten: Date(timeIntervalSince1970: 1600)), "rewrite: notes written again are fresh")
 }
 callSpeakersB3()
+/// PB-37 (G6, subtask C): Research this website: the plan from a fixture of the sidecar contract (spec section 7),
+/// ticks and the budget, the cost line, the report and the child sources.
+func siteResearchPB37C() {
+    var rows: [[String: Any]] = [["url": "https://example-company.com/", "path": "/", "depth": 0, "kind": "home", "planned": true, "note": "", "est_tokens": 1500]]
+    for i in 1...19 {
+        rows.append(["url": "https://example-company.com/p\(i)", "path": "/p\(i)", "depth": 1, "kind": "page", "planned": true, "note": "",
+                     "score": Double(20 - i), "why_ranked": i == 1 ? "matches the goal: team" : "", "est_tokens": 1000 + i])
+    }
+    rows.append(["url": "https://example-company.com/login", "path": "/login", "depth": 1, "kind": "page", "planned": false, "note": "sign-in"])
+    rows.append(["url": "https://example-company.com/old", "path": "/old", "depth": 1, "kind": "page", "planned": false, "note": "limit"])
+    let json: [String: Any] = ["url": "https://example-company.com/", "domain": "example-company.com",
+        "limits": ["depth": 2, "max_pages": 30, "respect_robots": true], "start": ["status": "ok", "http": 200],
+        "pages": rows, "external": [["url": "https://other.example.org/x", "domain": "other.example.org", "text": "Partner", "why": "linked"]]]
+    guard var plan = SitePlan(json: json) else { expect(false, "site plan: parse"); return }
+    expect(plan.budget == 15 && plan.tickedCount == 15 && plan.pages[0].ticked && plan.pages[14].ticked && !plan.pages[15].ticked, "site plan: 15 ticked by default, in the sidecar's order")
+    expect(plan.reason(plan.pages[16]) == "limit" && plan.reason(plan.pages[20]) == "sign-in" && plan.reason(plan.pages[21]) == "limit" && plan.reason(plan.pages[0]) == nil, "site plan: the reason of each page left out")
+    expect(plan.pages[1].whyRanked == "matches the goal: team" && plan.pages[1].score == 19 && plan.pages[0].estTokens == 1500, "site plan: score, why and tokens kept")
+    plan.toggle("https://example-company.com/p16")
+    expect(plan.tickedCount == 15 && !plan.pages[16].ticked, "site plan: a page over the budget cannot be ticked")
+    plan.toggle("https://example-company.com/p3")
+    plan.toggle("https://example-company.com/login")
+    expect(plan.tickedCount == 14 && !plan.pages[3].ticked, "site plan: untick works, a skipped page stays off")
+    plan.setBudget(30)
+    expect(plan.budget == 30 && plan.tickedCount == 20 && !plan.pages[20].ticked, "site plan: budget 30 ticks every planned page")
+    plan.setBudget(99)
+    expect(plan.budget == 30, "site plan: the budget stops at 30")
+    plan.setBudget(0)
+    expect(plan.budget == 1 && plan.tickedCount == 1, "site plan: the budget is at least 1")
+    plan.setBudget(5)
+    let fp = plan.fetchPlan()
+    let fl = fp["limits"] as? [String: Any]
+    let planned = (fp["pages"] as? [[String: Any]] ?? []).filter { $0["planned"] as? Bool == true }.count
+    expect(planned == 5 && fl?["max_pages"] as? Int == 5 && fl?["depth"] as? Int == 2, "site plan: webfetch plans only the ticked pages, the limit is their count")
+    let rq = SiteResearch.planRequest(url: "https://example-company.com", goal: "intro", callType: "sales", audience: "client", route: "api")
+    expect(rq["max_pages"] as? Int == 30 && rq["goal"] as? String == "intro" && rq["call_type"] as? String == "sales" && rq["audience"] as? String == "client" && rq["route"] as? String == "api" && rq["respect_robots"] as? Bool == true, "site plan: webplan request fields")
+    let fr = SiteResearch.fetchRequest(plan: plan, outDir: "/tmp/w", cancelPath: "/tmp/w/.cancel")
+    expect(fr["out_dir"] as? String == "/tmp/w" && fr["cancel_path"] as? String == "/tmp/w/.cancel" && fr["plan"] != nil, "site plan: webfetch request fields")
+
+    var blocked = json
+    blocked["start"] = ["status": "blocked", "note": "robots.txt does not allow this page"]
+    expect(SitePlan(json: blocked)?.startStatus == "blocked" && SitePlan(json: ["error": "x"]) == nil, "site plan: a blocked start and an error answer")
+
+    // the cost line: dollars where the route has a price, tokens and window share otherwise, never an invented price
+    expect(SiteResearch.cost(tokens: 15000, route: "api", window: 200_000) == .dollars(tokens: 15000, usd: 0.03), "site cost: api in dollars")
+    expect(SiteResearch.cost(tokens: 15000, route: "local", window: 64_000) == .free(tokens: 15000), "site cost: local is free")
+    expect(SiteResearch.cost(tokens: 20000, route: "code", window: 200_000) == .window(tokens: 20000, percent: 10), "site cost: an account route shows the window share")
+    expect(SiteResearch.cost(tokens: 20000, route: "agy", window: 1_000_000) == .window(tokens: 20000, percent: 2) && SiteResearch.inputPrice(route: "codex") == nil, "site cost: no dollar figure for a subscription")
+
+    // the report of webfetch and the child sources
+    let rep: [String: Any] = ["url": "https://example-company.com/",
+        "sources": [["id": "w1", "type": "web_page", "uri": "https://example-company.com/", "path": "/tmp/w/home.txt", "title": "Home", "size_tokens": 800,
+                     "why": ["page of example-company.com"], "parent_uri": "https://example-company.com/", "used": "full"],
+                    ["id": "w2", "type": "web_page", "uri": "https://example-company.com/team", "path": "/tmp/w/team.txt", "title": "Team", "size_tokens": 600,
+                     "why": ["page of example-company.com (team)"], "used": "full"],
+                    ["id": "w3", "type": "web_page", "uri": "https://example-company.com/soon", "path": "/tmp/w/soon.txt", "title": "Soon", "size_tokens": 20,
+                     "used": "not_used", "reason": "the page is empty or a placeholder"]],
+        "suggested": [["uri": "https://other.example.org/x", "title": "Partner", "type": "web"]],
+        "summary": ["read": 2, "empty": 1, "blocked": 0, "error": 0, "skipped": 4, "duplicate": 0, "tokens": 1400],
+        "pages": [["url": "https://example-company.com/team", "status": "read", "note": ""]]]
+    guard let report = SiteReadReport(json: rep) else { expect(false, "site report: parse"); return }
+    expect(report.children.count == 3 && report.usable.count == 2 && report.tokens == 1400 && report.counts["skipped"] == 4, "site report: children, usable pages, counts")
+    expect(report.children[1].parentURI == "https://example-company.com/" && report.children[1].why == ["page of example-company.com (team)"], "site report: the parent defaults to the site, why kept")
+    expect(report.suggested.first?.url == "https://other.example.org/x" && report.suggested.first?.domain == "other.example.org", "site report: other sites are suggested, not read")
+    expect(SiteReadReport(json: ["error": "boom"]) == nil, "site report: an error answer is no report")
+
+    // one source per page: the same page written two ways is one key
+    expect(SiteResearch.key("https://www.Example-Company.com/team/#x") == SiteResearch.key("https://example-company.com/team") && SiteResearch.key("https://example-company.com/") == "example-company.com", "site research: page key ignores www, case, fragment and slash")
+}
+siteResearchPB37C()
 print("core checks: \(passed) passed, \(failures) failed")
 exit(failures == 0 ? 0 : 1)

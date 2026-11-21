@@ -1198,10 +1198,18 @@ struct SheetDraftSourceRow: View {
                 Spacer(minLength: 8)
                 PrepStatusTag(text: SheetLabels.access(source: source), color: color)
                 action
-                Button { draft.sources.removeAll { $0.id == source.id } } label: {
+                Button { draft.removeSource(id: source.id) } label: {
                     Image(systemName: "xmark").font(PN.sys(10, .semibold)).foregroundStyle(PN.C.text3).frame(width: 20, height: 20)
                 }
                 .buttonStyle(.plain).help(L("call.remove")).accessibilityLabel(L("call.remove") + ": " + source.title)
+            }
+            // PB-37 (G6): the pages read from a website, and its research panel
+            if source.type == "web" && source.parentURI == nil {
+                let n = draft.sources.filter { $0.parentURI != nil && $0.parentURI == source.uri }.count
+                if n > 0 { Text(L("sheet.ui.web.pagesRead", ["n": "\(n)"])).font(th.homeText(13)).foregroundStyle(PN.C.text2).padding(.leading, 30) }
+                if let ses = draft.research[source.id] {
+                    SheetSiteResearchPanel(draft: draft, session: ses) { draft.closeResearch(sourceID: source.id) }.padding(.leading, 30)
+                }
             }
             if draft.model.callType == "presentation" && ["pptx", "pdf", "key"].contains(((source.path ?? "") as NSString).pathExtension.lowercased()) {
                 Toggle(L("sheet.ui.s3.isDeck"), isOn: $source.deck).toggleStyle(.pnCheckbox).font(th.homeText(13)).padding(.leading, 30)
@@ -1225,6 +1233,7 @@ struct SheetDraftSourceRow: View {
                 .padding(.leading, 30)
             }
         }
+        .padding(.leading, source.parentURI == nil ? 0 : 30)
         .pageRow(10)
     }
 
@@ -1249,6 +1258,9 @@ struct SheetDraftSourceRow: View {
     private var color: Color { source.access == "ok" ? PN.C.turn : source.access == "pending" ? PN.C.text3 : PN.C.pending }
 
     @ViewBuilder private var action: some View {
+        if source.type == "web" && source.parentURI == nil && draft.research[source.id] == nil {
+            Button(draft.pagesRead(of: source) ? L("sheet.ui.web.again") : L("sheet.ui.web.button")) { draft.researchSite(sourceID: source.id) }.buttonStyle(.pnSecondary)
+        }
         switch source.fix {
         case "connect_notion", "connect_google": Button(SheetLabels.fix(FixAction(rawValue: source.fix!))) { SettingsWindow.show(tab: "integrations") }.buttonStyle(.pnSecondary)
         // 0.10.0 (Meeting Sheet, Google Picker): Google Picker on this one Drive file; a read copy makes the source ok
