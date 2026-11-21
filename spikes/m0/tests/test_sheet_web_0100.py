@@ -252,7 +252,8 @@ class _H(BaseHTTPRequestHandler):
 
 
 @pytest.fixture()
-def site():
+def site(monkeypatch):
+    monkeypatch.setenv("PACENOTE_TEST_WEB_LOOPBACK", "1")
     _H.hits, _H.agents, _H.site = [], [], dict(SITE)
     srv = ThreadingHTTPServer(("127.0.0.1", 0), _H)
     t = threading.Thread(target=srv.serve_forever, daemon=True)
