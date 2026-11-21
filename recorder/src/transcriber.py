@@ -694,7 +694,7 @@ class Whisper:
             return base, None, top             # else the main language, even when it is English, and the source is kept
         # The main language wins unless another one is clearly likelier: short or noisy phrases stay in it.
         if best != base and probs.get(best, 0.0) < self.bias * probs.get(base, 0.0):
-            best = base
+            return base, None, None            # the bias overrode what the detector preferred: nothing was clearly heard
         return best, best, None
 
     def pick_language(self, audio: np.ndarray, allowed: list[str] | None = None) -> str | None:

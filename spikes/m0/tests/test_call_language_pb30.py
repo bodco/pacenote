@@ -294,10 +294,18 @@ def test_short_unclear_segment_keeps_the_previous_language_and_does_not_count_as
     w = make(T, ["uk", "en"], says={"uk": "Так, добре", "en": "Yes"}, probs={"uk": 0.4, "en": 0.45})
     res, share = run(T, w, seg_of(T, 0.05, 1.0), last="uk")
     assert res == ("Так, добре", "uk", None)
-    # the decode was forced to the previous language; the detector evidence (uk, unclear) is what is credited
+    assert share.secs == {}                                         # the decode was forced; nothing was clearly heard
     w = make(T, ["uk", "en"], says={"en": "Yes"}, probs={"uk": 0.4, "en": 0.45})
-    res, _ = run(T, w, seg_of(T, 0.05, 1.0), last="en")
+    res, share = run(T, w, seg_of(T, 0.05, 1.0), last="en")
     assert res == ("Yes", "en", None)
+    assert share.secs == {"en": 1.0}                                # the detector's own pick agrees with the keep
+
+
+def test_long_unclear_segment_stays_in_the_dominant_language_and_does_not_count_as_evidence(T):
+    w = make(T, ["uk", "en"], says={"uk": "Я хотів би", "en": "I would like"}, probs={"uk": 0.3, "en": 0.55})
+    res, share = run(T, w, seg_of(T, 0.05, 3.0), dominant="uk")
+    assert res == ("Я хотів би", "uk", None)
+    assert share.secs == {"uk": 100.0}                              # only the seeded share; this line adds nothing
 
 
 def test_short_segment_without_a_detector_keeps_the_previous_language_without_crediting_it(T):
