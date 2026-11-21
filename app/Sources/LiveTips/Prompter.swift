@@ -96,6 +96,7 @@ final class PrompterController: NSObject, NSWindowDelegate, WKScriptMessageHandl
     var trWide = false               // 2026-10-26: the transcript pane is open next to the tips
     var deckGrowRight = false
     var transcript: TailReader?      // the call's transcript (.md), pushed to the transcript pane
+    var translations: TailReader?    // PB-30: the call's timing sidecar; its "translated" events change a shown row in place
     var transcriptPath = ""
     var speakersMtime: Date?
     var briefMtime: Date?
@@ -212,6 +213,7 @@ final class PrompterController: NSObject, NSWindowDelegate, WKScriptMessageHandl
                     push("window.LiveTips && LiveTips.setTipsLang({meeting: '\(meeting)'})")
                     transcriptPath = f
                     transcript = TailReader(path: f)
+                    translations = TailReader(path: CallLayout.sidecar(of: f, ".timing.jsonl"))
                     speakersMtime = nil
                 }
             }
@@ -259,6 +261,9 @@ final class PrompterController: NSObject, NSWindowDelegate, WKScriptMessageHandl
             if !lines.isEmpty, let d = try? JSONSerialization.data(withJSONObject: lines), let js = String(data: d, encoding: .utf8) {
                 push("window.addTranscript && window.addTranscript(" + js + ")")
             }
+            // after the rows above: a translation finds its row in the pane
+            let ev = (translations?.newLines() ?? []).filter { $0.contains("\"translated\"") && isJSONObject($0) }
+            if !ev.isEmpty { push("window.updateTranscript && window.updateTranscript([" + ev.joined(separator: ",") + "])") }
         }
         // 2026-10-28 (owner): the full preparation for the Preparation pane, again when it changes.
         if ticks % 4 == 1, !transcriptPath.isEmpty {

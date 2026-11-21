@@ -4756,5 +4756,16 @@ func callSpeakersB3() {
     expect(!CallSpeakers.notesStale(editedAt: 1500, notesWritten: Date(timeIntervalSince1970: 1600)), "rewrite: notes written again are fresh")
 }
 callSpeakersB3()
+/// PB-30 (D56): the AI route for the recorder's background translation.
+func translateRoutePB30() {
+    let on = TranslateRoute.coreKeys(allowed: true, python: "/py/bin/python3", dir: "/engine/spikes/m0")
+    expect((on["translate_cmd"] as? [String]) == ["/py/bin/python3", "-m", "livetips_m0.translate_text"] && (on["translate_dir"] as? String) == "/engine/spikes/m0", "PB-30: a route and the engine: the command and its folder")
+    for off in [TranslateRoute.coreKeys(allowed: false, python: "/py", dir: "/d"), TranslateRoute.coreKeys(allowed: true, python: "", dir: "/d"),
+                TranslateRoute.coreKeys(allowed: true, python: "/py", dir: "")] {
+        expect((off["translate_cmd"] as? [String])?.isEmpty == true && (off["translate_dir"] as? String) == "", "PB-30: no route, no engine or no AI for this call: empty")
+    }
+    expect(TranslateRoute.enabled(allowed: true, python: "/py", dir: "/d") && !TranslateRoute.enabled(allowed: false, python: "/py", dir: "/d"), "PB-30: enabled follows the call's permission")
+}
+translateRoutePB30()
 print("core checks: \(passed) passed, \(failures) failed")
 exit(failures == 0 ? 0 : 1)

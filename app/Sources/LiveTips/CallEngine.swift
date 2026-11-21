@@ -99,7 +99,7 @@ final class CallEngine {
         let fm = FileManager.default
         guard fm.fileExists(atPath: (core as NSString).appendingPathComponent("VERSION")) else { return }   // dev build
         var restored: [String] = []
-        for rel in ["src/transcriber.py", "src/semantic.py", "src/fromfile.py", "src/fetchlink.py", "src/call_layout.py", "bin/lt", "bin/read_delta.py", "bin/audiocap"] {
+        for rel in ["src/transcriber.py", "src/semantic.py", "src/fromfile.py", "src/fetchlink.py", "src/call_layout.py", "src/translate.py", "bin/lt", "bin/read_delta.py", "bin/audiocap"] {
             let src = (core as NSString).appendingPathComponent(rel), dst = (appRoot as NSString).appendingPathComponent(rel)
             guard let a = fm.contents(atPath: src) else { continue }
             if fm.contents(atPath: dst) == a { continue }
@@ -151,6 +151,18 @@ final class CallEngine {
         return probe() ? nil : L("eng.helperBlocked")
     }
 
+    /// PB-30: translate_cmd and translate_dir in <app folder>/config.json; empty when this call may not use the AI route.
+    func writeTranslateConfig(allowed: Bool) {
+        let path = (appRoot as NSString).appendingPathComponent("config.json")
+        guard let d = try? Data(contentsOf: URL(fileURLWithPath: path)),
+              var core = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any] else { return }
+        let c = config
+        for (k, v) in TranslateRoute.coreKeys(allowed: allowed, python: c.engine.sidecarPython, dir: c.engine.sidecarDir) { core[k] = v }
+        if let out = try? JSONSerialization.data(withJSONObject: core, options: [.prettyPrinted, .sortedKeys]) {
+            try? out.write(to: URL(fileURLWithPath: path), options: .atomic)
+        }
+    }
+
     /// Starts recording. `request` goes to control/start.json (project_dir, title, slug, langs, call_type, audience).
     private var usageStart: Date?        // 0.8.7 (M): for call_ended minutes
     func start(request: [String: Any], apiAllowed: Bool, onReady: @escaping (EngineStatus) -> Void) -> String? {
@@ -165,6 +177,12 @@ final class CallEngine {
         if let err = ensureAudioHelper() { return err }
         LocalAIService.shared.apply(start: true)            // core config: semantic on/off, engine URL; 0.26.3: wake the engine
         if config.localAI.enabled { _ = LocalAIService.shared.waitReady(timeout: 6) }
+        // PB-30 (D56): the recorder translates a line Whisper wrote in another language in the background: first the local
+        // model, then the PM's own AI route through the tips engine's text command. The command goes into config.json
+        // (the app's trusted file, never a call request) only when this call may use the AI; the route settings and the
+        // key reach the recorder in its environment, the way they reach the tips engine.
+        let translateRoute = apiAllowed && AIRoute.canRun(job: "tips", config: config)
+        writeTranslateConfig(allowed: translateRoute)
         callContext = (request["context"] as? String) ?? ""
         callRequest = request
         let tipsRoute = config.ai.tips
@@ -192,6 +210,11 @@ final class CallEngine {
         p.executableURL = URL(fileURLWithPath: c.engine.python)
         p.arguments = [(appRoot as NSString).appendingPathComponent("src/transcriber.py"), "--from-control"]
         p.currentDirectoryURL = URL(fileURLWithPath: appRoot)
+        if TranslateRoute.enabled(allowed: translateRoute, python: c.engine.sidecarPython, dir: c.engine.sidecarDir) {
+            var env = AIRoute.env(job: "tips", config: c)     // "translate" has no route of its own: it follows the tips way
+            env["PYTHONDONTWRITEBYTECODE"] = "1"
+            p.environment = env
+        }
         // 0.24.1 (F7): every run starts with a header (versions, Python and packages, macOS, time zone)
         AppLog.header("recorder.log", "call start", extra: AppLog.runtimeExtra + [("ready", startReady ? "yes" : "no")])
         AppLog.app("call: start (ready=\(startReady))")

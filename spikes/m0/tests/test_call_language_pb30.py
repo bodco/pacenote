@@ -386,7 +386,7 @@ def worker_for(T, translate, w, done=None, maxlen=16):
     applied = done if done is not None else []
 
     def apply(j, new):
-        if w.replace(j["line"], new):
+        if w.replace(j["line"], new) is not None:
             applied.append((j["text"], new))
     return TR.TranslateWorker(translate, apply, T.translation_ok, maxlen=maxlen)
 
@@ -490,7 +490,7 @@ def test_stop_does_not_wait_longer_than_the_drain_time_and_a_late_translation_ch
     assert time.monotonic() - t0 < 3.0
     w.close("")
     gate.set()
-    assert w.replace(ln, "late") is False
+    assert w.replace(ln, "late") is None
     assert "Это очень хорошо" in (tmp_path / "c.md").read_text(encoding="utf-8")
 
 
@@ -499,7 +499,7 @@ def test_a_held_mic_line_is_translated_in_memory_before_it_is_written(T, tmp_pat
     w = T.Writer(tmp_path / "c.md", dict(T.DEFAULTS), "", them_speech=lambda: T.now())   # the other side talks: the line waits
     w.add(ln)
     assert w.held_me and not ln.row
-    assert w.replace(ln, "Це дуже добре")
+    assert w.replace(ln, "Це дуже добре") == ""                      # held: no row shown yet, so no live event
     w.close("")
     assert "(uk): Це дуже добре" in (tmp_path / "c.md").read_text(encoding="utf-8")
 

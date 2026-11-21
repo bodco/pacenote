@@ -533,6 +533,21 @@
     this.emit();
   };
 
+  /** PB-30: a background translation (a "translated" event of the recorder) changes the text of a row already shown, in
+   *  place: the same item, found by its time and original text; `translatedFrom` marks it. A row not found stays as is. */
+  Feed.prototype.updateTranscript = function (events) {
+    let changed = false;
+    for (const e of events || []) {
+      if (!e || e.event !== 'translated' || !e.text) continue;
+      const item = this.transcript.find((x) => x.t === e.t && x.text === e.original && !x.translatedFrom);
+      if (!item) continue;
+      item.text = String(e.text);
+      item.translatedFrom = String(e.translated_from || 'und');
+      changed = true;
+    }
+    if (changed) this.emit();
+  };
+
   /** Voice matches (score 0.5+) or, with none, the people of the series and the event (score null, 0.8.5 owner). */
   function pickSug(list) {
     return (list || []).filter((x) => x && x.name && (x.score == null || (+x.score || 0) >= 0.5)).slice(0, 4)

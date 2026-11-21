@@ -32,6 +32,7 @@ class Line:
     seg_end: Optional[float] = None   # seconds of day: end of the speech segment
     written: Optional[float] = None   # seconds of day: line appended to the transcript
     dur: Optional[float] = None
+    seq: Optional[int] = None         # PB-30: the recorder's id of the line (timing record), keys a "translated" event
 
     @property
     def t_s(self) -> float:

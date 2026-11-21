@@ -23,6 +23,7 @@ import argparse
 import collections
 import datetime as dt
 import difflib
+import itertools
 import json
 import os
 import queue
@@ -810,6 +811,7 @@ class Line:
     created: float = field(default_factory=now)
     sid: str | None = None    # speaker cluster of a system-channel line ("S2"), None = no speaker tag
     translated_from: str | None = None   # PB-30: the language the speech was in when Whisper wrote it in another one
+    seq: int = 0              # PB-30: stable id of the line in this call (the timing record and "translated" event carry it)
     row: str = ""             # the transcript row as written (set by Writer._write); a translation replaces it by this key
 
 
@@ -892,17 +894,19 @@ class Writer:
             label += f" [{line.sid}]"
         return f"[{hhmmss(line.t)}] {label} ({line.lang}): {line.text}"
 
-    def replace(self, line: Line, text: str) -> bool:
+    def replace(self, line: Line, text: str) -> str | None:
         """PB-30: a background translation replaces the line text. A line still held is changed in memory; a written
-        one is rewritten in close(), so a reader that follows the file by offset never sees an earlier row change."""
+        one is rewritten in close(), so a reader that follows the file by offset never sees an earlier row change.
+        -> None when the writer is closed; else the row as it was written ("" when the line is still held), read
+        under the lock, so the caller knows whether the live readers already show the line."""
         with self.lock:
             if self.closed:
-                return False
+                return None
             old = line.row
             line.text = text
             if old:
                 self.replaced.append((old, self._row(line)))
-            return True
+            return old
 
     def _rewrite(self) -> None:
         """Apply the translations to the file (atomic); a row that is no longer there is left alone."""
@@ -4869,7 +4873,7 @@ def listener_age() -> int | None:
         return None
 
 
-REQUEST_BLOCKED = {"ollama_url", "index_extra", "semantic_model", "python"}
+REQUEST_BLOCKED = {"ollama_url", "index_extra", "semantic_model", "python", "translate_cmd", "translate_dir"}
 
 
 def _local_url(u: str) -> bool:
@@ -5351,18 +5355,22 @@ def main() -> int:
     def apply_translation(j: dict, new: str) -> None:
         """The translation replaces the line text (the file at the end of the call); the sidecar keeps the original."""
         new = apply_dictionary(new, DICT_RULES)
-        if not writer.replace(j["line"], new):
+        shown = writer.replace(j["line"], new)   # the row already in the file (and so in the live transcript), if any
+        if not shown:                            # closed, or a held line: it goes out translated
             return
         try:
+            # the live readers (tips engine, transcript pane) change the row in place, keyed by the line's seq
             with open(call_layout.sidecar_of(out, ".timing.jsonl"), "a", encoding="utf-8") as tf:
-                tf.write(json.dumps({"event": "translated", "t": j["t"], "ch": j["ch"], "translated_from": j["src"],
-                                     "original": j["text"], "text": new}, ensure_ascii=False) + "\n")
+                tf.write(json.dumps({"event": "translated", "seq": j["line"].seq, "t": j["t"], "ch": j["ch"],
+                                     "translated_from": j["src"], "original": j["text"], "text": new},
+                                    ensure_ascii=False) + "\n")
         except OSError:
             pass
 
+    line_seq = itertools.count(1)
     tr_worker = None
     if cfg.get("translate", True):
-        tr_worker = TR.TranslateWorker(TR.Translator(cfg).translate, apply_translation, translation_ok,
+        tr_worker = TR.TranslateWorker(TR.Translator(cfg, translation_ok).translate, apply_translation, translation_ok,
                                        maxlen=int(cfg.get("translate_queue", 16)), log=log)
         tr_worker.start()
 
@@ -5392,7 +5400,8 @@ def main() -> int:
                     sid = tracker.observe(hhmmss(seg.t_start), seg.t_start, seg.t_end, emb, seg.duration, text)
             except Exception as e:  # noqa: BLE001
                 log(f"speakers: {e!r}")
-        line_obj = Line(seg.channel, seg.t_start, lang, text, sid=sid, translated_from=translated_from)
+        line_obj = Line(seg.channel, seg.t_start, lang, text, sid=sid, translated_from=translated_from,
+                        seq=next(line_seq))
         writer.add(line_obj)
         if tr_worker is not None and needs_translation(text, lang, translated_from):
             tr_worker.submit({"text": text, "src": translated_from, "dst": lang, "line": line_obj,
@@ -5461,7 +5470,7 @@ def main() -> int:
                     "queued_s": round(t_asr0 - seg.t_end, 2),
                     "asr_s": round(t_asr1 - t_asr0, 2),
                     "written": dt.datetime.fromtimestamp(t_asr1).strftime("%H:%M:%S.%f")[:-3],
-                    "chars": len(text),
+                    "chars": len(text), "seq": line_obj.seq,
                     # PB-30: set only when the line was written in another language than spoken (UI: "translated from")
                     **({"translated_from": translated_from} if translated_from else {})}, ensure_ascii=False) + "\n")
         except Exception:  # noqa: BLE001

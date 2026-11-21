@@ -1,6 +1,7 @@
 """PB-30 (D56): translate a line that Whisper wrote in another language than the one spoken, off the live path.
 
-The recorder writes the marked line at once (translated_from set). A worker thread then asks, in this order:
+The command and its folder come only from the app's own config.json, never from a call request (transcript text goes
+there). The recorder writes the marked line at once (translated_from set). A worker thread then asks, in this order:
 1. the app's local model (Ollama), when it is running and has the model;
 2. the PM's configured AI route, through a small command in the tips engine (livetips_m0.translate_text, text only,
    never audio; the route settings, the auto-switch and the spend ledger are the engine's own).
@@ -34,7 +35,8 @@ class Translator:
     """text -> translation, or None when no route answers in time. `translate(text, src, dst)` is blocking and is
     only called from the worker thread."""
 
-    def __init__(self, cfg: dict):
+    def __init__(self, cfg: dict, accept: Callable[[str, str], bool] = lambda text, dst: True):
+        self.accept = accept        # a local answer that fails it is not returned: the configured route is tried next
         self.timeout = float(cfg.get("translate_timeout_s", 15.0))
         self.url = str(cfg.get("ollama_url") or "http://127.0.0.1:11434").rstrip("/")
         self.model = str(cfg.get("translate_model") or os.environ.get("LT_LOCAL_MODEL") or DEFAULT_LOCAL_MODEL)
@@ -69,7 +71,7 @@ class Translator:
         if self.cmd_dir:
             env["PYTHONPATH"] = self.cmd_dir + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
         p = subprocess.run(self.cmd, input=json.dumps({"text": text, "src": src, "dst": dst}), capture_output=True,
-                           text=True, timeout=self.timeout, env=env)
+                           text=True, timeout=self.timeout, env=env, cwd=self.cmd_dir or None)
         if p.returncode != 0:
             return None
         return str(json.loads(p.stdout.strip().splitlines()[-1]).get("text", "")).strip() or None
@@ -78,7 +80,7 @@ class Translator:
         if self._ollama_up():
             try:
                 out = self._ollama(text, src, dst)
-                if out:
+                if out and self.accept(out, dst):
                     return out
             except Exception:  # noqa: BLE001
                 self._up_until = time.monotonic() + 60.0

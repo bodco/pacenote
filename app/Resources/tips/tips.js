@@ -1985,6 +1985,7 @@
     window.addItems = (items) => feed.addItems(items);
     window.setStatus = (s) => feed.setStatus(s);
     window.addTranscript = (lines) => feed.addTranscript(lines);
+    window.updateTranscript = (events) => feed.updateTranscript(events);      // PB-30: a translated row, in place
     window.setSpeakers = (d) => feed.setSpeakers(d);
     window.setPrepDoc = (p) => feed.setPrepDoc(p);
     window.setPrep = (p) => feed.setPrep(p);

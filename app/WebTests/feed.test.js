@@ -166,6 +166,21 @@ test('transcript: channels, clusters and unknown voices', () => {
   assert.strictEqual(s.speakers.me.name, 'Me');
 });
 
+test('transcript: a translation changes the shown row in place and keeps its marker (PB-30)', () => {
+  const { f, get } = make();
+  f.addTranscript(['[10:31:02] Emily C. [S1] (uk): Это очень хорошо', '[10:31:09] Me (uk): Добре']);
+  const before = f.transcript[0];
+  f.updateTranscript([{ event: 'translated', seq: 1, t: '10:31:02', ch: 'them', translated_from: 'ru', original: 'Это очень хорошо', text: 'Це дуже добре' },
+                      { event: 'translated', t: '10:59:59', original: 'nothing', text: 'x' }]);
+  const s = get();
+  assert.strictEqual(s.transcript.length, 2);
+  assert.strictEqual(f.transcript[0], before);                       // the same row, not a new one
+  assert.strictEqual(s.transcript[0].text, 'Це дуже добре');
+  assert.strictEqual(s.transcript[0].translatedFrom, 'ru');
+  assert.strictEqual(s.transcript[0].speakerId, 'S1');
+  assert.strictEqual(s.transcript[1].text, 'Добре');
+});
+
 test('presentation steps from slides; a skippable step', () => {
   const { f, get } = make();
   f.addItems([{ kind: 'slides', slides: [{ n: 1, title: 'Why', sec: 90, body: [{ k: 'p', t: 'Five users.' }, { k: 's', t: 'Skip if short.' }] }, { n: 2, title: 'Plan', sec: 120, body: [{ k: 'p', t: 'Monday.' }] }] }]);

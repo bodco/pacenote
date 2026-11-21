@@ -222,6 +222,7 @@ class LiveRun:
         if not from_start:                           # join a running call: skip what is already there
             skip_existing(self.t_md, self.t_tm)
         self.timing, self.pending, self.n = {}, [], 0
+        self.translations = []                       # PB-30: "translated" events not applied yet: [(event, first seen)]
         self.seen_lines = set()
         self.last_new = self.t0 = time.monotonic()
         self.last_touch = 0.0
@@ -231,6 +232,7 @@ class LiveRun:
         self.read_timing()
         self.read_lines()
         self.feed_ready()
+        self.apply_translations()
         if self.t_in:
             for raw in self.t_in.read():
                 handle_inbox(self.eng, raw)
@@ -239,8 +241,10 @@ class LiveRun:
         for raw in self.t_tm.read():
             try:
                 r = json.loads(raw)
-                if r.get("event"):
-                    continue                      # PB-30: a "translated" event, not a line's timing
+                if r.get("event"):                # PB-30: not a line's timing; the translation replaces the line's text
+                    if r["event"] == "translated":
+                        self.translations.append((r, time.monotonic()))
+                    continue
                 self.timing.setdefault((r.get("t"), r.get("ch")), []).append(r)
             except ValueError:
                 pass
@@ -273,9 +277,29 @@ class LiveRun:
             ln.written = hms_to_s(rec["written"]) if rec.get("written") else now_sod()
         else:
             ln.written = now_sod()
+        ln.seq = rec.get("seq") if rec else None
         self.eng.on_line(ln)
         self.first_written = self.first_written or ln.written
         self.last_written = ln.written
+
+    def apply_translations(self) -> None:
+        """PB-30: a background translation changes the text of the line in place (same line_id, same object), keyed by
+        the recorder's seq, else by (time, speaker, original text). A line the engine has not read yet gets it when it
+        has; an event that still finds no line after a minute is dropped."""
+        keep = []
+        for ev, seen in self.translations:
+            by_seq = ev.get("seq") is not None
+            def hit(h):
+                if by_seq and h.seq is not None:
+                    return h.seq == ev["seq"]
+                return h.t == ev.get("t") and h.speaker == ev.get("ch") and h.text == ev.get("original")
+            with self.eng.lock:
+                found = next((h for h in [p[0] for p in self.pending] + list(self.eng.history) if hit(h)), None)
+                if found is not None:
+                    found.text = str(ev.get("text") or found.text)
+            if found is None and time.monotonic() - seen < 60:
+                keep.append((ev, seen))
+        self.translations = keep
 
     def touch_state(self, state_dir: Path) -> None:
         if not state_dir or time.monotonic() - self.last_touch <= 5:
