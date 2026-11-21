@@ -133,6 +133,9 @@ struct SheetQuickView: View {
     // 0.14.0 (D1, Get Ready redesign): three short lines (people, sources, setup), each opens in place with Change.
     // Orange only where something needs you; tokens only in a tooltip.
     @State private var open: String?
+    @State private var quickLink = ""
+
+    private func addQuickLink() { draft.add(pasted: quickLink); quickLink = "" }
 
     private var setup: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -162,18 +165,23 @@ struct SheetQuickView: View {
     private var sourcesRow: some View {
         let checked = draft.sources.filter(\.checked)
         let bad = checked.filter { ["denied", "unsupported"].contains($0.access) }
-        let line = checked.isEmpty ? L("sheet.ui.quick.noSources") : PeopleSides.summary(checked.map(\.title), first: 3)
+        let line = checked.isEmpty ? L("sheet.ui.quick.noSources") : PeopleSides.summary(checked.filter { $0.parentURI == nil }.map(\.title), first: 3)
         let problem: String? = checked.isEmpty ? L("sheet.ui.quick.noSourcesSub")
             : bad.isEmpty ? nil : bad.map { $0.title + ": " + ($0.reason ?? SheetLabels.access(source: $0)) }.joined(separator: "; ")
         return summaryRow("sources", L("sheet.ui.row.sources"), line, ok: problem == nil, problem: problem,
                           fixLabel: checked.isEmpty ? L("sheet.ui.quick.add") : (bad.isEmpty ? nil : L("sheet.ui.fix")),
                           fix: { if checked.isEmpty { draft.chooseFiles() } else { draft.mode = .expert; draft.step = 3 } }) {
             VStack(alignment: .leading, spacing: 6) {
-                ForEach(checked) { src in
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(src.title).font(PN.Font.body).foregroundStyle(PN.C.text).lineLimit(1).truncationMode(.middle)
-                        if let f = src.folder { Text(SheetLabels.folderLine(f)).font(PN.Font.caption).foregroundStyle(PN.C.text3).fixedSize(horizontal: false, vertical: true) }
-                    }
+                // PB-37 (G6, FB7): a link field (the same add(pasted:) as Expert) and the same source rows, so the access
+                // fixes and Research this website (plan, budget, cost line) work here in place
+                ForEach($draft.sources) { $s in
+                    if s.checked { SheetDraftSourceRow(draft: draft, source: $s) }
+                }
+                HStack(spacing: 8) {
+                    TextField(L("sheet.ui.quick.linkPh"), text: $quickLink).textFieldStyle(.plain).font(th.homeText(14)).prepField(height: 34)
+                        .onSubmit(addQuickLink).accessibilityLabel(L("sheet.ui.quick.linkLabel"))
+                    Button(L("sheet.ui.add"), action: addQuickLink).buttonStyle(.pnSecondary)
+                        .disabled(quickLink.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
                 Button(L("sheet.quick.addMore")) { draft.chooseFiles() }.buttonStyle(.pnTertiary)
             }
