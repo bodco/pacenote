@@ -92,7 +92,8 @@ Numbered so QA can tick them.
    the call's languages; its default is the dominant language (after the call) or the first start-call language (before).
 7. Choosing another language and pressing **Regenerate** rewrites Summary, Recap and notes, the follow-up draft and the
    Notion page text in that language; a visible state says which language each artifact was written in and marks an
-   artifact "out of date" when it differs from the chosen output language.
+   artifact "out of date" when it differs from the chosen output language, except for a follow-up intentionally written
+   in the client’s language (option C in question 5).
 8. Without pressing Regenerate nothing is rewritten and nothing is sent to a model; the choice is remembered for this call.
 9. Regenerate asks nothing when the cost is below the existing spend-watch threshold and otherwise follows the existing
    cost confirmation (same behaviour as the current notes rewrite).
@@ -100,8 +101,8 @@ Numbered so QA can tick them.
 **Removal of the old sources**
 10. `MeetingSheetDraft.language` is no longer a user setting. `SheetSeriesMemory` entries written by older versions (with
     `language`) still load; the stored value is ignored for choosing the language.
-11. The follow-up language no longer reads `client_language` after a call exists; `FollowUpWindow.language(of:)` is replaced
-    by the resolver.
+11. The resolver supplies the default follow-up language. The Follow-up tab and inspector read `client_language`
+    to make the offer in option C before the first draft.
 12. `rules/notes.yaml`, `rules/followup.yaml`, `rules/meeting.yaml` (tips) and the generated skill section state the new
     rule; `tools/gen_skill_section.py --check` passes.
 
@@ -109,7 +110,7 @@ Numbered so QA can tick them.
 13. Old Sheets, notes, call files and series memory open without error and are not rewritten on load.
 14. Languages without static labels (anything beyond `en`/`uk`) still work: text in that language, fixed English headings
     where the app reads headings (as notes do today), no crash, no mixed half-translated labels.
-15. No new network destination, no new data in telemetry; the language code is the only new stored value.
+15. No new network destination and no new telemetry data. Language codes and the client-language choice are stored locally.
 
 **Docs**
 16. `CHANGELOG.md` (Unreleased), `docs/en/live-tips.md` and `docs/uk/live-tips.md` (the sections on the Meeting Sheet,
@@ -143,7 +144,8 @@ Numbered so QA can tick them.
 - New per-call value: the PM's choice of output language and, per artifact, the language it was written in. Stored in a
   small sidecar next to the call files (name and exact path follow `CallLayout`, to be fixed by the dev in S1). Fields:
   `output_language` (ISO 639-1 code, absent = not chosen), `set_by` (`user`), `artifacts` (map: `notes`, `meeting_notes`,
-  `followup`, `notion`, `sheet` to the code each was written in).
+  `followup`, `notion`, `sheet` to the code each was written in). Optional `followup_uses_client_language` records
+  that the PM explicitly chose the client’s language for the follow-up.
 - Read from PB-30 (assumed, to be confirmed with that task): see "What is needed from PB-30".
 - Removed as a user setting: `SheetSeriesMemory.Entry.language` (kept decodable, no longer written as a choice).
 - Project `client_language`: field stays (free text, hint only).
@@ -152,7 +154,7 @@ Numbered so QA can tick them.
 
 ## Privacy
 
-- Only a language code is added to local files. Nothing new leaves the Mac.
+- The language codes and the client-language choice are stored locally. Nothing new leaves the Mac.
 - Regenerate sends the same transcript/notes to the same model route the user already chose (Claude API, or the model on
   this Mac); no new provider, no new telemetry event carrying text. If the owner wants a usage counter for the toggle, it
   is a count with no language values or content (question 7).
@@ -270,8 +272,10 @@ under its own prefix (`sheet.ui.*` for S4, `call.outlang.*` for S6) so the JSON 
    client). `client_language` was the only way to get this today.
    - A. Follow the call language like everything else; the PM switches the toggle to English before drafting.
    - B. Follow-up alone keeps the project's `client_language` when it is set, as a documented exception.
-   - C. Follow the call language, but the follow-up tab asks once "Write in English instead?" when `client_language`
-     differs from the output language.
+   - C. Follow the call output language by default. The Follow-up tab and inspector ask "Write in English instead?"
+     before the first draft when `client_language` differs. If the PM accepts, the follow-up uses the client’s language
+     and stays current when the call output language changes. Write again requires confirmation and logs hand edits
+     before replacing an existing draft.
    Recommendation: C. It respects D56 and keeps the real use of `client_language` without a silent override.
 6. **"The email with materials".** I did not find a feature with this name or an email send of Sheet materials in this tree
    (only the follow-up mailto in `AfterCall.swift` and the Gmail/Calendar integrations). Which is it?

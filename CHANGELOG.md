@@ -11,6 +11,9 @@ Pacenote. Earlier versions are described in the commit messages and in
   call, else the dominant language of the call, never the interface language. A call in another language (Polish,
   German...) gets the text in it with English headings and labels. Notes already written are not changed. The tips
   window no longer falls back to the interface language when the call has no language set.
+- Follow-up email drafts use the call's output language. If the project's client language differs, the Follow-up
+  tab and inspector offer that language before the first draft. Write again asks before replacing the draft.
+  A draft intentionally written in the client's language stays current when the call’s output language changes.
 
 ## 0.26.4 (2026-11-20)
 

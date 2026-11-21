@@ -5,6 +5,6 @@ Generated from `rules/risks.yaml` and `rules/followup.yaml`; do not edit here.
 - After the call: The call summary has a "Risks" section. "Add to risk register" writes one page into the project's Notion risk database (Settings > Integrations > Notion > Databases > Risks, else risks_db in the project config) only after the PM confirms it, with the Project and Workspace properties chosen in Settings. 0.8.8: when the PM turned on "Add automatically after each call" under Risks, the call's risks are written once after the call, de-duplicated like decisions (rules/decisions.yaml > dedupe); otherwise nothing is added by itself.
 
 **Follow-up email.** After the call, only when the PM asks (the app's "Draft follow-up email"; the skill's wrap-up offers it in one line).
-- Language: The client's language from the project config (client_language), English when it is not set.
+- Language: Use the call's resolved output language. When the project's client_language differs, the Follow-up tab offers the client language once for this call while the app is open.
 - Structure: Subject: the meeting's name and date. Body: one line of thanks, the decisions, who does what and by when (both sides), the open questions; at most ~150 words, plain sentences, no long dashes, no internal notes (estimates the team did not agree, prices, names of internal tools).
 - Never: Nothing is sent. The draft is shown to edit, Copy, or Open in Mail (a mailto link with the text).

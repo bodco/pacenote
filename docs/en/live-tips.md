@@ -1331,8 +1331,10 @@ The skill and the app follow the same rules, in `rules/agenda.yaml`, `rules/comm
   close, Copy), open questions, the agenda (discussed, raised, not raised) and the risks. From there: the follow-up
   email, the transcript, the series and, in the menu, Notion and Finder. The tips window shows the same two actions
   when the call has ended.
-- **Follow-up email.** A draft in the client's language (the project config's client language, English otherwise):
-  thanks, decisions, next steps for both sides, open questions. Edit it, then Copy or Open in Mail. Nothing is sent.
+- **Follow-up email.** The draft uses the call's output language. If the project's client language differs,
+  the Follow-up tab and inspector offer it before the first draft. Choosing the client’s language keeps the
+  follow-up current even if you change the call’s output language. Write again asks before replacing your draft.
+  The draft includes thanks, decisions, next steps for both sides and open questions. Edit it, then Copy or Open in Mail. Nothing is sent.
 - **Call memory.** Home > Search calls (Command-F): choose the project, ask in plain words ("what did we agree about
   the export?"). The answer is 1-2 sentences, a quote and "Jump to 12:34", which opens the transcript at that moment.
   Only the chosen project's transcripts are read (its local index, or a word search when there is none).
