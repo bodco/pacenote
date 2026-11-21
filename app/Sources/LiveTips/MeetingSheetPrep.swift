@@ -174,9 +174,8 @@ struct SheetQuickView: View {
             VStack(alignment: .leading, spacing: 6) {
                 // PB-37 (G6, FB7): a link field (the same add(pasted:) as Expert) and the same source rows, so the access
                 // fixes and Research this website (plan, budget, cost line) work here in place
-                ForEach($draft.sources) { $s in
-                    if s.checked { SheetDraftSourceRow(draft: draft, source: $s) }
-                }
+                // every source, ticked or not, as in Expert: an unticked row can be ticked back, and a research panel keeps its Cancel
+                ForEach($draft.sources) { $s in SheetDraftSourceRow(draft: draft, source: $s) }
                 HStack(spacing: 8) {
                     TextField(L("sheet.ui.quick.linkPh"), text: $quickLink).textFieldStyle(.plain).font(th.homeText(14)).prepField(height: 34)
                         .onSubmit(addQuickLink).accessibilityLabel(L("sheet.ui.quick.linkLabel"))
