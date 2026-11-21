@@ -129,4 +129,4 @@ def test_sidecar_ignores_bad_input_and_survives_a_half_written_file(tmp_path):
 def test_no_long_dash_in_the_new_files():
     for f in ("rules/output_language.yaml", "spikes/m0/livetips_m0/call_language.py",
               "app/Sources/LiveTipsCore/CallLanguage.swift", "Fixtures/output_language_cases.json"):
-        assert "—" not in (APP / f).read_text("utf-8"), f
+        assert "\u2014" not in (APP / f).read_text("utf-8"), f
