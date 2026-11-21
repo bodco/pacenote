@@ -2642,7 +2642,7 @@
  "sheet.ui.s1.goalPh": "Домовитись про discovery-дзвінок і дізнатись бюджетне вікно.",
  "sheet.ui.s1.kind": "Що це за зустріч?",
  "sheet.ui.s1.kindSub": "Пресет лише задає стартові блоки. Змінюєте їх на наступному кроці.",
- "sheet.ui.s1.language": "Мова sheet",
+ "sheet.ui.s1.language": "Мова результату",
  "sheet.ui.s1.myPresets": "Мої пресети",
  "sheet.ui.s1.name": "Назва зустрічі",
  "sheet.ui.s1.ours": "Наша сторона",

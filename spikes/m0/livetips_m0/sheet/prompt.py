@@ -9,10 +9,18 @@ get the same contract and read the files themselves (agent_prompt).
 import json
 from typing import Dict, List, Optional
 
+from .. import call_language as CL
 from . import standup as SU
 
 LANGS = {"uk": "Ukrainian", "en": "English", "es": "Spanish", "de": "German", "pl": "Polish", "ru": "Russian"}
-SKIP_BLOCKS = ("header", "gaps")       # header: from the invitation (built by Pacenote); gaps: from conflicts and readiness
+
+
+def lang_name(code: str) -> str:
+    """PB-32 (FB2): 'uk' -> 'Ukrainian'; codes the output-language resolver names (it, pt, nl...) too; else the code."""
+    return LANGS.get(code) or CL.NAMES.get(CL.normalize(code) or "", code)
+
+
+SKIP_BLOCKS = ("header", "gaps")      # header: from the invitation (built by Pacenote); gaps: from conflicts and readiness
 
 CONTRACT = """You build a Meeting Sheet: short, checkable facts for a person going into a meeting. Use ONLY the
 sources given. Every fact names the sources it comes from by their ids (source_ids, e.g. ["s3"]) and a locator: a
@@ -92,7 +100,7 @@ def header_text(req: dict) -> str:
 
 
 def system(lang: str, call_langs: List[str]) -> str:
-    return CONTRACT.format(LANG=LANGS.get(lang, lang), CALL_LANGS=", ".join(LANGS.get(c, c) for c in call_langs or [lang]))
+    return CONTRACT.format(LANG=lang_name(lang), CALL_LANGS=", ".join(lang_name(c) for c in call_langs or [lang]))
 
 
 def source_block(s: dict, text: str) -> str:

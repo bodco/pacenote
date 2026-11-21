@@ -3,6 +3,14 @@
 Pacenote. Earlier versions are described in the commit messages and in
 [docs/en/live-tips.md](docs/en/live-tips.md), section 14.
 
+## Unreleased
+
+- **The Meeting Sheet and the brief are written in the call language (2026-11-21, PB-32 S4):** the Sheet, Quick and
+  Expert prep and the brief no longer follow the interface language or a remembered Sheet language. They use the first
+  language chosen in Start call (else the Settings transcription language, else English). The "Sheet language" field is
+  gone for a one-language call; a call with two or three languages shows **Output language** (only those languages,
+  this call only). A Sheet or brief can now be written in any language of Start call, not only English and Ukrainian.
+
 ## 0.26.4 (2026-11-20)
 
 - **A new organization project includes the person who made it (2026-11-20):** in New project > start a new
