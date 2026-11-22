@@ -182,6 +182,24 @@ out, then the largest value wins), at the end of the call and after a transcript
 (`call_language.py`, `CallLanguage.swift`) accept seconds or shares: a map whose values add up to more than 1 is divided
 by its total. The shared fixture table holds a seconds case. Until PB-30 writes the fields, calls fall back to the line tags.
 
+Writer (round 6, on this branch): `call_layout.save_spoken(transcript, secs, dominant=None)` in `recorder/src/call_layout.py`
+(the app copy `spikes/m0/livetips_m0/call_layout.py` is byte-identical, a test keeps them so). It writes `languages` and
+`dominant_language` into the file above under the same flock as the app's `RecordingMeta.update`, keeps the app's
+recording parts, and is atomic. The format is locked by `Fixtures/recording_meta_languages.json`: pytest
+(`tests/test_recording_meta_languages.py`) produces it with the recorder's copy and compares; CoreChecks reads that same
+file with the Swift reader and saves it through `RecordingMeta` without dropping the fields.
+
+Still needed from PB-30 (its branch, not this one: `LangShare` exists only on `team/PB-30-fb1-transcript-language`), two
+call sites in `transcriber.py`:
+1. When the recording ends: `call_layout.save_spoken(md, lang_share.secs, dominant)`.
+2. After the end-of-call transcript correction (and after a reassign that changes the transcript): the same call with
+   the corrected counts.
+
+`dominant` is `None` when no speech was counted or the call is still inside the warm-up: `LangShare.dominant()` returns
+the first language of the set then, which would mislabel a short call; with `None` the readers take the largest value of
+`languages`. Until PB-30 makes these calls, a call with wrong line tags still resolves from the tags (the open part of
+review round 6, finding 1).
+
 ## Plan
 
 ### Modules and files
