@@ -561,9 +561,17 @@ def find_page(ds: str, start: dt.datetime, date_prop: str | None = "Date") -> di
     return sorted(pages, key=gap)[0]
 
 
-def append(page_id: str, blocks: list) -> None:
+def append(page_id: str, blocks: list) -> list | None:
+    """Append the blocks; the ids Notion returned for them, or None when a response did not list them."""
+    ids = []
     for i in range(0, len(blocks), 90):
-        notion("PATCH", f"/blocks/{page_id}/children", {"children": blocks[i:i + 90]})
+        r = notion("PATCH", f"/blocks/{page_id}/children", {"children": blocks[i:i + 90]}) or {}
+        got = [b.get("id") for b in r.get("results") or []]
+        if len(got) != len(blocks[i:i + 90]) or not all(got):
+            ids = None
+        elif ids is not None:
+            ids += got
+    return ids
 
 
 def parse_args(argv=None):
@@ -771,6 +779,16 @@ def record_owned(md: Path, page_id: str, only=None) -> None:
         pass
 
 
+def set_owned(md: Path, page_id: str, ids) -> None:
+    """Remember exactly these block ids as Pacenote's (the ones Notion returned for its own writes)."""
+    try:
+        p = _owned_path(md)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps({"page_id": page_id, "ids": list(ids)}), "utf-8")
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def regenerate_page(page: dict, sc, ids, a, w, blocks, lang) -> dict:
     """Regenerate (--page): the generated Summary section of the call's own page and its Summary property are replaced in
     place. Blocks outside the section (the PM's own, the transcript sub-page, the footer) stay; the transcript is never
@@ -787,8 +805,11 @@ def regenerate_page(page: dict, sc, ids, a, w, blocks, lang) -> dict:
     head = [] if blocks and blocks[0].get("type") == "paragraph" else [para(w.get("summary", ""))]
     new = head + blocks
     if sec is None:             # the section was removed by hand: write it again, still without a transcript
-        append(pid, [h(2, TXT[lang]["summary"])] + new)
-        record_owned(a.md, pid)
+        got = append(pid, [h(2, TXT[lang]["summary"])] + new)
+        if got is None:
+            record_owned(a.md, pid)
+        else:
+            set_owned(a.md, pid, got)
         return {"ok": True, "url": page.get("url"), "page_id": pid}
     i, end = sec
     start = children[i]
@@ -801,11 +822,19 @@ def regenerate_page(page: dict, sc, ids, a, w, blocks, lang) -> dict:
         _plain(start) not in {T["summary"] for T in TXT.values()} else TXT[lang]["summary"]
     notion("PATCH", f"/blocks/{start['id']}", {"heading_2": {"rich_text": rt(label)}})
     chunks = [new[k:k + 90] for k in range(0, len(new), 90)]
+    written, exact = [], True               # ids Notion returned for our own writes: a block the PM adds meanwhile is not among them
     for chunk in reversed(chunks):          # each chunk goes right after the heading, so the last one inserted ends up first
-        notion("PATCH", f"/blocks/{pid}/children", {"children": chunk, "after": start["id"]})
+        r = notion("PATCH", f"/blocks/{pid}/children", {"children": chunk, "after": start["id"]}) or {}
+        got = [b.get("id") for b in r.get("results") or []]
+        if len(got) != len(chunk) or not all(got):
+            exact = False
+        written += got
     for b in old:
         notion("DELETE", f"/blocks/{b['id']}")
-    record_owned(a.md, pid, only={b["id"] for b in _children(pid)} - before)
+    if exact:
+        set_owned(a.md, pid, [start["id"]] + written)
+    else:                                   # a response without the new blocks: fall back to what appeared since the start
+        record_owned(a.md, pid, only=({b["id"] for b in _children(pid)} - before) | {start["id"]})
     if end < len(children):     # the transcript heading follows the page language too
         tb = children[end]
         if tb.get("type") in ("heading_2", "heading_3") and _plain(tb) in {T["transcript"] for T in TXT.values()} | {T["tr_app"] for T in TXT.values()}:
@@ -848,8 +877,11 @@ def run(a, res: dict) -> int:
     out_lang = call_language.output_language(a.md.parent / a.md.name.replace(".named.md", ".md"),
                                              a.md.read_text(encoding="utf-8", errors="replace"))
     lang = out_lang if out_lang in TXT else "en"
-    w = claude_wrapup(plain, brief, a.model, out_lang)
     m = wait_meeting(a.md, a.wait_notes)       # 0.9.5.2: the Meeting notes of the call notes
+    if a.page and m and m.get("tldr"):          # Regenerate keeps the page title: the fresh notes already supply body and Summary, no model request
+        w = {}
+    else:
+        w = claude_wrapup(plain, brief, a.model, out_lang)
     if m:
         blocks = meeting_blocks(m, a.md, stats, bool(brief), lang)
         w["summary"] = m.get("tldr") or w.get("summary", "")

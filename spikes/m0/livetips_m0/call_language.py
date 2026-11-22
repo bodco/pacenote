@@ -13,6 +13,7 @@ project client_language (hint) > Settings > "en".
 from __future__ import annotations
 
 import collections
+import fcntl
 import json
 import os
 import re
@@ -192,28 +193,30 @@ def write_sidecar(transcript, output_language=None, artifact=None, written_in=No
                   followup_uses_client_language=False) -> dict:
     """Set the PM's choice (`output_language`) and/or record the language an artifact was written in. Atomic; keeps
     what is already there; returns what was written."""
-    cur = read_sidecar(transcript)
-    if output_language is not None:
-        c = normalize(output_language)
-        if c:
-            cur["output_language"], cur["set_by"] = c, "user"
-    if artifact in ARTIFACTS and normalize(written_in):
-        cur["artifacts"][artifact] = normalize(written_in)
-        if artifact == "followup":
-            if followup_uses_client_language:
-                cur["followup_uses_client_language"] = True
-            else:
-                cur.pop("followup_uses_client_language", None)
-    body = {k: v for k, v in (("output_language", cur["output_language"]), ("set_by", cur["set_by"])) if v}
-    body["artifacts"] = cur["artifacts"]
-    if cur.get("followup_uses_client_language"):
-        body["followup_uses_client_language"] = True
     p = sidecar_path(transcript)
     p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_name(p.name + ".tmp")
-    tmp.write_text(json.dumps(body, ensure_ascii=False, indent=1), "utf-8")
-    os.replace(tmp, p)
-    return cur
+    with open(p.with_name(p.name + ".lock"), "a") as lk:     # one lock for the whole read-merge-replace (the app takes the same flock)
+        fcntl.flock(lk, fcntl.LOCK_EX)
+        cur = read_sidecar(transcript)
+        if output_language is not None:
+            c = normalize(output_language)
+            if c:
+                cur["output_language"], cur["set_by"] = c, "user"
+        if artifact in ARTIFACTS and normalize(written_in):
+            cur["artifacts"][artifact] = normalize(written_in)
+            if artifact == "followup":
+                if followup_uses_client_language:
+                    cur["followup_uses_client_language"] = True
+                else:
+                    cur.pop("followup_uses_client_language", None)
+        body = {k: v for k, v in (("output_language", cur["output_language"]), ("set_by", cur["set_by"])) if v}
+        body["artifacts"] = cur["artifacts"]
+        if cur.get("followup_uses_client_language"):
+            body["followup_uses_client_language"] = True
+        tmp = p.with_name(p.name + ".tmp")
+        tmp.write_text(json.dumps(body, ensure_ascii=False, indent=1), "utf-8")
+        os.replace(tmp, p)
+        return cur
 
 
 def stale_artifacts(artifacts: dict, output_language, followup_uses_client_language=False) -> list:

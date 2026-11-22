@@ -187,6 +187,12 @@ public enum CallLanguage {
     @discardableResult
     public static func writeSidecar(transcript: String, outputLanguage: String? = nil, artifact: String? = nil, writtenIn: String? = nil,
                                     followUpUsesClientLanguage: Bool = false) -> Sidecar? {
+        let path = sidecarPath(transcript: transcript)
+        do { try FileManager.default.createDirectory(atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true) } catch { return nil }
+        // One flock around read, merge and replace, the same lock the Python side takes: two writers never drop each other's update.
+        let fd = open(path + ".lock", O_CREAT | O_RDWR, 0o644)
+        if fd >= 0 { flock(fd, LOCK_EX) }
+        defer { if fd >= 0 { flock(fd, LOCK_UN); close(fd) } }
         var cur = readSidecar(transcript: transcript)
         if let c = normalize(outputLanguage) { cur.outputLanguage = c; cur.setBy = "user" }
         if let a = artifact, artifacts.contains(a), let c = normalize(writtenIn) {
@@ -197,9 +203,7 @@ public enum CallLanguage {
         if let c = cur.outputLanguage { body["output_language"] = c }
         if let b = cur.setBy { body["set_by"] = b }
         if cur.followUpUsesClientLanguage { body["followup_uses_client_language"] = true }
-        let path = sidecarPath(transcript: transcript)
         do {
-            try FileManager.default.createDirectory(atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
             try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys, .prettyPrinted]).write(to: URL(fileURLWithPath: path), options: .atomic)
         } catch { return nil }
         return cur

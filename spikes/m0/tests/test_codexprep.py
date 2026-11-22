@@ -66,7 +66,8 @@ def test_brief_and_call_languages(call_request, language):
     provider = Provider()
     codexprep.Preparation(call_request, provider).contents()
     expected = "English" if language else "Ukrainian"
-    assert "else in " + expected + ";" in provider.calls[0]["system"][0]["text"]
+    assert "Write the brief in " + expected + ":" in provider.calls[0]["system"][0]["text"]
+    assert "overrides any language the" in provider.calls[0]["system"][0]["text"]       # the resolved language beats the project config
     assert expected in provider.calls[0]["user"]
 
 
@@ -76,7 +77,7 @@ def test_packed_routes_name_the_new_call_languages(call_request, code, name):
     call_request["languages"] = [code]
     provider = Provider()
     codexprep.Preparation(call_request, provider).contents()
-    assert "else in " + name + ";" in provider.calls[0]["system"][0]["text"]
+    assert "Write the brief in " + name + ":" in provider.calls[0]["system"][0]["text"]
     assert "Ukrainian" not in provider.calls[0]["system"][0]["text"]
     assert name in provider.calls[0]["user"]
 

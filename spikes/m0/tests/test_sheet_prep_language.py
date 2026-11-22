@@ -45,3 +45,5 @@ def test_local_brief_requests_use_the_resolved_language_over_project_config(tmp_
     assert seen, "no model request was made"
     assert not any("Ukrainian" in s for s in seen)
     assert any("English" in s for s in seen)
+    brief = [s for s in seen if "Write the brief in English:" in s]
+    assert brief and all("overrides any language the" in s for s in brief)      # authoritative over the config text in the pack

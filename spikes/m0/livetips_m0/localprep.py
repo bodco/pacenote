@@ -202,8 +202,8 @@ files). Never invent facts, names, numbers or dates; when something is unknown o
 and go on with the most likely reading. Never give the PM homework before the call ("confirm", "verify", "check
 whether"): the PM has only this brief and the call itself, no place to look things up (2026-11-12, owner). A gap that
 matters for the call's goal becomes a question to ask on the call, in the checklist or the speech; a gap that does
-not matter is left out. Newer facts win. Write the brief in the language the project config asks for the brief, else in {BRIEF_LANG}; quotes and ready
-phrases in the call language ({CALL_LANG}).
+not matter is left out. Newer facts win. Write the brief in {BRIEF_LANG}: this is the language resolved for this call and it overrides any language the
+project config or any other material asks for; quotes and ready phrases in the call language ({CALL_LANG}).
 No long dashes. Be concrete and detailed (1500-2500 words): dates, numbers, ticket keys, who said what.
 
 Start with exactly this first line: {HEAD}

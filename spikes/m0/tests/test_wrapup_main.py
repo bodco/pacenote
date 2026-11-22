@@ -182,6 +182,7 @@ def _stateful_notion(call, monkeypatch):
         add = [dict(b, id=new_id()) for b in blocks]
         at = len(kids) if after is None else next(i for i, b in enumerate(kids) if b["id"] == after) + 1
         kids[at:at] = add
+        return [{"id": b["id"]} for b in add]
 
     def fake(method, path, body=None):
         log.append((method, path))
@@ -194,8 +195,7 @@ def _stateful_notion(call, monkeypatch):
             pid = path.split("/")[2]
             if method == "GET":
                 return {"results": list(pages.get(pid, [])), "has_more": False}
-            put(pid, body["children"], body.get("after"))
-            return {}
+            return {"results": put(pid, body["children"], body.get("after"))}
         if method == "DELETE":
             for kids in pages.values():
                 kids[:] = [b for b in kids if "/blocks/" + b["id"] != path]
