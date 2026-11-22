@@ -4834,6 +4834,32 @@ func outputLanguageS1() {
     expect(CallLanguage.promptLine("uk-UA").contains("in Ukrainian") && CallLanguage.promptLine("xx").contains("in xx"), "outlang prep prompt: codes without a name stay as the code")
     expect(CallLanguage.spoken(forCall: dir2 + "/2026-11-22-1000-other.app.md", text: tagsEn).dominant == "en", "outlang meta: a call without metadata reads its tags")
 
+    // round 6: the file the recorder writes (call_layout.save_spoken; pytest makes it with the recorder's copy and compares it
+    // to this fixture) is read by the Swift reader, and the app's RecordingMeta saves keep its language fields
+    let recFixture = url.deletingLastPathComponent().appendingPathComponent("recording_meta_languages.json").path
+    let mp3 = RecordingFiles.metaPath(transcript: t2)
+    try? FileManager.default.removeItem(atPath: mp3)
+    try? FileManager.default.copyItem(atPath: recFixture, toPath: mp3)
+    let sp3 = CallLanguage.spoken(forCall: t2, text: tagsEn)
+    expect(sp3.dominant == "uk" && CallLanguage.toggleLanguages(sp3) == ["uk", "en"], "outlang recorder meta: seconds of speech beat the wrong tags")
+    let rm = RecordingMeta.load(mp3)
+    expect(rm?.dominantLanguage == "uk" && rm?.languages?["uk"] == 1260.5 && rm?.parts.count == 1, "outlang recorder meta: RecordingMeta reads the fields")
+    RecordingMeta.update(mp3) { $0.parts[0].driveID = "drive-1" }                   // an app save after the recorder's write
+    let raw = FileManager.default.contents(atPath: mp3).flatMap { (try? JSONSerialization.jsonObject(with: $0)) as? [String: Any] }
+    expect((raw?["languages"] as? [String: Any])?.count == 2 && raw?["dominant_language"] as? String == "uk"
+           && RecordingMeta.load(mp3)?.parts.first?.driveID == "drive-1", "outlang recorder meta: an app save keeps the language fields")
+    expect(CallLanguage.outputLanguage(transcript: t2, text: tagsEn) == "uk", "outlang recorder meta: the default after an app save")
+
+    // round 6: a call that starts during Regenerate stops it for good, even after the call has ended
+    var gate = RegenerateGate()
+    gate.enter("a.md")
+    expect(gate.mayContinue("a.md", recording: false) && !gate.mayContinue("a.md", recording: true), "outlang gate: a recording blocks the next step")
+    expect(gate.callStarts() == ["a.md"] && !gate.mayContinue("a.md", recording: false), "outlang gate: a call start stops the running Regenerate")
+    gate.leave("a.md")
+    expect(gate.callStarts().isEmpty && gate == RegenerateGate(), "outlang gate: released when the job ends; a later call start stops nothing")
+    gate.enter("a.md")
+    expect(gate.mayContinue("a.md", recording: false), "outlang gate: a new Regenerate is not stopped by an old call start")
+
     // the follow-up Write rules the tips window uses: an emptied draft with a remembered language is written again, text is kept
     expect(CallLanguage.followUpHasDraft(language: "uk", subject: "", body: "") && !CallLanguage.followUpHasDraft(language: nil, subject: "", body: ""),
            "outlang follow-up: a remembered language is a draft")

@@ -4326,6 +4326,7 @@
  "call.outlang.followUpFailed": "The follow-up was not written again: {why}",
  "call.outlang.notionFailed": "The Notion page was not rewritten: {why}",
  "call.outlang.notionLegacy": "The new text is on the Notion page, but {n} older blocks from an earlier version were left in place because Pacenote cannot tell them from your own edits. Delete the old ones by hand, then press Regenerate again to finish.",
+ "call.outlang.stoppedByCall": "Regenerate stopped because a call started. Whatever was not written again stays out of date; press Regenerate after the call.",
  "call.outlang.confirm.title": "Write this long call again in {lang}?",
  "call.outlang.confirm.body": "The call is longer than an hour, so this can cost more than usual. The transcript does not change."
 }

@@ -1,0 +1,18 @@
+{
+  "dominant_language": "uk",
+  "languages": {
+    "en": 310.2,
+    "uk": 1260.5
+  },
+  "parts": [
+    {
+      "file": "2026-11-22-1000-mixed.recording.mp4",
+      "kind": "video",
+      "seconds": 1800,
+      "started": "2026-11-22T10:00:00Z"
+    }
+  ],
+  "project": "Orbit",
+  "schema": 1,
+  "title": "Mixed"
+}

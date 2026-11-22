@@ -152,6 +152,11 @@ public struct RecordingMeta: Codable, Equatable {
     public var title = ""
     public var project = ""
     public var parts: [Part] = []
+    /// PB-30/PB-32 (D56): what the recorder heard, written by it (call_layout.save_spoken) when the recording ends and after
+    /// the end-of-call correction: the language spoken most and seconds of speech per language. Kept by every save here.
+    public var dominantLanguage: String? = nil
+    public var languages: [String: Double]? = nil
+    enum CodingKeys: String, CodingKey { case schema, title, project, parts, dominantLanguage = "dominant_language", languages }
     public init() {}
 
     public static func load(_ path: String) -> RecordingMeta? {
@@ -163,6 +168,16 @@ public struct RecordingMeta: Codable, Equatable {
         let enc = JSONEncoder(); enc.dateEncodingStrategy = .iso8601; enc.outputFormatting = [.prettyPrinted, .sortedKeys]
         try? FileManager.default.createDirectory(atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
         if let d = try? enc.encode(self) { try? d.write(to: URL(fileURLWithPath: path), options: .atomic) }
+    }
+    /// Read, change and save under the flock the recorder takes for its language fields, so neither drops the other's write.
+    public static func update(_ path: String, _ change: (inout RecordingMeta) -> Void) {
+        try? FileManager.default.createDirectory(atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
+        let fd = open(path + ".lock", O_CREAT | O_RDWR, 0o644)
+        if fd >= 0 { flock(fd, LOCK_EX) }
+        defer { if fd >= 0 { flock(fd, LOCK_UN); close(fd) } }
+        var m = load(path) ?? RecordingMeta()
+        change(&m)
+        m.save(path)
     }
     /// Parts that are finished and have no Drive copy yet.
     public var notUploaded: [Part] { parts.filter { $0.driveID.isEmpty && $0.seconds > 0 } }

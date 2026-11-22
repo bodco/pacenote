@@ -228,3 +228,17 @@ public enum CallLanguage {
                 startLangs: startLangs, clientLanguage: clientLanguage, settings: settings)
     }
 }
+
+/// PB-32: the gate a call start and Regenerate share, held for the whole Regenerate job. A call start stops every
+/// Regenerate running then: its notes run is ended by the caller, and no further step (Notion page, follow-up) starts.
+public struct RegenerateGate: Equatable {
+    public private(set) var running: Set<String> = []
+    public private(set) var stopped: Set<String> = []
+    public init() {}
+    public mutating func enter(_ file: String) { running.insert(file); stopped.remove(file) }
+    /// A call starts: the calls whose Regenerate must stop now.
+    public mutating func callStarts() -> Set<String> { stopped.formUnion(running); return running }
+    /// The next step of this Regenerate may start: no call started since it began and none is recording.
+    public func mayContinue(_ file: String, recording: Bool) -> Bool { !recording && !stopped.contains(file) }
+    public mutating func leave(_ file: String) { running.remove(file); stopped.remove(file) }
+}

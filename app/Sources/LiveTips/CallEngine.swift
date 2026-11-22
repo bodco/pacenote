@@ -163,6 +163,7 @@ final class CallEngine {
         if let first = problems().first { return first }
         verifyCore()
         if let err = ensureAudioHelper() { return err }
+        MainActor.assumeIsolated { OutputLanguageModel.stopForCall() }     // PB-32: a call never overlaps Regenerate (its model requests and notes run)
         LocalAIService.shared.apply(start: true)            // core config: semantic on/off, engine URL; 0.26.3: wake the engine
         if config.localAI.enabled { _ = LocalAIService.shared.waitReady(timeout: 6) }
         callContext = (request["context"] as? String) ?? ""
@@ -600,6 +601,7 @@ final class CallEngine {
             let ms = Int(Date().timeIntervalSince(t0) * 1000)
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
+                    Self.notesRewriteProcs[file] = nil
                     if let usd = d["cost_usd"] as? Double, usd > 0 {
                         SpendDays.add(usd)
                         CallHistory.shared.addCost(file: file, usd)
@@ -622,7 +624,15 @@ final class CallEngine {
             }
         }
         Self.notesInWork.insert(notes)
-        do { try p.run() } catch { Self.notesInWork.remove(notes); done(error.localizedDescription, []) }
+        do { try p.run(); Self.notesRewriteProcs[file] = p } catch { Self.notesInWork.remove(notes); done(error.localizedDescription, []) }
+    }
+
+    /// PB-32: the notes rewrites running now, by call file (main thread only), so a call start can stop Regenerate's.
+    @MainActor private static var notesRewriteProcs: [String: Process] = [:]
+
+    /// Stop the notes rewrite of this call (its `done` gets a failure); nothing when none runs.
+    @MainActor func cancelNotesRewrite(file: String) {
+        if let p = Self.notesRewriteProcs[file], p.isRunning { p.terminate() }
     }
 
     /// `lines`: the real transcript lines when known (the call just ended); a call under NotionGate.minLines gets no page.

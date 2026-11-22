@@ -408,16 +408,15 @@ final class CallRecorder: NSObject, ObservableObject {
     }
 
     private func record(_ p: RecSession.Result, transcript t: String, label: String) {
-        let mp = RecordingFiles.metaPath(transcript: t)
-        var meta = RecordingMeta.load(mp) ?? RecordingMeta()
-        if meta.title.isEmpty { meta.title = title }
-        if meta.project.isEmpty { meta.project = project }
         var part = RecordingMeta.Part(file: (p.path as NSString).lastPathComponent, kind: p.kind, source: label, started: p.started)
         part.seconds = p.seconds
         part.bytes = ((try? FileManager.default.attributesOfItem(atPath: p.path))?[.size] as? NSNumber)?.int64Value ?? 0
-        meta.parts.removeAll { $0.file == part.file }
-        meta.parts.append(part)
-        meta.save(mp)
+        RecordingMeta.update(RecordingFiles.metaPath(transcript: t)) { meta in     // the recorder writes its language fields at the same moment
+            if meta.title.isEmpty { meta.title = title }
+            if meta.project.isEmpty { meta.project = project }
+            meta.parts.removeAll { $0.file == part.file }
+            meta.parts.append(part)
+        }
     }
 
     private func setState(_ s: String) { state = s; publish() }

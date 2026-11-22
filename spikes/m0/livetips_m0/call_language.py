@@ -94,11 +94,9 @@ def _named_to_md(transcript) -> str:
 
 def meta_path(transcript) -> Path:
     """<project>/video/<stem>.recording.json: where the recorder keeps a call's metadata (RecordingFiles.metaPath in Swift;
-    <stem> is the transcript's name without ".named", ".md" and ".app")."""
-    t = Path(_named_to_md(transcript))
-    stem = t.name[:-3] if t.name.endswith(".md") else t.name
-    stem = stem[:-4] if stem.endswith(".app") else stem
-    return call_layout.live_folder(t).parent / "video" / (stem + ".recording.json")
+    <stem> is the transcript's name without ".named", ".md" and ".app"; the recorder writes the language fields with
+    call_layout.save_spoken)."""
+    return call_layout.recording_meta(transcript)
 
 
 def load_meta(transcript) -> Optional[dict]:

@@ -59,6 +59,18 @@ final class OutputLanguageModel: ObservableObject {
         !running && !NotesRewrite.of(file).running && !Self.recordingLive
     }
 
+    /// The gate a call start and Regenerate share (held from Regenerate's start to its finish).
+    private static var gate = RegenerateGate()
+
+    /// A call is starting (CallEngine.start): every Regenerate stops here. Its notes run is ended now; it starts no further
+    /// step (Notion page, follow-up), so no model request of Regenerate starts during the call.
+    static func stopForCall() {
+        for f in gate.callStarts() { CallEngine.shared.cancelNotesRewrite(file: f) }
+    }
+
+    /// True when the next step must not start: a call started (or is recording) since this Regenerate began.
+    private var stopped: Bool { !Self.gate.mayContinue(file, recording: Self.recordingLive) }
+
     /// Any call recording or starting, this one or another (the same test as AutoStart and the home window).
     private static var recordingLive: Bool {
         CallEngine.shared.isRunning || ["recording", "standby", "loading_model"].contains(EngineStatus.load(path: CallEngine.shared.statusPath).state)
@@ -70,21 +82,25 @@ final class OutputLanguageModel: ObservableObject {
     func regenerate() {
         guard canRegenerate else { return }
         running = true; failed = nil
+        Self.gate.enter(file)     // held until the whole job is done (finish below)
         let job = NotesRewrite.of(file)
         job.start(syncNotion: false)     // full notes, Summary and Recap in the output language; the Notion page is written below by the one ownership-aware writer (wrapup_notion --page), never by the heading-based section sync
         Task { @MainActor in
             while job.running { try? await Task.sleep(nanoseconds: 500_000_000) }
-            if let err = job.failed { self.failed = err; self.running = false; self.refresh(); return }
+            if self.stopped { self.finish([]); return }       // the call start ended the notes run: its error is not the story
+            if let err = job.failed { self.finish([err]); return }
             var problems: [String] = []                // every step that did not finish, shown together; each language is recorded only by the step that wrote it
             let meetingFailed = !job.failedSteps.isEmpty
             if meetingFailed { problems.append(L("call.outlang.meetingFailed")) }
             if let page = CallPageSync.of(self.file).notionURL {
                 if meetingFailed { problems.append(L("call.outlang.notionSkipped")) }     // the page would lose its meeting notes
+                else if self.stopped { self.finish(problems); return }
                 else if let err = await self.rewriteNotionPage(page: page) { problems.append(err) }
             }
             let fu = FollowUpModel.of(self.file)
             if fu.hasDraft, !CallLanguage.readSidecar(transcript: self.file).followUpUsesClientLanguage {
                 while fu.busy { try? await Task.sleep(nanoseconds: 500_000_000) }     // a revision in flight first: write(replacingDraft:) would be refused while it runs
+                if self.stopped { self.finish(problems); return }     // no follow-up model request once a call started
                 fu.write(replacingDraft: true)
                 if !fu.busy {                                                          // refused anyway: never report success for a draft that stayed in the old language
                     problems.append(L("call.outlang.followUpFailed", ["why": fu.error]))
@@ -93,10 +109,17 @@ final class OutputLanguageModel: ObservableObject {
                     if !fu.error.isEmpty { problems.append(L("call.outlang.followUpFailed", ["why": fu.error])) }
                 }
             }
-            self.failed = problems.isEmpty ? nil : problems.joined(separator: "\n")
-            self.running = false
-            self.refresh()
+            self.finish(problems)
         }
+    }
+
+    /// The end of every Regenerate: what did not finish (and a call start, when one stopped it), the gate released.
+    private func finish(_ problems: [String]) {
+        if stopped { failed = ([L("call.outlang.stoppedByCall")] + problems).joined(separator: "\n") }
+        else { failed = problems.isEmpty ? nil : problems.joined(separator: "\n") }
+        Self.gate.leave(file)
+        running = false
+        refresh()
     }
 
     /// The page's Summary, Recap and Meeting notes: the same wrapup_notion run as after a call, on the call's own page (--page: never a lookup by date, never a new page). wrapup_notion
