@@ -388,19 +388,67 @@ def asr_segment(whisper, seg: "Segment", cfg: dict, lang_share: LangShare, last_
 
 
 def needs_translation(text: str, lang: str, translated_from: str | None, low_conf: bool = False) -> bool:
-    """PB-30 (D56): a line marked with a non-Cyrillic language outside the set (French speech decoded in English) is
-    always translated in the background: script and confidence cannot tell French from English, so the model checks
-    the language and answers SAME when Whisper already wrote it in the target one. Any other marked line (Russian,
-    unknown source) is translated when it is Russian, in a wrong script or unsure: for those the script tells."""
+    """PB-30 (D56): a line marked with a known language outside the set (French decoded in English, Belarusian decoded
+    in Ukrainian) is always translated in the background: script and confidence cannot tell French from English or
+    Belarusian from Ukrainian, so the model checks the language and answers SAME when Whisper already wrote it in the
+    target one. A line marked Russian or unknown is translated when it is Russian, in a wrong script or unsure: for
+    those the script tells (clean Ukrainian heard as Russian stays as it is)."""
     if not translated_from:
         return False
-    return (translated_from not in CYRILLIC_LANGS + ("und",) or is_russian(text) or script_mismatch(text, lang)
+    return (translated_from not in ("ru", "und") or is_russian(text) or script_mismatch(text, lang)
             or low_conf)
 
 
+# PB-30 (review round 6): common words of one language that the others in this table do not use. An answer to a
+# translation is rejected when it has more of another language's words than of the target's (a French paraphrase
+# instead of an English translation); a short answer with none of them passes.
+FUNCTION_WORDS = {
+    "en": {"the", "and", "is", "are", "you", "to", "of", "we", "it", "this", "that", "with", "for", "have", "not",
+           "would", "like", "please", "thank", "will", "can", "my", "your", "what", "be", "was", "i"},
+    "fr": {"je", "tu", "nous", "vous", "le", "la", "les", "un", "une", "des", "est", "et", "pas", "que", "qui",
+           "pour", "avec", "ce", "cette", "mais", "oui", "merci", "voudrais", "bonjour", "du", "au", "suis"},
+    "de": {"der", "die", "das", "und", "ist", "ich", "nicht", "ein", "eine", "wir", "mit", "für", "auf", "danke",
+           "auch", "zu", "bitte", "möchte"},
+    "es": {"el", "los", "las", "del", "una", "por", "para", "con", "pero", "gracias", "hola", "está", "yo", "muy",
+           "quiero", "es", "y"},
+    "it": {"il", "gli", "della", "che", "sono", "per", "con", "una", "grazie", "ciao", "è", "anche", "molto",
+           "vorrei"},
+    "pt": {"os", "uma", "não", "você", "obrigado", "obrigada", "com", "para", "mas", "é", "muito", "eu", "gostaria"},
+    "pl": {"nie", "jest", "się", "że", "na", "dziękuję", "tak", "jak", "ale", "czy", "proszę", "chciałbym"},
+    "uk": {"і", "й", "та", "що", "це", "не", "на", "як", "але", "дякую", "я", "ми", "ви", "так", "вже", "є", "дуже",
+           "будь", "ласка"},
+    "be": {"і", "што", "гэта", "не", "на", "як", "але", "дзякуй", "я", "мы", "вы", "так", "ужо", "ёсць", "вельмі",
+           "калі", "ласка", "ў"},
+    "bg": {"и", "че", "това", "не", "на", "как", "но", "благодаря", "аз", "ние", "вие", "да", "много", "моля"},
+}
+
+
+def in_language(text: str, dst: str) -> bool:
+    """False when the text has more common words of another language than of `dst` (only the words the two do not
+    share count), or has letters only Belarusian has when `dst` is Ukrainian. True when `dst` is not in the table."""
+    own = FUNCTION_WORDS.get(dst)
+    if own is None:
+        return True
+    if dst == "uk" and re.search(r"[ўЎ]", text):
+        return False
+    raw = re.findall(r"[^\W\d_]+", text)
+    words = [w.lower() for w in raw]
+    # a capitalized word after the first one is a name ("Los Angeles", "Le Bistro"): not a word of another language
+    plain = [w.lower() for i, w in enumerate(raw) if i == 0 or not w[0].isupper()]
+    for lang, other in FUNCTION_WORDS.items():
+        if lang == dst:
+            continue
+        mine = sum(w in own and w not in other for w in words)
+        theirs = sum(w in other and w not in own for w in plain)
+        if theirs > mine:
+            return False
+    return True
+
+
 def translation_ok(new: str, dst: str) -> bool:
-    """A translation is used only when it is real text in the target language, never Russian."""
-    return bool(norm(new)) and not is_russian(new) and not script_mismatch(new, dst)
+    """A translation is used only when it is real text in the target language, never Russian: the right script and no
+    more common words of another language than of the target one."""
+    return bool(norm(new)) and not is_russian(new) and not script_mismatch(new, dst) and in_language(new, dst)
 
 
 def now() -> float:
@@ -734,8 +782,10 @@ class Whisper:
         best = max(allowed, key=lambda l: probs.get(l, 0.0))
         top = max(probs, key=probs.get) if probs else best
         if top not in allowed and probs.get(top, 0.0) >= self.foreign_min and probs[top] > probs.get(best, 0.0):
-            if top in CYRILLIC_LANGS and base in CYRILLIC_LANGS:
-                return base, None, None        # Ukrainian heard as ru/be/bg: the main (Cyrillic) language, not a translation
+            if top == "ru" and base in CYRILLIC_LANGS:
+                return base, None, None        # Ukrainian heard as ru: the main language (a Russian text is still caught)
+            # be/bg with a Cyrillic main language: the source is kept, so the line is marked and the model translates it
+            # or answers SAME (review round 6: Belarusian on a Ukrainian call went out as Ukrainian, unmarked)
             return base, None, top             # else the main language, even when it is English, and the source is kept
         # The main language wins unless another one is clearly likelier: short or noisy phrases stay in it.
         if best != keep and probs.get(best, 0.0) < self.bias * probs.get(keep, 0.0):

@@ -34,6 +34,7 @@ class Tail:
         self.pos = 0
         self.buf = ""
         self.ino = None
+        self.replaced = False        # PB-30: the file was replaced or truncated since the caller last cleared this
 
     def read(self):
         if not self.path.exists():
@@ -44,6 +45,7 @@ class Tail:
         if size < self.pos or (self.ino is not None and st.st_ino != self.ino):
             self.pos = 0
             self.buf = ""
+            self.replaced = True
         self.ino = st.st_ino
         if size == self.pos:
             return []
@@ -212,7 +214,8 @@ def wait_for(path: Path, limit_s: float = 3 * 3600, step: float = 0.5) -> None:
 def skip_existing(*tails) -> None:
     for t in tails:
         if t and t.path.exists():
-            t.pos = t.path.stat().st_size
+            st = t.path.stat()
+            t.pos, t.ino = st.st_size, st.st_ino
 
 
 class LiveRun:
@@ -223,8 +226,14 @@ class LiveRun:
         self.t_md, self.t_tm = Tail(md), Tail(call_layout.sidecar(str(md), ".timing.jsonl"))
         self.t_in = Tail(inbox) if inbox else None
         skip_existing(self.t_in)                     # only requests made after the engine attached
+        self.rows_seen = 0                           # PB-30: transcript rows consumed from the file, in write order
+        self.skip_rows = 0                           # PB-30: rows of a rewritten file that were consumed before it
         if not from_start:                           # join a running call: skip what is already there
             skip_existing(self.t_md, self.t_tm)
+            if md.exists():                          # the end-of-call rewrite shows these rows again: count them
+                with md.open("rb") as f:                # pos is in bytes: never count a row appended after it
+                    head = f.read(self.t_md.pos).decode("utf-8", errors="replace")
+                self.rows_seen = sum(1 for raw in head.split("\n")[:-1] if parse_line(raw, 0, cfg["me_label"]))
         self.timing, self.pending, self.n = {}, [], 0
         self.rows = {}                               # PB-30: "row" events (written by the recorder's writer): {(t, ch): [event]}
         self.unseq = []                              # PB-30: fed lines whose "row" event had not arrived yet
@@ -278,9 +287,22 @@ class LiveRun:
 
     def read_lines(self) -> None:
         self.read_timing()                   # the writer publishes a row's event before it appends the row: read it first
-        for raw in self.t_md.read():
+        raws = self.t_md.read()
+        if self.t_md.replaced:
+            # the end-of-call rewrite keeps every row in its place and only changes the text of translated ones: the
+            # first rows of the new file are the ones already consumed (review round 6: matching them by text let a
+            # rewritten S1 row take the seq of S2's unread row with the same words)
+            self.t_md.replaced = False
+            self.skip_rows, self.rows_seen = self.rows_seen, 0
+            self.read_timing()               # every event of the old file was written before the rewrite
+        for raw in raws:
             ln = parse_line(raw, self.n, self.cfg["me_label"])
             if ln:
+                self.rows_seen += 1
+                if self.skip_rows:
+                    self.skip_rows -= 1
+                    self.drop_read_translations(ln)
+                    continue
                 identity = (ln.t, ln.label, ln.stag, ln.text)     # two people saying "Yes" in one second are two lines
                 key = self.row_key(ln.t, ln.speaker, ln.text)
                 # a file read again (the recorder rewrote it) shows a row twice; the writer's row events say how many
@@ -325,6 +347,14 @@ class LiveRun:
                 self.n += 1
                 self.pending.append((ln, time.monotonic()))
                 self.last_new = time.monotonic()
+
+    def drop_read_translations(self, ln) -> None:
+        """A consumed row skipped after the rewrite: a "translated" event of a row already read is not kept for text
+        matching, so it cannot take an identical row that is still unread."""
+        key = self.row_key(ln.t, ln.speaker, ln.text)
+        tr = self.tr_events.get(key)
+        if tr:
+            self.tr_events[key] = [e for e in tr if e.get("seq") is None or e["seq"] not in self.read_seqs]
 
     def feed_ready(self) -> None:
         keep = []
