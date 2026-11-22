@@ -1576,6 +1576,43 @@ func meetingSheetUI0100() {
     expect(SheetEdit.closeGap(&gw, gapID: "gap-no_open_conflicts-f-size-site", action: .addQuestion, now: "n")
            && gw.block(.questions)?.facts.first { !qBeforeWeb.contains($0.id) }?.fromWeb == true, "gap: a question from a researched fact's gap is marked")
     expect(g.block(.questions)?.facts.first { $0.text == "Budget?" }?.fromWeb == nil, "gap: a typed question is not marked")
+    // PB-37 (round 9): the UI always passes its own wording (the gap text, or both conflicting facts' text), so provenance
+    // follows the facts, not a nil question, and the call sync payload leaves those questions out
+    func syncJSON(_ s: MeetingSheet) -> String {
+        String(data: CallSync.json(CallSync.sheetBody(try? JSONEncoder().encode(s)) ?? [:]), encoding: .utf8) ?? ""
+    }
+    // f-size-site cites the researched page s1 in the fixture; gq cites a folder file instead and carries only the flag
+    func citing(_ s: MeetingSheet, _ src: String, fromWeb: Bool?) -> MeetingSheet {
+        var s = s
+        for bi in s.blocks.indices { for fi in s.blocks[bi].facts.indices where s.blocks[bi].facts[fi].id == "f-size-site" {
+            s.blocks[bi].facts[fi].sourceIds = [src]; s.blocks[bi].facts[fi].fromWeb = fromWeb } }
+        return s
+    }
+    var gq = citing(base, "s4", fromWeb: true)
+    let researchedBase = base
+    let gapText = gq.readiness?.gaps?.first { $0.id == "gap-no_open_conflicts-f-size-site" }?.text ?? ""
+    expect(SheetEdit.closeGap(&gq, gapID: "gap-no_open_conflicts-f-size-site", action: .addQuestion, now: "n", question: "QMARK-GAP Ask on the call: " + gapText)
+           && gq.block(.questions)?.facts.first { $0.text.hasPrefix("QMARK-GAP") }?.fromWeb == true, "gap: a worded question from a researched fact's gap is marked")
+    expect(!syncJSON(gq).contains("QMARK-GAP") && syncJSON(gq).contains("\"blocks\""), "sync: a worded question from a researched fact's gap stays local")
+    var kq = researchedBase
+    let bothText = (kq.fact(id: "f-size-site")?.text ?? "") + " / " + (kq.fact(id: "f-size-li")?.text ?? "")
+    expect(SheetEdit.settle(&kq, factID: "f-size-li", .keepBoth, now: "n", question: "QMARK-BOTH Which is right: " + bothText)
+           && kq.block(.questions)?.facts.first { $0.text.hasPrefix("QMARK-BOTH") }?.fromWeb == true, "conflict: keep both with a researched fact marks the question")
+    expect(!syncJSON(kq).contains("QMARK-BOTH"), "sync: a keep-both question quoting a researched fact stays local")
+    var kp = citing(base, "s4", fromWeb: nil)
+    expect(SheetEdit.settle(&kp, factID: "f-size-li", .keepBoth, now: "n", question: "QMARK-PLAIN Which is right?")
+           && kp.block(.questions)?.facts.first { $0.text.hasPrefix("QMARK-PLAIN") }?.fromWeb == nil && syncJSON(kp).contains("QMARK-PLAIN"),
+           "conflict: keep both without researched facts syncs the question")
+    // PB-37 (round 9): a suggested link is saved under its host and path; the researched site's anchor text never becomes its title
+    expect(SiteResearch.suggestedTitle("https://partner.example/case-studies/?ref=nav") == "partner.example/case-studies"
+           && SiteResearch.suggestedTitle("https://partner.example") == "partner.example" && SiteResearch.suggestedTitle("not a url") == "not a url",
+           "web: a suggested link's title is its host and path")
+    var sg = base
+    if let x = try? JSONDecoder().decode(SheetSource.self, from: Data(#"{"id":"x1","n":99,"type":"web","uri":"https://partner.example/case-studies","title":"t","access":"ok","used":"full"}"#.utf8)) {
+        var x = x; x.title = SiteResearch.suggestedTitle(x.uri ?? ""); sg.sources.append(x)
+    }
+    expect(syncJSON(sg).contains("\"title\":\"partner.example\\/case-studies\"") || syncJSON(sg).contains("\"title\":\"partner.example/case-studies\""),
+           "sync: a taken suggested link goes out under its address as title")
     expect(SheetEdit.setOwner(&g, factID: "f-overview", owner: "Mike Carter") && g.fact(id: "f-overview")?.value?.owner == "Mike Carter", "gap: owner")
     expect(SheetEdit.addFact(&g, blockType: .agenda, text: "Kick-off", now: "n") != nil && g.block(.agenda)?.facts.first?.status == .edited, "fact: added into a new block")
     // export

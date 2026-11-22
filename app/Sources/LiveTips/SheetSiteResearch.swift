@@ -297,7 +297,8 @@ struct SheetSiteResearchPanel: View {
                         if !line.isEmpty { Text(line).font(th.homeText(12)).foregroundStyle(PN.C.text3).lineLimit(2) }
                     }
                     Spacer(minLength: 6)
-                    if on { Text("~" + SheetLabels.tokens(p.estTokens)).font(th.homeMono(11)).foregroundStyle(PN.C.text3) }
+                    // the plan's estimate only before the read; a read page's real size is in the result line and its source row
+                    if on && st == nil { Text("~" + SheetLabels.tokens(p.estTokens)).font(th.homeMono(11)).foregroundStyle(PN.C.text3) }
                 }
                 .padding(.vertical, 4)
             }

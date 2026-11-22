@@ -175,9 +175,20 @@ public enum SheetEdit {
                     s.blocks[bi].facts[fi].conflictWith = nil
                 }
             }
-            if let q = question { addFact(&s, blockType: .questions, text: q, now: now) }
+            // PB-37: the question quotes the facts; when one of them is researched, the question stays local as well
+            let web = s.blocks.flatMap(\.facts).contains { group.contains($0.id) && researched($0, in: s) }
+            if let q = question, let id = addFact(&s, blockType: .questions, text: q, now: now), web { markFromWeb(&s, id) }
         }
         return true
+    }
+
+    /// PB-37: a fact whose text may repeat a researched page: the builder marked it, or it cites a `web_page` source.
+    public static func researched(_ f: SheetFact, in s: MeetingSheet) -> Bool {
+        f.fromWeb == true || f.sourceIds.contains { s.source(id: $0)?.type == .webPage }
+    }
+
+    private static func markFromWeb(_ s: inout MeetingSheet, _ id: String) {
+        for bi in s.blocks.indices { if let fi = s.blocks[bi].facts.firstIndex(where: { $0.id == id }) { s.blocks[bi].facts[fi].fromWeb = true } }
     }
 
     /// A gap's quick action that changes the sheet itself; the readiness is computed again by the sidecar after.
@@ -208,11 +219,10 @@ public enum SheetEdit {
             }
         case .addQuestion:
             let id = addFact(&s, blockType: .questions, text: question ?? g.text, now: now)
-            // PB-37: the gap text quotes its fact; a question copied from a researched fact's gap stays local as well
-            if question == nil, let id, let f = g.fact.flatMap({ s.fact(id: $0) }),
-               f.fromWeb == true || f.sourceIds.contains(where: { s.source(id: $0)?.type == .webPage }) {
-                for bi in s.blocks.indices { if let fi = s.blocks[bi].facts.firstIndex(where: { $0.id == id }) { s.blocks[bi].facts[fi].fromWeb = true } }
-            }
+            // PB-37: the gap text quotes its fact, and so does the question the UI makes of it (any wording):
+            // a question from a researched fact's gap (or its conflict partner's) stays local as well
+            if let id, let f = g.fact.flatMap({ s.fact(id: $0) }),
+               ([f] + (f.conflictWith ?? []).compactMap { s.fact(id: $0) }).contains(where: { researched($0, in: s) }) { markFromWeb(&s, id) }
         default:
             return false
         }

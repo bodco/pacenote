@@ -52,6 +52,8 @@ struct DraftSource: Identifiable, Equatable {
     var empty = false
     var cutRead: Int?
     var cutLimit: Int?
+    // PB-37: a suggested link's anchor text, shown in its suggestion row only; never in the request or the sheet
+    var anchor: String?
 }
 
 @MainActor
@@ -291,8 +293,10 @@ final class SheetDraft: ObservableObject {
         }
         sources.insert(contentsOf: kids, at: min(at, sources.count))
         for e in rep.suggested where !candidates.contains(where: { $0.uri == e.url }) && !sources.contains(where: { $0.uri == e.url }) {
-            candidates.append(DraftSource(type: SheetDraft.linkType(e.url), uri: e.url, title: e.text.isEmpty ? e.domain : e.text, auto: true,
-                                          why: [L("sheet.ui.web.linkedFrom", ["domain": SiteResearch.host(parentURI ?? "")])], checked: false, access: "pending"))
+            var c = DraftSource(type: SheetDraft.linkType(e.url), uri: e.url, title: SiteResearch.suggestedTitle(e.url), auto: true,
+                                why: [L("sheet.ui.web.linkedFrom", ["domain": SiteResearch.host(parentURI ?? "")])], checked: false, access: "pending")
+            c.anchor = e.text.isEmpty ? nil : e.text
+            candidates.append(c)
         }
         checkSize()
     }

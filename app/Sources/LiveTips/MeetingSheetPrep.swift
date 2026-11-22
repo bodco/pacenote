@@ -1146,6 +1146,7 @@ struct SheetSourcesStep: View {
                 HStack(alignment: .firstTextBaseline, spacing: 10) {
                     if let i { Toggle("", isOn: $draft.candidates[i].checked).toggleStyle(.pnCheckbox).labelsHidden().accessibilityLabel(c.title) }
                     (Text(c.title).font(th.homeText(15)).foregroundStyle(PN.C.text)
+                     + Text(c.anchor.map { " · \"\($0)\"" } ?? "").font(th.homeText(13)).foregroundStyle(PN.C.text2)
                      + Text(c.why.isEmpty ? "" : " · " + c.why.joined(separator: " · ")).font(th.homeText(13)).foregroundStyle(PN.C.text3))
                         .lineLimit(2)
                     Spacer(minLength: 8)

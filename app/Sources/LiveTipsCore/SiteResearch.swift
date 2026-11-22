@@ -296,6 +296,14 @@ public enum SiteResearch {
 
     public static func host(_ url: String) -> String { URLComponents(string: url)?.host ?? url }
 
+    /// The saved title of a suggested link: its host and path only. The anchor text was written by the researched site,
+    /// and a taken link's title is ordinary source metadata that call sync keeps, so the anchor stays in the suggestion row.
+    public static func suggestedTitle(_ url: String) -> String {
+        guard let c = URLComponents(string: url), let h = c.host, !h.isEmpty else { return url }
+        let path = c.percentEncodedPath.hasSuffix("/") ? String(c.percentEncodedPath.dropLast()) : c.percentEncodedPath
+        return h + path
+    }
+
     /// A tick-and-reason line for a failed or empty state, as a key suffix for `sheet.ui.web.state.<key>`.
     /// A page the sidecar refused because its address is private or not public (reported as blocked, but not by robots.txt).
     public static func isPrivateRefusal(state: String, note: String) -> Bool { state == "blocked" && note.hasPrefix("private or non-public") }
