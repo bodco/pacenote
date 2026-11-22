@@ -1667,9 +1667,11 @@ call's own id with the call, so applying again, or the Auto switch, updates the 
 second one. One rare case still makes a second Call: HubSpot creates the Call but its answer is lost, and you apply
 again before HubSpot's search shows the new Call; the Call text carries `Pacenote call id`, so a search in HubSpot
 finds both. The company, deal and contacts you link with Refresh in Start call go to the recorded call you start
-from that window (Refresh saves them with the preparation you chose, else the planned one). Only the link that window
-showed is used: a preparation the recorder picks by title after the call starts never brings a link, so the call
-gets exactly the company and deal the Start call row showed. A call started another way stays unlinked, and Update HubSpot says so; to link a call,
+from that window (Refresh saves them with the preparation you chose, else the planned one). The link goes with the
+call only when Pacenote knows it is this call's: you started the call from its calendar event and pressed Refresh for
+that event, or you chose the preparation yourself. A title or a time is never enough, so a same-title meeting of
+another customer never passes its link on. A call without a calendar event and without a chosen preparation stays
+unlinked, and the row says so after Refresh. A call started another way stays unlinked too, and Update HubSpot says so; to link a call,
 press Refresh in Start call before you start it. When you pick another preparation in Start call, the row shows that
 preparation's own link, and Refresh starts from it. Undo deletes a new Call or puts the old values back, and does nothing if the key now belongs to another
 HubSpot account. The link also remembers its HubSpot account: after

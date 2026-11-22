@@ -733,12 +733,25 @@ func crmLinkCarry() {
     let prep = folder + "/prep-2026-11-22-1500-orbit-renewal", call = folder + "/2026-11-22-1502-orbit-renewal.app"
     let link: [String: Any] = ["provider": "hubspot", "portalId": "4711", "companyId": "c1", "companyName": "Northwind",
                                "dealId": "d1", "dealName": "Orbit renewal", "contactIds": ["p1", "p2"],
-                               "contactNames": ["Emily Carter", "James Miller"], "callKey": "old-key", "callId": "old-call"]
+                               "contactNames": ["Emily Carter", "James Miller"], "callKey": "old-key", "callId": "old-call",
+                               "occurrence": "ev-orbit@1795870800"]
+    let occ = "ev-orbit@1795870800"      // the calendar occurrence Refresh saved the link for (fix round 6)
     func read(_ p: String) -> [String: Any] { fm.contents(atPath: p).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:] }
     func write(_ o: [String: Any], _ p: String) { try? JSONSerialization.data(withJSONObject: o).write(to: URL(fileURLWithPath: p)) }
-    expect(!CRMLinkCarry.carry(from: prep, to: call), "carry: no link at the preparation, nothing written")
+    expect(!CRMLinkCarry.carry(from: prep, to: call, occurrence: occ, chosen: false), "carry: no link at the preparation, nothing written")
     write(link, CallLayout.sidecar(prep, ".crm.json"))
-    expect(CRMLinkCarry.carry(from: prep, to: call), "carry: the link goes to the call")
+    // fix round 6: a preparation found by title and time (not chosen) whose link was saved for another occurrence, or
+    // for none, or a call without a calendar event: identity not verified, the call stays unlinked
+    expect(!CRMLinkCarry.carry(from: prep, to: call, occurrence: "ev-other@1795870800", chosen: false)
+           && !fm.fileExists(atPath: CallLayout.sidecar(call, ".crm.json")), "carry: another occurrence's link is not carried")
+    expect(!CRMLinkCarry.carry(from: prep, to: call, occurrence: "", chosen: false), "carry: a call without a calendar event and no chosen prep stays unlinked")
+    expect(!CRMLinkCarry.verified(base: prep, occurrence: "ev-orbit@1796475600", chosen: false), "verified: the next occurrence of the series is another call")
+    var noOcc = link; noOcc.removeValue(forKey: "occurrence")
+    let oldPrep = folder + "/prep-2026-11-22-1450-orbit-renewal"
+    write(noOcc, CallLayout.sidecar(oldPrep, ".crm.json"))
+    expect(!CRMLinkCarry.verified(base: oldPrep, occurrence: occ, chosen: false), "verified: a link saved without an occurrence is not this call's")
+    expect(CRMLinkCarry.verified(base: oldPrep, occurrence: "", chosen: true), "verified: a preparation chosen by hand is the PM's choice")
+    expect(CRMLinkCarry.carry(from: prep, to: call, occurrence: occ, chosen: false), "carry: the link goes to the call of its occurrence")
     let dst = CallLayout.sidecar(call, ".crm.json")
     expect(dst == folder + "/.work/2026-11-22-1502-orbit-renewal.app.crm.json", "carry: the call's own sidecar in .work/")
     let got = read(dst)
@@ -749,13 +762,13 @@ func crmLinkCarry() {
     // the call's own link (Relink, or an Apply that stored a Call id) is never replaced by the preparation's
     var mine = got; mine["callId"] = "c-9"; mine["dealId"] = "none"
     write(mine, dst)
-    expect(!CRMLinkCarry.carry(from: prep, to: call), "carry: an existing call link stays")
+    expect(!CRMLinkCarry.carry(from: prep, to: call, occurrence: occ, chosen: true), "carry: an existing call link stays")
     let kept = read(dst)
     expect(kept["callId"] as? String == "c-9" && kept["dealId"] as? String == "none", "carry: the call link is unchanged")
     // a flat (old layout) live folder works the same way
     let flatPrep = root + "/live/prep-2026-11-22-1600-sync", flatCall = root + "/live/2026-11-22-1601-sync.app"
     write(link, CallLayout.sidecar(flatPrep, ".crm.json"))
-    expect(CRMLinkCarry.carry(from: flatPrep, to: flatCall) && fm.fileExists(atPath: flatCall + ".crm.json"), "carry: flat layout")
+    expect(CRMLinkCarry.carry(from: flatPrep, to: flatCall, occurrence: occ, chosen: false) && fm.fileExists(atPath: flatCall + ".crm.json"), "carry: flat layout")
     // Refresh saves the link with the prep Start call copies: the chosen one over the planned one (PB-58 fix round 4)
     let planned = folder + "/prep-2026-11-22-1500-orbit-renewal", picked = folder + "/prep-2026-11-22-1400-orbit-renewal"
     expect(CRMLinkCarry.prepBase(chosen: picked + ".brief.md", planned: planned) == picked, "refresh base: the chosen brief over the planned prep")
@@ -766,7 +779,7 @@ func crmLinkCarry() {
     // the link Refresh saved at the chosen prep is the one Start call carries
     write(link, CallLayout.sidecar(picked, ".crm.json"))
     let call2 = folder + "/2026-11-22-1405-orbit-renewal.app"
-    expect(CRMLinkCarry.carry(from: CRMLinkCarry.prepBase(chosen: picked + ".brief.md", planned: planned)!, to: call2)
+    expect(CRMLinkCarry.carry(from: CRMLinkCarry.prepBase(chosen: picked + ".brief.md", planned: planned)!, to: call2, occurrence: "", chosen: true)
            && read(CallLayout.sidecar(call2, ".crm.json"))["companyId"] as? String == "c1", "refresh base: Start call carries the chosen prep's link")
     // fix round 5: two preparations linked to different customers. After the PM switches from the first to the second,
     // Refresh keeps the link stored with the second (read at Refresh time), never the first one's company and deal
@@ -780,8 +793,23 @@ func crmLinkCarry() {
     expect(keep["companyId"] as? String == "globex" && keep["dealId"] as? String == "d-globex", "refresh keep: after a switch, the second preparation's link, not the first one's")
     expect(CRMLinkCarry.stored(base: fresh) == nil, "refresh keep: a preparation without a link starts empty")
     let call3 = folder + "/2026-11-22-1312-globex.app"
-    expect(CRMLinkCarry.carry(from: globex, to: call3) && read(CallLayout.sidecar(call3, ".crm.json"))["companyId"] as? String == "globex",
+    expect(CRMLinkCarry.carry(from: globex, to: call3, occurrence: "", chosen: true) && read(CallLayout.sidecar(call3, ".crm.json"))["companyId"] as? String == "globex",
            "refresh keep: Start call carries the second preparation's customer")
+    // fix round 7: Start call fills the chosen preparation by title and time when the PM picked none. A first start
+    // that fails and a retry with the same window must stay automatic, so a preparation saved for another occurrence
+    // stays unlinked; only the PM's own pick vouches for the link
+    let autoFile = (prep as NSString).lastPathComponent + ".brief.md", autoPath = prep + ".brief.md"
+    let call4 = folder + "/2026-11-22-1503-orbit-renewal.app"
+    for attempt in 1...2 {
+        let byHand = CRMLinkCarry.chosenByHand(picked: nil, current: autoFile, path: autoPath)
+        expect(!byHand, "start retry \(attempt): a preparation found by title and time is not chosen by hand")
+        expect(!CRMLinkCarry.carry(from: prep, to: call4, occurrence: "ev-other@1795870800", chosen: byHand)
+               && !fm.fileExists(atPath: CallLayout.sidecar(call4, ".crm.json")), "start retry \(attempt): another occurrence's link stays off the call")
+    }
+    expect(CRMLinkCarry.chosenByHand(picked: autoFile, current: autoFile, path: autoPath), "start: the preparation the PM picked is chosen by hand")
+    expect(!CRMLinkCarry.chosenByHand(picked: "prep-2026-11-22-1400-orbit-renewal.brief.md", current: autoFile, path: autoPath),
+           "start: a pick replaced since is not this preparation")
+    expect(!CRMLinkCarry.chosenByHand(picked: autoFile, current: autoFile, path: nil), "start: a picked file that is gone is not a choice")
     try? fm.removeItem(atPath: root)
 }
 
