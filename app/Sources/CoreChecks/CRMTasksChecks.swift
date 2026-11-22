@@ -8,8 +8,22 @@ final class FakeHubSpotTasks: CRMTransport {
     var log: [String] = []
     var bodies: [[String: Any]] = []
     var next = 500
+    var portalId = "111"                               // the account the key opens
+    var fail: [String: Int] = [:]                      // "METHOD path" -> the HTTP code HubSpot answers
+    var offline: Set<String> = []                      // "METHOD path" (or "*") with no answer at all
+    private let lock = NSLock()
     func send(_ method: String, _ path: String, _ body: [String: Any]?) async throws -> (Int, [String: Any], [String: String]) {
-        log.append(method + " " + path.split(separator: "?")[0])
+        await Task.yield()                             // two requests in flight interleave, as on the network
+        return try lock.withLock { try handle(method, path, body) }
+    }
+    func writes() -> [String] { log.filter { !$0.hasPrefix("GET") && !$0.hasSuffix("/search") && !$0.hasSuffix("/batch/read") } }
+    private func handle(_ method: String, _ path: String, _ body: [String: Any]?) throws -> (Int, [String: Any], [String: String]) {
+        let req = method + " " + path.split(separator: "?")[0]
+        if offline.contains(req) || offline.contains("*") { throw URLError(.notConnectedToInternet) }
+        log.append(req)
+        if let code = fail[req] { return (code, ["message": "HTTP \(code) from the fake"], [:]) }
+        if path == "/account-info/v3/details" { return (200, ["portalId": portalId, "dataHostingLocation": "na1"], [:]) }
+        if path.hasPrefix("/crm/v3/owners") { return (200, ["results": [["id": "9", "firstName": "Emily", "lastName": "Clark"]]], [:]) }
         if let b = body { bodies.append(b) }
         let props = { (b: [String: Any]?) -> [String: String] in ((b?["properties"] as? [String: Any]) ?? [:]).mapValues { "\($0)" } }
         func object(_ id: String) -> [String: Any] { ["id": id, "properties": tasks[id] ?? [:]] }
@@ -129,6 +143,9 @@ func crmTasksChecks() async {
     expect(CRMTasks.twin(mine, text: "send pricing sheet", refs: [CRMRef("deals", "D1")])?.id == "1", "htasks: a twin on the same deal is linked")
     expect(CRMTasks.twin(mine, text: "send pricing sheet", refs: [CRMRef("deals", "D9")]) == nil, "htasks: another deal is a new task")
     expect(CRMTasks.twin(mine, text: "book the venue", refs: [CRMRef("deals", "D1")]) == nil, "htasks: other words are a new task")
+    expect(CRMTasks.twin(mine, text: "send pricing sheet", refs: [CRMRef("contacts", "P1")])?.id == "1"
+           && CRMTasks.twin(mine, text: "send pricing sheet", refs: [CRMRef("contacts", "P7")]) == nil
+           && CRMTasks.twin(mine, text: "send pricing sheet", refs: []) == nil, "htasks: a contact-only call needs the same contact; no link, no twin")
 
     // tick and Undo: COMPLETED, then the status before
     try? await hs.setTaskStatus(id: "4", "COMPLETED")

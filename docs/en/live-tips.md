@@ -1675,12 +1675,17 @@ company or contacts). The settings choose whose tasks (yours, the owner in Match
 queue, and the type, priority and due date (when none was said) of new tasks; a line under them says how many tasks
 match now and when they were synced, with Refresh. **Add to HubSpot tasks** on an item on you (On you and the call
 page menus) makes a task linked to the call's contacts, company and deal; an open task with the same words on the same
-deal or company is linked instead of made again. A tick sets the task to Completed, Undo for 8 seconds puts the
+deal or company (the same contact when the call has neither) is linked instead of made again, and a call without a
+CRM link always makes a new task. A tick sets the task to Completed, Undo for 8 seconds puts the
 status back; a task closed in HubSpot closes the item, reopened there reopens it, deleted there leaves the item open
-with "HubSpot task was deleted". Remove deletes the task in HubSpot after the 8 second Undo; a task Pacenote did not make asks once first. **Add my commitments to
+with "HubSpot task was deleted". Remove deletes the task in HubSpot after the 8 second Undo; a task Pacenote did not make asks once first.
+When HubSpot refuses a tick or a Remove, the task and the item come back with the reason; made offline, they wait and
+are sent when HubSpot answers. Every change goes only to the HubSpot account the task came from: when the key opens
+another account, nothing is written and the list is read again. **Add my commitments to
 HubSpot tasks automatically after each call** is off by default. When Notion tasks are set up too, **New tasks go to**
 chooses Notion or HubSpot for the automatic add; the menus offer both until an item is linked to one. The task says
-which call it came from and links back to it; transcript text is never sent.
+which call it came from and links back to it; transcript text is never sent. Undo of the automatic add deletes the new
+tasks and unlinks their items; a task HubSpot does not let you delete stays linked, and the toast says so.
 
 **What Pacenote can do.** Help > What Pacenote can do lists every feature with Try it and how often you used it
 (from the local usage log, Settings > General > Data). For the first 14 days it is also a card on Home.

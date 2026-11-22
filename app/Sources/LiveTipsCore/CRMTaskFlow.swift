@@ -1,0 +1,429 @@
+import Foundation
+
+/// PB-17 (INT7, rules/hubspot-tasks.yaml): the workflow of the PM's HubSpot tasks without the UI, so CoreChecks drives
+/// it on a mocked HubSpot: the sync, Add to HubSpot tasks, ticks, Remove, the after-call add and their Undo. The app's
+/// HubSpotTasks is a thin shell over it (the connector, the settings, the register folders, the toasts).
+///
+/// Every write goes to the portal the task came from: the portal is read before each write and before the queue is
+/// sent, cached tasks and queued writes carry it, and the register's crm_link keeps it (crm_portal).
+@MainActor
+public final class CRMTaskFlow {
+    /// What the PM is told (the app turns these into toasts and lines).
+    public enum Note {
+        case added(Int, undo: (() -> Void)?)
+        case completed(String, undo: () -> Void)
+        case refused(String)
+        case removed(undo: () -> Void)
+        case removeRefused(String, url: String)
+        case undoRefused(Int, reason: String)       // N new tasks stayed in HubSpot and stay linked
+        case accountChanged                        // the key now opens another portal: nothing was written
+    }
+    public enum Outcome: Equatable { case sent, queued, refused(String), changed }
+
+    public private(set) var tasks: [CRMTask] = [] { didSet { onChange(nil) } }
+    public private(set) var syncedAt: Date? { didSet { onChange(nil) } }
+    public private(set) var error = "" { didSet { if error != oldValue { onChange(nil) } } }
+    public private(set) var busy = false { didSet { onChange(nil) } }
+    public private(set) var portal = "", region = ""
+    public private(set) var ownerNames: [String: String] = [:]
+    /// Writes HubSpot has not taken yet: {"key", "op": "status"|"delete", "task", "status", "portal", and for a delete
+    /// "kind": "remove"|"undo", "folder", "item"}. Sent at the next sync, only to their portal.
+    public private(set) var pending: [[String: String]] = []
+    private var hidden: Set<String> = []            // removed, inside the 8 s Undo
+    private var removing: [String: Task<Void, Never>] = [:]
+    private var adding: Set<String> = []            // folder|id of commitments being added now
+    private var sending: Set<String> = []           // keys of queued writes being sent now
+
+    let cachePath: String
+    let connected: () -> Bool
+    let connector: () -> HubSpotConnector?
+    let settings: () -> CRMTasksSettings
+    let matchingOwner: () -> String
+    let items: () -> [Commitment]
+    let onChange: (String?) -> Void                 // a register folder changed (nil: only the lists)
+    let notify: (Note) -> Void
+    let sleep: (Double) async -> Void
+
+    public init(cachePath: String, connected: @escaping () -> Bool, connector: @escaping () -> HubSpotConnector?,
+                settings: @escaping () -> CRMTasksSettings, matchingOwner: @escaping () -> String,
+                items: @escaping () -> [Commitment], onChange: @escaping (String?) -> Void = { _ in },
+                notify: @escaping (Note) -> Void = { _ in },
+                sleep: @escaping (Double) async -> Void = { s in try? await Task.sleep(nanoseconds: UInt64(s * 1e9)) }) {
+        self.cachePath = cachePath; self.connected = connected; self.connector = connector; self.settings = settings
+        self.matchingOwner = matchingOwner; self.items = items; self.onChange = onChange; self.notify = notify; self.sleep = sleep
+        loadCache()
+    }
+
+    public var ready: Bool { settings().enabled && connected() }
+
+    func line(_ e: Error) -> String { (e as? CRMError)?.message ?? e.localizedDescription }
+    static let changedLine = "the HubSpot key now opens another account; nothing was written"
+
+    // MARK: the portal
+
+    /// Reads the portal the key opens now. Another portal than the one of the cache drops the cached tasks, owners
+    /// and queued writes (their ids belong to the other account; a queued Remove gives its item back).
+    func bind(_ hs: HubSpotConnector) async throws {
+        let p = try await hs.portal()
+        guard !p.id.isEmpty else { throw CRMError(code: 0, message: "HubSpot did not say which account the key opens") }
+        if !portal.isEmpty && portal != p.id {
+            let dropped = pending
+            pending = []; tasks = []; ownerNames = [:]; hidden = []
+            for e in dropped { settle(e, ok: false) }
+        }
+        portal = p.id; region = p.region
+        saveCache()
+    }
+
+    /// Before a write: the key still opens `at`, the portal the task was read from.
+    private func sameAccount(_ hs: HubSpotConnector, _ at: String) async throws -> Bool {
+        try await bind(hs)
+        return !at.isEmpty && portal == at
+    }
+
+    // MARK: sync
+
+    public func sync() async {
+        guard ready, !busy, let hs = connector() else { return }
+        busy = true
+        defer { busy = false }
+        do {
+            try await bind(hs)
+            await flushPending(hs, bound: true)
+            if ownerNames.isEmpty, let os = try? await hs.owners() {
+                ownerNames = Dictionary(os.map { ($0.id, $0.name) }, uniquingKeysWith: { a, _ in a })
+            }
+            let s = settings()
+            tasks = try await hs.openTasks(owner: s.ownerFilter(matchingOwner: matchingOwner()), queue: s.queueId)
+            syncedAt = Date()
+            error = ""
+            saveCache()
+            await syncLinks(hs)
+        } catch {
+            self.error = "HubSpot: " + line(error)
+        }
+    }
+
+    /// The sync is older than `seconds` (or never ran).
+    public func stale(_ seconds: Double = 300, now: Date = Date()) -> Bool { syncedAt.map { now.timeIntervalSince($0) > seconds } ?? true }
+
+    /// rules/hubspot-tasks.yaml > both_ways, for the items linked to a task of this portal only.
+    private func syncLinks(_ hs: HubSpotConnector) async {
+        let openIds = Set(tasks.map(\.id))
+        let linked = items().filter { !$0.crmTask.isEmpty && $0.status != "dropped" && $0.crmPortal == portal }
+        for c in linked.prefix(80) {
+            if c.status == "open" && openIds.contains(c.crmTask) { continue }
+            if c.status == "done" && c.doneSource != "hubspot" { continue }     // closed here; HubSpot was told
+            if isPendingDelete(c.crmTask) { continue }
+            guard let t = try? await hs.task(id: c.crmTask) else { continue } // an error: try again next time
+            switch CRMTasks.syncOp(commitmentStatus: c.status, doneSource: c.doneSource, task: t) {
+            case "done": mark(c, "done", source: "hubspot")
+            case "reopen": mark(c, "reopen")
+            case "crm_unlink": mark(c, "crm_unlink", source: "removed")
+            default: break
+            }
+        }
+    }
+
+    /// Sends the queued writes of the portal the key opens; the rest of the queue stays. Returns what happened to each.
+    @discardableResult
+    func flushPending(_ hs: HubSpotConnector, bound: Bool = false) async -> [String: Outcome] {
+        var out: [String: Outcome] = [:]
+        let batch = pending.filter { !sending.contains($0["key"] ?? "") }
+        guard !batch.isEmpty else { return out }
+        if !bound { do { try await bind(hs) } catch { return out } }     // unreachable: everything waits
+        for e in batch {
+            guard let key = e["key"], pending.contains(where: { $0["key"] == key }) else { continue }  // dropped by bind
+            guard let id = e["task"], e["portal"] == portal else { finish(key); settle(e, ok: false); out[key] = .changed; continue }
+            sending.insert(key)
+            do {
+                if e["op"] == "delete" { try await hs.delete(type: "tasks", id: id) } else { try await hs.setTaskStatus(id: id, e["status"] ?? "") }
+                finish(key); settle(e, ok: true); out[key] = .sent
+            } catch let x as CRMError where x.code == 404 {
+                finish(key); settle(e, ok: true); out[key] = .sent             // gone already
+            } catch let x as CRMError where x.code >= 400 && x.code != 429 {
+                finish(key); settle(e, ok: false); out[key] = .refused(line(x))
+                error = "HubSpot: " + line(x)
+            } catch {
+                out[key] = .queued                                              // offline: next sync
+            }
+            sending.remove(key)
+        }
+        saveCache()
+        return out
+    }
+
+    private func finish(_ key: String) { pending.removeAll { $0["key"] == key } }
+
+    /// A queued write is over: a delete that went through takes the task out (and unlinks an undone add); a refused
+    /// Remove gives the item back, a refused undo leaves the item linked to the task that stayed.
+    private func settle(_ e: [String: String], ok: Bool) {
+        guard e["op"] == "delete", let id = e["task"] else { return }
+        hidden.remove(id)
+        let folder = e["folder"] ?? "", item = e["item"] ?? ""
+        if ok {
+            tasks.removeAll { $0.id == id }
+            if e["kind"] == "undo", !folder.isEmpty {
+                CommitmentRegister.mark(folder: folder, id: item, op: "crm_unlink", source: "undo"); onChange(folder)
+            }
+        } else if e["kind"] == "remove", !folder.isEmpty {
+            CommitmentRegister.mark(folder: folder, id: item, op: "reopen"); onChange(folder)
+        } else {
+            onChange(nil)
+        }
+    }
+
+    private func isPendingDelete(_ id: String) -> Bool { pending.contains { $0["op"] == "delete" && $0["task"] == id } }
+
+    private func enqueue(_ e: [String: String]) -> String {
+        var e = e
+        let key = UUID().uuidString
+        e["key"] = key
+        pending.append(e)
+        saveCache()
+        return key
+    }
+
+    // MARK: the cache
+
+    private func loadCache() {
+        guard let d = FileManager.default.contents(atPath: cachePath),
+              let o = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any] else { return }
+        if let a = o["tasks"], let data = try? JSONSerialization.data(withJSONObject: a),
+           let list = try? JSONDecoder().decode([CRMTask].self, from: data) { tasks = list }
+        if let ts = o["synced"] as? Double { syncedAt = Date(timeIntervalSince1970: ts) }
+        portal = (o["portal"] as? String) ?? ""; region = (o["region"] as? String) ?? ""
+        // a write queued before the portal was known (or without a key) is never sent
+        pending = ((o["pending"] as? [[String: String]]) ?? []).filter { !($0["portal"] ?? "").isEmpty && $0["key"] != nil }
+        ownerNames = (o["owners"] as? [String: String]) ?? [:]
+        if portal.isEmpty { tasks = [] }
+    }
+
+    func saveCache() {
+        let list = (try? JSONSerialization.jsonObject(with: (try? JSONEncoder().encode(tasks)) ?? Data("[]".utf8))) ?? []
+        let o: [String: Any] = ["tasks": list, "synced": (syncedAt ?? Date()).timeIntervalSince1970, "pending": pending,
+                                "portal": portal, "region": region, "owners": ownerNames]
+        if let d = try? JSONSerialization.data(withJSONObject: o) {
+            try? FileManager.default.createDirectory(atPath: (cachePath as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
+            try? d.write(to: URL(fileURLWithPath: cachePath))
+        }
+    }
+
+    // MARK: what a list shows
+
+    public var shown: [CRMTask] {
+        ready ? tasks.filter { $0.open && !hidden.contains($0.id) && !isPendingDelete($0.id) } : []
+    }
+
+    public func url(_ t: CRMTask) -> String { CRMTasks.url(portal: portal, region: region, id: t.id) }
+
+    /// The register item linked to a task of this portal.
+    public func linkedCommitment(_ t: CRMTask) -> Commitment? {
+        items().first { $0.crmTask == t.id && $0.crmPortal == portal && !portal.isEmpty }
+    }
+
+    /// The item as the register file says now (another add may have linked it since the menu was built).
+    func current(_ c: Commitment) -> Commitment? { CommitmentRegister.load(folder: c.folder).first { $0.id == c.id } }
+
+    private func mark(_ c: Commitment, _ op: String, source: String = "manual") {
+        CommitmentRegister.mark(folder: c.folder, id: c.id, op: op, source: source)
+        onChange(c.folder)
+    }
+
+    // MARK: ticks
+
+    /// A tick on a task (or a linked item): its status at once, then HubSpot. Refused or another account: the row and
+    /// the item come back. Offline: the write waits in the queue.
+    @discardableResult
+    public func tick(_ t: CRMTask, done: Bool = true) -> Task<Void, Never>? {
+        guard let hs = connector() else { return nil }
+        let at = portal
+        let before = t.open ? t.status : "NOT_STARTED"
+        let value = done ? "COMPLETED" : before
+        let c = linkedCommitment(t)
+        setStatus(t.id, value)
+        if let c { mark(c, done ? "done" : "reopen") }
+        return Task {
+            switch await self.write(hs, id: t.id, status: value, at: at) {
+            case .sent: if done { self.notify(.completed(t.title, undo: { [weak self] in self?.untick(t, to: before) })) }
+            case .queued: break
+            case .refused(let why):
+                self.setStatus(t.id, t.status); if let c { self.mark(c, done ? "reopen" : "done") }
+                self.notify(.refused(why))
+            case .changed:
+                if let c { self.mark(c, done ? "reopen" : "done") }
+                self.notify(.accountChanged)
+            }
+        }
+    }
+
+    /// Undo of a tick: the status before, and the item reopened. Refused: the task and the item stay completed.
+    @discardableResult
+    public func untick(_ t: CRMTask, to status: String) -> Task<Void, Never>? {
+        guard let hs = connector() else { return nil }
+        let at = portal
+        let c = linkedCommitment(t)
+        if tasks.contains(where: { $0.id == t.id }) { setStatus(t.id, status) } else { var u = t; u.status = status; tasks.append(u) }
+        if let c { mark(c, "reopen") }
+        return Task {
+            switch await self.write(hs, id: t.id, status: status, at: at) {
+            case .sent, .queued: break
+            case .refused(let why):
+                self.setStatus(t.id, "COMPLETED"); if let c { self.mark(c, "done") }
+                self.notify(.refused(why))
+            case .changed:
+                if let c { self.mark(c, "done") }
+                self.notify(.accountChanged)
+            }
+        }
+    }
+
+    private func setStatus(_ id: String, _ status: String) {
+        if let i = tasks.firstIndex(where: { $0.id == id }) { tasks[i].status = status }
+    }
+
+    /// One status write to `at`. Offline (no answer, or HubSpot busy after the retries): queued.
+    func write(_ hs: HubSpotConnector, id: String, status: String, at: String) async -> Outcome {
+        do {
+            guard try await sameAccount(hs, at) else { return .changed }
+            try await hs.setTaskStatus(id: id, status)
+            return .sent
+        } catch let e as CRMError where e.code >= 400 && e.code != 429 {
+            return .refused(line(e))
+        } catch {
+            _ = enqueue(["op": "status", "task": id, "status": status, "portal": at])
+            return .queued
+        }
+    }
+
+    // MARK: Remove
+
+    /// rules/hubspot-tasks.yaml > remove: out of the lists at once, deleted in HubSpot after the 8 s Undo. A delete
+    /// HubSpot refuses (or another account) gives the task and the item back; offline it waits in the queue.
+    /// Returns the job (CoreChecks awaits it).
+    @discardableResult
+    public func remove(_ t: CRMTask, commitment c: Commitment?) -> Task<Void, Never>? {
+        guard let hs = connector() else { return nil }
+        let at = portal
+        if let c { mark(c, "drop") }
+        hidden.insert(t.id); onChange(nil)
+        let job = Task { [weak self] in
+            guard let self else { return }
+            await self.sleep(8.5)
+            guard !Task.isCancelled, self.removing[t.id] != nil else { return }
+            self.removing[t.id] = nil
+            let key = self.enqueue(["op": "delete", "kind": "remove", "task": t.id, "portal": at,
+                                    "folder": c?.folder ?? "", "item": c?.id ?? ""])
+            switch await self.flushPending(hs)[key] {
+            case .refused(let why)?: self.notify(.removeRefused(why, url: self.url(t)))
+            case .changed?: self.notify(.accountChanged)
+            default: break
+            }
+        }
+        removing[t.id] = job
+        notify(.removed(undo: { [weak self] in
+            guard let self, let j = self.removing[t.id] else { return }         // the delete started: too late
+            j.cancel(); self.removing[t.id] = nil; self.hidden.remove(t.id)
+            if let c { self.mark(c, "reopen") } else { self.onChange(nil) }
+        }))
+        return job
+    }
+
+    // MARK: Add
+
+    public struct Added: Equatable {
+        public var id: String; public var created: Bool
+        public init(id: String, created: Bool) { self.id = id; self.created = created }
+    }
+
+    /// "Add to HubSpot tasks" on an item owned by me: a task with `properties`, associated with `refs` (the call's
+    /// deal, company and contacts), then crm_link with the portal. One add per item at a time; the register file is
+    /// read again before the task is made. An open task with the same words on the call's deal or company (or contact)
+    /// is linked instead, after a fresh read of its associations.
+    @discardableResult
+    public func add(_ c: Commitment, properties: [String: Any], refs: [CRMRef], silent: Bool = false) async -> Added? {
+        guard ready, c.mine, c.notionPage.isEmpty, c.crmTask.isEmpty, let hs = connector() else { return nil }
+        let key = c.folder + "|" + c.id
+        guard adding.insert(key).inserted else { return nil }
+        defer { adding.remove(key) }
+        func unlinked() -> Commitment? {
+            guard let now = current(c), now.status == "open", now.notionPage.isEmpty, now.crmTask.isEmpty else { return nil }
+            return now
+        }
+        do {
+            try await bind(hs)
+            guard unlinked() != nil else { return nil }
+            if let cand = CRMTasks.twin(shown, text: c.text, refs: refs),
+               let fresh = try await hs.taskWithAssociations(id: cand.id),
+               CRMTasks.twin([fresh], text: c.text, refs: refs) != nil {
+                guard unlinked() != nil else { return nil }
+                link(c, fresh.id)
+                return Added(id: fresh.id, created: false)
+            }
+            guard unlinked() != nil else { return nil }
+            let at = portal
+            let t = try await hs.createTask(properties, associations: refs)
+            guard !t.id.isEmpty else { return nil }
+            link(c, t.id, at: at)
+            if at == portal { tasks.append(t) }
+            saveCache()
+            if !silent { notify(.added(1, undo: nil)) }
+            return Added(id: t.id, created: true)
+        } catch {
+            if !silent { notify(.refused(line(error))) } else { self.error = "HubSpot: " + line(error) }
+            return nil
+        }
+    }
+
+    private func link(_ c: Commitment, _ id: String, at: String? = nil) {
+        CommitmentRegister.mark(folder: c.folder, id: c.id, op: "crm_link", crmTask: id, crmPortal: at ?? portal)
+        onChange(c.folder)
+    }
+
+    // MARK: after a call
+
+    /// rules/hubspot-tasks.yaml > after_call: with the switch on (and HubSpot the destination), every open item owned
+    /// by me of the call in `folder` becomes a task, once; one toast with Undo for the new ones. Switch off: nothing
+    /// is read from or written to HubSpot.
+    public func afterCall(file: String, folder: String, destination: String?,
+                          draft: (Commitment) -> (properties: [String: Any], refs: [CRMRef])) async {
+        guard ready, settings().autoAdd, destination == "hubspot" else { return }
+        let key = CommitmentRegister.callKey(file)
+        let list = CommitmentRegister.load(folder: folder).filter {
+            $0.mine && $0.status == "open" && $0.notionPage.isEmpty && $0.crmTask.isEmpty && CommitmentRegister.callKey($0.call) == key }
+        var made: [String] = []
+        for c in list {
+            let d = draft(c)
+            if let r = await add(c, properties: d.properties, refs: d.refs, silent: true), r.created { made.append(r.id) }   // linked twins are not undone
+        }
+        guard !made.isEmpty else { return }
+        let at = portal
+        notify(.added(made.count, undo: { [weak self] in Task { await self?.undoAdds(made, folder: folder, at: at) } }))
+    }
+
+    /// Undo of the after-call add: each new task is deleted, and its item unlinked only once HubSpot deleted it. A
+    /// refused delete leaves the item linked (and says so); offline the delete waits in the queue.
+    @discardableResult
+    public func undoAdds(_ ids: [String], folder: String, at: String) async -> [String: Outcome] {
+        guard let hs = connector() else { return [:] }
+        var keys: [String: String] = [:]
+        for c in CommitmentRegister.load(folder: folder) where ids.contains(c.crmTask) && c.crmPortal == at {
+            hidden.insert(c.crmTask)
+            keys[c.crmTask] = enqueue(["op": "delete", "kind": "undo", "task": c.crmTask, "portal": at, "folder": folder, "item": c.id])
+        }
+        onChange(nil)
+        let out = await flushPending(hs)
+        var result: [String: Outcome] = [:], refused = 0, why = ""
+        for (id, key) in keys {
+            let o = out[key] ?? .queued
+            result[id] = o
+            switch o {
+            case .refused(let r): refused += 1; why = r
+            case .changed: refused += 1; why = Self.changedLine
+            default: break
+            }
+        }
+        if refused > 0 { notify(.undoRefused(refused, reason: why)) }
+        return result
+    }
+}

@@ -29,6 +29,10 @@ Pacenote. Earlier versions are described in the commit messages and in
   links an open task with the same words on that deal. A tick sets Completed with Undo, Remove deletes the task after
   the 8 second Undo, and tasks closed, reopened or deleted in HubSpot follow in Pacenote. The automatic add after a
   call is off by default; with Notion tasks set up too, you choose where new tasks go. Transcript text is never sent.
+  Two adds of the same item never make two tasks, a call with only a contact links a task of that contact only, and a
+  call without a CRM link always makes a new task. Changes go only to the HubSpot account the task came from (queued
+  offline changes are dropped when the key opens another account), and a refused Remove or Undo gives the task and
+  the item back with the reason.
 
 ## 0.26.4 (2026-11-20)
 

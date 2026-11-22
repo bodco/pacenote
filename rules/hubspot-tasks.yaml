@@ -26,7 +26,14 @@ sync:
     set), hs_queue_membership_ids CONTAINS_TOKEN the queue (when set), soonest hs_timestamp first, all pages up to 500.
     Then POST /crm/v4/associations/tasks/{deals,companies,contacts}/batch/read, 100 ids at a time.
   when: on opening Home or the Tracker, every 5 minutes while Home or a call is open, and when the call window asks
-  cache: state/hubspot-tasks.json (tasks, the offline queue of ticks, the portal id and region, owner names)
+  cache: >-
+    state/hubspot-tasks.json (tasks, the offline queue of ticks and deletes, the portal id and region, owner names).
+  portal: >-
+    The portal id (account-info) is read at every sync and before every write. Cached tasks, queued writes and the
+    register's crm_link (crm_portal) carry the portal they belong to; a write goes only there. When the key opens
+    another portal, the cached tasks and the queue are dropped (a queued Remove gives its item back), links of the
+    other portal are neither read nor unlinked, and a tick or Remove started before says the account changed.
+  call_window_sync: the call window's payload (every few seconds) syncs only when the last sync is older than 5 minutes
   errors: one line in the settings section and under On you, never a modal; 401 and 403 lines come from the client
 on_you: >-
   One list with the register and the Notion tasks, in the commitments order. Badge HS; the second line: project (of a
@@ -38,13 +45,14 @@ tracker: >-
 tick: >-
   PATCH hs_task_status COMPLETED at once; a toast "<title> set to Completed in HubSpot" with Undo for 8 s, which writes
   the status before the tick. A linked item gets done (Undo: reopen). When HubSpot refuses, the row comes back with
-  the reason. A tick made offline waits in the queue and is sent when HubSpot answers.
+  the reason (the item too). A tick made offline waits in the queue and is sent when HubSpot answers.
 open: Double click opens the task in HubSpot (app-eu1.hubspot.com for the EU data region).
 remove: >-
   Remove takes the task out of the lists at once and deletes it in HubSpot (its recycling bin) after the 8 s Undo, so
   Undo writes nothing to HubSpot. A linked item gets drop (Undo: reopen). A task Pacenote did not make asks once in On
   you and the Tracker: Delete "<title>" in HubSpot? (the call window does not ask, as for Notion tasks). When HubSpot
-  refuses, the toast says the task stayed in HubSpot, with Open. Hide here hides it only in Pacenote.
+  refuses, the task and the item come back and the toast says the task stayed in HubSpot, with Open. Made offline,
+  the delete waits in the queue (the task stays out of the lists). Hide here hides it only in Pacenote.
 call_window: >-
   The On me tab gets a group "HubSpot <deal or company>": the open tasks associated with the call's deal, company or
   contacts (from <call>.crm.json). A call without a CRM link shows none. The tab counter counts them.
@@ -62,9 +70,12 @@ both_ways: >-
 after_call: >-
   When auto_add is on (and the destination is HubSpot when Notion tasks are set up too), at the end of the call every
   open item owned by me of that call becomes a task, once. An open task with at least 60% of the words (the duplicates
-  rule of rules/commitments.yaml) on the same deal or company is linked instead of created. Home shows once "N
-  commitments added to HubSpot tasks" with Undo (the new tasks are deleted and their items unlinked; linked twins stay linked). Items owned by
-  someone else never go to HubSpot.
+  rule of rules/commitments.yaml) on the same deal or company (the same contact when the call has neither) is linked
+  instead of created, after a fresh read of that task's associations; a call without a CRM link has no twin. One add
+  per item at a time, and the register is read again right before the task is made. With the switch off nothing is
+  read from or written to HubSpot. Home shows once "N commitments added to HubSpot tasks" with Undo: each new task is
+  deleted and its item unlinked only once HubSpot deleted it; a refused delete keeps the link and the toast says so;
+  offline the delete waits in the queue. Linked twins stay linked. Items owned by someone else never go to HubSpot.
 scopes: >-
   No new scope: tasks are read and written with the ten scopes the HubSpot page lists (as for notes and calls, spec
   section 4). To be confirmed on a real portal; a 403 names the missing scope.

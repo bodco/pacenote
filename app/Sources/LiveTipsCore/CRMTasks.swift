@@ -130,12 +130,15 @@ public enum CRMTasks {
     }
 
     /// Dedupe (rules/hubspot-tasks.yaml > after_call): an open task with 60% of the words and the same deal or company
-    /// (or any task when the call has no link) is the same task; it is linked instead of created.
+    /// (the same contact when the call has neither) is the same task; it is linked instead of created. A call without
+    /// a CRM link has no twin: a task of another customer is never reused.
     public static func twin(_ tasks: [CRMTask], text: String, refs: [CRMRef]) -> CRMTask? {
         let deals = Set(refs.filter { $0.type == "deals" }.map(\.id)), cos = Set(refs.filter { $0.type == "companies" }.map(\.id))
+        let people = Set(refs.filter { $0.type == "contacts" }.map(\.id))
         return tasks.first { t in
-            t.open && CommitmentRegister.similar(t.title, text)
-                && ((deals.isEmpty && cos.isEmpty) || !deals.isDisjoint(with: t.dealIds) || !cos.isDisjoint(with: t.companyIds))
+            guard t.open, CommitmentRegister.similar(t.title, text) else { return false }
+            if !deals.isEmpty || !cos.isEmpty { return !deals.isDisjoint(with: t.dealIds) || !cos.isDisjoint(with: t.companyIds) }
+            return !people.isEmpty && !people.isDisjoint(with: t.contactIds)
         }
     }
 
@@ -205,6 +208,14 @@ extension HubSpotConnector {
             let r = try await call("GET", "/crm/v3/objects/tasks/\(id)?properties=" + CRMTasks.props.joined(separator: ","))
             return CRMTasks.task(r)
         } catch let e as CRMError where e.code == 404 { return nil }
+    }
+
+    /// One task by id with its deal, company and contact ids, read now (a twin is checked on this, not on the cache).
+    public func taskWithAssociations(id: String) async throws -> CRMTask? {
+        guard let t = try await task(id: id) else { return nil }
+        var one = [t]
+        try await addAssociations(&one)
+        return one[0]
     }
 
     /// A new task associated with the call's deal, company and contacts (task -> deal 216, company 192, contact 204).
