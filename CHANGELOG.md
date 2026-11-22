@@ -22,6 +22,12 @@ Pacenote. Earlier versions are described in the commit messages and in
   switch in Settings > Integrations > HubSpot, **Log the call in HubSpot automatically after it ends**, is off by
   default and logs only the Call. The HubSpot integration design is in `docs/specs/hubspot-crm-integration.md`.
 
+- **HubSpot deals (H4).** Update HubSpot now shows the deal the call is linked to, with a menu to pick another open
+  deal, and suggests next step, close date, stage and qualification fields from the call, each with the evidence from
+  the call page and a checkbox. A field with no evidence is not suggested. The stage is chosen from the portal's own
+  stages of the deal's pipeline instead of typed text, and never moves to Closed won or Closed lost. Quotes are shown
+  only to you and are never sent to HubSpot. Apply updates the deal once and Undo restores the old values.
+
 ## 0.26.4 (2026-11-20)
 
 - **A new organization project includes the person who made it (2026-11-20):** in New project > start a new

@@ -11,10 +11,11 @@ public struct CRMDeal: Equatable, Codable {
     public var id: String; public var name: String; public var stage: String; public var stageName: String
     public var amount: String; public var closeDate: String; public var owner: String; public var nextStep: String
     public var updated: String; public var open: Bool
+    public var pipeline: String      // H4: the deal's own pipeline, so only its stages are offered
     public init(id: String, name: String, stage: String = "", stageName: String = "", amount: String = "", closeDate: String = "",
-                owner: String = "", nextStep: String = "", updated: String = "", open: Bool = true) {
+                owner: String = "", nextStep: String = "", updated: String = "", open: Bool = true, pipeline: String = "") {
         self.id = id; self.name = name; self.stage = stage; self.stageName = stageName; self.amount = amount; self.closeDate = closeDate
-        self.owner = owner; self.nextStep = nextStep; self.updated = updated; self.open = open
+        self.owner = owner; self.nextStep = nextStep; self.updated = updated; self.open = open; self.pipeline = pipeline
     }
 }
 public struct CRMActivity: Equatable, Codable { public var kind: String; public var when: String; public var text: String; public var done: Bool
@@ -221,14 +222,14 @@ public final class HubSpotConnector: CRMConnector {
         }
     }
 
-    static let dealProps = ["dealname", "dealstage", "amount", "closedate", "hubspot_owner_id", "hs_next_step", "hs_lastmodifieddate", "hs_is_closed"]
+    static let dealProps = ["dealname", "dealstage", "amount", "closedate", "hubspot_owner_id", "hs_next_step", "hs_lastmodifieddate", "hs_is_closed", "pipeline"]
 
     func dealFrom(_ d: [String: Any], stages: [String: String]) -> CRMDeal? {
         guard let id = d["id"] as? String else { return nil }
         let st = Self.p(d, "dealstage")
         return CRMDeal(id: id, name: Self.p(d, "dealname"), stage: st, stageName: stages[st] ?? st, amount: Self.p(d, "amount"),
                        closeDate: String(Self.p(d, "closedate").prefix(10)), owner: Self.p(d, "hubspot_owner_id"),
-                       nextStep: Self.p(d, "hs_next_step"), updated: Self.p(d, "hs_lastmodifieddate"), open: Self.p(d, "hs_is_closed") != "true")
+                       nextStep: Self.p(d, "hs_next_step"), updated: Self.p(d, "hs_lastmodifieddate"), open: Self.p(d, "hs_is_closed") != "true", pipeline: Self.p(d, "pipeline"))
     }
 
     public func deals(companyId: String) async throws -> [CRMDeal] {

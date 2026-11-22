@@ -1656,7 +1656,7 @@ Update, Create, confirm; copy the key. In Pacenote: Settings > Integrations > Hu
 key stays in the Keychain. Pacenote reads the company (by the attendees' email domains, else the name), its freshest
 open deal, contacts, the last 10 activities and open tasks into `<brief>.crm.md` when you press Refresh in Start
 call. It writes only from the call page's menu, Update HubSpot: a note on the deal, company and contacts, deal fields
-(next step, the stage only if you type one), a follow-up task, each with a checkbox; Apply writes, Undo works for 8
+(next step, close date, stage and qualification, only with evidence from the call), a follow-up task, each with a checkbox; Apply writes, Undo works for 8
 seconds. The transcript goes into the note only if you turn that on.
 
 **The call in HubSpot.** Update HubSpot also has a Call row, ticked by default: a HubSpot Call with the title, start
@@ -1667,6 +1667,15 @@ call's own id with the call, so applying again, or the Auto switch, updates the 
 second one; Undo deletes a new Call or puts the old values back. **Log the call in HubSpot automatically after it
 ends** is off by default; when on, it logs only the Call, about two and a half minutes after the call, without a
 review. Notes, deal fields and tasks stay behind Apply. The design is in `docs/specs/hubspot-crm-integration.md`.
+
+**The deal (H4).** Update HubSpot shows the deal the call is linked to (the company's open deal updated last) with a
+menu to pick another open deal or No deal. Below it are the changes the call supports, each with a checkbox, the
+current and the new value and the evidence from the call page: the next step (the step both sides agreed on), the
+close date (only when a closing step such as a signature has a real date), a later stage of the deal's own pipeline
+(only when the call names it, for example a contract or a demo; never Closed won or Closed lost) and the qualification
+fields you mapped in Settings (only for a criterion with a quote). A field with no evidence is not suggested. The Stage
+menu lists the portal's own stages of that pipeline, and Pacenote writes only an id from it. The quote is shown to you
+and never sent. Apply writes the ticked fields in one update and Undo puts the old values back.
 
 **What Pacenote can do.** Help > What Pacenote can do lists every feature with Try it and how often you used it
 (from the local usage log, Settings > General > Data). For the first 14 days it is also a card on Home.

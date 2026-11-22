@@ -230,7 +230,7 @@ struct CRMUpdateView: View {
     @ObservedObject var crm = CRMService.shared
     @State private var plan: CRMUpdatePlan? = nil
     @State private var link: CRMLink? = nil
-    @State private var stage = ""
+    @State private var dm = CRMDealModel()      // H4: the deal, its suggestions with evidence and the pipeline's stages
     @State private var busy = false
     @State private var status = ""
     @State private var undo: [(String, String, [String: String])] = []    // (type, id, old fields)
@@ -255,7 +255,7 @@ struct CRMUpdateView: View {
                     .toggleStyle(.pnCheckbox)
                     .disabled(p.rows[i].id == "deal" && (l.dealId.isEmpty || l.dealId == "none"))
                 }
-                TextField(L("crm.stage"), text: $stage, prompt: Text(L("crm.stage.prompt"))).help(L("crm.stage.help"))
+                CRMDealSection(model: $dm, dealName: l.dealId == "none" ? "" : l.dealName, setDeal: pickDeal)
             } else {
                 Text(L("crm.update.noLink")).foregroundStyle(PN.C.text3)
             }
@@ -278,27 +278,45 @@ struct CRMUpdateView: View {
         let rec = CallHistory.shared.records.first { $0.file == file }
         let sales = (try? Data(contentsOf: URL(fileURLWithPath: CallLayout.sidecar(base, ".sales.json")))).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
         let next = (sales["next_step"] as? String) ?? ((sales["next_step"] as? [String: Any])?["what"] as? String) ?? ""
-        // 0.8.7 (I6.5): the qualification of the call page (criterion -> what) through the mapping of its method
-        var qual: [String: String] = [:]
-        for c in (sales["criteria"] as? [[String: Any]]) ?? [] {
-            if let k = c["criterion"] as? String, let w = c["what"] as? String, !w.isEmpty { qual[k] = w }
-        }
+        // H4: deal fields (next step, close date, stage, qualification) are suggested in the deal section with their evidence
         let crmCfg = SettingsWindow.model.config.crm
-        let mapping = crmCfg.qualification[(sales["method"] as? String) ?? ""] ?? [:]
         var callLog: CRMCallLog? = nil
         if var l = link { callLog = CRMCallLogger.log(file: file, link: &l); link = l }     // keeps the new call key in the view's link
         let transcript = SettingsWindow.model.config.crm.transcriptInNote ? (try? String(contentsOfFile: file, encoding: .utf8)) : nil
         plan = CRMUpdatePlan.build(title: CallPageView.title(file), date: rec.map { CallPageView.fmt("dMMMyyyy").string(from: $0.start) } ?? "",
                                    summary: o.onMe, decisions: o.decisions, nextSteps: o.onMe + o.theirs.map { $0.who + ": " + $0.what },
-                                   notionURL: rec?.notionURL ?? "", transcript: transcript, nextStep: next, closeDate: "", stage: nil,
-                                   qualification: qual, mapping: mapping, followUp: next.isEmpty ? nil : (next, nil),
+                                   notionURL: rec?.notionURL ?? "", transcript: transcript, nextStep: "", closeDate: "", stage: nil,
+                                   qualification: [:], mapping: [:], followUp: next.isEmpty ? nil : (next, nil),
                                    writeNote: crmCfg.writeNote, writeDeal: crmCfg.writeDeal, writeTask: crmCfg.writeTask,
                                    callLog: callLog, writeCall: crmCfg.writeCall)
+        loadDeal()
+    }
+
+    /// H4: reads the deal and builds the suggestions; the "deal" row appears when there is something to write.
+    func loadDeal() {
+        guard let l = link else { return }
+        Task {
+            dm = await CRMDealModel.load(link: l, file: file)
+            guard var p = plan else { return }
+            p.rows.removeAll { $0.id == "deal" }
+            if !dm.suggestions.isEmpty || dm.myStages.count > 1 {
+                let at = p.rows.firstIndex { $0.id == "task" || $0.id == "transcript" } ?? p.rows.endIndex
+                p.rows.insert(.init(id: "deal", title: "deal", detail: "", on: SettingsWindow.model.config.crm.writeDeal), at: at)
+            }
+            plan = p
+        }
+    }
+
+    /// The PM picks another open deal of the company (or No deal); the suggestions are built again for that deal.
+    func pickDeal(_ id: String, _ name: String) {
+        guard var l = link else { return }
+        l.dealId = id; l.dealName = name; l.save(base: base); link = l
+        loadDeal()
     }
 
     func apply() {
-        guard var p = plan, let l = link, let c = crm.connector() else { return }
-        if !stage.isEmpty { p.dealFields["dealstage"] = stage }
+        guard let p = plan, let l = link, let c = crm.connector() else { return }
+        let dealFields = dm.fields      // H4: ticked suggestions and a stage of the deal's own pipeline; evidence is never part of it
         busy = true; status = L("crm.writing")
         Task {
             var done: [(String, String, [String: String])] = []
@@ -313,8 +331,8 @@ struct CRMUpdateView: View {
                     done.append(("calls", r.id, r.old))       // a new Call: old is empty and Undo deletes it; an update: Undo restores
                     var nl = link ?? l; nl.callId = r.id; nl.save(base: base); link = nl
                 }
-                if p.rows.first(where: { $0.id == "deal" })?.on == true, !l.dealId.isEmpty, l.dealId != "none", !p.dealFields.isEmpty {
-                    let old = try await c.updateDeal(id: l.dealId, fields: p.dealFields); done.append(("deals", l.dealId, old)); fields = p.dealFields.count
+                if p.rows.first(where: { $0.id == "deal" })?.on == true, !l.dealId.isEmpty, l.dealId != "none", !dealFields.isEmpty {
+                    let old = try await c.updateDeal(id: l.dealId, fields: dealFields); done.append(("deals", l.dealId, old)); fields = dealFields.count
                 }
                 if p.rows.first(where: { $0.id == "task" })?.on == true, let t = p.task {
                     let id = try await c.createTask(subject: t.subject, due: t.due, associations: refs); done.append(("tasks", id, [:]))

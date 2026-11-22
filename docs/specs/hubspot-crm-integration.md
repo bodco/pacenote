@@ -1,6 +1,6 @@
 # HubSpot CRM integration: spec (PB-57)
 
-Status: draft for the owner. Part 2 of the first slice (H2, PB-58, the Call engagement) is built on this branch; the
+Status: draft for the owner. Part 2 of the first slice (H2, PB-58, the Call engagement) and H4 (PB-60, deals) are built on this branch; the
 rest is planned. Source of truth for behavior today: `app/Sources/LiveTipsCore/CRM.swift`,
 `app/Sources/LiveTips/CRMFlow.swift`, `rules/crm.yaml`.
 
@@ -54,8 +54,14 @@ HubSpot association type ids below are HUBSPOT_DEFINED, from the object on the l
 |---|---|
 | Note `hs_note_body` | Summary, Decisions, Next steps, the Notion link; the transcript only when "Add the transcript to the CRM note" is on |
 | Task `hs_task_subject`, `hs_timestamp` | the next step, due date when one was said (else tomorrow) |
-| Deal `hs_next_step`, `closedate`, `dealstage` | the call page's next step; close date when said; stage only when the PM types one |
-| Deal qualification properties | per method criterion to a deal property chosen in Settings (or "Don't write") |
+| Deal `hs_next_step`, `closedate`, `dealstage` (H4, `LiveTipsCore/CRMDeals.swift`) | next step: the agreed step on the call page. Close date: a mutual-plan step with a closing word (close, sign, signature) and a real `YYYY-MM-DD` date not in the past, written as UTC midnight. Stage: only when a signal, plan step or the next step names a later open stage of the deal's own pipeline (generic stage words from `rules/sales.yaml > stages`, matched to the portal's stage labels); never a closed stage; or a stage the PM picks from that pipeline's list |
+| Deal qualification properties | per method criterion to a deal property chosen in Settings (or "Don't write"), only for a known or partial criterion that has a quote |
+
+H4 rules: every suggestion carries its evidence (the quote, or the agreed step itself for the next step and the close
+date) and a field without evidence is absent, not unticked. The evidence is shown in Update HubSpot and never sent
+(rule 2 of section 5). One `updateDeal` call writes the ticked fields and returns the old values for Undo. The stage id
+must belong to the deal's `pipeline`. The PM can switch the call to another open deal of the company or to No deal in
+the same window; the Call's associations follow the saved link.
 
 ## 4. Required scopes
 
