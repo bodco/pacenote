@@ -45,6 +45,14 @@ public enum CRMLinkCarry {
         return prepBase(chosen: path, planned: nil) != nil
     }
 
+    /// Relink (fix round 7): the attendees come only from the calendar occurrence the link was saved for (an event's id
+    /// or one of its copies), never from a meeting near the recording's start, which may be another customer's. No
+    /// saved occurrence, or one the calendar no longer has: no attendees, so Relink finds the company by its saved name.
+    public static func relinkEmails(occurrence: String, events: [(ids: [String], emails: [String])]) -> [String] {
+        guard !occurrence.isEmpty else { return [] }
+        return events.first { $0.ids.contains(occurrence) }?.emails ?? []
+    }
+
     /// The preparation Refresh saves the link with, picked the way Start call picks the one it copies to the call: the
     /// prep chosen by hand (its brief or Meeting Sheet) first, else the planned one. nil when neither is known.
     public static func prepBase(chosen: String?, planned: String?) -> String? {

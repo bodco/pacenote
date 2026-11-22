@@ -807,6 +807,18 @@ func crmLinkCarry() {
     expect(!CRMLinkCarry.chosenByHand(picked: "prep-2026-11-22-1400-orbit-renewal.brief.md", current: autoFile, path: autoPath),
            "start: a pick replaced since is not this preparation")
     expect(!CRMLinkCarry.chosenByHand(picked: autoFile, current: autoFile, path: nil), "start: a picked file that is gone is not a choice")
+    // fix round 7: Relink of a call recorded at 15:02. Two meetings within 20 minutes: Globex at 15:00 (nearer, another
+    // customer) and Orbit at 15:10 (the occurrence the link was saved for). Only the saved occurrence gives attendees.
+    let nearby: [(ids: [String], emails: [String])] = [
+        (["ev-globex@1795870800"], ["sarah.johnson@globex.example"]),
+        (["ev-orbit@1795871400", "gcal-orbit@1795871400"], ["emily.carter@northwind.example"])]
+    expect(CRMLinkCarry.relinkEmails(occurrence: "ev-orbit@1795871400", events: nearby) == ["emily.carter@northwind.example"],
+           "relink: the attendees of the saved occurrence, not the nearer meeting of another customer")
+    expect(CRMLinkCarry.relinkEmails(occurrence: "gcal-orbit@1795871400", events: nearby) == ["emily.carter@northwind.example"],
+           "relink: the saved occurrence found through a calendar copy")
+    expect(CRMLinkCarry.relinkEmails(occurrence: "", events: nearby).isEmpty, "relink: a link without an occurrence takes no attendees (company by name)")
+    expect(CRMLinkCarry.relinkEmails(occurrence: "ev-orbit@1795267800", events: nearby).isEmpty,
+           "relink: an occurrence the calendar no longer has takes no attendees")
     try? fm.removeItem(atPath: root)
 }
 
