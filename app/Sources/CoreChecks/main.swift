@@ -678,7 +678,13 @@ final class FakeHubSpotCalls: CRMTransport {
     var createDelay: UInt64 = 0     // ns a create takes, so two writers can overlap
     var createThenFail = false      // the Call is made but the answer is a 502 (an ambiguous create)
     var failPut = false             // adding an association fails with a 500
+    let lock = NSLock()             // the race checks send from two tasks at once; unguarded state crashed the gate
     func send(_ method: String, _ path: String, _ body: [String: Any]?) async throws -> (Int, [String: Any], [String: String]) {
+        // the delay is waited before the lock, never inside it
+        if method == "POST" && path == "/crm/v3/objects/calls" && createDelay > 0 { try? await Task.sleep(nanoseconds: createDelay) }
+        return lock.withLock { handle(method, path, body) }
+    }
+    func handle(_ method: String, _ path: String, _ body: [String: Any]?) -> (Int, [String: Any], [String: String]) {
         log.append(method + " " + path.split(separator: "?")[0])
         if let b = body { bodies.append(b) }
         let props = { (b: [String: Any]?) -> [String: String] in ((b?["properties"] as? [String: Any]) ?? [:]).mapValues { "\($0)" } }
@@ -689,7 +695,6 @@ final class FakeHubSpotCalls: CRMTransport {
             return (200, ["results": hit.map { [["id": $0.key]] } ?? []], [:])
         }
         if method == "POST" && path == "/crm/v3/objects/calls" {
-            if createDelay > 0 { try? await Task.sleep(nanoseconds: createDelay) }
             next += 1; let id = "\(next)"
             calls[id] = props(body)
             assoc[id] = ((body?["associations"] as? [[String: Any]]) ?? []).map { a in
