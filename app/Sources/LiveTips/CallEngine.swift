@@ -298,6 +298,7 @@ final class CallEngine {
                 if fm.fileExists(atPath: tmp) { try? fm.moveItem(atPath: tmp, toPath: dst) }
             }
         }
+        CRMLinkCarry.carry(from: base, to: stem)     // H2: the HubSpot link from Refresh, when the call has none
         notify(L("eng.prepLoaded"))
         // the tips engine reloads now instead of at its next fifth line
         if let inbox = EngineStatus.load(path: statusPath).inboxFile, let h = FileHandle(forWritingAtPath: inbox) {
@@ -328,6 +329,7 @@ final class CallEngine {
                     try? FileManager.default.copyItem(atPath: CallLayout.sidecar(base, ext), toPath: dst)
                 }
             }
+            CRMLinkCarry.carry(from: base, to: stem)     // H2: the HubSpot link Refresh saved with this preparation
         }
         let p = Process()
         p.executableURL = URL(fileURLWithPath: c.engine.python)

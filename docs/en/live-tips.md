@@ -1663,8 +1663,11 @@ seconds. The transcript goes into the note only if you turn that on.
 time, duration, direction (Settings > Integrations > HubSpot, default Outbound), outcome Connected, the participants'
 names, the call page's Summary, the next steps, and a link back to the call (the Notion page when there is one),
 associated with the matched contacts, the company and the open deal. No transcript text is sent. Pacenote keeps the
-call's own id with the call, so applying again, or the Auto switch, updates the same HubSpot Call and never adds a
-second one; Undo deletes a new Call or puts the old values back, and does nothing if the key now belongs to another
+call's own id with the call, so applying again, or the Auto switch, updates the same HubSpot Call instead of adding a
+second one. One rare case still makes a second Call: HubSpot creates the Call but its answer is lost, and you apply
+again before HubSpot's search shows the new Call; the Call text carries `Pacenote call id`, so a search in HubSpot
+finds both. The company, deal and contacts you link with Refresh in Start call go with the preparation to the
+recorded call. Undo deletes a new Call or puts the old values back, and does nothing if the key now belongs to another
 HubSpot account. The link also remembers its HubSpot account: after
 you change the key to another account, or for a call linked before this version, Pacenote writes nothing and Update
 HubSpot offers **Relink**. **Log the call in HubSpot automatically after it

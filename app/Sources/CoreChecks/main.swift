@@ -719,6 +719,43 @@ final class FakeHubSpotCalls: CRMTransport {
     }
 }
 
+/// H2 (PB-58): Start call carries the HubSpot link Refresh saved with the preparation to the recorded call, where the
+/// finished call reads it (CRMLink.load(base: <call stem>)); without the call's own key and HubSpot Call id.
+func crmLinkCarry() {
+    let fm = FileManager.default
+    let root = NSTemporaryDirectory() + "lt-crm-carry-\(getpid())"
+    try? fm.removeItem(atPath: root)
+    let folder = root + "/live/2026-11-22-orbit-renewal"
+    try? fm.createDirectory(atPath: folder + "/.work", withIntermediateDirectories: true)
+    let prep = folder + "/prep-2026-11-22-1500-orbit-renewal", call = folder + "/2026-11-22-1502-orbit-renewal.app"
+    let link: [String: Any] = ["provider": "hubspot", "portalId": "4711", "companyId": "c1", "companyName": "Northwind",
+                               "dealId": "d1", "dealName": "Orbit renewal", "contactIds": ["p1", "p2"],
+                               "contactNames": ["Emily Carter", "James Miller"], "callKey": "old-key", "callId": "old-call"]
+    func read(_ p: String) -> [String: Any] { fm.contents(atPath: p).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:] }
+    func write(_ o: [String: Any], _ p: String) { try? JSONSerialization.data(withJSONObject: o).write(to: URL(fileURLWithPath: p)) }
+    expect(!CRMLinkCarry.carry(from: prep, to: call), "carry: no link at the preparation, nothing written")
+    write(link, CallLayout.sidecar(prep, ".crm.json"))
+    expect(CRMLinkCarry.carry(from: prep, to: call), "carry: the link goes to the call")
+    let dst = CallLayout.sidecar(call, ".crm.json")
+    expect(dst == folder + "/.work/2026-11-22-1502-orbit-renewal.app.crm.json", "carry: the call's own sidecar in .work/")
+    let got = read(dst)
+    expect(got["portalId"] as? String == "4711" && got["companyId"] as? String == "c1" && got["dealId"] as? String == "d1"
+           && got["contactIds"] as? [String] == ["p1", "p2"] && got["contactNames"] as? [String] == ["Emily Carter", "James Miller"],
+           "carry: portal, company, deal and contacts kept")
+    expect(got["callKey"] == nil && got["callId"] == nil, "carry: the call key and the HubSpot Call id are not carried")
+    // the call's own link (Relink, or an Apply that stored a Call id) is never replaced by the preparation's
+    var mine = got; mine["callId"] = "c-9"; mine["dealId"] = "none"
+    write(mine, dst)
+    expect(!CRMLinkCarry.carry(from: prep, to: call), "carry: an existing call link stays")
+    let kept = read(dst)
+    expect(kept["callId"] as? String == "c-9" && kept["dealId"] as? String == "none", "carry: the call link is unchanged")
+    // a flat (old layout) live folder works the same way
+    let flatPrep = root + "/live/prep-2026-11-22-1600-sync", flatCall = root + "/live/2026-11-22-1601-sync.app"
+    write(link, CallLayout.sidecar(flatPrep, ".crm.json"))
+    expect(CRMLinkCarry.carry(from: flatPrep, to: flatCall) && fm.fileExists(atPath: flatCall + ".crm.json"), "carry: flat layout")
+    try? fm.removeItem(atPath: root)
+}
+
 func crmCalls() async {
     let start = Date(timeIntervalSince1970: 1_780_000_000)
     let key = "11111111-1111-1111-1111-111111111111"
@@ -976,6 +1013,7 @@ await part2_087()
 usage087()
 await crm087()
 await crmCalls()
+crmLinkCarry()
 learningPatterns()
 enginePathsFollowTheApp()
 engineHealsAPythonWithoutModules()

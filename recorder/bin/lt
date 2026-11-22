@@ -532,6 +532,7 @@ def adopt_prep(s):
         pass
     title = call_title_slug(s)
     adopted = {}
+    bases = {}      # the first adopted prep's base (the brief, else the next file found)
     exts = (".brief.md", ".cards.json", ".facts.json", ".outline.json", ".slides.json", ".sheet.json")   # 0.10.0: + the Meeting Sheet
     def is_fresh(p):
         """Made in the last 3 h, or (QA 26.10) made earlier for a call whose time in the name is near:
@@ -558,7 +559,38 @@ def adopt_prep(s):
         src = max(cands, key=lambda p: p.stat().st_mtime)
         shutil.copy(src, sc(s, ext))
         adopted[ext] = src.name
+        bases.setdefault("prep", str(src)[: -len(ext)])
+    # H2 (PB-58): the HubSpot link Refresh saved with the preparation; from the adopted prep, else the freshest
+    # matching link (Refresh before Prepare)
+    crm = sc(s, ".crm.json")
+    if not os.path.exists(crm):
+        src = sc(bases["prep"], ".crm.json") if "prep" in bases else ""
+        if not os.path.exists(src):
+            cands = [p for d in dirs for p in d.glob("prep-*.crm.json") if is_fresh(p)
+                     and title_match(prep_core(str(p), ".crm.json"), title)]
+            src = str(max(cands, key=lambda p: p.stat().st_mtime)) if cands else ""
+        if src and carry_crm_link(src, crm):
+            adopted[".crm.json"] = os.path.basename(src)
     return adopted
+
+
+def carry_crm_link(src, dst):
+    """Copies a HubSpot link (<prep>.crm.json) to the call without its call key and HubSpot Call id: they belong to
+    one call, a preparation used again for another call must not update that Call (CRMLinkCarry in the app)."""
+    try:
+        link = json.load(open(src, encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    if not isinstance(link, dict):
+        return False
+    link.pop("callKey", None)
+    link.pop("callId", None)
+    Path(dst).parent.mkdir(parents=True, exist_ok=True)
+    tmp = f"{dst}.{os.getpid()}.tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(link, f, ensure_ascii=False)
+    os.replace(tmp, dst)
+    return True
 
 
 def cmd_prep_check(args):

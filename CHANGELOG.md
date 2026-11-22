@@ -22,7 +22,9 @@ Pacenote. Earlier versions are described in the commit messages and in
   if the key was switched to another HubSpot account in between). A create that gets no answer is checked in HubSpot
   three times over a few seconds before it is reported as failed. Transcript text is
   never sent. A call's HubSpot link now remembers its HubSpot account: after the key changes to another account, or
-  for a call linked before this version, nothing is written and Update HubSpot offers **Relink**. A new
+  for a call linked before this version, nothing is written and Update HubSpot offers **Relink**. The company, deal
+  and contacts linked with Refresh in Start call now go with the preparation to the recorded call, so Auto and Update
+  HubSpot find them (before, the call showed "not linked"). A new
   switch in Settings > Integrations > HubSpot, **Log the call in HubSpot automatically after it ends**, is off by
   default and logs only the Call. The HubSpot integration design is in `docs/specs/hubspot-crm-integration.md`.
 

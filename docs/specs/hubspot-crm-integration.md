@@ -163,7 +163,10 @@ is shown on the card. Behavior to keep and to define:
 
 ## 9. Auto, review and Undo flow (H2)
 
-1. Start call: Refresh links company, deal and contacts (`.crm.json`).
+1. Start call: Refresh links company, deal and contacts (`.crm.json` of the preparation). When the recording starts,
+   the link is copied to the call's own `<stem>.crm.json` together with the preparation's files (the chosen
+   preparation, a late one, or the automatic pick by title), without `callKey` and `callId`; a link the call already
+   has is kept.
 2. The call ends. If Auto is on and the call is linked in the portal of the current key (section 8), Pacenote waits for the call page's notes (about 2.5 minutes),
    then logs the Call. No review and no Undo in this path; the switch is the consent. The PM sees it in HubSpot and in
    the call's Update HubSpot window (Call row, ticked).

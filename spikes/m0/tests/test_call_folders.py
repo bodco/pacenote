@@ -123,3 +123,32 @@ def test_engine_sidecars_go_to_work(tmp_path):
     assert AC.sheet_for(md) is None
     (d / ".work" / "2026-11-18-1612-pacenote-sync.app.sheet.json").write_text("{}")
     assert AC.sheet_for(md) == d / ".work" / "2026-11-18-1612-pacenote-sync.app.sheet.json"
+
+
+def test_start_call_carries_the_hubspot_link(tmp_path):
+    """H2 (PB-58): Refresh saves the HubSpot link with the preparation; automatic adoption takes it to the call
+    (from the adopted prep, else a matching link alone), without the call key and the HubSpot Call id."""
+    import json
+    lt = _load_script("lt_cli_crm", REC / "bin/lt")
+    d = tmp_path / "proj" / "live" / "2026-11-22-orbit-renewal"
+    (d / ".work").mkdir(parents=True)
+    prep = d / "prep-2026-11-22-1500-orbit-renewal"
+    Path(str(prep) + ".brief.md").write_text("# Live Brief: Orbit renewal\n", encoding="utf-8")
+    link = {"portalId": "4711", "companyId": "c1", "dealId": "d1", "contactIds": ["p1"], "callKey": "old", "callId": "old-call"}
+    (d / ".work" / (prep.name + ".crm.json")).write_text(json.dumps(link), encoding="utf-8")
+    call = str(d / "2026-11-22-1502-orbit-renewal.app")
+    mine = d / ".work" / "2026-11-22-1502-orbit-renewal.app.crm.json"
+    got = lt.adopt_prep(call)
+    assert got[".crm.json"] == prep.name + ".crm.json" and ".brief.md" in got
+    assert json.loads(mine.read_text(encoding="utf-8")) == {"portalId": "4711", "companyId": "c1", "dealId": "d1", "contactIds": ["p1"]}
+    # the call's own link stays
+    mine.write_text(json.dumps({"callId": "c-9"}), encoding="utf-8")
+    assert ".crm.json" not in lt.adopt_prep(call)
+    assert json.loads(mine.read_text(encoding="utf-8")) == {"callId": "c-9"}
+    # Refresh before Prepare: only the link exists, it is still carried
+    other = tmp_path / "proj" / "live" / "2026-11-22-weekly-sync"
+    (other / ".work").mkdir(parents=True)
+    (other / ".work" / "prep-2026-11-22-1600-weekly-sync.crm.json").write_text(json.dumps(link), encoding="utf-8")
+    assert ".crm.json" in lt.adopt_prep(str(other / "2026-11-22-1601-weekly-sync.app"))
+    # a link of another call is not taken
+    assert ".crm.json" not in lt.adopt_prep(str(other / "2026-11-22-1700-board-review.app"))
