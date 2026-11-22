@@ -367,8 +367,6 @@ def main(argv=None) -> int:
         call_lang = lang_name(call_codes[0])
         # PB-32 (FB2, D56): the brief is in the call language the app resolved (brief_lang), never the interface language
         brief_lang = lang_name(r.get("brief_lang") or call_codes[0])
-        if r.get("config") and re.search(r"бриф українською|brief in ukrainian", read_text(r["config"], 60_000), re.I):
-            brief_lang = "Ukrainian"                   # the project config decides the brief language
         langs = ", ".join(lang_name(c) for c in call_codes)
         head = f'# Live Brief: {r["title"]} (prep, {r.get("when", "")}, local model {model})'
         call = (f'Call: "{r["title"]}", {r.get("when", "")}. Project: {r.get("project_name", "")}. Audience: '

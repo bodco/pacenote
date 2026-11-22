@@ -1,4 +1,5 @@
 """PB-32 S2 (FB2, D56): the Notion meeting page is written in the call's output language."""
+import json
 import types
 
 from livetips_m0 import call_language as CL
@@ -101,6 +102,13 @@ def _existing_page(call, monkeypatch, children):
     return got
 
 
+def _own(call, *ids):
+    """What an earlier run of Pacenote recorded as its own blocks on the page."""
+    import json
+    path = W._owned_path(call.md)
+    path.write_text(json.dumps({"page_id": PID, "ids": list(ids)}), "utf-8")
+
+
 def test_regenerate_rewrites_the_generated_section_in_place_and_never_uploads_the_transcript(call, capsys, monkeypatch):
     """PB-32 S6: Regenerate replaces the old section and the Summary property; the PM's own blocks stay; no second section,
     no new transcript sub-page."""
@@ -110,6 +118,7 @@ def test_regenerate_rewrites_the_generated_section_in_place_and_never_uploads_th
             _blk("o2", "bulleted_list_item", "old bullet"), _blk("t", "heading_2", "Transcript"), _blk("tp", "child_page", "Transcript"),
             {"id": "d", "type": "divider", "divider": {}}, _blk("f", "paragraph", "footer")]
     got = _existing_page(call, monkeypatch, kids)
+    _own(call, "h", "o1", "o2")
     assert W.main(call.base + ["--page", "https://www.notion.so/Weekly-sync-" + PID]) == 0
     assert not [g for g in got if g[0] == "POST"]                                    # no page, no transcript sub-page
     assert [g[1] for g in got if g[0] == "DELETE"] == ["/blocks/o1", "/blocks/o2"]   # only the old generated body
@@ -127,11 +136,34 @@ def test_regenerate_inserts_before_it_archives(call, capsys, monkeypatch):
     _retag(call, "uk")
     kids = [_blk("h", "heading_2", "Pacenote: summary (10:00)"), _blk("o1", "paragraph", "old"), _blk("t", "heading_3", "Transcript (Pacenote)")]
     got = _existing_page(call, monkeypatch, kids)
+    _own(call, "h", "o1")
     assert W.main(call.base + ["--page", PID]) == 0
     first_delete = next(i for i, g in enumerate(got) if g[0] == "DELETE")
     assert any(g[0] == "PATCH" and g[1] == "/blocks/" + PID + "/children" for g in got[:first_delete])
     head = [g for g in got if g[0] == "PATCH" and g[1] == "/blocks/h"][0][2]["heading_2"]["rich_text"][0]["text"]["content"]
     assert head.startswith("Pacenote: підсумок (")
+
+
+def test_regenerate_keeps_a_manual_block_inside_the_section(call, capsys, monkeypatch):
+    """PB-32 round 2: a paragraph the PM typed between the Summary heading and the transcript is not Pacenote's."""
+    _retag(call, "uk")
+    kids = [_blk("h", "heading_2", "Summary"), _blk("o1", "paragraph", "old text"), _blk("pm", "paragraph", "PM wrote this here"),
+            _blk("o2", "bulleted_list_item", "old bullet"), _blk("t", "heading_2", "Transcript")]
+    got = _existing_page(call, monkeypatch, kids)
+    _own(call, "h", "o1", "o2")
+    assert W.main(call.base + ["--page", PID]) == 0
+    assert [g[1] for g in got if g[0] == "DELETE"] == ["/blocks/o1", "/blocks/o2"]
+
+
+def test_regenerate_on_a_page_without_a_record_archives_nothing_and_says_so(call, capsys, monkeypatch):
+    _retag(call, "uk")
+    kids = [_blk("h", "heading_2", "Summary"), _blk("o1", "paragraph", "old text"), _blk("t", "heading_2", "Transcript")]
+    got = _existing_page(call, monkeypatch, kids)
+    assert W.main(call.base + ["--page", PID]) == 0
+    assert not [g for g in got if g[0] == "DELETE"]
+    assert any(g[0] == "PATCH" and g[1] == "/blocks/" + PID + "/children" for g in got)    # the new text is there
+    assert json.loads(capsys.readouterr().out.strip().splitlines()[-1])["kept_blocks"] == 1
+    assert "notion" not in CL.read_sidecar(call.md)["artifacts"]                          # still out of date
 
 
 def test_regenerate_without_a_section_appends_one_and_still_no_transcript(call, capsys, monkeypatch):

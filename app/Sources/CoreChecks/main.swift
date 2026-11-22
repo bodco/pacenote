@@ -4830,6 +4830,8 @@ func outputLanguageS1() {
     expect(sp2.dominant == "uk" && CallLanguage.toggleLanguages(sp2) == ["uk", "en"], "outlang meta: the menu follows the metadata, not the tags")
     expect(CallLanguage.outputLanguage(transcript: t2, text: tagsEn) == "uk", "outlang meta: the default follows the same metadata")
     expect(CallLanguage.outputLanguage(transcript: dir2 + "/2026-11-22-1000-mixed.app.named.md", text: tagsEn) == "uk", "outlang meta: .named.md is the same call")
+    expect(CallLanguage.promptLine("en").contains("in English") && !CallLanguage.promptLine("en").contains("in Ukrainian"), "outlang prep prompt: names the resolved language")
+    expect(CallLanguage.promptLine("uk-UA").contains("in Ukrainian") && CallLanguage.promptLine("xx").contains("in xx"), "outlang prep prompt: codes without a name stay as the code")
     expect(CallLanguage.spoken(forCall: dir2 + "/2026-11-22-1000-other.app.md", text: tagsEn).dominant == "en", "outlang meta: a call without metadata reads its tags")
 
     // the follow-up Write rules the tips window uses: an emptied draft with a remembered language is written again, text is kept

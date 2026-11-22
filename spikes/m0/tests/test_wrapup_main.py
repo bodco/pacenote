@@ -67,7 +67,8 @@ def test_new_page(call, capsys):
     assert json.loads((call.tmp / "spend.json").read_text())
     tp = [c for c in call.calls if c[0] == "POST" and c[1] == "/pages"][1][2]
     assert tp["parent"]["type"] == "page_id" and tp["properties"]["title"]["title"][0]["text"]["content"].startswith("Transcript · Weekly sync: Release plan")
-    assert call.calls[-1][0] == "PATCH" and call.calls[-1][2]["children"][0]["type"] == "divider"
+    last_write = [c for c in call.calls if c[0] != "GET"][-1]          # the ownership record reads the page after the footer
+    assert last_write[0] == "PATCH" and last_write[2]["children"][0]["type"] == "divider"
 
 
 def test_existing_page(call, capsys):
@@ -166,3 +167,60 @@ def test_notion_sends_the_token_header(monkeypatch):
     monkeypatch.setattr(W, "http", lambda m, url, headers, body=None: seen.update(m=m, url=url, h=headers) or {})
     W.notion("GET", "/users/me")
     assert seen["url"] == W.NOTION + "/users/me" and seen["h"]["Authorization"] == "Bearer tok"
+
+
+def _stateful_notion(call, monkeypatch):
+    """A fake Notion that keeps each page's blocks: ids are assigned on write, `after` is honoured, DELETE removes."""
+    pages, n, log = {}, [0], []
+
+    def new_id():
+        n[0] += 1
+        return "blk%03d" % n[0]
+
+    def put(pid, blocks, after=None):
+        kids = pages.setdefault(pid, [])
+        add = [dict(b, id=new_id()) for b in blocks]
+        at = len(kids) if after is None else next(i for i, b in enumerate(kids) if b["id"] == after) + 1
+        kids[at:at] = add
+
+    def fake(method, path, body=None):
+        log.append((method, path))
+        if method == "POST" and path == "/pages":
+            r = call.notion(method, path, body)
+            r["id"] = "%032x" % (len(pages) + 1)      # a real page id, so --page accepts it
+            put(r["id"], body.get("children", []))
+            return r
+        if path.startswith("/blocks/") and "/children" in path:
+            pid = path.split("/")[2]
+            if method == "GET":
+                return {"results": list(pages.get(pid, [])), "has_more": False}
+            put(pid, body["children"], body.get("after"))
+            return {}
+        if method == "DELETE":
+            for kids in pages.values():
+                kids[:] = [b for b in kids if "/blocks/" + b["id"] != path]
+            return {}
+        if method == "GET" and path.startswith("/pages/"):
+            return {"id": path.split("/")[2], "url": "https://notion.so/new", "properties": {}}
+        return call.notion(method, path, body)
+    monkeypatch.setattr(W, "notion", fake)
+    return pages, log
+
+
+def test_regenerate_after_a_write_archives_only_what_pacenote_wrote(call, capsys, monkeypatch):
+    """PB-32 round 2: create a page, let the PM type a paragraph inside the Summary section, Regenerate: it survives."""
+    pages, log = _stateful_notion(call, monkeypatch)
+    assert W.main(call.base + ["--when", "2026-10-01T09:30:00+00:00"]) == 0
+    pid = next(iter(pages))                  # the first page written is the meeting page
+    assert W._owned_path(call.md).exists()
+    kids = pages[pid]
+    heading = next(i for i, b in enumerate(kids) if b["type"] == "heading_2")
+    pm = {"id": "pm1", "type": "paragraph", "paragraph": {"rich_text": [{"type": "text", "text": {"content": "PM note"}}]}}
+    kids.insert(heading + 2, pm)
+    generated = {b["id"] for b in kids[heading + 1:] if b["id"] != "pm1"}
+    log.clear()
+    capsys.readouterr()
+    assert W.main(call.base + ["--page", pid]) == 0
+    deleted = {p.split("/")[2] for m, p in log if m == "DELETE"}
+    assert "pm1" not in deleted and "pm1" in {b["id"] for b in pages[pid]}
+    assert deleted and deleted <= generated

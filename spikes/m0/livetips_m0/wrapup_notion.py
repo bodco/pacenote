@@ -700,6 +700,7 @@ def write_to_page(page: dict, sc, ids, a, w, blocks, plain, info, lang) -> dict:
            + [h(3, TXT[lang]["tr_app"])])
     transcript_page(page["id"], TXT[lang]["tr_app"] + " · " + info["title"], plain)
     add_footer(page["id"], lang)
+    record_owned(a.md, page["id"])
     return {"ok": True, "url": page.get("url"), "page_id": page.get("id")}
 
 
@@ -741,6 +742,35 @@ def _generated_section(children: list):
     return head, end
 
 
+def _owned_path(md: Path) -> Path:
+    return call_layout.sidecar_of(call_language._named_to_md(md), ".notion-blocks.json")
+
+
+def read_owned(md: Path, page_id: str):
+    """The ids of the blocks Pacenote wrote on this page; None when nothing was recorded (a page of an older version)."""
+    try:
+        d = json.loads(_owned_path(md).read_text("utf-8"))
+        return set(d["ids"]) if d.get("page_id") == page_id else None
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def record_owned(md: Path, page_id: str, only=None) -> None:
+    """Remember which blocks of the generated section are Pacenote's (the section as it is now, or only the ids in `only`),
+    so a later Regenerate archives those and nothing the PM added. Optional: a failure here leaves the page as written."""
+    try:
+        ch = _children(page_id)
+        sec = _generated_section(ch)
+        if sec is None:
+            return
+        ids = [b["id"] for b in ch[sec[0]:sec[1]] if only is None or b["id"] in only]
+        p = _owned_path(md)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps({"page_id": page_id, "ids": ids}), "utf-8")
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def regenerate_page(page: dict, sc, ids, a, w, blocks, lang) -> dict:
     """Regenerate (--page): the generated Summary section of the call's own page and its Summary property are replaced in
     place. Blocks outside the section (the PM's own, the transcript sub-page, the footer) stay; the transcript is never
@@ -752,14 +782,21 @@ def regenerate_page(page: dict, sc, ids, a, w, blocks, lang) -> dict:
     if upd:
         notion("PATCH", f"/pages/{pid}", {"properties": upd})
     children = _children(pid)
+    before = {b["id"] for b in children}
     sec = _generated_section(children)
     head = [] if blocks and blocks[0].get("type") == "paragraph" else [para(w.get("summary", ""))]
     new = head + blocks
     if sec is None:             # the section was removed by hand: write it again, still without a transcript
         append(pid, [h(2, TXT[lang]["summary"])] + new)
+        record_owned(a.md, pid)
         return {"ok": True, "url": page.get("url"), "page_id": pid}
     i, end = sec
-    old, start = children[i + 1:end], children[i]
+    start = children[i]
+    # Only the blocks Pacenote recorded are archived. Anything else inside the section is the PM's and stays; a page with no
+    # record (written by an older version) keeps every old block, the new text goes in above it, and the caller is told.
+    owned = read_owned(a.md, pid)
+    old = [b for b in children[i + 1:end] if owned is not None and b["id"] in owned]
+    kept = [b for b in children[i + 1:end] if b not in old]
     label = TXT[lang]["append"].format(hhmm=dt.datetime.now().strftime("%H:%M")) if start.get("type") == "heading_2" and \
         _plain(start) not in {T["summary"] for T in TXT.values()} else TXT[lang]["summary"]
     notion("PATCH", f"/blocks/{start['id']}", {"heading_2": {"rich_text": rt(label)}})
@@ -768,12 +805,16 @@ def regenerate_page(page: dict, sc, ids, a, w, blocks, lang) -> dict:
         notion("PATCH", f"/blocks/{pid}/children", {"children": chunk, "after": start["id"]})
     for b in old:
         notion("DELETE", f"/blocks/{b['id']}")
+    record_owned(a.md, pid, only={b["id"] for b in _children(pid)} - before)
     if end < len(children):     # the transcript heading follows the page language too
         tb = children[end]
         if tb.get("type") in ("heading_2", "heading_3") and _plain(tb) in {T["transcript"] for T in TXT.values()} | {T["tr_app"] for T in TXT.values()}:
             key = "tr_app" if tb["type"] == "heading_3" or _plain(tb) in {T["tr_app"] for T in TXT.values()} else "transcript"
             notion("PATCH", f"/blocks/{tb['id']}", {tb["type"]: {"rich_text": rt(TXT[lang][key])}})
-    return {"ok": True, "url": page.get("url"), "page_id": pid}
+    out = {"ok": True, "url": page.get("url"), "page_id": pid}
+    if kept:
+        out["kept_blocks"] = len(kept)          # old or manual blocks left in place: the page is not fully in the new language
+    return out
 
 
 def create_page(sc, ids, a, w, blocks, plain, info, lang) -> dict:
@@ -789,6 +830,7 @@ def create_page(sc, ids, a, w, blocks, plain, info, lang) -> dict:
         append(p["id"], rest)
     transcript_page(p["id"], TXT[lang]["transcript"] + " · " + name, plain)
     add_footer(p["id"], lang)
+    record_owned(a.md, p["id"])
     return {"ok": True, "url": p.get("url"), "created": True, "page_id": p.get("id")}
 
 
@@ -832,6 +874,8 @@ def run(a, res: dict) -> int:
         res.update(write_to_page(page, sc, ids, a, w, blocks, plain, info, lang))
     else:
         res.update(create_page(sc, ids, a, w, blocks, plain, info, lang))
+    if res.get("kept_blocks"):      # part of the page is still in the old language: it stays "out of date"
+        return None
     try:
         call_language.write_sidecar(a.md.parent / a.md.name.replace(".named.md", ".md"), artifact="notion", written_in=out_lang)
     except Exception:  # noqa: BLE001  the page is written; the language note is optional

@@ -19,6 +19,11 @@ Pacenote. Earlier versions are described in the commit messages and in
   blocks outside the Pacenote section and the transcript page stay, the transcript is never uploaded again; always the call's own page, never a second page;
   the Notion line turns current only after Notion took the write), names a step that failed (meeting notes, Notion, follow-up) so you can retry it, asks first for a call over one
   hour, and a line says which language each text was written in and which is out of date. A one-language call shows nothing.
+  Regenerate archives only the Notion blocks Pacenote itself wrote (it remembers their ids); a paragraph you typed inside the
+  section stays, and on a page written before this change the old blocks are kept, the new text goes in above them and a
+  message says so. A follow-up revision still running is waited for before the draft is rewritten. The brief and its
+  refresh name the call's output language in the model request, and a project config saying "brief in Ukrainian" no
+  longer overrides it.
 - Follow-up email drafts use the call's output language. If the project's client language differs, the Follow-up
   tab and inspector offer that language before the first draft. Write again asks before replacing the draft.
   A draft intentionally written in the client's language stays current when the call’s output language changes.

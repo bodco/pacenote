@@ -20,3 +20,28 @@ def test_brief_language_names():
     assert localprep.lang_name("ru") == "Russian"
     assert localprep.lang_name("pt-BR") == "Portuguese"
     assert localprep.lang_name("") == "English"
+
+
+def test_local_brief_requests_use_the_resolved_language_over_project_config(tmp_path, monkeypatch):
+    """PB-32 round 2: a project config saying 'brief in Ukrainian' must not override the resolved English."""
+    import json
+    cfg = tmp_path / "config.md"
+    cfg.write_text("Brief in Ukrainian\n", encoding="utf-8")
+    (tmp_path / "skill" / "references").mkdir(parents=True)
+    (tmp_path / "live").mkdir()
+    seen = []
+
+    def fake_chat(url, model, system, user, on_tokens, max_out=6000):
+        seen.append(system)
+        return {"text": "## Brief\nok\n", "prompt_eval_count": 1, "eval_count": 1}
+
+    monkeypatch.setattr(localprep, "ollama_chat", fake_chat)
+    req = {"title": "Sync", "when": "today", "project_name": "P", "model": "m", "live": str(tmp_path / "live"),
+           "skill": str(tmp_path / "skill"), "base": str(tmp_path / "prep-x"), "config": str(cfg),
+           "languages": ["en"], "brief_lang": "en", "use_project_folder": False, "root": str(tmp_path)}
+    f = tmp_path / "req.json"
+    f.write_text(json.dumps(req), encoding="utf-8")
+    localprep.main(["--request", str(f)])
+    assert seen, "no model request was made"
+    assert not any("Ukrainian" in s for s in seen)
+    assert any("English" in s for s in seen)

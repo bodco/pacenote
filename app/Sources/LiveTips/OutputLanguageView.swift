@@ -79,9 +79,14 @@ final class OutputLanguageModel: ObservableObject {
             }
             let fu = FollowUpModel.of(self.file)
             if fu.hasDraft, !CallLanguage.readSidecar(transcript: self.file).followUpUsesClientLanguage {
+                while fu.busy { try? await Task.sleep(nanoseconds: 500_000_000) }     // a revision in flight first: write(replacingDraft:) would be refused while it runs
                 fu.write(replacingDraft: true)
-                while fu.busy { try? await Task.sleep(nanoseconds: 500_000_000) }     // the follow-up records its language when it is done
-                if !fu.error.isEmpty { problems.append(L("call.outlang.followUpFailed", ["why": fu.error])) }
+                if !fu.busy {                                                          // refused anyway: never report success for a draft that stayed in the old language
+                    problems.append(L("call.outlang.followUpFailed", ["why": fu.error]))
+                } else {
+                    while fu.busy { try? await Task.sleep(nanoseconds: 500_000_000) }     // the follow-up records its language when it is done
+                    if !fu.error.isEmpty { problems.append(L("call.outlang.followUpFailed", ["why": fu.error])) }
+                }
             }
             self.failed = problems.isEmpty ? nil : problems.joined(separator: "\n")
             self.running = false
@@ -104,7 +109,9 @@ final class OutputLanguageModel: ObservableObject {
             PyTool.run("wrapup_notion", args, notion: true) { k.resume(returning: $0) }
         }
         if let usd = r["cost_usd"] as? Double, usd > 0 { SpendDays.add(usd); CallHistory.shared.addCost(file: file, usd) }
-        return (r["ok"] as? Bool) == true ? nil : L("call.outlang.notionFailed", ["why": (r["error"] as? String) ?? ""])
+        if (r["ok"] as? Bool) != true { return L("call.outlang.notionFailed", ["why": (r["error"] as? String) ?? ""]) }
+        if let n = r["kept_blocks"] as? Int, n > 0 { return L("call.outlang.notionKept", ["n": String(n)]) }     // the language stays "out of date"
+        return nil
     }
 }
 

@@ -4325,6 +4325,7 @@
  "call.outlang.notionSkipped": "The Notion page was left as it was because the meeting notes failed.",
  "call.outlang.followUpFailed": "The follow-up was not written again: {why}",
  "call.outlang.notionFailed": "The Notion page was not rewritten: {why}",
+ "call.outlang.notionKept": "The new text is on the Notion page, but {n} older blocks were left in place because Pacenote cannot tell them from your own edits. Delete the old ones by hand.",
  "call.outlang.confirm.title": "Write this long call again in {lang}?",
  "call.outlang.confirm.body": "The call is longer than an hour, so this can cost more than usual. The transcript does not change."
 }

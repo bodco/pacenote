@@ -32,6 +32,11 @@ public enum CallLanguage {
         return names[c] ?? c
     }
 
+    /// The sentence that makes the resolved output language authoritative in a model request (prep brief, refresh).
+    public static func promptLine(_ code: String?) -> String {
+        "Write the whole brief in \(name(code)). This is the call's output language: it overrides any language named in the project config, the context or the skill files."
+    }
+
     /// The project's client_language free text ("English", "Ukrainian (formal)") -> a code, nil when not recognised.
     public static func hint(fromClientLanguage text: String?) -> String? {
         let t = (text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
