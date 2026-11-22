@@ -14,7 +14,10 @@ public struct SitePlanPage: Identifiable, Equatable {
     public var planned: Bool
     public var note: String
     public var score: Double?
-    public var whyRanked: String
+    /// Why the page is where it is in the list: a code (start, goal, call, section) and the person's own goal words that matched.
+    /// The panel words it in the app language; the sidecar's English `why_ranked` is never shown.
+    public var whyCode: String
+    public var whyTerms: [String]
     public var estTokens: Int
     public var ticked = false
     public var id: String { url }
@@ -38,6 +41,8 @@ public struct SitePlan: Equatable {
     /// "ok", "blocked" (robots.txt) or "error" (the site is down, not a page ...); `startNote` is the cause.
     public var startStatus: String
     public var startNote: String
+    /// "private" = the start address is a private or non-public one (not a robots.txt block).
+    public var startWhy: String
     public var depth: Int
     public var respectRobots: Bool
     /// How many pages the person agreed to read: 15 by default, up to 30 (the code's hard cap in the sidecar).
@@ -51,6 +56,7 @@ public struct SitePlan: Equatable {
         startStatus = start["status"] as? String ?? "ok"
         if let n = start["note"] as? String { startNote = n }
         else if let h = start["http"] as? Int { startNote = "HTTP \(h)" } else { startNote = "" }
+        startWhy = start["why"] as? String ?? ""
         let lim = json["limits"] as? [String: Any] ?? [:]
         depth = lim["depth"] as? Int ?? 2
         respectRobots = lim["respect_robots"] as? Bool ?? true
@@ -58,7 +64,7 @@ public struct SitePlan: Equatable {
             guard let u = o["url"] as? String else { return nil }
             return SitePlanPage(url: u, path: o["path"] as? String ?? u, kind: o["kind"] as? String ?? "page", depth: o["depth"] as? Int ?? 1,
                                 planned: o["planned"] as? Bool ?? false, note: o["note"] as? String ?? "",
-                                score: (o["score"] as? NSNumber)?.doubleValue, whyRanked: o["why_ranked"] as? String ?? "",
+                                score: (o["score"] as? NSNumber)?.doubleValue, whyCode: o["why_code"] as? String ?? "", whyTerms: o["why_terms"] as? [String] ?? [],
                                 estTokens: o["est_tokens"] as? Int ?? SiteResearch.pageEstimateTokens)
         }
         external = (json["external"] as? [[String: Any]] ?? []).compactMap { o in
@@ -285,5 +291,8 @@ public enum SiteResearch {
     public static func host(_ url: String) -> String { URLComponents(string: url)?.host ?? url }
 
     /// A tick-and-reason line for a failed or empty state, as a key suffix for `sheet.ui.web.state.<key>`.
+    /// A page the sidecar refused because its address is private or not public (reported as blocked, but not by robots.txt).
+    public static func isPrivateRefusal(state: String, note: String) -> Bool { state == "blocked" && note.hasPrefix("private or non-public") }
+
     public static func stateKey(_ s: String) -> String { ["read", "empty", "blocked", "error", "skipped", "duplicate"].contains(s) ? s : "error" }
 }

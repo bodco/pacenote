@@ -342,7 +342,23 @@ public enum CallSync {
 
     /// The Meeting Sheet as built for the call, if it is a JSON object under 1 MB.
     public static func sheetBody(_ data: Data?) -> [String: Any]? {
-        guard let d = data, d.count < 1_000_000, let o = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any] else { return nil }
+        guard let d = data, d.count < 1_000_000, var o = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any] else { return nil }
+        // PB-37: researched website text stays on this Mac. A fact that cites a page of a researched site keeps its text and
+        // its sources, but its locator loses the verbatim quote (the page text itself is never in the sheet).
+        let web = Set(((o["sources"] as? [[String: Any]]) ?? []).filter { ($0["type"] as? String) == "web_page" }.compactMap { $0["id"] as? String })
+        if !web.isEmpty, var blocks = o["blocks"] as? [[String: Any]] {
+            for bi in blocks.indices {
+                guard var facts = blocks[bi]["facts"] as? [[String: Any]] else { continue }
+                for fi in facts.indices {
+                    let ids = (facts[fi]["source_ids"] as? [String]) ?? []
+                    guard ids.contains(where: { web.contains($0) }), var loc = facts[fi]["locator"] as? [String: Any] else { continue }
+                    loc["quote"] = nil
+                    facts[fi]["locator"] = loc
+                }
+                blocks[bi]["facts"] = facts
+            }
+            o["blocks"] = blocks
+        }
         return ["sheet": o]
     }
 

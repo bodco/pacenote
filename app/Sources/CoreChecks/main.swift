@@ -1232,6 +1232,10 @@ func meetingLaunch096() {
     mn.actions = [MeetingNotes.Item(t: "00:20", text: "Mike sends the proposal")]
     expect(CallSync.decisions(mn).count == 1 && CallSync.tasks(mn).first?["text"] as? String == "Mike sends the proposal", "sync: decisions and tasks")
     expect(CallSync.sheetBody(Data("[1]".utf8)) == nil && CallSync.sheetBody(Data("{\"a\":1}".utf8)) != nil, "sync: sheet is an object")
+    // PB-37: a verbatim quote from a researched page never reaches the server payload; other quotes stay
+    let webSheet = Data(#"{"sources":[{"id":"w1","type":"web_page"},{"id":"s1","type":"pdf"}],"blocks":[{"type":"company","facts":[{"text":"a","source_ids":["w1"],"locator":{"quote":"ZEBRA-QUOTE-7731","url":"https://example-company.com/"}},{"text":"b","source_ids":["s1"],"locator":{"quote":"keep-this"}}]}]}"#.utf8)
+    let webJSON = String(data: CallSync.json(CallSync.sheetBody(webSheet) ?? [:]), encoding: .utf8) ?? ""
+    expect(!webJSON.contains("ZEBRA-QUOTE-7731") && webJSON.contains("keep-this") && webJSON.contains("example-company.com"), "sync: researched page quotes stay local")
     var rm = RecordingMeta(); var rp = RecordingMeta.Part(file: "v.mp4", kind: "video", started: Date())
     rp.driveID = "1AbcDEFghijkLMNOPqrs"; rp.driveLink = "https://drive.google.com/file/d/1AbcDEFghijkLMNOPqrs/view"; rp.driveKind = "shared_drive"; rp.bytes = 10
     var bad = rp; bad.driveLink = "https://evil.example/x"
@@ -4762,7 +4766,7 @@ func siteResearchPB37C() {
     var rows: [[String: Any]] = [["url": "https://example-company.com/", "path": "/", "depth": 0, "kind": "home", "planned": true, "note": "", "est_tokens": 1500]]
     for i in 1...19 {
         rows.append(["url": "https://example-company.com/p\(i)", "path": "/p\(i)", "depth": 1, "kind": "page", "planned": true, "note": "",
-                     "score": Double(20 - i), "why_ranked": i == 1 ? "matches the goal: team" : "", "est_tokens": 1000 + i])
+                     "score": Double(20 - i), "why_code": i == 1 ? "goal" : "section", "why_terms": i == 1 ? ["team"] : [], "est_tokens": 1000 + i])
     }
     rows.append(["url": "https://example-company.com/login", "path": "/login", "depth": 1, "kind": "page", "planned": false, "note": "sign-in"])
     rows.append(["url": "https://example-company.com/old", "path": "/old", "depth": 1, "kind": "page", "planned": false, "note": "limit"])
@@ -4772,7 +4776,7 @@ func siteResearchPB37C() {
     guard var plan = SitePlan(json: json) else { expect(false, "site plan: parse"); return }
     expect(plan.budget == 15 && plan.tickedCount == 15 && plan.pages[0].ticked && plan.pages[14].ticked && !plan.pages[15].ticked, "site plan: 15 ticked by default, in the sidecar's order")
     expect(plan.reason(plan.pages[16]) == "limit" && plan.reason(plan.pages[20]) == "sign-in" && plan.reason(plan.pages[21]) == "limit" && plan.reason(plan.pages[0]) == nil, "site plan: the reason of each page left out")
-    expect(plan.pages[1].whyRanked == "matches the goal: team" && plan.pages[1].score == 19 && plan.pages[0].estTokens == 1500, "site plan: score, why and tokens kept")
+    expect(plan.pages[1].whyCode == "goal" && plan.pages[1].whyTerms == ["team"] && plan.pages[1].score == 19 && plan.pages[0].estTokens == 1500, "site plan: score, why and tokens kept")
     plan.toggle("https://example-company.com/p16")
     expect(plan.tickedCount == 15 && !plan.pages[16].ticked, "site plan: a page over the budget cannot be ticked")
     plan.toggle("https://example-company.com/p3")
@@ -4818,6 +4822,9 @@ func siteResearchPB37C() {
         "suggested": [["uri": "https://other.example.org/x", "title": "Partner", "type": "web"]],
         "summary": ["read": 2, "empty": 1, "blocked": 0, "error": 0, "skipped": 4, "duplicate": 0, "tokens": 1400],
         "pages": [["url": "https://example-company.com/team", "status": "read", "note": ""]]]
+    let privStart = SitePlan(json: ["url": "http://10.0.0.1/", "start": ["status": "blocked", "note": "private or non-public address", "why": "private"]])
+    expect(privStart?.startStatus == "blocked" && privStart?.startWhy == "private" && SitePlan(json: blocked)?.startWhy == "", "site plan: a private address is its own start reason, not robots.txt")
+    expect(SiteResearch.isPrivateRefusal(state: "blocked", note: "private or non-public address") && !SiteResearch.isPrivateRefusal(state: "blocked", note: "robots"), "site report: a private refusal is not a robots.txt block")
     guard let report = SiteReadReport(json: rep) else { expect(false, "site report: parse"); return }
     expect(report.children.count == 3 && report.usable.count == 2 && report.tokens == 1400 && report.counts["skipped"] == 4, "site report: children, usable pages, counts")
     expect(report.children[1].parentURI == "https://example-company.com/" && report.children[1].why == ["page of example-company.com (team)"], "site report: the parent defaults to the site, why kept")

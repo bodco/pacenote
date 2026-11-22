@@ -30,6 +30,10 @@ final class SiteResearchSession: ObservableObject {
     private var process: Process?
     private var cancelPath = ""
     private var runID = UUID()
+    /// The planning process and its stop marker: a call starting ends the plan too (planning makes network requests as well).
+    private var planProcess: Process?
+    private var planCancelPath = ""
+    private var planRun = UUID()
 
     /// Sessions that may have a read in flight: a call starting stops them (nothing runs during a live call).
     private static let live = NSHashTable<SiteResearchSession>.weakObjects()
@@ -46,7 +50,16 @@ final class SiteResearchSession: ObservableObject {
     func loadPlan(request: [String: Any]) {
         guard !Self.callBusy else { error = ""; phase = .failed; return }
         phase = .planning; plan = nil; error = ""; report = nil
-        SheetCLI.run("webplan", request: request) { r in
+        let run = UUID()
+        let marker = (SheetCLI.stateDir as NSString).appendingPathComponent("webplan-\(UUID().uuidString.prefix(8)).cancel")
+        planRun = run; planCancelPath = marker
+        try? FileManager.default.removeItem(atPath: marker)
+        var req = request
+        req["cancel_path"] = marker
+        SheetCLI.run("webplan", request: req, started: { self.planProcess = $0 }) { r in
+            guard run == self.planRun else { return }
+            self.planProcess = nil
+            try? FileManager.default.removeItem(atPath: marker)
             if let p = r.json.flatMap({ SitePlan(json: $0) }), r.json?["error"] == nil {
                 self.plan = p
                 self.phase = .ready
@@ -133,7 +146,10 @@ final class SiteResearchSession: ObservableObject {
         var rep = acc
         for p in pages where pageStates[p.url] == nil { pageStates[p.url] = ("stopped", "") }
         var c: [String: Int] = [:]
-        for (_, v) in pageStates where v.state != "stopped" { c[SiteResearch.stateKey(v.state), default: 0] += 1 }
+        for (_, v) in pageStates where v.state != "stopped" {
+            // a private address is not a robots.txt block: counted with the pages that could not be read
+            c[SiteResearch.isPrivateRefusal(state: v.state, note: v.note) ? "error" : SiteResearch.stateKey(v.state), default: 0] += 1
+        }
         rep.counts = c
         if cancelling && rep.children.isEmpty {
             lostOnCancel = true; phase = .ready
@@ -146,6 +162,7 @@ final class SiteResearchSession: ObservableObject {
     /// The sidecar stops before the next page and returns what it read. A page slow to answer does not hold the person: after
     /// a short grace the process is ended and the pages already printed are kept. Only the process of this read is ended.
     func cancel() {
+        if phase == .planning { stopPlanning(); return }
         guard phase == .reading else { return }
         cancelling = true
         FileManager.default.createFile(atPath: cancelPath, contents: Data())
@@ -153,6 +170,18 @@ final class SiteResearchSession: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) { MainActor.assumeIsolated {
             if run == self.runID, let p = self.process, p.isRunning { p.terminate() }
         } }
+    }
+
+    /// Ends the plan in flight: the sidecar makes no further request (also inside a redirect or a robots.txt lookup) and, after
+    /// the same short grace, the process of this plan is ended. Only this plan's process and marker are touched.
+    private func stopPlanning() {
+        let marker = planCancelPath, p = planProcess
+        FileManager.default.createFile(atPath: marker, contents: Data())
+        planRun = UUID(); planProcess = nil; error = ""; phase = .failed
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+            if let p, p.isRunning { p.terminate() }
+            try? FileManager.default.removeItem(atPath: marker)
+        }
     }
 
     func close() { if phase != .reading { phase = .ready } }
@@ -209,7 +238,7 @@ struct SheetSiteResearchPanel: View {
     }
 
     private func startText(_ plan: SitePlan) -> String {
-        if plan.startStatus == "blocked" { return L("sheet.ui.web.start.blocked") }
+        if plan.startStatus == "blocked" { return L(plan.startWhy == "private" ? "sheet.ui.web.start.private" : "sheet.ui.web.start.blocked") }
         if case .http(let code) = SiteResearch.errorKind(plan.startNote) { return L("sheet.ui.web.start.error", ["e": "HTTP " + code]) }
         return L("sheet.ui.web.start.errorPlain")
     }
@@ -228,10 +257,22 @@ struct SheetSiteResearchPanel: View {
     private func pageLine(_ plan: SitePlan, _ p: SitePlanPage) -> String {
         if session.phase != .ready, let st = session.pageStates[p.url] {
             let n = noteText(st), note = n.isEmpty ? "" : " (" + n + ")"
-            return L("sheet.ui.web.pageState." + (st.state == "stopped" ? "stopped" : SiteResearch.stateKey(st.state))) + note
+            let key = SiteResearch.isPrivateRefusal(state: st.state, note: st.note) ? "private" : (st.state == "stopped" ? "stopped" : SiteResearch.stateKey(st.state))
+            return L("sheet.ui.web.pageState." + key) + note
         }
-        return ([p.kind == "page" ? "" : p.kind, p.whyRanked].filter { !$0.isEmpty } + [plan.reason(p).map { L("sheet.ui.web.why." + $0) }].compactMap { $0 })
+        return ([p.kind == "page" ? "" : p.kind, rankText(p)].filter { !$0.isEmpty } + [plan.reason(p).map { L("sheet.ui.web.why." + $0) }].compactMap { $0 })
             .joined(separator: " · ")
+    }
+
+    /// The ranking reason in the app language: the sidecar sends a code and the matched goal words, never a sentence.
+    private func rankText(_ p: SitePlanPage) -> String {
+        switch p.whyCode {
+        case "goal": return L("sheet.ui.web.rank.goal", ["terms": p.whyTerms.joined(separator: ", ")])
+        case "call": return L("sheet.ui.web.rank.call")
+        case "start": return L("sheet.ui.web.rank.start")
+        case "section": return L("sheet.ui.web.rank.section")
+        default: return ""
+        }
     }
 
     private func pageList(_ plan: SitePlan) -> some View {

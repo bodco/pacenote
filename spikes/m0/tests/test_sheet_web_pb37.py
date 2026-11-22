@@ -39,6 +39,9 @@ def test_plan_goal_order_and_estimates():
     assert planned_paths(interview)[:3] == ["/", "/team", "/careers"]
     assert interview["pages"][1]["score"] > interview["pages"][2]["score"] > 0
     assert "engineering" in interview["pages"][1]["why_ranked"]
+    # the panel words the ranking itself: a code and the person's own terms, never English text
+    assert (interview["pages"][1]["why_code"], interview["pages"][1]["why_terms"][0]) == ("goal", "engineering")
+    assert interview["pages"][0]["why_code"] == "start" and neutral["pages"][1]["why_code"] == "section"
     ukrainian = web.plan(BASE, getter=get, goal="Вакансії", call_type="interview", route="local")
     assert planned_paths(ukrainian)[1] == "/careers"
     assert all(row["est_tokens"] == 1500 for row in interview["pages"])
@@ -216,7 +219,7 @@ def test_private_addresses_are_refused(address, monkeypatch):
     monkeypatch.delenv("PACENOTE_TEST_WEB_LOOPBACK", raising=False)
     host = f"[{address}]" if ":" in address else address
     plan = web.plan(f"http://{host}")
-    assert plan["start"] == {"status": "blocked", "note": "private or non-public address"}
+    assert plan["start"] == {"status": "blocked", "note": "private or non-public address", "why": "private"}
     assert not plan["pages"]
 
 
@@ -230,7 +233,7 @@ def test_redirect_revalidates_resolved_address(http_fixture, monkeypatch):
 
     monkeypatch.setattr(socket, "getaddrinfo", getaddrinfo)
     plan = web.plan("http://127.0.0.1:8000/redirect", respect_robots=False)
-    assert plan["start"] == {"status": "blocked", "note": "private or non-public address"}
+    assert plan["start"] == {"status": "blocked", "note": "private or non-public address", "why": "private"}
     assert hits == ["/redirect"]
 
 
@@ -240,3 +243,57 @@ def test_redirect_does_not_follow_another_site(http_fixture):
     plan = web.plan("http://127.0.0.1:8000/redirect", respect_robots=False)
     assert plan["start"] == {"status": "error", "note": "redirect leaves the site"}
     assert hits == ["/redirect"]
+
+
+def test_planning_follows_the_robots_rule_on_a_redirect(http_fixture):
+    pages, hits, _, redirects = http_fixture
+    pages["/robots.txt"] = "User-agent: *\nDisallow: /hidden\n"
+    pages["/hidden"] = page("Hidden", LOREM)
+    redirects["/start"] = "http://127.0.0.1:8000/hidden"
+    plan = web.plan("http://127.0.0.1:8000/start")
+    assert plan["start"] == {"status": "error", "note": "redirect points to a page robots.txt does not allow"}
+    assert "/hidden" not in hits
+
+
+def test_cancel_during_a_redirect_makes_no_further_request(http_fixture):
+    pages, hits, _, redirects = http_fixture
+    pages["/other"] = page("Other", LOREM)
+    redirects["/start"] = "http://127.0.0.1:8000/other"
+    with pytest.raises(web.Cancelled):
+        web.http_get("http://127.0.0.1:8000/start", stop=lambda: "/start" in hits)
+    assert hits == ["/start"]
+
+
+def test_planning_stops_before_its_next_request(http_fixture):
+    _, hits, _, _ = http_fixture
+    with pytest.raises(web.Cancelled):
+        web.plan("http://127.0.0.1:8000/", stop=lambda: True)
+    assert hits == []
+    with pytest.raises(web.Cancelled):                  # a stopped robots.txt lookup is not "no robots.txt"
+        web.Robots(stop=lambda: True).allowed("http://127.0.0.1:8000/")
+
+
+def test_call_start_stops_webplan_through_the_cancel_file(http_fixture, tmp_path, capsys):
+    _, hits, _, _ = http_fixture
+    cancel = tmp_path / "plan.cancel"
+    cancel.touch()
+    request = tmp_path / "request.json"
+    request.write_text(json.dumps({"url": "http://127.0.0.1:8000", "cancel_path": str(cancel)}))
+    assert cli.main(["webplan", "--request", str(request)]) == 4
+    assert json.loads(capsys.readouterr().out) == {"error": "cancelled"}
+    assert hits == []
+
+
+def test_a_cancelled_request_in_fetch_is_not_an_error_row(tmp_path):
+    hits = []
+    get = site_getter(SITE, hits)
+    plan = web.plan(BASE, getter=get)
+
+    def getter(url, stop=None):
+        if url == BASE + "/about":
+            raise web.Cancelled()
+        return get(url)
+
+    report = web.fetch(plan, tmp_path / "pages", getter=getter, sleep=lambda _: None)
+    assert report["cancelled"] is True and not any(row["status"] == "error" for row in report["pages"])
+    assert [s["uri"] for s in report["sources"]] == [BASE + "/"]

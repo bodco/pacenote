@@ -152,7 +152,8 @@ enum SheetCLI {
     }
 
     /// One-shot command on a background thread; done on the main thread. The last JSON object of stdout is `json`.
-    static func run(_ cmd: String, request: [String: Any]? = nil, args: [String] = [], done: @escaping (Result) -> Void) {
+    /// `started`: the process, on the caller's thread before it runs, for a caller that must be able to end it.
+    static func run(_ cmd: String, request: [String: Any]? = nil, args: [String] = [], started: ((Process) -> Void)? = nil, done: @escaping (Result) -> Void) {
         if SheetShots.active { return }      // 0.10.0 (Meeting Sheet, smoke): offscreen pictures never start the sidecar
         var a = args
         if let r = request {
@@ -161,6 +162,7 @@ enum SheetCLI {
             a = ["--request", path] + a
         }
         guard let p = process(cmd, a) else { done(Result(code: 127, json: nil, lines: [], text: L("sheet.ui.err.noEngine"))); return }
+        started?(p)
         DispatchQueue.global().async {
             let o = Pipe(), e = Pipe()
             p.standardOutput = o; p.standardError = e
