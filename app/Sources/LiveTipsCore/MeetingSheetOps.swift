@@ -207,7 +207,12 @@ public enum SheetEdit {
                 r.dropped = d
             }
         case .addQuestion:
-            addFact(&s, blockType: .questions, text: question ?? g.text, now: now)
+            let id = addFact(&s, blockType: .questions, text: question ?? g.text, now: now)
+            // PB-37: the gap text quotes its fact; a question copied from a researched fact's gap stays local as well
+            if question == nil, let id, let f = g.fact.flatMap({ s.fact(id: $0) }),
+               f.fromWeb == true || f.sourceIds.contains(where: { s.source(id: $0)?.type == .webPage }) {
+                for bi in s.blocks.indices { if let fi = s.blocks[bi].facts.firstIndex(where: { $0.id == id }) { s.blocks[bi].facts[fi].fromWeb = true } }
+            }
         default:
             return false
         }

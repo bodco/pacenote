@@ -351,11 +351,13 @@ public enum CallSync {
     /// A fact that cites a page of a researched site is left out (its text may repeat the page), and so are the gap
     /// facts that copy it (`about`) and links to it (`conflict_with`, `superseded_by`, a readiness gap), and the meeting
     /// goal when its header fact cites such a page (the AI wrote it); a `web_page` source keeps only its address and state.
+    /// Citations alone are not trusted: a fact the builder marked `from_web` (its model call was given a researched page)
+    /// and a fact citing a source the sheet no longer lists stay local too, and the flag itself never goes out.
     static func syncedSheet(_ raw: [String: Any]) -> [String: Any] {
         func only(_ o: [String: Any], _ keys: Set<String>) -> [String: Any] { o.filter { keys.contains($0.key) } }
         let topKeys = Set(MeetingSheet.CodingKeys.allCases.map(\.rawValue))
         let blockKeys = Set(SheetBlock.CodingKeys.allCases.map(\.rawValue))
-        let factKeys = Set(SheetFact.CodingKeys.allCases.map(\.rawValue))
+        let factKeys = Set(SheetFact.CodingKeys.allCases.map(\.rawValue)).subtracting(["from_web"])
         let sourceKeys = Set(SheetSource.CodingKeys.allCases.map(\.rawValue))
         let webSourceKeys: Set<String> = ["id", "n", "type", "uri", "parent", "access", "used"]
         var o = only(raw, topKeys)
@@ -369,17 +371,21 @@ public enum CallSync {
                 return w
             }
         }
+        let known = Set(sources.compactMap { $0["id"] as? String })
         var blocks = ((o["blocks"] as? [[String: Any]]) ?? []).map { only($0, blockKeys) }
         let allFacts = blocks.flatMap { ($0["facts"] as? [[String: Any]]) ?? [] }
-        let fromWeb = Set(allFacts.filter { ((($0["source_ids"] as? [String]) ?? []).contains(where: { web.contains($0) })) }
-            .compactMap { $0["id"] as? String })
+        func researched(_ f: [String: Any]) -> Bool {
+            (f["from_web"] as? Bool) == true
+                || ((f["source_ids"] as? [String]) ?? []).contains(where: { web.contains($0) || !known.contains($0) })
+        }
+        let fromWeb = Set(allFacts.filter(researched).compactMap { $0["id"] as? String })
         // a readiness gap copies its fact's label and text and points back with `about` (read before the allowlist strips it)
         func copiesWeb(_ f: [String: Any]) -> Bool { fromWeb.contains((f["about"] as? String) ?? "") }
         let dropped = fromWeb.union(allFacts.filter(copiesWeb).compactMap { $0["id"] as? String })
         for bi in blocks.indices {
             guard let facts = blocks[bi]["facts"] as? [[String: Any]] else { continue }
             blocks[bi]["facts"] = facts.compactMap { f -> [String: Any]? in
-                if ((f["source_ids"] as? [String]) ?? []).contains(where: { web.contains($0) }) || copiesWeb(f) { return nil }
+                if researched(f) || copiesWeb(f) { return nil }
                 return only(f, factKeys)
             }
         }
@@ -404,7 +410,7 @@ public enum CallSync {
         if o["blocks"] != nil { o["blocks"] = blocks }
         // the Goal header fact cites the researched pages when the AI wrote the goal from them, so with researched pages the
         // top-level goal goes only next to a kept Goal fact of the same text (a kept old fact says nothing of a new goal)
-        if !web.isEmpty, let g = o["goal"] as? String {
+        if !web.isEmpty || !fromWeb.isEmpty, let g = o["goal"] as? String {
             let hg = blocks.flatMap { ($0["facts"] as? [[String: Any]]) ?? [] }.first { $0["id"] as? String == "f-header-goal" }
             if (hg?["text"] as? String) != g { o.removeValue(forKey: "goal") }
         }

@@ -25,7 +25,8 @@ Pacenote. Earlier versions are described in the commit messages and in
   automatically at build time follows the same private-address and redirect rules as the crawler. In Quick, the
   pages read are counted per site. The reason a page is ranked
   is worded in your language, a private address is reported as such (not as robots.txt), and nothing from
-  researched pages is sent to Pacenote by call sync: facts drawn from them, the Gaps notes that repeat such a fact,
+  researched pages is sent to Pacenote by call sync: every fact the AI wrote while it had those pages (whatever
+  source it names, also after you edit it or remove the page and refresh), the Gaps notes that repeat such a fact,
   the meeting goal when the AI wrote it from those pages, their titles and quotes, and the sheet's refresh history stay on this Mac. The plan footer says that Google Drive may sync the copies to colleagues.
 - **Quick prep takes a link (2026-11-22, FB7):** the Sources line of Quick has a Link to add field, so a link no
   longer needs Expert.

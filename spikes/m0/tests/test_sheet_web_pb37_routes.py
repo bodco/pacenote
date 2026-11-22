@@ -199,6 +199,72 @@ def test_build_skips_an_empty_stored_page_and_lists_it(tmp_path):
     assert row["used"] == "skipped" and "empty" in row["reason"]
 
 
+def _web_req(tmp_path, with_page=True):
+    root, a, b = _project(tmp_path)
+    url = "https://lumenfield.example/team"
+    p = _stored(tmp_path, "team.txt", "Team", url, "Emily Parker is VP Engineering at Lumenfield. " * 5)
+    srcs = [{"id": "s1", "path": str(a)}, {"id": "s2", "path": str(b)}]
+    if with_page:
+        srcs.append({"id": "s3", "type": "web_page", "uri": url, "title": "Team", "path": str(p)})
+    return _req(root, a, b, route="local", sources=srcs)
+
+
+def _facts(sheet):
+    return [f for b in sheet["blocks"] for f in b.get("facts") or []]
+
+
+def test_facts_of_a_call_given_researched_pages_are_marked_whatever_they_cite(tmp_path):
+    # round 8: the model may cite a file (or nothing) for a fact it read on the page; the mark does not rely on citations
+    ans = {"blocks": {"overview": [
+        {"label": "Team", "text": "Emily Parker is VP Engineering.", "source_ids": ["s1"], "status": "found"},
+        {"label": "Size", "text": "About forty people.", "source_ids": [], "status": "found"}]}}
+    res = B.build(_web_req(tmp_path), emit=quiet, responder=lambda s, u: json.dumps(ans))
+    assert res.get("done"), res
+    sheet = json.loads(Path(res["sheet"]).read_text(encoding="utf-8"))
+    model = {f["text"]: f for f in _facts(sheet) if f.get("origin") == "model" and not f["id"].startswith("f-header")}
+    assert model["Emily Parker is VP Engineering."].get("from_web") is True
+    assert model["About forty people."].get("from_web") is True
+    assert SCH.validate(sheet) == []
+
+
+def test_facts_of_a_call_without_researched_pages_are_not_marked(tmp_path):
+    ans = {"blocks": {"overview": [{"label": "Team", "text": "Emily Parker is VP Engineering.", "source_ids": ["s1"]}]}}
+    res = B.build(_web_req(tmp_path, with_page=False), emit=quiet, responder=lambda s, u: json.dumps(ans))
+    sheet = json.loads(Path(res["sheet"]).read_text(encoding="utf-8"))
+    assert not any(f.get("from_web") for f in _facts(sheet))
+
+
+def test_merge_of_passes_keeps_the_researched_mark():
+    a = {"overview": [{"label": "T", "text": "Same fact", "source_ids": ["s1"], "status": "found"}]}
+    b = {"overview": [{"label": "T", "text": "Same fact", "source_ids": ["s3"], "status": "found", "from_web": True}]}
+    merged = B.merge_passes([a, b])["overview"]
+    assert len(merged) == 1 and merged[0]["from_web"] is True
+
+
+def test_edit_remove_the_page_and_refresh_keeps_the_page_record_and_the_mark(tmp_path):
+    # round 8: an edited researched fact comes back with its citation; its web_page record must come back with it
+    req = _web_req(tmp_path)
+    assert B.build(req, emit=quiet, responder=lambda s, u: json.dumps(ANSWER)).get("done")
+    path = Path(req["base"] + ".sheet.json")
+    sheet = json.loads(path.read_text(encoding="utf-8"))
+    f = next(x for x in _facts(sheet) if x["text"] == "Emily Parker is VP Engineering.")
+    assert f["source_ids"] == ["s3"] and f["from_web"] is True
+    f.update(text="Emily Parker leads engineering.", status="edited")
+    path.write_text(json.dumps(sheet), encoding="utf-8")
+    req2 = dict(req, sources=[s for s in req["sources"] if s["id"] != "s3"])
+    second = {"blocks": {"overview": [{"label": "Sales", "text": "Mike Stone runs sales.", "source_ids": ["s1"]}]}}
+    res = B.build(req2, refresh=True, emit=quiet, responder=lambda s, u: json.dumps(second))
+    assert res.get("done"), res
+    new = json.loads(path.read_text(encoding="utf-8"))
+    kept = next(x for x in _facts(new) if x["text"] == "Emily Parker leads engineering.")
+    assert kept["source_ids"] == ["s3"] and kept["from_web"] is True
+    page = [s for s in new["sources"] if s["id"] == "s3"]
+    assert page and page[0]["type"] == "web_page"
+    fresh = next(x for x in _facts(new) if x["text"] == "Mike Stone runs sales.")
+    assert not fresh.get("from_web")                    # this call had no researched page
+    assert SCH.validate(new) == []
+
+
 def test_two_researches_in_one_folder_keep_their_own_copies(tmp_path):
     out = tmp_path / "pages"
     bodies = {"/a/b": "First page about Emily Parker, VP Engineering at Lumenfield. " * 5,

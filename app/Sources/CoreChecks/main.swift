@@ -1258,6 +1258,16 @@ func meetingLaunch096() {
     let goalTyped = String(data: CallSync.json(CallSync.sheetBody(goalSheet(#""s-meeting""#)) ?? [:]), encoding: .utf8) ?? ""
     expect(!goalWeb.contains("GOAL-7731") && goalWeb.contains("example-company.com"), "sync: a goal written from researched pages stays local")
     expect(goalTyped.components(separatedBy: "GOAL-7731").count == 3, "sync: a typed goal goes in both copies")
+    // PB-37 (round 8): citations are not trusted: a fact the builder marked from_web goes nowhere even when it cites only a
+    // file or nothing, its gap copy stays too, a fact citing a source record the refresh lost stays local, and the flag never goes
+    let provSheet = Data(#"{"goal":"GOAL-PROV","sources":[{"id":"s1","n":1,"type":"file","title":"Brief.pdf","access":"ok","used":"full"},{"id":"w1","n":2,"type":"web_page","uri":"https://example-company.com/","title":"t","access":"ok","used":"full"}],"blocks":[{"id":"b0","type":"header","facts":[{"id":"f-header-goal","label":"Goal","text":"GOAL-PROV","source_ids":["s-meeting"],"locator":{},"status":"found","from_web":true}]},{"id":"b1","type":"company","facts":[{"id":"f1","text":"ZEBRA-WRONGCITE","source_ids":["s1"],"locator":{"quote":"ZEBRA-WRONGQUOTE"},"status":"found","origin":"model","from_web":true},{"id":"f2","text":"ZEBRA-NOCITE","source_ids":[],"locator":{},"status":"needs_check","origin":"model","from_web":true},{"id":"f3","text":"ZEBRA-LOSTSRC","source_ids":["w9"],"locator":{"quote":"ZEBRA-LOSTQUOTE"},"status":"edited","origin":"model"},{"id":"f4","text":"keep-file-fact","source_ids":["s1"],"locator":{},"status":"found","origin":"model"}]},{"id":"b2","type":"gaps","facts":[{"id":"f-gap-2","label":"Not found: Company","text":"ZEBRA-NOCITE-GAP","source_ids":[],"locator":{},"status":"needs_check","origin":"readiness","about":"f2","from_web":true}]}]}"#.utf8)
+    let provJSON = String(data: CallSync.json(CallSync.sheetBody(provSheet) ?? [:]), encoding: .utf8) ?? ""
+    expect(!provJSON.contains("ZEBRA") && !provJSON.contains("GOAL-PROV") && !provJSON.contains("from_web") && provJSON.contains("keep-file-fact"),
+           "sync: a fact from a model call given researched pages stays local whatever it cites")
+    var provFact = try? JSONDecoder().decode(SheetFact.self, from: Data(#"{"id":"f1","text":"x","source_ids":[],"status":"found","origin":"model","from_web":true}"#.utf8))
+    provFact?.text = "edited by the user"
+    let provRound = provFact.flatMap { try? JSONEncoder().encode($0) }.flatMap { try? JSONDecoder().decode(SheetFact.self, from: $0) }
+    expect(provRound?.fromWeb == true, "sheet: the from_web flag survives an edit and an app save")
     var rm = RecordingMeta(); var rp = RecordingMeta.Part(file: "v.mp4", kind: "video", started: Date())
     rp.driveID = "1AbcDEFghijkLMNOPqrs"; rp.driveLink = "https://drive.google.com/file/d/1AbcDEFghijkLMNOPqrs/view"; rp.driveKind = "shared_drive"; rp.bytes = 10
     var bad = rp; bad.driveLink = "https://evil.example/x"
@@ -1559,6 +1569,13 @@ func meetingSheetUI0100() {
     expect(SheetEdit.closeGap(&g, gapID: "gap-no_open_conflicts-f-size-site", action: .markChecked, now: "n") && g.fact(id: "f-size-site")?.status == .edited, "gap: mark checked")
     expect(SheetEdit.closeGap(&g, gapID: "gap-qualification_complete-budget", action: .addQuestion, now: "n", question: "Budget?") && g.readiness?.state == .ready
            && g.block(.questions)?.facts.contains { $0.text == "Budget?" && $0.origin == .user } == true, "gap: add question, then ready")
+    // PB-37 (round 8): a question copied from the gap of a researched fact quotes it, so it is marked and stays local
+    var gw = base
+    for bi in gw.blocks.indices { for fi in gw.blocks[bi].facts.indices where gw.blocks[bi].facts[fi].id == "f-size-site" { gw.blocks[bi].facts[fi].fromWeb = true } }
+    let qBeforeWeb = Set(gw.block(.questions)?.facts.map(\.id) ?? [])
+    expect(SheetEdit.closeGap(&gw, gapID: "gap-no_open_conflicts-f-size-site", action: .addQuestion, now: "n")
+           && gw.block(.questions)?.facts.first { !qBeforeWeb.contains($0.id) }?.fromWeb == true, "gap: a question from a researched fact's gap is marked")
+    expect(g.block(.questions)?.facts.first { $0.text == "Budget?" }?.fromWeb == nil, "gap: a typed question is not marked")
     expect(SheetEdit.setOwner(&g, factID: "f-overview", owner: "Mike Carter") && g.fact(id: "f-overview")?.value?.owner == "Mike Carter", "gap: owner")
     expect(SheetEdit.addFact(&g, blockType: .agenda, text: "Kick-off", now: "n") != nil && g.block(.agenda)?.facts.first?.status == .edited, "fact: added into a new block")
     // export
