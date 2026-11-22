@@ -215,8 +215,12 @@ struct CRMCallRow: View {
         guard let b = base else { return }
         busy = true; err = ""
         let name = model.project?.crmCompanyName.isEmpty == false ? model.project!.crmCompanyName : (model.project?.name ?? "")
+        let cur = link, crm = crm, emails = emails
         Task {
-            let (l, e) = await crm.refresh(base: b, emails: emails, name: name, keep: link)
+            // H5 (review round 6): in turn with the call's writes like Relink; a portal change drops the stored ids
+            let (l, e) = (try? await CRMCallSync.relink(key: CRMTimelineLogger.turnKey(base: b, link: cur)) {
+                await crm.refresh(base: b, emails: emails, name: name, keep: cur.map { CRMLink.load(base: b) ?? $0 })
+            }) ?? (nil, L("crm.notConnected"))
             link = l; err = e; busy = false
             if let co = l?.companyId, !co.isEmpty, let c = crm.connector() { deals = ((try? await c.deals(companyId: co)) ?? []).filter { $0.open } }
         }
@@ -224,7 +228,7 @@ struct CRMCallRow: View {
 
     func setDeal(_ id: String, _ name: String) {
         guard let b = base else { return }
-        var l = link ?? CRMLink(); l.dealId = id; l.dealName = name; l.save(base: b); link = l
+        var l = CRMLink.load(base: b) ?? CRMLink(); l.dealId = id; l.dealName = name; l.save(base: b); link = l
         refresh()
     }
 }
@@ -427,13 +431,18 @@ struct CRMUpdateView: View {
 
     /// H2: links the call again in the portal of the key in use: the company by the attendees' domains (when the
     /// calendar still has the event) or by the linked company's name; the call key is kept, the old ids are not.
+    /// H5 (review round 6): in turn with the call's writes (Call, Meeting, Email), reading the link when its turn comes,
+    /// so a write's read, portal check and store of its ids never interleave with Relink's save.
     func relink() {
         guard let l = link else { return }
         let rec = CallHistory.shared.records.first { $0.file == file }
         let emails = rec.flatMap { r in CalendarService.shared.events.first { abs($0.start.timeIntervalSince(r.start)) < 20 * 60 }?.emails } ?? []
         busy = true; status = ""
+        let base = base, crm = crm
         Task {
-            let (nl, e) = await crm.refresh(base: base, emails: emails, name: l.companyName, keep: l)
+            let (nl, e) = (try? await CRMCallSync.relink(key: CRMTimelineLogger.turnKey(base: base, link: l)) {
+                await crm.refresh(base: base, emails: emails, name: l.companyName, keep: CRMLink.load(base: base) ?? l)
+            }) ?? (nil, L("crm.notConnected"))
             busy = false
             if nl != nil {
                 // H5: the pick and the Undo records name ids of the old portal; the same ids may be other records in the new one
@@ -454,13 +463,14 @@ struct CRMUpdateView: View {
             do {
                 let r = try await CRMUndo.run(items, portal: portal, connector: c)
                 failed = r.failed
-                for (type, id) in r.deleted {
-                    if type == "calls" {     // the next Apply makes a new Call
-                        if var d = CRMLink.load(base: base), d.callId == id { d.callId = ""; d.save(base: base) }
-                        link?.callId = ""
-                    }
+                // the stored ids go in turn with the call's writes and Relink, never between their read and save
+                let base = base, deleted = r.deleted
+                _ = try? await CRMCallSync.relink(key: CRMTimelineLogger.turnKey(base: base, link: link)) {
+                    for (type, id) in deleted { CRMTimelineLogger.forget(type: type, id: id, portal: portal, base: base) }
+                }
+                for (type, _) in r.deleted {
+                    if type == "calls" { link?.callId = "" }     // the next Apply makes a new Call
                     if type == "meetings" || type == "emails" {      // H5: a deleted one is made again by the next Apply
-                        CRMTimelineLogger.forget(type: type, id: id, portal: portal, base: base)
                         if link?.portalId == portal { if type == "meetings" { link?.meetingId = "" } else { link?.emailId = ""; link?.emailOurs = false } }
                     }
                 }

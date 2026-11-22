@@ -69,11 +69,22 @@ enum CRMTimelineLogger {
         CRMTimelineIds(portalId: l.portalId, meetingId: l.meetingId, emailId: l.emailId, emailOurs: l.emailOurs)
     }
 
-    /// Undo deleted a Meeting or an Email Pacenote made in `portal`: the stored id goes, so the next Apply makes it
-    /// again. A link of another portal (relinked since) keeps its ids: the same id there is another record.
-    static func forget(type: String, id: String, portal: String, base: String) {
+    /// The turn key of a call's writes and of every change of its stored link (Relink, Refresh, Undo): the call key
+    /// on disk (Auto may have made it since the window opened), else the one shown, else the base for a call that has
+    /// none yet (it has no writes to wait for).
+    nonisolated static func turnKey(base: String, link: CRMLink?) -> String {
+        if let k = CRMLink.load(base: base)?.callKey, !k.isEmpty { return k }
+        if let k = link?.callKey, !k.isEmpty { return k }
+        return base
+    }
+
+    /// Undo deleted a Call, a Meeting or an Email Pacenote made in `portal`: the stored id goes, so the next Apply makes
+    /// it again. A link of another portal (relinked since) keeps its ids: the same id there is another record. Run in
+    /// the call's turn (turnKey).
+    nonisolated static func forget(type: String, id: String, portal: String, base: String) {
         guard var d = CRMLink.load(base: base), CRMPortal.matches(link: d.portalId, current: portal) else { return }
-        if type == "meetings", d.meetingId == id { d.meetingId = "" }
+        if type == "calls", d.callId == id { d.callId = "" }
+        else if type == "meetings", d.meetingId == id { d.meetingId = "" }
         else if type == "emails", d.emailId == id { d.emailId = ""; d.emailOurs = false }
         else { return }
         d.save(base: base)

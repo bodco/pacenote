@@ -37,8 +37,8 @@ Pacenote. Earlier versions are described in the commit messages and in
   automatic switch for either, Undo also removes the associations Pacenote added, a failed write leaves nothing half
   done (an association HubSpot would not let it take back stays in Undo), and transcript text is never sent. The
   meetings to pick and Undo belong to the HubSpot account they came from: Relink to another account drops them, and
-  they never write to a record of the new account with the same id. A Relink while a write is still running keeps
-  that write's ids out of the new link too.
+  they never write to a record of the new account with the same id. Relink and Refresh wait until a write of the
+  same call that is still running has finished, so that write's ids never end up in the new link and never overwrite it.
 
 ## 0.26.4 (2026-11-20)
 

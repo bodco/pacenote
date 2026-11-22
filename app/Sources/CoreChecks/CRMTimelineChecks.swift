@@ -419,4 +419,32 @@ func crmTimeline() async {
            "relink during a write: the write stays in portal A and undoable there")
     expect(disk3.ids.portalId == "600" && disk3.ids.meetingId.isEmpty && disk3.ids.emailId.isEmpty && !disk3.ids.emailOurs
            && disk3.ids.meetingId != ow.ids.meetingId, "relink during a write: portal A's ids are not stored in portal B's link")
+
+    // review round 6: Relink saves portal B's link after the write read A's link for its portal check and before it
+    // stored A's ids. Relink takes the call's turn (CRMCallSync.relink), so it waits for the write's store to end and
+    // B's link is never overwritten with A's
+    final class Locked: @unchecked Sendable {
+        let lock = NSLock(); var ids = CRMTimelineIds(portalId: "500"); var seq: [String] = []; var written = false
+        func get<T>(_ f: (Locked) -> T) -> T { lock.lock(); defer { lock.unlock() }; return f(self) }
+    }
+    let pr = FakeHubSpotTimeline(); let hpr = HubSpotConnector(transport: pr, sleep: { _ in })
+    let d6 = Locked(), q6 = CRMCallQueue()
+    var relinkJob: Task<Void, Error>?
+    pr.onRequest = { r in
+        guard r == "POST /crm/v3/objects/meetings", relinkJob == nil else { return }
+        d6.get { $0.written = true }
+        relinkJob = Task.detached { try await CRMCallSync.relink(key: key, queue: q6) { d6.get { $0.seq.append("relink"); $0.ids = CRMTimelineIds(portalId: "600") } } }
+    }
+    let or6 = await CRMTimelineSync.log(key: key, writer: hpr, connector: hpr, meeting: meeting(["Interleaved"]), email: nil, associations: refs, queue: q6,
+        load: {
+            let r = d6.get { $0.ids }
+            // the gap the review named: the write read the link, Relink may save before the write stores its ids
+            if d6.get({ $0.written }) { Thread.sleep(forTimeInterval: 0.3) }
+            return r
+        },
+        save: { i in d6.get { $0.seq.append("save"); $0.ids = i } })
+    try? await relinkJob?.value
+    let seq6 = d6.get { $0.seq }, final6 = d6.get { $0.ids }
+    expect(or6.error == nil && seq6 == ["save", "relink"], "relink in turn: Relink saves only after the write stored its ids (\(seq6))")
+    expect(final6.portalId == "600" && final6.meetingId.isEmpty && final6.emailId.isEmpty, "relink in turn: portal B's link is never overwritten with portal A's")
 }

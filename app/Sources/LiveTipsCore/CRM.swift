@@ -106,6 +106,11 @@ public enum CRMCallSync {
             return r
         }
     }
+
+    /// Relink of a call takes the same turns as its Call writes, so it never runs while a write waits for HubSpot.
+    public static func relink<T>(key: String, queue: CRMCallQueue = .shared, _ op: @escaping () async -> T) async throws -> T {
+        try await queue.run(key) { await op() }
+    }
 }
 
 /// H2 (docs/specs/hubspot-crm-integration.md): what is logged as a Call engagement after a call. No transcript text:
