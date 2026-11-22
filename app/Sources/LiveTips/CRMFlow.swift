@@ -12,6 +12,19 @@ struct CRMLink: Codable, Equatable {
     var companyId = "", companyName = ""
     var dealId = "", dealName = ""
     var contactIds: [String] = []
+    var contactNames: [String] = []     // H2: the participants named in the Call engagement
+    var callKey = ""                    // H2: the Pacenote call id, made once and kept with the call
+    var callId = ""                     // H2: the HubSpot Call engagement of this call, so a re-run updates it
+
+    init() {}
+    init(from d: Decoder) throws {
+        let c = try d.container(keyedBy: CodingKeys.self)
+        func s(_ k: CodingKeys, _ def: String = "") -> String { (try? c.decodeIfPresent(String.self, forKey: k)) ?? nil ?? def }
+        provider = s(.provider, "hubspot"); companyId = s(.companyId); companyName = s(.companyName); dealId = s(.dealId); dealName = s(.dealName)
+        contactIds = (try? c.decodeIfPresent([String].self, forKey: .contactIds)) ?? nil ?? []
+        contactNames = (try? c.decodeIfPresent([String].self, forKey: .contactNames)) ?? nil ?? []
+        callKey = s(.callKey); callId = s(.callId)
+    }
 
     static func url(base: String) -> URL { URL(fileURLWithPath: CallLayout.sidecar(base, ".crm.json")) }
     static func load(base: String) -> CRMLink? { (try? Data(contentsOf: url(base: base))).flatMap { try? JSONDecoder().decode(CRMLink.self, from: $0) } }
@@ -56,6 +69,7 @@ extension CRMService {
             link.companyId = company?.id ?? ""; link.companyName = company?.name ?? ""
             if link.dealId != "none" { link.dealId = deal?.id ?? ""; link.dealName = deal?.name ?? "" }
             link.contactIds = contacts.map(\.id)
+            link.contactNames = contacts.map { $0.name.isEmpty ? $0.email : $0.name }
             try? FileManager.default.createDirectory(atPath: (CallLayout.sidecar(base, ".crm.md") as NSString).deletingLastPathComponent, withIntermediateDirectories: true)   // 0.8.7.1; call folders: .work/
             let md = CRMSnapshot.render(provider: c.providerName, company: company, deal: deal, contacts: contacts, activity: acts, taken: Date())
             try? md.replacingOccurrences(of: "\u{2014}", with: "-").write(toFile: CallLayout.sidecar(base, ".crm.md"), atomically: true, encoding: .utf8)
@@ -63,6 +77,58 @@ extension CRMService {
             return (link, "")
         } catch {
             return (nil, (error as? CRMError)?.message ?? error.localizedDescription)
+        }
+    }
+}
+
+/// H2: the Call engagement of a finished call, from the call page as edited. Nothing from the transcript.
+@MainActor
+enum CRMCallLogger {
+    static func log(file: String, link: inout CRMLink) -> CRMCallLog? {
+        let base = file.hasSuffix(".md") ? String(file.dropLast(3)) : file
+        guard let rec = CallHistory.shared.records.first(where: { $0.file == file }) else { return nil }
+        if link.callKey.isEmpty { link.callKey = UUID().uuidString.lowercased() }
+        let o = CallOutcome.read(transcript: file) ?? CallOutcome()
+        let sales = (try? Data(contentsOf: URL(fileURLWithPath: CallLayout.sidecar(base, ".sales.json")))).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
+        let next = (sales["next_step"] as? String) ?? ((sales["next_step"] as? [String: Any])?["what"] as? String) ?? ""
+        var steps = o.onMe + o.theirs.map { $0.who + ": " + $0.what }
+        if steps.isEmpty && !next.isEmpty { steps = [next] }
+        let ms = Int(((rec.end ?? rec.start.addingTimeInterval((rec.minutes ?? 0) * 60)).timeIntervalSince(rec.start)) * 1000)
+        return CRMCallLog(key: link.callKey, title: CallPageView.title(file), start: rec.start, durationMs: ms,
+                          direction: SettingsWindow.model.config.crm.callDirection,
+                          body: CRMCallLog.body(summary: o.onMe, nextSteps: steps, participants: link.contactNames, link: rec.notionURL ?? "", key: link.callKey))
+    }
+
+    static func refs(_ l: CRMLink) -> [CRMRef] {
+        var r: [CRMRef] = []
+        if !l.dealId.isEmpty && l.dealId != "none" { r.append(CRMRef("deals", l.dealId)) }
+        if !l.companyId.isEmpty { r.append(CRMRef("companies", l.companyId)) }
+        return r + l.contactIds.map { CRMRef("contacts", $0) }
+    }
+
+    /// Auto switch (Settings > Integrations > HubSpot, off by default): the call is logged after it ends, without a click.
+    /// Only the Call engagement; notes, deal fields and tasks still go through Update HubSpot.
+    @MainActor static func start() {
+        NotificationCenter.default.addObserver(forName: CallEngine.callEnded, object: nil, queue: .main) { n in
+            guard let file = n.userInfo?["file"] as? String, !file.isEmpty else { return }
+            // the call page's notes are written in the background after the call
+            DispatchQueue.main.asyncAfter(deadline: .now() + 150) { MainActor.assumeIsolated { auto(file) } }
+        }
+    }
+
+    @MainActor static func auto(_ file: String) {
+        let cfg = SettingsWindow.model.config.crm
+        let base = file.hasSuffix(".md") ? String(file.dropLast(3)) : file
+        guard cfg.autoLogCall, cfg.writeCall, var l = CRMLink.load(base: base), let c = CRMService.shared.connector(),
+              let entry = log(file: file, link: &l) else { return }
+        Task {
+            do {
+                let r = try await c.upsertCall(entry, knownId: l.callId, associations: refs(l))
+                l.callId = r.id; l.save(base: base)
+                UsageLog.log("update_crm", ["fields": 0, "call": 1])
+            } catch {
+                AnalyticsTracker.shared.error("crm", Analytics.errorCode(message: (error as? CRMError)?.message ?? error.localizedDescription), provider: "hubspot")
+            }
         }
     }
 }
@@ -219,12 +285,15 @@ struct CRMUpdateView: View {
         }
         let crmCfg = SettingsWindow.model.config.crm
         let mapping = crmCfg.qualification[(sales["method"] as? String) ?? ""] ?? [:]
+        var callLog: CRMCallLog? = nil
+        if var l = link { callLog = CRMCallLogger.log(file: file, link: &l); link = l }     // keeps the new call key in the view's link
         let transcript = SettingsWindow.model.config.crm.transcriptInNote ? (try? String(contentsOfFile: file, encoding: .utf8)) : nil
         plan = CRMUpdatePlan.build(title: CallPageView.title(file), date: rec.map { CallPageView.fmt("dMMMyyyy").string(from: $0.start) } ?? "",
                                    summary: o.onMe, decisions: o.decisions, nextSteps: o.onMe + o.theirs.map { $0.who + ": " + $0.what },
                                    notionURL: rec?.notionURL ?? "", transcript: transcript, nextStep: next, closeDate: "", stage: nil,
                                    qualification: qual, mapping: mapping, followUp: next.isEmpty ? nil : (next, nil),
-                                   writeNote: crmCfg.writeNote, writeDeal: crmCfg.writeDeal, writeTask: crmCfg.writeTask)
+                                   writeNote: crmCfg.writeNote, writeDeal: crmCfg.writeDeal, writeTask: crmCfg.writeTask,
+                                   callLog: callLog, writeCall: crmCfg.writeCall)
     }
 
     func apply() {
@@ -235,12 +304,14 @@ struct CRMUpdateView: View {
             var done: [(String, String, [String: String])] = []
             var fields = 0
             do {
-                var refs: [CRMRef] = []
-                if !l.dealId.isEmpty && l.dealId != "none" { refs.append(CRMRef("deals", l.dealId)) }
-                if !l.companyId.isEmpty { refs.append(CRMRef("companies", l.companyId)) }
-                refs += l.contactIds.map { CRMRef("contacts", $0) }
+                let refs = CRMCallLogger.refs(l)
                 if p.rows.first(where: { $0.id == "note" })?.on == true {
                     let id = try await c.createNote(text: p.note, associations: refs); done.append(("notes", id, [:]))
+                }
+                if p.rows.first(where: { $0.id == "call" })?.on == true, let entry = p.callLog {
+                    let r = try await c.upsertCall(entry, knownId: l.callId, associations: refs)
+                    done.append(("calls", r.id, r.old))       // a new Call: old is empty and Undo deletes it; an update: Undo restores
+                    var nl = link ?? l; nl.callId = r.id; nl.save(base: base); link = nl
                 }
                 if p.rows.first(where: { $0.id == "deal" })?.on == true, !l.dealId.isEmpty, l.dealId != "none", !p.dealFields.isEmpty {
                     let old = try await c.updateDeal(id: l.dealId, fields: p.dealFields); done.append(("deals", l.dealId, old)); fields = p.dealFields.count
@@ -269,7 +340,12 @@ struct CRMUpdateView: View {
             var failed = 0      // 0.8.7.1: a failed undo is said, not hidden behind "Undone"
             for (type, id, old) in items.reversed() {
                 do {
-                    if type == "deals" { _ = try await c.updateDeal(id: id, fields: old) } else { try await c.delete(type: type, id: id) }
+                    if type == "deals" { _ = try await c.updateDeal(id: id, fields: old) }
+                    else if type == "calls" && !old.isEmpty { try await c.restoreCall(id: id, fields: old) }
+                    else {
+                        try await c.delete(type: type, id: id)
+                        if type == "calls", var l = link { l.callId = ""; l.save(base: base); link = l }   // the next Apply makes a new Call
+                    }
                 } catch { failed += 1 }
             }
             status = failed == 0 ? L("crm.undone") : L("crm.undoFailed", ["n": "\(failed)", "crm": c.providerName])

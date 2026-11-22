@@ -15,6 +15,13 @@ Pacenote. Earlier versions are described in the commit messages and in
   clean up partial downloads. If an Ollama pull fails, Retry resumes from the partial files Ollama saved.
   Cancelling a retry also removes partial files saved by earlier attempts for that pull.
 
+- **The call is logged in HubSpot (H2).** Update HubSpot has a new Call row: a HubSpot Call with the title, start
+  time, duration, direction, outcome, participants, the Summary and next steps, and a link back to the call,
+  associated with the matched contacts, company and open deal. Applying again updates the same Call instead of
+  adding a second one, and Undo removes a new Call or restores the old values. Transcript text is never sent. A new
+  switch in Settings > Integrations > HubSpot, **Log the call in HubSpot automatically after it ends**, is off by
+  default and logs only the Call. The HubSpot integration design is in `docs/specs/hubspot-crm-integration.md`.
+
 ## 0.26.4 (2026-11-20)
 
 - **A new organization project includes the person who made it (2026-11-20):** in New project > start a new

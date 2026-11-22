@@ -35,7 +35,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         MainActor.assumeIsolated { AIStatusModel.shared.start() }    // 0.10.0 (status fix): limits known from launch
         MainActor.assumeIsolated { AIUsageProbe.shared.start() }     // 0.10.0 (owner 12.11): account usage numbers, 60 s after launch
         // 0.9.5: recordings that were on their way to Google Drive when the app quit go on (after the accounts load)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 20) { MainActor.assumeIsolated { DriveRecordings.shared.resumeQueue(); CallSyncService.shared.start() } }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 20) { MainActor.assumeIsolated { DriveRecordings.shared.resumeQueue(); CallSyncService.shared.start(); CRMCallLogger.start() } }
         // 0.26.2 (call folders, B6): flat calls move into their call folders, a few seconds after launch (move only)
         DispatchQueue.main.asyncAfter(deadline: .now() + 8) { CallMigration.runAtLaunch() }
         SetupModel.repairEnginePaths()      // 0.8.3: the engine follows the app after a rename or a move

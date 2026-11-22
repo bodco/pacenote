@@ -667,6 +667,98 @@ func part2_087() async {
     expect(old?.matchByDomain == true && old?.ownerAuto == true && old?.writeNote == true && old?.qualification.isEmpty == true, "CRM settings defaults")
 }
 
+/// H2: a small in-memory HubSpot for Call engagements. Never the network.
+final class FakeHubSpotCalls: CRMTransport {
+    var calls: [String: [String: String]] = [:]       // id -> properties
+    var assoc: [String: [String]] = [:]                // id -> "type/id" added by PUT or at create
+    var log: [String] = []
+    var bodies: [[String: Any]] = []
+    var next = 100
+    func send(_ method: String, _ path: String, _ body: [String: Any]?) async throws -> (Int, [String: Any], [String: String]) {
+        log.append(method + " " + path.split(separator: "?")[0])
+        if let b = body { bodies.append(b) }
+        let props = { (b: [String: Any]?) -> [String: String] in ((b?["properties"] as? [String: Any]) ?? [:]).mapValues { "\($0)" } }
+        if method == "POST" && path == "/crm/v3/objects/calls/search" {
+            let want = ((((body?["filterGroups"] as? [[String: Any]])?.first?["filters"]) as? [[String: Any]])?.first?["value"] as? String) ?? ""
+            let hit = calls.first { $0.value["hs_call_external_id"] == want }
+            return (200, ["results": hit.map { [["id": $0.key]] } ?? []], [:])
+        }
+        if method == "POST" && path == "/crm/v3/objects/calls" {
+            next += 1; let id = "\(next)"
+            calls[id] = props(body)
+            assoc[id] = ((body?["associations"] as? [[String: Any]]) ?? []).map { a in
+                "\((a["to"] as! [String: Any])["id"]!)#\(((a["types"] as! [[String: Any]])[0])["associationTypeId"]!)" }
+            return (200, ["id": id], [:])
+        }
+        let id = String(path.split(separator: "?")[0].split(separator: "/")[4])
+        if path.hasPrefix("/crm/v4/objects/calls/") && method == "PUT" {
+            assoc[id, default: []].append(String(path.split(separator: "/").suffix(2).joined(separator: "/"))); return (200, [:], [:])
+        }
+        guard calls[id] != nil else { return (404, ["message": "not found"], [:]) }
+        switch method {
+        case "GET": return (200, ["id": id, "properties": calls[id]!], [:])
+        case "PATCH": for (k, v) in props(body) { calls[id]![k] = v }; return (200, ["id": id], [:])
+        case "DELETE": calls[id] = nil; return (204, [:], [:])
+        default: return (400, [:], [:])
+        }
+    }
+}
+
+func crmCalls() async {
+    let start = Date(timeIntervalSince1970: 1_780_000_000)
+    let key = "11111111-1111-1111-1111-111111111111"
+    func entry(_ summary: [String]) -> CRMCallLog {
+        CRMCallLog(key: key, title: "Orbit renewal", start: start, durationMs: 1_800_000, direction: "OUTBOUND",
+                   body: CRMCallLog.body(summary: summary, nextSteps: ["Send the demo link"], participants: ["Emily Clark"], link: "https://notion.example/p1", key: key))
+    }
+    let refs = [CRMRef("deals", "D1"), CRMRef("companies", "C1"), CRMRef("contacts", "P1"), CRMRef("notes", "X")]
+    // create: properties and the three association types; the key is the external id
+    let t = FakeHubSpotCalls()
+    let hs = HubSpotConnector(transport: t, ownerId: "9", sleep: { _ in })
+    let r1 = try? await hs.upsertCall(entry(["Budget approved"]), knownId: "", associations: refs)
+    let c1 = t.calls[r1?.id ?? ""] ?? [:]
+    expect(r1?.created == true && t.calls.count == 1, "calls: created once")
+    expect(c1["hs_call_title"] == "Orbit renewal" && c1["hs_call_duration"] == "1800000" && c1["hs_call_direction"] == "OUTBOUND" && c1["hs_call_status"] == "COMPLETED"
+           && c1["hs_call_disposition"] == CRMCallLog.connected && c1["hs_call_external_id"] == "pacenote:" + key && c1["hubspot_owner_id"] == "9", "calls: fields, outcome, external id, owner")
+    expect(Set(t.assoc[r1?.id ?? ""] ?? []) == ["D1#206", "C1#182", "P1#194"], "calls: associated with the deal, the company and the contact only")
+    expect((c1["hs_call_body"] ?? "").contains("Budget approved") && (c1["hs_call_body"] ?? "").contains("https://notion.example/p1") && (c1["hs_call_body"] ?? "").contains("Emily Clark"), "calls: summary, link back, participants")
+    expect(!(c1["hs_call_body"] ?? "").contains("Transcript"), "calls: no transcript text")
+    expect(CRMCallLog.body(summary: ["a <b> & c"], nextSteps: [], participants: [], link: "", key: "k").contains("a &lt;b&gt; &amp; c"), "calls: body text is escaped")
+    // re-run with the stored id: the same Call is updated, no second POST
+    let posts = t.log.filter { $0 == "POST /crm/v3/objects/calls" }.count
+    let r2 = try? await hs.upsertCall(entry(["Budget approved", "Legal review next"]), knownId: r1?.id ?? "", associations: refs)
+    expect(r2?.id == r1?.id && r2?.created == false && t.calls.count == 1 && t.log.filter { $0 == "POST /crm/v3/objects/calls" }.count == posts, "calls: re-run updates the same Call")
+    expect((t.calls[r1?.id ?? ""]?["hs_call_body"] ?? "").contains("Legal review next") && (r2?.old["hs_call_body"] ?? "").contains("Budget approved") && !(r2?.old["hs_call_body"] ?? "").contains("Legal"), "calls: update keeps the old body for Undo")
+    expect(t.log.contains { $0.hasPrefix("PUT /crm/v4/objects/calls/") && $0.contains("/associations/default/contacts/P1") }, "calls: an update re-associates")
+    // dedupe: the stored id is lost, HubSpot is asked by the external id
+    let r3 = try? await hs.upsertCall(entry(["Same call, id lost"]), knownId: "", associations: refs)
+    expect(r3?.id == r1?.id && r3?.created == false && t.calls.count == 1, "calls: no stored id finds the Call by the Pacenote call id")
+    // a stored id that was deleted in HubSpot: found by external id (none now) so a new Call is made, never an error
+    let t2 = FakeHubSpotCalls()
+    let hs2 = HubSpotConnector(transport: t2, sleep: { _ in })
+    let r4 = try? await hs2.upsertCall(entry(["x"]), knownId: "999", associations: [])
+    expect(r4?.created == true && t2.calls.count == 1, "calls: a stale stored id makes a new Call")
+    // Undo: a new Call is deleted, an updated one gets its old values back
+    if let id = r4?.id { try? await hs2.delete(type: "calls", id: id) }
+    expect(t2.calls.isEmpty, "calls: undo of a new Call deletes it")
+    if let id = r1?.id, let old = r2?.old {
+        try? await hs.restoreCall(id: id, fields: old)
+        expect(t.calls[id]?["hs_call_body"] == old["hs_call_body"] && !(t.calls[id]?["hs_call_body"] ?? "").contains("Legal"), "calls: undo of an update restores the old values")
+    }
+    // the plan: a Call row, ticked by the setting; a plan without a Call has no row; the note carries the transcript only when asked
+    let plan = CRMUpdatePlan.build(title: "Orbit renewal", date: "31 Oct", summary: ["a"], decisions: [], nextSteps: [], notionURL: "", transcript: nil,
+                                   nextStep: "", closeDate: "", stage: nil, qualification: [:], mapping: [:], followUp: nil,
+                                   callLog: entry(["a"]), writeCall: false)
+    expect(plan.rows.first { $0.id == "call" }?.on == false && plan.callLog?.key == key, "calls: the Call row follows the setting")
+    expect(CRMUpdatePlan.build(title: "t", date: "", summary: [], decisions: [], nextSteps: [], notionURL: "", transcript: "SECRET WORDS", nextStep: "", closeDate: "",
+                               stage: nil, qualification: [:], mapping: [:], followUp: nil).rows.first { $0.id == "call" } == nil, "calls: no Call row without a log")
+    expect(!"\(t.bodies)".contains("SECRET WORDS") && !(plan.callLog?.body ?? "").contains("SECRET WORDS"), "calls: nothing sent to the Call API carries transcript text")
+    // settings: off by default; old files keep working
+    let old = try? JSONDecoder().decode(CRMSettings.self, from: Data("{\"provider\":\"hubspot\"}".utf8))
+    expect(old?.autoLogCall == false && old?.writeCall == true && old?.callDirection == "OUTBOUND" && CRMSettings().autoLogCall == false, "calls: Auto is off by default")
+    expect(CRMCallLog(key: "k", title: "t", start: start, durationMs: -5, direction: "sideways", body: "").direction == "OUTBOUND", "calls: direction and duration are clamped")
+}
+
 final class BodyFake: CRMTransport {
     var bodies: [[String: Any]] = []
     func send(_ method: String, _ path: String, _ body: [String: Any]?) async throws -> (Int, [String: Any], [String: String]) {
@@ -767,6 +859,7 @@ settings087()
 await part2_087()
 usage087()
 await crm087()
+await crmCalls()
 learningPatterns()
 enginePathsFollowTheApp()
 engineHealsAPythonWithoutModules()

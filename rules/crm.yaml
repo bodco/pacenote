@@ -37,6 +37,16 @@ write:
     only when the PM picked one); qualification fields by the mapping; a follow-up task with a date. Texts come from
     the call page as the PM edited it.
   after: '"Updated in HubSpot · Open" and Undo for 8 s for what can be undone (deal fields back, the note and task deleted)'
-  never: automatic writes
+  never: >-
+    writes without the PM's click, except the one Call switch (off by default): it logs only the Call engagement,
+    never notes, deal fields or tasks
+  auto: >-
+    One switch, off by default (Settings > Integrations > HubSpot): the Call engagement (title, start, duration,
+    direction, outcome, participants, Summary and next steps, link back; never transcript text) is logged after the
+    call ends, keyed by the Pacenote call id stored in <stem>.crm.json, so a re-run updates the same Call.
+    Notes, deal fields and tasks never write without a click.
+  call: >-
+    Call row in the review, ticked by default; associations contact 194, company 182, deal 206; dedupe by
+    hs_call_external_id = pacenote:<call id>. Full design: docs/specs/hubspot-crm-integration.md.
 mapping:
   qualification: for each criterion of the method, a deal property chosen by name in Settings > Integrations > HubSpot, or "Don't write"

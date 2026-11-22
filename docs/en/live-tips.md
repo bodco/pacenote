@@ -1659,6 +1659,15 @@ call. It writes only from the call page's menu, Update HubSpot: a note on the de
 (next step, the stage only if you type one), a follow-up task, each with a checkbox; Apply writes, Undo works for 8
 seconds. The transcript goes into the note only if you turn that on.
 
+**The call in HubSpot.** Update HubSpot also has a Call row, ticked by default: a HubSpot Call with the title, start
+time, duration, direction (Settings > Integrations > HubSpot, default Outbound), outcome Connected, the participants'
+names, the Summary and next steps from the call page, and a link back to the call (the Notion page when there is one),
+associated with the matched contacts, the company and the open deal. No transcript text is sent. Pacenote keeps the
+call's own id with the call, so applying again, or the Auto switch, updates the same HubSpot Call and never adds a
+second one; Undo deletes a new Call or puts the old values back. **Log the call in HubSpot automatically after it
+ends** is off by default; when on, it logs only the Call, about two and a half minutes after the call, without a
+review. Notes, deal fields and tasks stay behind Apply. The design is in `docs/specs/hubspot-crm-integration.md`.
+
 **What Pacenote can do.** Help > What Pacenote can do lists every feature with Try it and how often you used it
 (from the local usage log, Settings > General > Data). For the first 14 days it is also a card on Home.
 

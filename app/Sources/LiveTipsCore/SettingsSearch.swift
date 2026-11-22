@@ -121,7 +121,7 @@ public enum SettingsSearch {
         // 0.26.0 (INT6): HubSpot is on the list's first level, not under Advanced
         .init("int.hubspot.key", "integrations", h("conn"), integration: "hubspot", title: "search.hubspotKey", words: "hubspot crm key connect ключ"),
         .init("int.hubspot.match", "integrations", h("match"), integration: "hubspot", title: "int.hubspot.matching", words: "hubspot owner company domain власник"),
-        .init("int.hubspot.write", "integrations", h("data"), integration: "hubspot", title: "int.hubspot.canWrite", words: "hubspot write note deal task запис"),
+        .init("int.hubspot.write", "integrations", h("data"), integration: "hubspot", title: "int.hubspot.canWrite", words: "hubspot write note deal task call auto log запис дзвінок"),
         .init("int.hubspot.qual", "integrations", h("qual"), integration: "hubspot", title: "int.hubspot.qualification", words: "hubspot bant qualification кваліфікація"),
         // Projects
         .init("pr.scan", "projects", adv("projects"), title: "set.scanWorkFolder", words: "scan add project folder workspace сканувати додати проєкт"),

@@ -495,6 +495,9 @@ public struct CRMSettings: Codable, Equatable {
     public var writeNote = true
     public var writeDeal = true
     public var writeTask = true
+    public var writeCall = true            // H2: the Call engagement is ticked in Update HubSpot
+    public var autoLogCall = false         // H2: log the call by itself after it ends; off until the PM turns it on
+    public var callDirection = "OUTBOUND"  // H2: OUTBOUND or INBOUND
     public var qualification: [String: [String: String]] = [:]   // method -> criterion -> deal property name ("" = don't write)
     public init() {}
     public init(from decoder: Decoder) throws {
@@ -511,6 +514,9 @@ public struct CRMSettings: Codable, Equatable {
         writeNote = (try? c.decode(Bool.self, forKey: .writeNote)) ?? true
         writeDeal = (try? c.decode(Bool.self, forKey: .writeDeal)) ?? true
         writeTask = (try? c.decode(Bool.self, forKey: .writeTask)) ?? true
+        writeCall = (try? c.decode(Bool.self, forKey: .writeCall)) ?? true
+        autoLogCall = (try? c.decode(Bool.self, forKey: .autoLogCall)) ?? false
+        callDirection = (try? c.decode(String.self, forKey: .callDirection)) ?? "OUTBOUND"
         qualification = (try? c.decode([String: [String: String]].self, forKey: .qualification)) ?? [:]
     }
 }
