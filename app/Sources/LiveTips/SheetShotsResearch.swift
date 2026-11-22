@@ -44,6 +44,7 @@ extension SheetShots {
         let web = d.sources[1]
         let ses = SiteResearchSession(sourceID: web.id, url: web.uri ?? "")
         ses.plan = plan; ses.phase = phase
+        assert(ses.idle, "a staged research session must hold no process")
         set(ses)
         d.research[web.id] = ses
         if let route { d.route = route }
@@ -69,7 +70,7 @@ extension SheetShots {
                 let v = SheetPrepView(draft: d)
                 SheetQuickView.shotOpen = nil
                 return AnyView(v)
-            }, tweak: { made?.checking = false })
+            }, tweak: { made?.checking = false }, still: true)
         }
         // plan: the three cost lines (dollars on the API, free on this Mac, a share of the window on an account route)
         for (n, route) in [("usd", AIRoute.api), ("free", AIRoute.local), ("window", AIRoute.code)] {

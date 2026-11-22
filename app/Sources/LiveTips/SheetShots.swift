@@ -18,6 +18,8 @@ final class SheetShots: NSObject, NSApplicationDelegate {
         var size: NSSize
         var make: () -> AnyView
         var tweak: (() -> Void)? = nil
+        /// A static screen (no animation to wait for): a short settle instead of 1.7 s.
+        var still = false
     }
 
     let out: URL
@@ -463,9 +465,9 @@ final class SheetShots: NSObject, NSApplicationDelegate {
         w.isReleasedWhenClosed = false
         w.contentView = host
         w.orderFrontRegardless()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + (sc.still ? 0.3 : 1.0)) { [self] in
             sc.tweak?()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { [self] in
+            DispatchQueue.main.asyncAfter(deadline: .now() + (sc.still ? 0.3 : 0.7)) { [self] in
                 host.layoutSubtreeIfNeeded()
                 save(host, sc.name + suffix, fallback: root, dark: dark)
                 w.orderOut(nil)

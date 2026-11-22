@@ -4842,6 +4842,20 @@ func siteResearchPB37C() {
     // one source per page: the same page written two ways is one key
     expect(SiteResearch.key("https://www.Example-Company.com/team/#x") == SiteResearch.key("https://example-company.com/team") && SiteResearch.key("https://example-company.com/") == "example-company.com", "site research: page key ignores www, case, fragment and slash")
 }
+// PB-37 (G6): the shot staging of the research panel is static: no process, no timer, no network, no sidecar call, no wait
+func siteResearchShotStaticPB37() {
+    let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let dir = repo.appendingPathComponent("app/Sources/LiveTips")
+    let staging = (try? String(contentsOf: dir.appendingPathComponent("SheetShotsResearch.swift"), encoding: .utf8)) ?? ""
+    expect(staging.contains("SiteResearchSession("), "research shots: the staging file is found")
+    for bad in ["Process(", "Timer", "SheetCLI", "URLSession", "asyncAfter", "DispatchQueue", "Task {", ".loadPlan(", ".read(", ".researchSite(", ".readPages(", ".cancel("] {
+        expect(!staging.contains(bad), "research shots: the staging has no \(bad)")
+    }
+    let spin = (try? String(contentsOf: dir.appendingPathComponent("BrandComponents.swift"), encoding: .utf8)) ?? ""
+    expect(spin.contains("paused: still") && spin.contains("SheetShots.active"), "research shots: the spinner is paused in shot mode (no display-link redraws)")
+}
+siteResearchShotStaticPB37()
 siteResearchPB37C()
 print("core checks: \(passed) passed, \(failures) failed")
 exit(failures == 0 ? 0 : 1)

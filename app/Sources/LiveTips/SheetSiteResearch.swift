@@ -29,6 +29,9 @@ final class SiteResearchSession: ObservableObject {
     private var cancelPath = ""
     private var runID = UUID()
 
+    /// No read process: what the shot harness stages (also checked by source in CoreChecks).
+    var idle: Bool { process == nil }
+
     init(sourceID: String, url: String) { self.sourceID = sourceID; self.url = url }
 
     func loadPlan(request: [String: Any]) {

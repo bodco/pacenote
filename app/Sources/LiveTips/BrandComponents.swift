@@ -131,9 +131,10 @@ struct PNSpinner: View {
 
     var body: some View {
         let lineC = line ?? Color(pnHex: t.ink), trackC = track ?? Color(pnHex: t.rule), dotC = dot ?? Color(pnHex: t.spDot)
-        TimelineView(.animation(paused: reduce)) { tl in
+        let still = reduce || SheetShots.active      // the shot harness draws one still frame: no display-link redraws offscreen
+        TimelineView(.animation(paused: still)) { tl in
             Canvas { ctx, sz in
-                let g = reduce ? (drawn: 0.6, opacity: 1.0) : PNMotion.draw(tl.date, steps: t.drawSteps)
+                let g = still ? (drawn: 0.6, opacity: 1.0) : PNMotion.draw(tl.date, steps: t.drawSteps)
                 let s = sz.height / Brand.markBox.height
                 let tf = RouteGeometry.transform(height: sz.height, x: (sz.width - Brand.markBox.width * s) / 2, y: 0)
                 let style = StrokeStyle(lineWidth: Brand.markStroke * s, lineCap: .round, lineJoin: .round)
