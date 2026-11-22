@@ -107,8 +107,10 @@ decides, the service key stays the only path.
 4. **Undo.** A new object is deleted; an updated object gets its old property values back. Associations added during a
    re-run are not removed by Undo (they are harmless and HubSpot has no history for them); the Undo failure line says
    what is left. Undo first checks that the key still belongs to the portal the Apply wrote to; after a key change
-   it sends nothing and says so, as the same ids in another portal are other records. A re-run of the Call adds the associations first and changes the fields last, so a failed association
-   leaves the Call's fields as they were and nothing changed is outside Undo.
+   it sends nothing and says so, as the same ids in another portal are other records. A re-run of the Call adds the
+   associations first and changes the fields last, so a failed association leaves the Call's fields as they were.
+   Associations added before the one that failed stay on the Call and are outside Undo, like every association a
+   re-run adds; the Apply reports the failure.
 5. **Errors are one line where the action was**, never a modal; 429 waits (Retry-After, else 1, 2, 4 s) and retries three
    times; 401 and 403 say what to fix (key, or the named scope).
 6. **No silent overwrites of the PM's own edits in HubSpot.** A re-run updates only the Pacenote-owned properties of the
@@ -158,6 +160,10 @@ is shown on the card. Behavior to keep and to define:
   (by the attendees' domains of the occurrence the link was saved for while the calendar still has it, else by the
   linked company's name). Relink never takes attendees from a meeting near the recording's start: an overlapping
   meeting can be another customer's.
+- A call's link has one writer at a time. Call writes (Auto and Apply) and Relink of the same call take turns on one
+  per-call queue, so Relink waits for a write that is waiting for HubSpot. Each write reads the link (Call id, portal,
+  associations) when its turn comes, and stores the Call id HubSpot returns only if the link still names the same
+  portal and Pacenote call id when the answer comes; otherwise the id is dropped, never put into another portal's link.
 - Several portals at once (an agency with client portals): one key per project in Settings > Projects, kept in the
   Keychain under a per-project name. Not built; decision 3.
 - Data hosting regions (US, EU) use the same base URL for the API; the region is only displayed.

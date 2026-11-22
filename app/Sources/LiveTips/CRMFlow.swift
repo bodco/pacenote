@@ -117,12 +117,17 @@ enum CRMCallLogger {
                           body: CRMCallLog.body(summary: s.summary, nextSteps: s.nextSteps, participants: link.contactNames, link: rec.notionURL ?? "", key: link.callKey))
     }
 
-    /// H2: writes the Call through the per-call queue; the stored id and portal are read from <base>.crm.json when the
-    /// turn comes and the new id is stored before the next turn.
+    /// H2: writes the Call through the per-call queue; the stored id, portal and associations are read from
+    /// <base>.crm.json when the turn comes, and the new id is stored only if the link still names that portal and call
+    /// key when HubSpot answers (fix round 8: a Relink to another portal in between keeps its own ids).
     static func write(_ entry: CRMCallLog, base: String, link: CRMLink, connector c: CRMConnector) async throws -> CRMCallResult {
-        try await CRMCallSync.log(entry, connector: c, associations: refs(link),
-                                  load: { let d = CRMLink.load(base: base) ?? link; return (d.callId, d.portalId) },
+        try await CRMCallSync.log(entry, connector: c, fallback: target(link),
+                                  load: { CRMLink.load(base: base).map(target) },
                                   save: { id in var d = CRMLink.load(base: base) ?? link; d.callId = id; d.save(base: base) })
+    }
+
+    static func target(_ l: CRMLink) -> CRMCallTarget {
+        CRMCallTarget(callId: l.callId, portalId: l.portalId, callKey: l.callKey, associations: refs(l))
     }
 
     static func refs(_ l: CRMLink) -> [CRMRef] {
@@ -377,7 +382,7 @@ struct CRMUpdateView: View {
                 if p.rows.first(where: { $0.id == "call" })?.on == true, let entry = p.callLog {
                     let r = try await CRMCallLogger.write(entry, base: base, link: l, connector: c)    // in turn with Auto
                     done.append(CRMUndoItem("calls", r.id, r.old))       // a new Call: old is empty and Undo deletes it; an update: Undo restores
-                    link?.callId = r.id
+                    link?.callId = CRMLink.load(base: base)?.callId ?? r.id      // the id as stored, never one the write declined to store
                 }
                 if p.rows.first(where: { $0.id == "deal" })?.on == true, !l.dealId.isEmpty, l.dealId != "none", !p.dealFields.isEmpty {
                     let old = try await c.updateDeal(id: l.dealId, fields: p.dealFields); done.append(CRMUndoItem("deals", l.dealId, old)); fields = p.dealFields.count
@@ -401,14 +406,18 @@ struct CRMUpdateView: View {
 
     /// H2: links the call again in the portal of the key in use: the company by the attendees' domains of the calendar
     /// occurrence the link was saved for (fix round 7: never the nearest meeting, it may be another customer's), else
-    /// by the linked company's name without contacts; the call key is kept, the old ids are not.
+    /// by the linked company's name without contacts; the call key is kept, the old ids are not. Fix round 8: in turn
+    /// with the call's Call writes (an Auto write waiting for HubSpot finishes first), reading the link when its turn comes.
     func relink() {
         guard let l = link else { return }
         let emails = CRMLinkCarry.relinkEmails(occurrence: l.occurrence,
                                                events: CalendarService.shared.events.map { ([$0.id] + $0.copies, $0.emails) })
         busy = true; status = ""
+        let base = base, crm = crm
         Task {
-            let (nl, e) = await crm.refresh(base: base, emails: emails, name: l.companyName, keep: l)
+            let (nl, e) = (try? await CRMCallSync.relink(key: l.callKey.isEmpty ? base : l.callKey) {
+                await crm.refresh(base: base, emails: emails, name: l.companyName, keep: CRMLink.load(base: base) ?? l)
+            }) ?? (nil, L("crm.notConnected"))
             busy = false
             if nl != nil { needsRelink = false; load(); status = L("crm.relink.done") } else { status = e }
         }

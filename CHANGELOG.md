@@ -24,7 +24,8 @@ Pacenote. Earlier versions are described in the commit messages and in
   never sent. A call's HubSpot link now remembers its HubSpot account: after the key changes to another account, or
   for a call linked before this version, nothing is written and Update HubSpot offers **Relink**. Relink takes the
   attendees only from the calendar event the link was made for, never from another meeting at about the same time
-  (it could be another customer's); without that event it finds the company by its saved name. The company, deal
+  (it could be another customer's); without that event it finds the company by its saved name. Relink waits for a
+  Call being written for the same call, and a Call written for the old account is never stored in the new link. The company, deal
   and contacts linked with Refresh in Start call now go to the recorded call started from that window, so Auto and
   Update HubSpot find them (before, the call showed "not linked"). Refresh saves the link with the preparation the call
   will use (the one you chose, else the planned one) and starts from that preparation's own link after you pick
