@@ -135,7 +135,8 @@ func crmDeals() async {
     expect(stage(["signals": [["what": "They received the contract"]]], deal)?.value == "s4" && stage(["signals": [["what": "We shared the proposal"]]], deal)?.value == "s3",
            "deals: received and shared establish sent")
     expect(CRMDealSuggester.establishes("The decision maker approved it", label: "Decision maker bought-in")
-           && !CRMDealSuggester.establishes("We reviewed the contract", label: "Decision maker bought-in"),
+           && !CRMDealSuggester.establishes("We reviewed the contract", label: "Decision maker bought-in")
+           && !CRMDealSuggester.establishes("The decision maker sent the contract", label: "Decision maker bought-in"),
            "deals: a label without a completion word needs its own thing in the signal")
     // review round 3: the completed action must refer to the stage's own thing, in the same clause
     for text in ["We sent the proposal and reviewed the contract", "Ми надіслали пропозицію і переглянули контракт",
@@ -149,6 +150,17 @@ func crmDeals() async {
     expect(stage(["signals": [["what": "We sent them the signed contract"]]], deal)?.value == "s4" && stage(["signals": [["what": "We signed the NDA"]]], deal) == nil
            && stage(["signals": [["what": "The contract was sent with the proposal"]]], deal)?.value == "s4",
            "deals: the object of the completed action decides the stage")
+    // fix round 4: a stage noun that only describes the object (or sits in its phrase) is no evidence
+    for text in ["We sent the pricing sheet for the enterprise contract", "We sent the contract template", "We sent the proposal template",
+                 "We sent the pricing sheet for the proposal", "The contract template was sent", "Ми надіслали шаблон контракту",
+                 "We sent the enterprise contract checklist", "The pricing sheet for the enterprise contract was sent"] {
+        expect(stage(["signals": [["what": text]]], deal) == nil && !CRMDealSuggester.establishes(text, label: "Contract sent")
+               && !CRMDealSuggester.establishes(text, label: "Proposal sent"), "deals: no stage from \"\(text)\"")
+    }
+    for (text, id) in [("Contract sent", "s4"), ("We sent over the final contract today", "s4"), ("The contract has been signed", "s4"),
+                       ("We sent the contract draft to Emily Clark", "s4"), ("Пропозицію надіслали", "s3"), ("Ми вже надіслали нашу пропозицію", "s3")] {
+        expect(stage(["signals": [["what": text]]], deal)?.value == id, "deals: \"\(text)\" is evidence for its own stage")
+    }
     var other = deal; other.pipeline = "p2"; other.stage = "r1"
     expect(stage(["signals": [["what": "The contract was sent"]]], other) == nil, "deals: another pipeline's stage names are not used (the stage must be later in the same pipeline)")
     var lost = deal; lost.pipeline = ""

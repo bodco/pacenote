@@ -1679,7 +1679,8 @@ close date (only when a closing step such as a signature has a real date), a lat
 Contract sent; not when it was negated, planned, only agreed or asked for, and not from a nearby step such as "we
 reviewed the contract" or "we presented the demo" for Proposal sent; the action must refer to the stage's own thing,
 so "we sent the proposal and reviewed the contract" and "we sent the proposal for the contract" suggest Proposal
-sent, not Contract sent; never Closed won or Closed lost) and the qualification
+sent, not Contract sent, and "we sent the contract template" or "we sent the pricing sheet for the contract" suggest
+no stage; never Closed won or Closed lost) and the qualification
 fields you mapped in Settings (only for a criterion with a quote). A field with no evidence is not suggested. The Stage
 menu lists the portal's own stages of that pipeline, and Pacenote writes only an id from it. The quote is shown to you
 and never sent. Apply writes the ticked fields in one update and Undo puts the old values back. When you pick another

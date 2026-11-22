@@ -181,39 +181,71 @@ public enum CRMDealSuggester {
         return out.filter { !$0.isEmpty }.map { $0.joined(separator: " ") }
     }
     static func tokenIs(_ t: String, _ words: [String]) -> Bool { words.contains { $0.allSatisfy(\.isASCII) ? t == $0 : t.hasPrefix($0) } }
-    /// A noun after one of these (and only determiners between) belongs to a phrase, not to the action:
-    /// "the proposal for the contract", "пропозицію щодо контракту".
+    /// A phrase that starts with one of these is about something else: "the proposal for the contract",
+    /// "пропозицію щодо контракту".
     static let prepositions: Set<String> = ["for", "about", "of", "on", "with", "to", "from", "in", "regarding", "under", "after", "before",
-                                            "щодо", "для", "до", "про", "з", "із", "зі", "на", "від", "у", "в", "під", "після", "за"]
+                                            "at", "by", "via", "over", "within",
+                                            "щодо", "для", "до", "про", "з", "із", "зі", "на", "від", "у", "в", "під", "після", "за", "через"]
+    /// Words that may stand between the action and its thing ("we sent them the final proposal", "надіслали нашу пропозицію").
     static let determiners: Set<String> = ["the", "a", "an", "this", "that", "our", "their", "its", "his", "her", "your", "my", "new", "final",
-                                           "цей", "цього", "цю", "наш", "нашу", "нашого", "їхній", "їхню", "їхнього"]
-    static func inPhrase(_ t: [String], _ j: Int) -> Bool {
-        var k = j - 1
-        while k >= 0, determiners.contains(t[k]) || tokenIs(t[k], doneWords) { k -= 1 }
-        return k >= 0 && prepositions.contains(t[k])
+                                           "revised", "updated", "formal", "official", "full", "draft", "first", "second",
+                                           "them", "him", "us", "you", "over", "out", "back", "already", "finally", "just",
+                                           "цей", "цього", "цю", "наш", "нашу", "нашого", "їхній", "їхню", "їхнього", "їм", "йому", "їй",
+                                           "нам", "вже", "уже", "нарешті", "остаточну", "фінальну", "оновлену"]
+    /// Words between a thing and its completion word: "the contract was sent", "the contract has been signed".
+    static let auxiliaries: Set<String> = ["was", "were", "is", "are", "has", "have", "had", "been", "being", "be", "got", "gets", "get",
+                                           "already", "finally", "now", "just", "successfully", "було", "вже", "уже", "нарешті"]
+    /// Words after the thing that keep it the thing: "the contract draft" is the contract, "the contract template" is not.
+    static let sameThing: Set<String> = ["draft", "drafts", "copy", "version", "redline", "redlines", "pdf"]
+    /// Words that may end the thing's phrase besides a preposition or the end of the clause.
+    static let afterThing: Set<String> = ["today", "yesterday", "already", "again", "last", "this", "earlier", "back", "over", "out",
+                                          "successfully", "вчора", "сьогодні", "вже", "уже", "нарешті"]
+    /// Where the thing's phrase starting at `j` ends: only same-thing words and the label's own words ("decision maker"
+    /// for Decision maker bought-in) may follow the thing; any other word means the thing only describes it.
+    static func headEnd(_ t: [String], _ j: Int, label: Set<String>) -> Int {
+        var k = j + 1
+        while k < t.count, sameThing.contains(t[k]) || label.contains(t[k]) { k += 1 }
+        return k
     }
-    /// The milestone noun the completion word at `i` is about: the first one after it ("we sent the proposal for the
-    /// contract" -> proposal), else the first of the clause ("the proposal for the contract was sent", "пропозицію щодо
-    /// контракту надіслали"). A noun in a phrase ("for the contract") and the completion word itself are never the object.
-    static func object(_ t: [String], at i: Int) -> String? {
-        let nouns = t.indices.filter { j in
-            j != i && !tokenIs(t[j], doneWords) && milestoneNouns.contains { tokenIs(t[j], $0) } && !inPhrase(t, j)
+    /// The completion word at `i` has the stage's thing itself as its object or its subject: "we sent (them) the proposal
+    /// (to the team)", "the proposal (for the contract) was sent", "пропозицію надіслали". In "we sent the pricing sheet
+    /// for the contract" and "we sent the contract template" the object is another thing, so the answer is no.
+    static func about(_ t: [String], at i: Int, nouns: [[String]], label: Set<String>) -> Bool {
+        func isThing(_ j: Int) -> Bool { !tokenIs(t[j], doneWords) && nouns.contains { tokenIs(t[j], $0) } }
+        // object: the first word after the completion word (past determiners) is the thing, and its phrase ends there
+        var j = i + 1
+        while j < t.count, determiners.contains(t[j]) || tokenIs(t[j], doneWords) { j += 1 }
+        if j < t.count, isThing(j) {
+            let k = headEnd(t, j, label: label)
+            if k == t.count || prepositions.contains(t[k]) || afterThing.contains(t[k]) { return true }
         }
-        return (nouns.first { $0 > i } ?? nouns.first).map { t[$0] }
+        // the action has another stage's thing as its object ("the decision maker sent the contract"): not about this one
+        if j < t.count, milestoneNouns.contains(where: { tokenIs(t[j], $0) }) { return false }
+        // subject: the clause starts with the thing, then maybe a phrase of its own, auxiliaries and the completion word
+        j = 0
+        while j < i, determiners.contains(t[j]) || tokenIs(t[j], doneWords) { j += 1 }
+        guard j < i, isThing(j) else { return false }
+        var k = headEnd(t, j, label: label)
+        if k < i, prepositions.contains(t[k]) {
+            k += 1
+            while k < i, !auxiliaries.contains(t[k]) { k += 1 }
+        }
+        while k < i, auxiliaries.contains(t[k]) { k += 1 }
+        return k == i
     }
     /// The signal establishes this stage's own milestone: in one clause a completion word for the stage ("sent",
     /// "signed", or something that implies it; any completion word when the label has none) has the stage's thing as
-    /// its object. "We sent the proposal and reviewed the contract" and "We sent the proposal for the contract"
-    /// establish Proposal sent, not Contract sent.
+    /// its object or subject. "We sent the proposal and reviewed the contract", "We sent the proposal for the contract"
+    /// establish Proposal sent, not Contract sent; "We sent the contract template" establishes neither.
     public static func establishes(_ text: String, label: String) -> Bool {
         let need = doneWords.filter { has(label, [$0]) }
         let done = need.isEmpty ? doneWords : need.flatMap { impliedBy[$0] ?? [$0] }
         let groups = milestoneNouns.filter { has(label, $0) }
+        guard !groups.isEmpty else { return false }
+        let words = Set(label.lowercased().split { !$0.isLetter && !$0.isNumber && $0 != "-" }.map(String.init).filter { !tokenIs($0, doneWords) })
         return clauses(text).contains { c in
             let t = c.split { !$0.isLetter && !$0.isNumber && $0 != "-" }.map(String.init)
-            return t.indices.contains { i in
-                tokenIs(t[i], done) && object(t, at: i).map { o in groups.contains { tokenIs(o, $0) } } == true
-            }
+            return t.indices.contains { i in tokenIs(t[i], done) && about(t, at: i, nouns: groups, label: words) }
         }
     }
 
