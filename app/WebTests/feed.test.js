@@ -170,7 +170,7 @@ test('transcript: a translation changes the shown row in place and keeps its mar
   const { f, get } = make();
   f.addTranscript(['[10:31:02] Emily C. [S1] (uk): Это очень хорошо', '[10:31:09] Me (uk): Добре']);
   const before = f.transcript[0];
-  f.updateTranscript([{ t: '10:31:02', ch: 'them', seq: 1 }, { t: '10:31:09', ch: 'me', seq: 2 }]);
+  f.updateTranscript([{ event: 'row', t: '10:31:02', ch: 'them', seq: 1, text: 'Это очень хорошо' }, { event: 'row', t: '10:31:09', ch: 'me', seq: 2, text: 'Добре' }]);
   f.updateTranscript([{ event: 'translated', seq: 1, t: '10:31:02', ch: 'them', translated_from: 'ru', original: 'Это очень хорошо', text: 'Це дуже добре' },
                       { event: 'translated', t: '10:59:59', original: 'nothing', text: 'x' }]);
   const s = get();
@@ -185,16 +185,29 @@ test('transcript: a translation changes the shown row in place and keeps its mar
 test('transcript: a translation finds its row by the line seq, also for two speakers and a row read late (PB-30 round 7)', () => {
   const { f } = make();
   f.addTranscript(['[10:31:02] Me (uk): Это', '[10:31:02] Emily C. [S1] (uk): Это', '[10:31:02] Mike [S2] (uk): Это']);   // same second and words
-  f.updateTranscript([{ t: '10:31:02', ch: 'me', seq: 1 }, { t: '10:31:02', ch: 'them', seq: 2 }, { t: '10:31:02', ch: 'them', seq: 3 }]);
+  f.updateTranscript([{ event: 'row', t: '10:31:02', ch: 'me', seq: 1, text: 'Это' }, { event: 'row', t: '10:31:02', ch: 'them', seq: 2, text: 'Это' },
+                      { event: 'row', t: '10:31:02', ch: 'them', seq: 3, text: 'Это' }]);
   f.updateTranscript([{ event: 'translated', seq: 3, t: '10:31:02', ch: 'them', translated_from: 'ru', original: 'Это', text: 'Це' }]);
   assert.deepStrictEqual(f.transcript.map((x) => x.text), ['Это', 'Это', 'Це']);          // the second "them" speaker, not the mic row or S1
   assert.strictEqual(f.transcript[0].translatedFrom, undefined);
   f.updateTranscript([{ event: 'translated', seq: 5, t: '10:31:20', ch: 'me', translated_from: 'ru', original: 'Хорошо', text: 'Добре' }]);
   assert.strictEqual(f.transcript.length, 3);                                             // no row yet: kept, nothing changes
-  f.updateTranscript([{ t: '10:31:20', ch: 'me', seq: 5 }]);                              // the timing row before the transcript row
+  f.updateTranscript([{ event: 'row', t: '10:31:20', ch: 'me', seq: 5, text: 'Хорошо' }]);   // the row event before the transcript row
   f.addTranscript(['[10:31:20] Me (uk): Хорошо']);
   assert.strictEqual(f.transcript[3].text, 'Добре');                                      // applied when the row arrived
   assert.strictEqual(f.transcript[3].translatedFrom, 'ru');
+});
+
+test('transcript: a timing entry of a line the writer dropped as echo does not shift the seq of visible rows (PB-30 round 8)', () => {
+  const { f } = make();
+  // the recorder's timing file: seq 1 is a mic segment dropped as echo (a timing entry, no row event); rows 2 and 3 were written
+  f.updateTranscript([{ t: '10:31:02', ch: 'me', seq: 1, dur: 1.2 },
+                      { event: 'row', t: '10:31:02', ch: 'me', seq: 2, text: 'Хорошо' }, { t: '10:31:02', ch: 'me', seq: 2 },
+                      { event: 'row', t: '10:31:02', ch: 'me', seq: 3, text: 'Добре' }, { t: '10:31:02', ch: 'me', seq: 3 }]);
+  f.addTranscript(['[10:31:02] Me (uk): Хорошо', '[10:31:02] Me (uk): Добре']);
+  f.updateTranscript([{ event: 'translated', seq: 2, t: '10:31:02', ch: 'me', translated_from: 'ru', original: 'Хорошо', text: 'Гаразд' }]);
+  assert.deepStrictEqual(f.transcript.map((x) => x.text), ['Гаразд', 'Добре']);           // the second row is untouched
+  assert.deepStrictEqual(f.transcript.map((x) => x.seq), [2, 3]);
 });
 
 test('presentation steps from slides; a skippable step', () => {

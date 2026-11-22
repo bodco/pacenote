@@ -130,6 +130,8 @@ def test_a_translation_event_changes_the_live_line_in_place(tmp_path):
     tm = tmp_path / "c.md.timing.jsonl"
     rows = [{"t": "10:00:00", "ch": "them", "seg_end": "10:00:02.000", "written": "10:00:03.000", "seq": 1},
             {"t": "10:00:05", "ch": "me", "seg_end": "10:00:07.000", "written": "10:00:08.000", "seq": 2}]
+    rows = [{"event": "row", "seq": 1, "t": "10:00:00", "ch": "them", "text": "Это очень хорошо"},
+            {"event": "row", "seq": 2, "t": "10:00:05", "ch": "me", "text": "Добре"}] + rows
     tm.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
     eng = Eng()
     run = LiveRun({"me_label": "Me"}, eng, md, from_start=True)

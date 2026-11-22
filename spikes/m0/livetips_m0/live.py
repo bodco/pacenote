@@ -222,6 +222,7 @@ class LiveRun:
         if not from_start:                           # join a running call: skip what is already there
             skip_existing(self.t_md, self.t_tm)
         self.timing, self.pending, self.n = {}, [], 0
+        self.rows = {}                               # PB-30: "row" events (written by the recorder's writer): {(t, ch): [event]}
         self.translations = []                       # PB-30: "translated" events not applied yet: [(event, first seen)]
         self.seen_lines = set()
         self.last_new = self.t0 = time.monotonic()
@@ -241,9 +242,11 @@ class LiveRun:
         for raw in self.t_tm.read():
             try:
                 r = json.loads(raw)
-                if r.get("event"):                # PB-30: not a line's timing; the translation replaces the line's text
-                    if r["event"] == "translated":
+                if r.get("event"):                # PB-30: not a line's timing
+                    if r["event"] == "translated":          # the translation replaces the line's text
                         self.translations.append((r, time.monotonic()))
+                    elif r["event"] == "row":               # the writer appended this row: its stable seq
+                        self.rows.setdefault((r.get("t"), r.get("ch")), []).append(r)
                     continue
                 self.timing.setdefault((r.get("t"), r.get("ch")), []).append(r)
             except ValueError:
@@ -277,7 +280,12 @@ class LiveRun:
             ln.written = hms_to_s(rec["written"]) if rec.get("written") else now_sod()
         else:
             ln.written = now_sod()
-        ln.seq = rec.get("seq") if rec else None
+        # the seq comes from the writer's "row" event for this exact row (time, channel, text), never from timing order:
+        # the timing file also has entries for lines the writer dropped as echo
+        rows = self.rows.get((getattr(ln, "t", None), getattr(ln, "speaker", None))) or []
+        text = " ".join(str(getattr(ln, "text", "")).split())
+        i = next((k for k, r in enumerate(rows) if " ".join(str(r.get("text") or "").split()) == text), None)
+        ln.seq = rows.pop(i).get("seq") if i is not None else None
         self.eng.on_line(ln)
         self.first_written = self.first_written or ln.written
         self.last_written = ln.written

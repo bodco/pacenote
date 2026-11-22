@@ -534,14 +534,17 @@
     this.emit();
   };
 
-  /** PB-30: the recorder's `.timing.jsonl` rows (each carries the line's `seq`, in the order the rows were written) give
-   *  the transcript rows their seq: the oldest row of the same time and channel without one. A timing row whose
-   *  transcript row is not read yet waits (at most 50). */
+  const flat = (s) => String(s == null ? '' : s).split(/\s+/).filter(Boolean).join(' ');
+
+  /** PB-30: the "row" events of the recorder's `.timing.jsonl` (the writer publishes one for each row it appends, with
+   *  the line's `seq`, time, channel and text) give the transcript rows their seq: the oldest row of the same time,
+   *  channel and text without one. The plain timing entries are not used (they also exist for lines the writer dropped
+   *  as echo). An event whose transcript row is not read yet waits (at most 50). */
   Feed.prototype.pairSeq = function () {
     const q = this.unpairedTiming || (this.unpairedTiming = []);
     for (let i = 0; i < q.length;) {
       const r = q[i];
-      const item = this.transcript.find((x) => x.seq == null && x.t === r.t && x.ch === (r.ch === 'me' ? 'me' : 'them'));
+      const item = this.transcript.find((x) => x.seq == null && x.t === r.t && x.ch === (r.ch === 'me' ? 'me' : 'them') && flat(x.text) === flat(r.text));
       if (!item) { i++; continue; }
       item.seq = +r.seq;
       q.splice(i, 1);
@@ -552,14 +555,14 @@
   /** PB-30: a background translation (a "translated" event of the recorder) changes the text of a row already shown, in
    *  place: the row with the event's `seq` (the same channel and time are checked too; an event without a seq, from an
    *  older recorder, goes by channel, time and original text). A row not shown yet keeps the event waiting (at most 50).
-   *  `events` may also hold the plain timing rows: they only give rows their seq. */
+   *  `events` may also hold the "row" events (they only give rows their seq) and plain timing entries (ignored). */
   Feed.prototype.updateTranscript = function (events) {
     const pending = this.pendingTranslations || (this.pendingTranslations = []);
     const timing = this.unpairedTiming || (this.unpairedTiming = []);
     for (const e of events || []) {
       if (!e) continue;
       if (e.event === 'translated') { if (e.text) pending.push(e); }
-      else if (e.seq != null && e.t) timing.push(e);
+      else if (e.event === 'row' && e.seq != null && e.t) timing.push(e);
     }
     this.pairSeq();
     let changed = false;

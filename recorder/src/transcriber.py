@@ -834,6 +834,7 @@ class Writer:
         self.last_line_at = None
         self.replaced: list[tuple[str, str]] = []   # PB-30: (row as written, row after translation), applied in close()
         self.closed = False
+        self.on_row = None          # PB-30: called with a line just before its row is appended (publishes the row's seq)
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "a", encoding="utf-8") as f:
             f.write(header)
@@ -927,6 +928,11 @@ class Writer:
 
     def _write(self, line: Line) -> None:
         line.row = self._row(line)
+        if self.on_row is not None:
+            try:
+                self.on_row(line)
+            except Exception as e:  # noqa: BLE001
+                log(f"translate: row event failed ({e!r})")
         with open(self.path, "a", encoding="utf-8") as f:
             f.write(line.row + "\n")
             f.flush()
@@ -5367,6 +5373,14 @@ def main() -> int:
         except OSError:
             pass
 
+    def publish_row(line: Line) -> None:
+        """The writer is about to append this row: publish its seq. Readers pair rows with seq by this event (time,
+        channel, text), not by the timing entries, which also exist for mic lines the writer drops as echo."""
+        with open(call_layout.sidecar_of(out, ".timing.jsonl"), "a", encoding="utf-8") as tf:
+            tf.write(json.dumps({"event": "row", "seq": line.seq, "t": hhmmss(line.t), "ch": line.channel,
+                                 "text": line.text}, ensure_ascii=False) + "\n")
+
+    writer.on_row = publish_row
     line_seq = itertools.count(1)
     tr_worker = None
     if cfg.get("translate", True):

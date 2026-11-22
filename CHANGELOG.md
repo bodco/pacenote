@@ -23,7 +23,8 @@ Pacenote. Earlier versions are described in the commit messages and in
   Gemini account or the model on this Mac through the route), and only when the app launches the recorder for that call with
   permission: without it, whatever `config.json` or the environment holds, only the local model is used and the recorder
   gets no key. A translation of several lines is saved as one row, and in the live pane it changes the row of its own
-  channel (you or the other side), even when the row is read after the translation. With no route the marked line stays. A short out-of-set phrase now uses the call's
+  channel (you or the other side), even when the row is read after the translation, and even when the recorder dropped
+  an echo of your mic in the same second (the writer publishes each row's id when it appends the row). With no route the marked line stays. A short out-of-set phrase now uses the call's
   main language (not the previous line's); "Субтитри зроблені спільнотою" and "Subtitles by" are dropped only on
   near-silence, like the other stop-phrases.
 
