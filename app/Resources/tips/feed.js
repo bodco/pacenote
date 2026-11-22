@@ -246,7 +246,8 @@
       case 'question': return false;                      // heard-question lines are not shown (2026-10-26 review)
       case 'ask': return false;                           // echoes of what the PM typed: the field already shows it
       case 'consent': return false;                       // 0.13.0: the consent record of the call, for the call page only
-      case 'ack': this.toast = { text: this.tr('applied'), kind: 'ok', at: this.now() }; return true;
+      case 'ack': this.ack = { key: it.key, value: it.value, n: (this.ack ? this.ack.n : 0) + 1 };   // PB-49: the window reads which setting was applied
+        this.toast ={ text: this.tr('applied'), kind: 'ok', at: this.now() }; return true;
       case 'notice': this.prep = 'ready'; this.toast = { text: this.tr('prepReady'), kind: 'ok', at: this.now() }; return true;
       case 'deal':
         // 0.8.7 (H4): the qualification tracker; criteria with state unknown | partial | known, a short what and a quote

@@ -15,6 +15,8 @@ Pacenote. Earlier versions are described in the commit messages and in
   (shown for a mixed call as "Tips in") and the code prints `UK` or `EN` instead of the Cyrillic `УК`. Below 760 px the
   strip is two rows (status and exit above, views and call controls below) instead of wrapping by accident. A switch
   shows a divider in the transcript. If the recorder does not confirm within 4 seconds, the chip goes back and says so.
+  The success message appears only after the recorder confirms, a mixed row never lists more than three languages, and
+  `⌘⇧T` is ignored while an input method is composing text. Switching to one language names both call and tips in the message.
 
 - **Call notes, Summary, Recap and the Notion page follow the language of the call (PB-32, FB2):** they were written
   in the language most transcript lines were tagged with, so a Ukrainian call tagged mostly `en` by mistake got English

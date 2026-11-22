@@ -717,5 +717,13 @@ test('PB-49: the call-language chip and menu come from the status echo, the tips
   assert.ok(/(\.slice\(0, 3\))/.test(body), 'the menu lists at most three languages');
 });
 
+test('PB-49: an ack keeps the key and value it applied and counts, for the window to confirm a tips language', () => {
+  const { f } = make();
+  f.addItems([{ t: '10:40:00', kind: 'ack', key: 'tips_lang', value: 'en' }]);
+  assert.deepStrictEqual({ k: f.ack.key, v: f.ack.value, n: f.ack.n }, { k: 'tips_lang', v: 'en', n: 1 });
+  f.addItems([{ t: '10:40:05', kind: 'ack', key: 'tips_lang', value: 'uk' }]);
+  assert.strictEqual(f.ack.n, 2);
+});
+
 console.log(`feed tests: ${passed} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);

@@ -94,7 +94,7 @@
         autoTt: 'Slides turn by the schedule, with a beep', compTt: 'Hide the "can skip" paragraphs', swap: 'Swap the slides and tips sides',
         expand: 'Expand', collapse: 'One window', expandTt: 'Slides next to the tips: the window gets twice as wide', collapseTt: 'Back to one window: the slide on top, the tips below' },
       doneQ: 'Done?', markDone: 'Mark done', onThemKind: 'On them', closed: 'Closed',
-      noItems: 'Nothing on you yet', notMine: 'Not mine', trShow: 'Show transcript', trHide: 'Hide transcript', trAria: 'Transcript', trEmptyReady: 'The transcript appears when the call starts listening.', trEmptyLive: 'Nothing said yet.', langMarker: (n) => `Language: ${n}`, cl: { head: 'Call language', mixed: 'mixed', tipsIn: 'Tips in', more: 'More languages…', foot: 'Applies from the next phrase. This call only.', tip: (n) => `Call language: ${n}. Click to change`, tipMixed: (n) => `Call language: ${n}`, aria: (n) => `Call language: ${n}. Change`, resume: 'Applies when you resume.', off: 'Recorder is not running.', ok: (n) => `Call language: ${n}. Applies from the next phrase.`, fail: 'Could not change the language. Try again.' }, close: 'Close', noBriefYet: 'No brief for this call yet.',
+      noItems: 'Nothing on you yet', notMine: 'Not mine', trShow: 'Show transcript', trHide: 'Hide transcript', trAria: 'Transcript', trEmptyReady: 'The transcript appears when the call starts listening.', trEmptyLive: 'Nothing said yet.', langMarker: (n) => `Language: ${n}`, cl: { head: 'Call language', mixed: 'mixed', tipsIn: 'Tips in', more: 'More languages…', foot: 'Applies from the next phrase. This call only.', tip: (n) => `Call language: ${n}. Click to change`, tipMixed: (n) => `Call language: ${n}`, aria: (n) => `Call language: ${n}. Change`, resume: 'Applies when you resume.', off: 'Recorder is not running.', ok: (n, tips) => `${tips ? 'Call and tips language' : 'Call language'}: ${n}. Applies from the next phrase.`, fail: 'Could not change the language. Try again.' }, close: 'Close', noBriefYet: 'No brief for this call yet.',
       readyStatus: 'Ready', readyTitle: 'Ready when you are', startListening: 'Start listening', openBrief: 'Open brief',
       listeningTitle: 'Listening', tipsOffTitle: 'Transcript only', tipsOffSub: 'Tips are off. The summary and the follow-up come after the call. Turn tips on in Call settings.', listeningSub: (k) => `Tips show up here when they matter. Stuck? Press ${k}.`, onDevice: 'Audio stays on this Mac',
       searched: (o) => `You searched: ${o.q}`, heardMeta: (o) => `Heard${o.who ? ' from ' + o.who : ''}, searching the project`, heardAnswer: (o) => `${o.who ? o.who + ' asked' : 'Asked'}: ${o.q}`, shorterMeta: 'Shorter', applied: 'Settings applied', prepReady: 'The brief is ready',
@@ -183,7 +183,7 @@
         slide: 'Слайд', title: 'Назва', plan: 'План', fact: 'Факт', diff: 'Різниця',
         autoTt: 'Слайди гортаються самі за розкладом, з сигналом', compTt: 'Сховати абзаци «можна пропустити»', swap: 'Поміняти місцями слайди і підказки',
         expand: 'Розгорнути', collapse: 'Одне вікно', expandTt: 'Слайди поруч із підказками: вікно стає вдвічі ширшим', collapseTt: 'Назад в одне вікно: слайд зверху, підказки внизу' },
-      noItems: 'Поки нічого на тобі', notMine: 'Не моє', trShow: 'Показати транскрипт', trHide: 'Сховати транскрипт', trAria: 'Транскрипт', trEmptyReady: 'Транскрипт з’явиться, коли дзвінок почне слухати.', trEmptyLive: 'Поки ніхто нічого не сказав.', langMarker: (n) => `Мова: ${n}`, cl: { head: 'Мова дзвінка', mixed: 'змішана', tipsIn: 'Підказки', more: 'Інші мови…', foot: 'Діє з наступної фрази. Лише для цього дзвінка.', tip: (n) => `Мова дзвінка: ${n}. Клацніть, щоб змінити`, tipMixed: (n) => `Мова дзвінка: ${n}`, aria: (n) => `Мова дзвінка: ${n}. Змінити`, resume: 'Діє, коли ви продовжите.', off: 'Запис не йде.', ok: (n) => `Мова дзвінка: ${n}. Діє з наступної фрази.`, fail: 'Не вдалося змінити мову. Спробуйте ще раз.' }, close: 'Закрити', noBriefYet: 'Брифу для цього дзвінка ще немає.',
+      noItems: 'Поки нічого на тобі', notMine: 'Не моє', trShow: 'Показати транскрипт', trHide: 'Сховати транскрипт', trAria: 'Транскрипт', trEmptyReady: 'Транскрипт з’явиться, коли дзвінок почне слухати.', trEmptyLive: 'Поки ніхто нічого не сказав.', langMarker: (n) => `Мова: ${n}`, cl: { head: 'Мова дзвінка', mixed: 'змішана', tipsIn: 'Підказки', more: 'Інші мови…', foot: 'Діє з наступної фрази. Лише для цього дзвінка.', tip: (n) => `Мова дзвінка: ${n}. Клацніть, щоб змінити`, tipMixed: (n) => `Мова дзвінка: ${n}`, aria: (n) => `Мова дзвінка: ${n}. Змінити`, resume: 'Діє, коли ви продовжите.', off: 'Запис не йде.', ok: (n, tips) => `${tips ? 'Мова дзвінка і підказок' : 'Мова дзвінка'}: ${n}. Діє з наступної фрази.`, fail: 'Не вдалося змінити мову. Спробуйте ще раз.' }, close: 'Закрити', noBriefYet: 'Брифу для цього дзвінка ще немає.',
       readyStatus: 'Готово', readyTitle: 'Можна починати', startListening: 'Почати слухати', openBrief: 'Відкрити бриф',
       listeningTitle: 'Слухаю', tipsOffTitle: 'Лише транскрипт', tipsOffSub: 'Підказки вимкнено. Підсумок і фоллоу-ап будуть після дзвінка. Увімкнути підказки можна в налаштуваннях дзвінка.', listeningSub: (k) => `Підказки зʼявляться тут, коли будуть потрібні. Застряг? Натисни ${k}.`, onDevice: 'Аудіо лишається на цьому Mac',
       searched: (o) => `Ви шукали: ${o.q}`, heardMeta: (o) => `Почув${o.who ? ' від ' + o.who : ''}, шукаю в проєкті`, heardAnswer: (o) => `${o.who ? o.who + ' питав' : 'Питання'}: ${o.q}`, shorterMeta: 'Коротше', applied: 'Налаштування застосовано', prepReady: 'Бриф готовий',
@@ -1116,10 +1116,21 @@
     return { langs, main, cands: S.startLangs.concat(seed.cands) };
   }
   /** The chip shows a switch at once; the status echo confirms it, or after 4 s it goes back. */
+  const MAX_CALL_LANGS = 3;   // the recorder's limit (call_language.py MAX_LANGUAGES); a longer request is refused there
+  const validCallLangs = (l) => l.length >= 1 && l.length <= MAX_CALL_LANGS && l.every((c) => /^[a-z]{2,3}$/.test(c)) && new Set(l).size === l.length;
+  /** The sidecar's ack of a setting ({kind: 'ack', key, value}): the tips language it applied is the confirmed one. */
+  function consumeAck() {
+    const a = feed && feed.ack; if (!a || a.n === S.ackN) return; S.ackN = a.n;
+    if (a.key !== 'tips_lang' || !S.tipsLang) return;
+    S.tipsLang.current = String(a.value);
+    if (S.ui.tipsPending && S.ui.tipsPending.l === S.tipsLang.current) S.ui.tipsPending = null;
+  }
   function langShown() {
+    consumeAck();
     const cl = callLangNow(), p = S.ui.langPending;
     if (p && !p.demo && sameLangs(p.langs, cl.langs) && p.main === cl.main) {
       S.ui.langPending = null;
+      showToast({ text: T().cl.ok(langNames(p.langs), p.tips ? langNames([p.tips]) : ''), kind: 'ok', at: Date.now() });
       if (p.tips && !(S.tipsLang && S.tipsLang.current === p.tips)) tipsLangSet(p.tips);   // tips follow only once the recorder confirmed
     }
     else if (p && Date.now() - p.at > 4000) { S.ui.langPending = null; showToast({ text: T().cl.fail, kind: 'warn', at: Date.now() }); }
@@ -1130,7 +1141,7 @@
   /** The rows of the menu: one per language (at most 3, the current main first) and, from two languages on, a mixed row. */
   function langRows(l) {
     const cands = [l.main].concat(l.langs, l.cands || []).filter((c, i, a) => c && a.indexOf(c) === i).slice(0, 3);
-    const start = (S.startLangs || []).slice(), mixed = l.langs.length >= 2 ? l.langs.slice() : (start.length >= 2 ? [l.main].concat(start.filter((c) => c !== l.main)) : (cands.length >= 2 ? [l.main, cands.find((c) => c !== l.main)] : []));
+    const start = (S.startLangs || []).slice(), mixed = l.langs.length >= 2 ? l.langs.slice() : (start.length >= 2 ? [l.main].concat(start.filter((c) => c !== l.main)).slice(0, MAX_CALL_LANGS) : (cands.length >= 2 ? [l.main, cands.find((c) => c !== l.main)] : []));
     return { singles: cands, mixed };
   }
   function renderLangSwitch() {
@@ -1177,12 +1188,12 @@
   function pickLang(v) {
     const langs = v.split('+'), main = langs[0], cl = callLangNow();
     S.ui.langMenu = false;
+    if (!validCallLangs(langs)) { showToast({ text: T().cl.fail, kind: 'warn', at: Date.now() }); render(); return; }
     if (!(sameLangs(langs, cl.langs) && main === cl.main && !S.ui.langPending)) {
       S.ui.langPending = { value: v, langs, main, at: Date.now() };
       post('setting', { key: 'call_lang', value: v });
       // tips follow the main language of a one-language call; a mixed call keeps its tips language
       if (langs.length === 1 && (main === 'uk' || main === 'en') && !(S.tipsLang && S.tipsLang.current === main)) S.ui.langPending.tips = main;
-      showToast({ text: T().cl.ok(langNames(langs)), kind: 'ok', at: Date.now() });
       setTimeout(render, 4100);
     }
     render(); const b = $('langBtn'); if (b && !b.hidden) b.focus();
@@ -1661,7 +1672,7 @@
       else if (!S.ui.paneGrown) {
         S.ui.paneGrown = true; post('transcript', { on: true });
         // the window may not grow (screen edge): then the transcript is the sheet, as in the split view
-        setTimeout(() => { if (S.ui.paneGrown && S.ui.paneTab === tab && !isWide()) { S.ui.paneGrown = false; post('transcript', { on: false }); S.ui.sheet = tab; render(); } }, 700);
+        setTimeout(() => { if (S.ui.paneGrown && !isWide()) { S.ui.paneGrown = false; post('transcript', { on: false }); S.ui.sheet = S.ui.paneTab; render(); } }, 700);   // the latest tab asked for
       }
     }
     render();
@@ -1982,7 +1993,7 @@
     }
     if (e.target.classList && e.target.classList.contains('row') && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); e.target.click(); }
     if (e.metaKey && (e.key === '=' || e.key === '+' || e.key === '-' || e.key === '0')) { e.preventDefault(); post('zoom', { step: e.key === '-' ? -1 : e.key === '0' ? 0 : 1 }); return; }
-    if (e.metaKey && e.shiftKey && !e.ctrlKey && !e.altKey && (e.key === 't' || e.key === 'T')) { e.preventDefault(); toggleTranscript(); return; }   // PB-49
+    if (e.metaKey && e.shiftKey && !e.ctrlKey && !e.altKey && !e.isComposing && (e.key === 't' || e.key === 'T')) { e.preventDefault(); toggleTranscript(); return; }   // PB-49
     if (S.ui.langMenu && e.target && e.target.closest && e.target.closest('#langMenu') && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
       e.preventDefault(); const it = Array.from($('langMenu').querySelectorAll('button')), i = it.indexOf(document.activeElement);
       it[(i + (e.key === 'ArrowDown' ? 1 : -1) + it.length) % it.length].focus(); return;
@@ -2086,8 +2097,8 @@
     setProject(p) { S.proj = p || null; render(); },
     setSpeakerPrompt(sec) { S.spkPrompt = +sec || 15; render(); },
     setTipsLang(t) {
-      S.ui.tipsPending = null;
-      S.tipsLang = t && t.meeting ? { meeting: t.meeting, langs: Array.isArray(t.langs) ? t.langs : [], current: t.current || t.meeting } : null;
+      const prev = S.tipsLang;   // the native push comes with the transcript file, it is not an ack: keep what the sidecar confirmed
+      S.tipsLang = t && t.meeting ? { meeting: t.meeting, langs: Array.isArray(t.langs) ? t.langs : [], current: t.current || (prev && prev.meeting === t.meeting && prev.current) || t.meeting } : null;
       // PB-49: also what the call listens for ({call: ['uk','en'], cands: [...]}), until the recorder's status echo says it
       S.callLangSeed = t && t.meeting ? { langs: Array.isArray(t.call) ? t.call : [], main: (Array.isArray(t.call) && t.call[0]) || t.meeting, cands: Array.isArray(t.cands) ? t.cands : [] } : null;
       render();
@@ -2131,10 +2142,11 @@
     if (q.get('lang_menu') === 'open') S.ui.langMenu = true;
     if (q.get('pending') === '1') S.ui.langPending = { value: 'uk', langs: ['uk'], main: 'uk', at: Date.now() + 3.6e6, demo: true };
     if (q.get('mode') === 'card') S.view = 'card';
+    if (q.get('sheet') === 'transcript') S.ui.sheet = 'transcript';
     if (q.get('pane') === 'off') S.ui.paneOff = true;
     window.LiveTips.setState({
       lang: q.get('lang') || 'en', theme: q.get('theme') || 'auto',
-      call: { title: 'Orbit weekly with the client', state: q.get('state') === 'ready' ? 'ready' : 'live', briefLine: 'Brief ready · 09:40',
+      call: { title: 'Orbit weekly with the client', state: q.get('state') === 'ready' ? 'ready' : q.get('state') === 'ended' ? 'ended' : 'live', briefLine: 'Brief ready · 09:40',
               startedAt: q.get('state') === 'empty' ? now - 42000 : now - 32 * min - 14000, minutesLeft: Number(q.get('left') || 13),
               mode: 'normal', recap: 'export on Tuesday, our QA tests week one, names from you by Friday.',
               presenting: q.get('mode') === 'presentation', presType: q.get('mode') === 'presentation' },
