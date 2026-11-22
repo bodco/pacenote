@@ -30,8 +30,8 @@ def test_language_without_static_labels_gets_text_in_it_and_english_labels(call,
     _retag(call, "pl")
     assert W.main(call.base + ["--when", "2026-10-01T09:30:00+00:00"]) == 0
     assert call.seen["lang"] == "pl"
-    page = [c for c in call.calls if c[0] == "POST" and c[1] == "/pages"][0][2]
-    heads = [b["heading_2"]["rich_text"][0]["text"]["content"] for b in page["children"] if b["type"] == "heading_2"]
+    heads = [b["heading_2"]["rich_text"][0]["text"]["content"] for c in call.calls if c[0] == "PATCH" and c[1].endswith("/children")
+             for b in c[2]["children"] if b["type"] == "heading_2"]
     assert heads == ["Summary", "Transcript"]
 
 
@@ -162,7 +162,7 @@ def test_regenerate_on_a_page_without_a_record_archives_nothing_and_says_so(call
     assert W.main(call.base + ["--page", PID]) == 0
     assert not [g for g in got if g[0] == "DELETE"]
     assert any(g[0] == "PATCH" and g[1] == "/blocks/" + PID + "/children" for g in got)    # the new text is there
-    assert json.loads(capsys.readouterr().out.strip().splitlines()[-1])["kept_blocks"] == 1
+    assert json.loads(capsys.readouterr().out.strip().splitlines()[-1])["legacy_blocks"] == 1
     assert "notion" not in CL.read_sidecar(call.md)["artifacts"]                          # still out of date
 
 

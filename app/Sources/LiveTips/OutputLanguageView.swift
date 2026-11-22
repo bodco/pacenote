@@ -110,7 +110,7 @@ final class OutputLanguageModel: ObservableObject {
         }
         if let usd = r["cost_usd"] as? Double, usd > 0 { SpendDays.add(usd); CallHistory.shared.addCost(file: file, usd) }
         if (r["ok"] as? Bool) != true { return L("call.outlang.notionFailed", ["why": (r["error"] as? String) ?? ""]) }
-        if let n = r["kept_blocks"] as? Int, n > 0 { return L("call.outlang.notionKept", ["n": String(n)]) }     // the language stays "out of date"
+        if let n = r["legacy_blocks"] as? Int, n > 0 { return L("call.outlang.notionLegacy", ["n": String(n)]) }     // the language stays "out of date"
         return nil
     }
 }

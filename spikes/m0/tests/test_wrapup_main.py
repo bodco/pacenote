@@ -40,6 +40,8 @@ def call(tmp_path, monkeypatch):
             return {"results": state["pages"]}
         if method == "POST" and path == "/pages":
             return {"id": "p%d" % len(calls), "url": "https://notion.so/new"}
+        if method == "PATCH" and path.endswith("/children"):
+            return {"results": [{"id": "b%d_%d" % (len(calls), i)} for i in range(len(body["children"]))]}
         return {}
     monkeypatch.setattr(W, "notion", notion)
     base = ["--md", str(md), "--project-config", str(cfg), "--lt", "py", "lt", "--project-name", "Demo"]
@@ -62,13 +64,15 @@ def test_new_page(call, capsys):
     assert props["Summary"]["rich_text"][0]["text"]["content"] == "We agreed."
     assert props["Project"] == {"select": {"name": "Demo"}} and props["Workspace"] == {"relation": [{"id": "ws1"}]}
     assert page["parent"] == {"type": "data_source_id", "data_source_id": "ds1"}
-    kinds = [b["type"] for b in page["children"]]
+    assert "children" not in page                                        # the blocks go in by append: only append reports their ids
+    kinds = [b["type"] for b in next(c for c in call.calls if c[0] == "PATCH" and c[1].endswith("/children"))[2]["children"]]
     assert kinds[0] == "heading_2" and "bulleted_list_item" in kinds and kinds[-1] == "heading_2"
     assert json.loads((call.tmp / "spend.json").read_text())
     tp = [c for c in call.calls if c[0] == "POST" and c[1] == "/pages"][1][2]
     assert tp["parent"]["type"] == "page_id" and tp["properties"]["title"]["title"][0]["text"]["content"].startswith("Transcript · Weekly sync: Release plan")
-    last_write = [c for c in call.calls if c[0] != "GET"][-1]          # the ownership record reads the page after the footer
+    last_write = [c for c in call.calls if c[0] != "GET"][-1]
     assert last_write[0] == "PATCH" and last_write[2]["children"][0]["type"] == "divider"
+    assert not [c for c in call.calls if c[0] == "GET" and "/children" in c[1]]     # ownership comes from the write responses, not a scan
 
 
 def test_existing_page(call, capsys):
@@ -224,3 +228,21 @@ def test_regenerate_after_a_write_archives_only_what_pacenote_wrote(call, capsys
     deleted = {p.split("/")[2] for m, p in log if m == "DELETE"}
     assert "pm1" not in deleted and "pm1" in {b["id"] for b in pages[pid]}
     assert deleted and deleted <= generated
+
+
+def test_a_block_the_pm_adds_before_the_first_regenerate_is_not_archived(call, capsys, monkeypatch):
+    """PB-32 round 4: ownership is the ids Notion returned for Pacenote's own writes, so an edit that lands right after the
+    first wrap-up, before any later scan, is never claimed."""
+    pages, log = _stateful_notion(call, monkeypatch)
+    assert W.main(call.base + ["--when", "2026-10-01T09:30:00+00:00"]) == 0
+    pid = next(iter(pages))
+    kids = pages[pid]
+    heading = next(i for i, b in enumerate(kids) if b["type"] == "heading_2")
+    kids.insert(heading + 1, {"id": "pm0", "type": "paragraph", "paragraph": {"rich_text": [{"type": "text", "text": {"content": "PM"}}]}})
+    log.clear()
+    capsys.readouterr()
+    assert W.main(call.base + ["--page", pid]) == 0
+    assert "pm0" not in {p.split("/")[2] for m, p in log if m == "DELETE"} and "pm0" in {b["id"] for b in pages[pid]}
+    res = out(capsys)
+    assert "legacy_blocks" not in res                                       # a preserved manual block is not "out of date"
+    assert W.call_language.read_sidecar(call.md)["artifacts"]["notion"] == "en"
