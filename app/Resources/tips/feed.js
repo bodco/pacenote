@@ -517,6 +517,8 @@
       let m;
       if ((m = /^- (?:Канали|Channels): (.+?) = .*?, (.+?) = /.exec(l))) { this.channels = { me: m[1], them: m[2] }; continue; }
       if ((m = /^- (?:Канали|Channels): (.+?) = /.exec(l))) { this.channels.me = m[1]; continue; }
+      // PB-49: the recorder's own marker for a call-language switch ("--- language: en+uk 10:31:40 ---"): a divider in the pane
+      if ((m = /^--- (?:language|мова): ([a-z]{2,3}(?:\+[a-z]{2,3})*) (\d\d:\d\d:\d\d) ---$/.exec(l))) { this.transcript.push({ marker: 'lang', langs: m[1].split('+'), t: m[2] }); continue; }
       m = TR_RX.exec(l); if (!m) continue;
       const sid = m[3] || (this.channels.me && m[2] === this.channels.me ? 'me' : /^(я|me|pm)$/i.test(m[2]) ? 'me' : 'other');
       if (!m[3] && sid === 'other' && !/^(співрозмовник|other)$/i.test(m[2])) {

@@ -94,7 +94,7 @@
         autoTt: 'Slides turn by the schedule, with a beep', compTt: 'Hide the "can skip" paragraphs', swap: 'Swap the slides and tips sides',
         expand: 'Expand', collapse: 'One window', expandTt: 'Slides next to the tips: the window gets twice as wide', collapseTt: 'Back to one window: the slide on top, the tips below' },
       doneQ: 'Done?', markDone: 'Mark done', onThemKind: 'On them', closed: 'Closed',
-      noItems: 'Nothing on you yet', notMine: 'Not mine', tipsIn: (o) => `Tips in ${o.l}, click for ${o.o}`, close: 'Close', noBriefYet: 'No brief for this call yet.',
+      noItems: 'Nothing on you yet', notMine: 'Not mine', trShow: 'Show transcript', trHide: 'Hide transcript', trAria: 'Transcript', trEmptyReady: 'The transcript appears when the call starts listening.', trEmptyLive: 'Nothing said yet.', langMarker: (n) => `Language: ${n}`, cl: { head: 'Call language', mixed: 'mixed', tipsIn: 'Tips in', more: 'More languages…', foot: 'Applies from the next phrase. This call only.', tip: (n) => `Call language: ${n}. Click to change`, tipMixed: (n) => `Call language: ${n}`, aria: (n) => `Call language: ${n}. Change`, resume: 'Applies when you resume.', off: 'Recorder is not running.', ok: (n) => `Call language: ${n}. Applies from the next phrase.`, fail: 'Could not change the language. Try again.' }, close: 'Close', noBriefYet: 'No brief for this call yet.',
       readyStatus: 'Ready', readyTitle: 'Ready when you are', startListening: 'Start listening', openBrief: 'Open brief',
       listeningTitle: 'Listening', tipsOffTitle: 'Transcript only', tipsOffSub: 'Tips are off. The summary and the follow-up come after the call. Turn tips on in Call settings.', listeningSub: (k) => `Tips show up here when they matter. Stuck? Press ${k}.`, onDevice: 'Audio stays on this Mac',
       searched: (o) => `You searched: ${o.q}`, heardMeta: (o) => `Heard${o.who ? ' from ' + o.who : ''}, searching the project`, heardAnswer: (o) => `${o.who ? o.who + ' asked' : 'Asked'}: ${o.q}`, shorterMeta: 'Shorter', applied: 'Settings applied', prepReady: 'The brief is ready',
@@ -183,7 +183,7 @@
         slide: 'Слайд', title: 'Назва', plan: 'План', fact: 'Факт', diff: 'Різниця',
         autoTt: 'Слайди гортаються самі за розкладом, з сигналом', compTt: 'Сховати абзаци «можна пропустити»', swap: 'Поміняти місцями слайди і підказки',
         expand: 'Розгорнути', collapse: 'Одне вікно', expandTt: 'Слайди поруч із підказками: вікно стає вдвічі ширшим', collapseTt: 'Назад в одне вікно: слайд зверху, підказки внизу' },
-      noItems: 'Поки нічого на тобі', notMine: 'Не моє', tipsIn: (o) => `Підказки: ${o.l}, клацніть для ${o.o}`, close: 'Закрити', noBriefYet: 'Брифу для цього дзвінка ще немає.',
+      noItems: 'Поки нічого на тобі', notMine: 'Не моє', trShow: 'Показати транскрипт', trHide: 'Сховати транскрипт', trAria: 'Транскрипт', trEmptyReady: 'Транскрипт з’явиться, коли дзвінок почне слухати.', trEmptyLive: 'Поки ніхто нічого не сказав.', langMarker: (n) => `Мова: ${n}`, cl: { head: 'Мова дзвінка', mixed: 'змішана', tipsIn: 'Підказки', more: 'Інші мови…', foot: 'Діє з наступної фрази. Лише для цього дзвінка.', tip: (n) => `Мова дзвінка: ${n}. Клацніть, щоб змінити`, tipMixed: (n) => `Мова дзвінка: ${n}`, aria: (n) => `Мова дзвінка: ${n}. Змінити`, resume: 'Діє, коли ви продовжите.', off: 'Запис не йде.', ok: (n) => `Мова дзвінка: ${n}. Діє з наступної фрази.`, fail: 'Не вдалося змінити мову. Спробуйте ще раз.' }, close: 'Закрити', noBriefYet: 'Брифу для цього дзвінка ще немає.',
       readyStatus: 'Готово', readyTitle: 'Можна починати', startListening: 'Почати слухати', openBrief: 'Відкрити бриф',
       listeningTitle: 'Слухаю', tipsOffTitle: 'Лише транскрипт', tipsOffSub: 'Підказки вимкнено. Підсумок і фоллоу-ап будуть після дзвінка. Увімкнути підказки можна в налаштуваннях дзвінка.', listeningSub: (k) => `Підказки зʼявляться тут, коли будуть потрібні. Застряг? Натисни ${k}.`, onDevice: 'Аудіо лишається на цьому Mac',
       searched: (o) => `Ви шукали: ${o.q}`, heardMeta: (o) => `Почув${o.who ? ' від ' + o.who : ''}, шукаю в проєкті`, heardAnswer: (o) => `${o.who ? o.who + ' питав' : 'Питання'}: ${o.q}`, shorterMeta: 'Коротше', applied: 'Налаштування застосовано', prepReady: 'Бриф готовий',
@@ -204,12 +204,12 @@
     call: { title: '', state: 'live', startedAt: null, paused: false, micOff: false, minutesLeft: null, mode: 'normal', recap: '', briefLine: '', alert: null },
     agenda: [], questions: [], cards: [], onMe: [], next: null, deal: null,
     transcript: [], speakers: {}, brief: null, briefText: '', steps: [], toast: null,
-    keys: { help: '⌃⌥H', pause: '⌃⌥P', mute: '⌃⌥M', present: '⌃⌥S', prev: '⌃⌥←', next: '⌃⌥→', add30: '⌃⌥=' },
+    keys: { help: '⌃⌥H', pause: '⌃⌥P', mute: '⌃⌥M', present: '⌃⌥S', prev: '⌃⌥←', next: '⌃⌥→', add30: '⌃⌥=', transcript: '⌘⇧T' },
     rec: { state: 'off', kind: 'video', elapsed: 0, source: '', note: '' },
-    pres: { slide: null, slideRx: 0, timeline: null, moveAsk: null, follow: null }, thumbs: {}, syncA: null, extra: {}, after: null, sys: null, meetEnd: null, notice: null, ask: null, rosterSide: {}, roster: [], knownNames: [], knownSrc: {}, tipsLang: null,
+    pres: { slide: null, slideRx: 0, timeline: null, moveAsk: null, follow: null }, thumbs: {}, syncA: null, extra: {}, after: null, sys: null, meetEnd: null, notice: null, ask: null, rosterSide: {}, roster: [], knownNames: [], knownSrc: {}, tipsLang: null, callLangSeed: null,
     openItems: [], notionItems: [], notionProject: '', minePending: [], mineN: 0, spkPrompt: 15,
     ui: { spkOpen: null, spkCard: null, spkSnooze: {}, spkCollapsed: PREFS.spk_collapsed !== '0',   // 0.10.0: collapsed by default, remembered
-          lineWho: {}, lineDel: {}, delArm: null, openPts: {}, heroMin: {}, paneTab: 'transcript', sheet: null, menuOpen: false, heroOverride: null, follow: true, editing: null, rateOpen: null, briefEdit: false,
+          lineWho: {}, lineDel: {}, delArm: null, openPts: {}, heroMin: {}, paneTab: 'transcript', sheet: null, menuOpen: false, langMenu: false, langPending: null, pendingTr: false, heroOverride: null, follow: true, editing: null, rateOpen: null, briefEdit: false,
           present: { index: 0, running: false, stepStart: 0 }, presentForced: null }
   };
   const T = () => STR[S.lang] || STR.en;
@@ -480,6 +480,13 @@
     $('dealBtn').hidden = !dealChip; $('dealBtn').textContent = dealChip;
     $('onmeBtn').setAttribute('aria-label', t.onMe + ': ' + openOnMe);   // below 460 px only the count is visible
     $('moreBtn').setAttribute('aria-label', t.more);
+    // PB-49: the Transcript button is always there (no count or call state hides it); pressed while the transcript is showing
+    const trb = $('trBtn'), trOn = transcriptShown();
+    if (!trb.firstChild) trb.innerHTML = TR_ICON(16);
+    trb.classList.toggle('on', trOn);
+    trb.setAttribute('aria-expanded', String(trOn));
+    trb.setAttribute('aria-label', t.trAria);
+    trb.title = (trOn ? t.trHide : t.trShow) + (S.keys && S.keys.transcript ? ' (' + S.keys.transcript + ')' : '');
     // 0.8 (owner): the microphone switch is back in the top bar (a cafe: the meeting is muted, the transcript too).
     // 0.8 (owner): three tools, each with its shortcut in the tooltip, aria-label and aria-pressed.
     const key = (k) => (S.keys && S.keys[k] ? ' (' + S.keys[k] + ')' : '');
@@ -553,7 +560,7 @@
       <button class="btn1" type="button" data-act="after" data-item="followup">${esc(t.followup)}</button>
       <button class="ghost" type="button" data-act="after" data-item="callpage">${esc(t.callPage)}</button>`; }
 
-    // 0.8.5 (owner): tips follow the meeting's language; PB-32 S5: a switch only for a mixed call (two or more call languages).
+    // PB-49: the call-language chip and its menu (the S5 tips-language switch lives in that menu, for a mixed call)
     renderLangSwitch();
 
     // 0.8.5 (P8): a recording problem replaces the tips area: red strip, the state, the levels, one action.
@@ -660,6 +667,7 @@
       ${idle ? '' : `<button class="tc-b${micOff ? ' on' : ''}" type="button" data-act="card-mute" aria-pressed="${micOff}" aria-label="${esc(t.ariaMic)}" title="${esc((micOff ? t.menu.unmute : t.menu.mute) + key('mute'))}">${micOff ? MIC_OFF : MIC_ON}</button>
       <button class="tc-b${paused ? ' on' : ''}" type="button" data-act="card-pause" aria-pressed="${paused}" aria-label="${esc(paused ? t.menu.resume : t.ariaPause)}" title="${esc((paused ? t.menu.resume : t.menu.pause) + key('pause'))}">${paused ? PLAY : PAUSE}</button>
       <button class="tc-b tc-help" type="button" data-act="card-help" title="${esc(c2.help + key('help'))}">${esc(c2.help)}</button>`}
+      <button class="tc-b" type="button" data-act="card-transcript" aria-label="${esc(t.trAria)}" title="${esc(t.trShow + key('transcript'))}">${TR_ICON(14)}</button>
       <button class="tc-b" type="button" data-act="card-expand" aria-label="${esc(c2.expand)}" title="${esc(c2.expand)}">${EXPAND}</button>
       ${ended ? '' : `<button class="tc-end" type="button" data-act="end-call" title="${esc(t.endCallTip)}">${esc(t.endCall)}</button>`}
     </div>`;
@@ -1087,19 +1095,99 @@
   function reportPresenting() { const p = presenting() && S.steps.length > 0; if (p !== lastPresenting) { lastPresenting = p; post('presenting', { on: p }); } }
   window.addEventListener('resize', () => { if (DK.isSplit) dkShowCard(DK.idx); });
 
-  function nextTipsLang(tl) { const l = tl.langs, i = l.indexOf(tl.current || tl.meeting); return l[(i + 1) % l.length]; }
-
-  function renderLangSwitch() {
-    let b = $('langBtn');
-    const tl = S.tipsLang, show = !!(tl && tl.meeting && tl.langs.length >= 2);
-    if (!b) { b = document.createElement('button'); b.id = 'langBtn'; b.type = 'button'; b.className = 'langbtn'; b.dataset.act = 'tips-lang'; const more = $('moreBtn'); more.parentNode.insertBefore(b, more); }
-    b.hidden = !show;
-    if (!show) return;
-    const cur = tl.current || tl.meeting, other = nextTipsLang(tl), name = (l) => l === 'uk' ? 'УК' : 'EN';
-    b.textContent = name(cur);
-    b.title = T().tipsIn({ l: name(cur), o: name(other) });
-    b.setAttribute('aria-label', b.title);
+  // ---------- PB-49: the call language (what the recorder listens for) ----------
+  const TR_ICON = (n) => `<svg width="${n}" height="${n}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M2.5 3.2c0-.7.5-1.2 1.2-1.2h8.6c.7 0 1.2.5 1.2 1.2v6.1c0 .7-.5 1.2-1.2 1.2H7.2L4.4 13.3V10.5h-.7c-.7 0-1.2-.5-1.2-1.2z"/><path d="M5 5h6M5 7.2h6M5 9.2h3.4" stroke-width="1.2"/></svg>`;
+  const LANG_FALLBACK = { uk: ['Ukrainian', 'українська'], en: ['English', 'англійська'] };
+  function langName(c) {
+    try { const n = new Intl.DisplayNames([S.lang], { type: 'language' }).of(c); if (n && n.toLowerCase() !== c) return n; } catch (e) { /* no Intl.DisplayNames */ }
+    const f = LANG_FALLBACK[c]; return f ? f[S.lang === 'uk' ? 1 : 0] : String(c).toUpperCase();
   }
+  const capFirst = (x) => x.charAt(0).toLocaleUpperCase(S.lang) + x.slice(1);
+  const langNames = (list) => list.map(langName).join(' + ');   // lower case in UK mid-sentence; the menu rows capitalise on their own
+  const sameLangs = (a, b) => a.length === b.length && a.every((x) => b.indexOf(x) >= 0);
+  /** What the recorder listens for: its status echo (langs, me_lang), else what the app pushed at the start of the call. */
+  function callLangNow() {
+    const st = (feed && feed.status) || {}, seed = S.callLangSeed || { langs: [], main: '', cands: [] };
+    let langs = Array.isArray(st.langs) && st.langs.length ? st.langs.slice() : seed.langs.slice();
+    const main = st.me_lang || seed.main || langs[0] || '';
+    if (!langs.length && main) langs = [main];
+    if (main && langs.indexOf(main) > 0) { langs.splice(langs.indexOf(main), 1); langs.unshift(main); }
+    return { langs, main, cands: seed.cands };
+  }
+  /** The chip shows a switch at once; the status echo confirms it, or after 4 s it goes back. */
+  function langShown() {
+    const cl = callLangNow(), p = S.ui.langPending;
+    if (p && !p.demo && sameLangs(p.langs, cl.langs) && p.main === cl.main) S.ui.langPending = null;
+    else if (p && Date.now() - p.at > 4000) { S.ui.langPending = null; showToast({ text: T().cl.fail, kind: 'warn', at: Date.now() }); }
+    const q = S.ui.langPending;
+    return q ? { langs: q.langs, main: q.main, pending: true, cands: cl.cands } : { langs: cl.langs, main: cl.main, pending: false, cands: cl.cands };
+  }
+  const langCode = (l) => l.langs.length >= 3 ? l.main.toUpperCase() + '+' + (l.langs.length - 1) : l.langs.map((c) => c.toUpperCase()).join('+');
+  /** The rows of the menu: one per language (at most 3, the current main first) and, from two languages on, a mixed row. */
+  function langRows(l) {
+    const cands = [l.main].concat(l.langs, l.cands || []).filter((c, i, a) => c && a.indexOf(c) === i).slice(0, 3);
+    const mixed = l.langs.length >= 2 ? l.langs.slice() : (cands.length >= 2 ? [l.main, cands.find((c) => c !== l.main)] : []);
+    return { singles: cands, mixed };
+  }
+  function renderLangSwitch() {
+    const b = $('langBtn'), l = langShown(), t = T().cl, off = !!(S.sys && S.sys.kind === 'notRecording');
+    b.hidden = !l.main;
+    if (!l.main) { S.ui.langMenu = false; renderLangMenu(); return; }
+    const names = langNames(l.langs), mixed = l.langs.length >= 2;
+    b.innerHTML = `<span class="lc">${esc(langCode(l))}</span><span class="car" aria-hidden="true">▾</span>`;
+    b.classList.toggle('pending', l.pending);
+    b.disabled = off;
+    if (l.pending) b.setAttribute('aria-busy', 'true'); else b.removeAttribute('aria-busy');
+    if (off) S.ui.langMenu = false;
+    b.setAttribute('aria-expanded', String(!!S.ui.langMenu));
+    b.title = off ? t.off : (mixed ? t.tipMixed(names) : t.tip(names)) + (S.call.paused ? ' ' + t.resume : '');
+    b.setAttribute('aria-label', off ? t.off : t.aria(names));
+    renderLangMenu(l);
+  }
+  function renderLangMenu(l) {
+    const m = $('langMenu'), t = T().cl;
+    m.hidden = !S.ui.langMenu;
+    if (!S.ui.langMenu) { m.dataset.html = ''; return; }
+    l = l || langShown();
+    const rows = langRows(l), cur = l.langs.join('+');
+    const row = (v, label) => `<button type="button" role="menuitemradio" aria-checked="${cur === v}" data-act="lang-set" data-v="${esc(v)}"><span class="rd" aria-hidden="true">${cur === v ? '◉' : '○'}</span><span>${esc(label)}</span></button>`;
+    let html = `<div class="mh" role="presentation">${esc(t.head)}</div>` + rows.singles.map((c) => row(c, capFirst(langName(c)))).join('');
+    if (rows.mixed.length >= 2) html += row(rows.mixed.join('+'), `${langNames(rows.mixed)} (${t.mixed})`);
+    if (l.langs.length >= 2) {
+      const tl = S.tipsLang, tips = l.langs.filter((c) => c === 'uk' || c === 'en'), curTips = (tl && tl.current) || l.main;
+      if (tips.length >= 2) html += `<div class="sep"></div><div class="tipsin" role="radiogroup" aria-label="${esc(t.tipsIn)}"><span>${esc(t.tipsIn)}</span>` + tips.map((c) => `<button type="button" role="radio" aria-checked="${curTips === c}" data-act="tips-lang-set" data-l="${c}">${c.toUpperCase()}</button>`).join('') + '</div>';
+    }
+    html += `<div class="sep"></div><button type="button" role="menuitem" data-act="lang-more"><span>${esc(t.more)}</span></button><div class="foot">${esc(t.foot)}</div>`;
+    if (m.dataset.html !== html) { m.innerHTML = html; m.dataset.html = html; }
+    const r = $('langBtn').getBoundingClientRect();
+    m.style.top = Math.round(r.bottom + 6) + 'px';
+    m.style.left = Math.max(8, Math.min(Math.round(r.left), window.innerWidth - m.offsetWidth - 8)) + 'px';
+  }
+  function pickLang(v) {
+    const langs = v.split('+'), main = langs[0], cl = callLangNow();
+    S.ui.langMenu = false;
+    if (!(sameLangs(langs, cl.langs) && main === cl.main && !S.ui.langPending)) {
+      S.ui.langPending = { value: v, langs, main, at: Date.now() };
+      post('setting', { key: 'call_lang', value: v });
+      // tips follow the main language of a one-language call; a mixed call keeps its tips language
+      if (langs.length === 1 && (main === 'uk' || main === 'en') && !(S.tipsLang && S.tipsLang.current === main)) {
+        S.tipsLang = Object.assign({ meeting: main, langs: [] }, S.tipsLang, { current: main });
+        post('setting', { key: 'tips_lang', value: main });
+      }
+      showToast({ text: T().cl.ok(langNames(langs)), kind: 'ok', at: Date.now() });
+      setTimeout(render, 4100);
+    }
+    render(); const b = $('langBtn'); if (b && !b.hidden) b.focus();
+  }
+  function transcriptShown() { return S.ui.sheet === 'transcript' || !!((paneShown() || S.ui.paneGrown) && S.ui.paneTab === 'transcript'); }
+  function toggleTranscript() {
+    if (S.view === 'card') { cardTranscript(); return; }
+    if (S.ui.sheet === 'transcript') { S.ui.sheet = null; render(); return; }
+    if (transcriptShown()) { closePane(); return; }   // a second click closes it
+    openTab('transcript');
+  }
+  /** The card's transcript icon: expand to the window and show the Transcript tab there. */
+  function cardTranscript() { S.ui.paneTab = 'transcript'; S.ui.paneOff = false; S.ui.pendingTr = true; post('expand'); }
 
   // ---------- 2026-11-10 (owner): the meeting has ended, the call stops in a few seconds (MeetingEndWatch) ----------
   function renderMeetEnd(on) {
@@ -1264,7 +1352,8 @@
     if (tab === 'transcript') {
       const unknown = Object.entries(S.speakers).find(([sid, s]) => /^S\d+$/i.test(sid) && !s.name);
       const sugBtns = (sid, sp) => (sp.suggestions || []).map((x) => `<button class="sug" type="button" data-act="name-pick" data-sid="${esc(sid)}" data-name="${esc(x.name)}" title="${x.score == null ? esc(T().notByVoice) : Math.round(x.score * 100) + '%'}">${esc(x.name)}</button>`).join('');
-      body = S.transcript.map((l, i) => {
+      body = !S.transcript.length ? `<p class="tr-empty">${esc(S.call.state === 'ready' ? t.trEmptyReady : t.trEmptyLive)}</p>` : S.transcript.map((l, i) => {
+          if (l.marker) return `<div class="tl-mark" role="separator"><span>${esc(t.langMarker(langNames(l.langs)))}</span></div>`;   // PB-49: the recorder's language-switch line
           const sp = S.speakers[l.speakerId] || {};
           const cls = sp.side === 'client' ? 'client' : sp.side === 'team' ? 'team' : 'unknown';
           const named = /^S\d+$/i.test(l.speakerId);
@@ -1581,6 +1670,7 @@
     if (e.target.closest('button,[data-act]')) { const sel = window.getSelection(); if (sel && !sel.isCollapsed) sel.removeAllRanges(); }   // a real click: the redraw goes ahead
     const b = e.target.closest('[data-act]');
     if (!$('menu').hidden && !e.target.closest('#menu') && !e.target.closest('#moreBtn')) { S.ui.menuOpen = false; renderMenu(); }
+    if (S.ui.langMenu && !e.target.closest('#langMenu') && !e.target.closest('#langBtn')) { S.ui.langMenu = false; renderLangMenu(); }
     // 2026-11-05: composedPath, not closest: a chip re-drawn by its own click is detached and looked like a click outside
     if (!$('pop').hidden && !e.composedPath().includes($('pop')) && !(b && (b.dataset.act === 'name' || b.dataset.act === 'line-who'))) $('pop').hidden = true;
     if (S.ui.delArm && !(b && b.dataset.act === 'line-del')) { S.ui.delArm = null; if (!b) render(); }
@@ -1800,11 +1890,11 @@
       case 'add30': add30(+b.dataset.n); return;
       case 'stop-follow': S.syncA = null; post('stop-follow'); render(); return;
       case 'attach-deck': post('attach-deck'); return;
-      case 'tips-lang': {
-        const tl = S.tipsLang; if (!tl || tl.langs.length < 2) return;
-        tl.current = nextTipsLang(tl);
-        post('setting', { key: 'tips_lang', value: tl.current }); render(); return;
-      }
+      case 'lang-menu': if (b.disabled) return; S.ui.langMenu = !S.ui.langMenu; render(); if (S.ui.langMenu) { const f = $('langMenu').querySelector('[aria-checked="true"]') || $('langMenu').querySelector('button'); if (f) f.focus(); } return;
+      case 'lang-set': pickLang(b.dataset.v); return;
+      case 'tips-lang-set': S.tipsLang = Object.assign({ meeting: b.dataset.l, langs: [] }, S.tipsLang, { current: b.dataset.l }); post('setting', { key: 'tips_lang', value: b.dataset.l }); render(); return;
+      case 'lang-more': S.ui.langMenu = false; post('menu', { item: 'settings' }); render(); return;
+      case 'card-transcript': cardTranscript(); return;
       case 'ask-b': answerAsk(b.dataset.b); return;
       case 'notice-act': if (S.notice) post('notice', { id: S.notice.id, item: 'act' }); S.notice = null; render(); return;
       case 'notice-close': if (S.notice) post('notice', { id: S.notice.id, item: 'close' }); S.notice = null; render(); return;
@@ -1880,6 +1970,12 @@
     }
     if (e.target.classList && e.target.classList.contains('row') && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); e.target.click(); }
     if (e.metaKey && (e.key === '=' || e.key === '+' || e.key === '-' || e.key === '0')) { e.preventDefault(); post('zoom', { step: e.key === '-' ? -1 : e.key === '0' ? 0 : 1 }); return; }
+    if (e.metaKey && e.shiftKey && !e.ctrlKey && !e.altKey && (e.key === 't' || e.key === 'T')) { e.preventDefault(); toggleTranscript(); return; }   // PB-49
+    if (S.ui.langMenu && e.target && e.target.closest && e.target.closest('#langMenu') && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+      e.preventDefault(); const it = Array.from($('langMenu').querySelectorAll('button')), i = it.indexOf(document.activeElement);
+      it[(i + (e.key === 'ArrowDown' ? 1 : -1) + it.length) % it.length].focus(); return;
+    }
+    if (e.key === 'Escape' && S.ui.langMenu) { e.preventDefault(); S.ui.langMenu = false; render(); const lb = $('langBtn'); if (lb) lb.focus(); return; }
     if (e.metaKey && e.key === ',') { e.preventDefault(); post('menu', { item: 'settings' }); return; }
     const typing = e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA');
     if (e.key === 'Escape') {
@@ -1892,6 +1988,7 @@
   $('pauseBtn').addEventListener('click', () => togglePause());
   $('bulbBtn').addEventListener('click', () => toggleProactive());
   $('dealBtn').addEventListener('click', () => openTab('deal'));
+  $('trBtn').addEventListener('click', () => toggleTranscript());
   $('onmeBtn').addEventListener('click', () => {
     if (S.ui.sheet === 'onme') { S.ui.sheet = null; render(); return; }
     if ((paneShown() || S.ui.paneGrown) && S.ui.paneTab === 'onme') { closePane(); return; }   // a second click closes it
@@ -1923,7 +2020,7 @@
   setInterval(() => { if (!S.ui.editing && !S.ui.briefEdit) render(); }, 30000);   // relative times, the 90 s hero rule
 
   /** Theme pass stage 4: 'card' | 'window'. The app sends 'window' after Expand moved this page into the tips window. */
-  function setView(v) { S.view = v === 'card' ? 'card' : 'window'; render(); }
+  function setView(v) { S.view = v === 'card' ? 'card' : 'window'; if (S.view === 'window' && S.ui.pendingTr) { S.ui.pendingTr = false; openTab('transcript'); return; } render(); }
   // The card's height follows its content: the app keeps the top edge under the camera and sets the panel's height.
   let cardH = 0;
   if (window.ResizeObserver && $('tcard')) new ResizeObserver(() => {
@@ -1976,7 +2073,12 @@
     /** 0.10.1 (A3): {name, show, label, change}: the call's project line under the header. */
     setProject(p) { S.proj = p || null; render(); },
     setSpeakerPrompt(sec) { S.spkPrompt = +sec || 15; render(); },
-    setTipsLang(t) { S.tipsLang = t && t.meeting ? { meeting: t.meeting, langs: Array.isArray(t.langs) ? t.langs : [], current: t.current || t.meeting } : null; render(); },
+    setTipsLang(t) {
+      S.tipsLang = t && t.meeting ? { meeting: t.meeting, langs: Array.isArray(t.langs) ? t.langs : [], current: t.current || t.meeting } : null;
+      // PB-49: also what the call listens for ({call: ['uk','en'], cands: [...]}), until the recorder's status echo says it
+      S.callLangSeed = t && t.meeting ? { langs: Array.isArray(t.call) ? t.call : [], main: (Array.isArray(t.call) && t.call[0]) || t.meeting, cands: Array.isArray(t.cands) ? t.cands : [] } : null;
+      render();
+    },
     help() { post('help'); },
     rename(title) { if (feed) feed.rename(title); },
     _state: S, _feed: feed
@@ -2011,6 +2113,12 @@
     const now = Date.now(), min = 60000;
     const q = new URLSearchParams(location.search);
     if (q.get('spk') === 'open') S.ui.spkCollapsed = false;      // 0.10.0: the Speakers block expanded
+    // PB-49 (webshots): ?call_lang=en|uk|uk+en, ?lang_menu=open, ?pending=1, ?mode=card, ?pane=off (a wide window with the panel closed)
+    { const cl = (q.get('call_lang') || 'en').split(/[+\s]/); S.callLangSeed = { langs: cl, main: cl[0], cands: ['uk', 'en'] }; S.tipsLang = { meeting: cl[0], langs: cl.length > 1 ? cl : [], current: cl[0] }; }
+    if (q.get('lang_menu') === 'open') S.ui.langMenu = true;
+    if (q.get('pending') === '1') S.ui.langPending = { value: 'uk', langs: ['uk'], main: 'uk', at: Date.now() + 3.6e6, demo: true };
+    if (q.get('mode') === 'card') S.view = 'card';
+    if (q.get('pane') === 'off') S.ui.paneOff = true;
     window.LiveTips.setState({
       lang: q.get('lang') || 'en', theme: q.get('theme') || 'auto',
       call: { title: 'Orbit weekly with the client', state: q.get('state') === 'ready' ? 'ready' : 'live', briefLine: 'Brief ready · 09:40',

@@ -5,6 +5,17 @@ Pacenote. Earlier versions are described in the commit messages and in
 
 ## Unreleased
 
+- **A Transcript button and the call language in the tips window strip (2026-11-22, PB-49, PB-33):** the transcript was
+  reachable only through On me (hidden when it had nothing) or the ⋯ menu. The strip now has a Transcript icon left of
+  On me in every call state: it shows the panel, a second click closes it, and `⌘⇧T` does the same. On the compact card
+  the icon sits before Expand and opens the window on the transcript. Next to mic, pause and the bulb there is a
+  call-language chip (`UK`, `EN`, `UK+EN`) in every live call. It opens a menu with one row per language and a mixed
+  row; the pick changes only what the recorder listens for, from the next phrase, for this call only. The call's
+  output language still follows the language mostly spoken. The tips-language switch from the entry below moved into that menu
+  (shown for a mixed call as "Tips in") and the code prints `UK` or `EN` instead of the Cyrillic `УК`. Below 760 px the
+  strip is two rows (status and exit above, views and call controls below) instead of wrapping by accident. A switch
+  shows a divider in the transcript. If the recorder does not confirm within 4 seconds, the chip goes back and says so.
+
 - **Call notes, Summary, Recap and the Notion page follow the language of the call (PB-32, FB2):** they were written
   in the language most transcript lines were tagged with, so a Ukrainian call tagged mostly `en` by mistake got English
   notes, and the Notion page knew only English and Ukrainian. They now use one call language: your choice for the

@@ -698,12 +698,23 @@ test('0.25: a quiet risk and a decision conflict reach the card, a quiet Done? d
   assert.strictEqual(p.total, 5); assert.strictEqual(p.card.id, 'd');
 });
 
-test('PB-32 S5: the tips language switch needs a mixed call, never the interface language', () => {
+test('PB-49: a language-switch marker line becomes a divider, not a spoken line', () => {
+  const { f, get } = make();
+  f.addTranscript(['[10:31:09] Me (en): Tuesday.', '--- language: en+uk 10:32:00 ---', '--- мова: uk 10:33:00 ---', '--- microphone: the Mac\'s 10:34:00 ---']);
+  const t = get().transcript;
+  assert.deepStrictEqual(t.map((l) => l.marker || l.speakerId), ['me', 'lang', 'lang']);
+  assert.deepStrictEqual(t[1].langs, ['en', 'uk']);
+  assert.deepStrictEqual(t[2].langs, ['uk']);
+});
+
+test('PB-49: the call-language chip and menu come from the status echo, the tips switch only for a mixed call', () => {
   const src = require('fs').readFileSync(path.join(__dirname, '../Resources/tips/tips.js'), 'utf8');
-  const body = src.slice(src.indexOf('function renderLangSwitch'), src.indexOf('function renderMeetEnd'));
-  assert.ok(/tl\.langs\.length >= 2/.test(body), 'shown only for two or more call languages');
-  assert.ok(!/S\.lang/.test(body.split('const cur')[0]), 'the interface language is not an input');
-  assert.ok(/langs: Array\.isArray\(t\.langs\)/.test(src), 'setTipsLang carries the call languages');
+  const body = src.slice(src.indexOf('function callLangNow'), src.indexOf('function renderMeetEnd'));
+  assert.ok(/st\.langs/.test(body) && /st\.me_lang/.test(body), 'main language and set come from the recorder status echo');
+  assert.ok(/l\.langs\.length >= 2/.test(body), 'the Tips in segment needs a mixed call');
+  assert.ok(/call: \['uk','en'\]/.test(src) && /langs: Array\.isArray\(t\.langs\)/.test(src), 'setTipsLang carries the call languages');
+  assert.ok(/key: 'call_lang'/.test(body), 'the chip sends call_lang');
+  assert.ok(/(\.slice\(0, 3\))/.test(body), 'the menu lists at most three languages');
 });
 
 console.log(`feed tests: ${passed} passed, ${failures} failed`);

@@ -211,7 +211,12 @@ final class PrompterController: NSObject, NSWindowDelegate, WKScriptMessageHandl
                     let meeting: String = MainActor.assumeIsolated { CallEngine.tipsLang(CallEngine.shared.callRequest, ui: AppConfig.load(from: AppPaths.config).uiLanguage) }
                     let langs: [String] = MainActor.assumeIsolated { CallEngine.tipsLangs(CallEngine.shared.callRequest) }
                     let langsJS = "[" + langs.map { "'\($0)'" }.joined(separator: ",") + "]"
-                    push("window.LiveTips && LiveTips.setTipsLang({meeting: '\(meeting)', langs: \(langsJS)})")
+                    // PB-49: the languages the call listens for (first = main) and the menu's candidates (Settings > Transcription); the recorder's status echo takes over after a switch
+                    let isCode: (String) -> Bool = { $0.count >= 2 && $0.count <= 3 && $0.allSatisfy { $0.isLowercase && $0.isASCII } }
+                    let callLangs: [String] = MainActor.assumeIsolated { ((CallEngine.shared.callRequest["langs"] as? [String]) ?? []).filter(isCode) }
+                    let cands: [String] = MainActor.assumeIsolated { AppConfig.load(from: AppPaths.config).callLanguage.split(separator: "+").map(String.init).filter(isCode) }
+                    let jsList: ([String]) -> String = { "[" + $0.map { "'\($0)'" }.joined(separator: ",") + "]" }
+                    push("window.LiveTips && LiveTips.setTipsLang({meeting: '\(meeting)', langs: \(langsJS), call: \(jsList(callLangs)), cands: \(jsList(cands))})")
                     transcriptPath = f
                     transcript = TailReader(path: f)
                     speakersMtime = nil
