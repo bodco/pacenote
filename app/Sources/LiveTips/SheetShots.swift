@@ -377,6 +377,7 @@ final class SheetShots: NSObject, NSApplicationDelegate {
             keep.append(doc)
             return AnyView(SheetExportView(doc: doc, done: {}).background(Color(nsColor: .windowBackgroundColor)))
         }))
+        s += researchScenes()      // PB-37 (G6): the Research this website panel (SheetShotsResearch.swift)
         s += b7bScenes()
         s += d3Scenes()
         return s

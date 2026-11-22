@@ -9,7 +9,10 @@ Pacenote. Earlier versions are described in the commit messages and in
   Sources, in Expert and in Quick. It shows a plan first (pages ordered by the call goal, type and audience, 15 pages
   by default and up to 30, a cost line for your AI route, and the reason for every page left out), then reads the
   ticked pages one by one with progress and Cancel. Every AI route reads the same stored copy of a page. Copies are
-  kept in the hidden `.work/web/<host>` folder inside the call folder, which Google Drive may sync.
+  kept in the hidden `.work/web/<host>` folder inside the call folder, which Google Drive may sync. The page budget uses
+  square - and + buttons, the cost sentence has its own line, the page list no longer scrolls inside the page, and a line
+  explains why more pages cannot be ticked when the budget is reached. In Quick, the summary line says how many pages
+  of the site were read, and the link field placeholder is shorter.
 - **Quick prep takes a link (2026-11-22, FB7):** the Sources line of Quick has a Link to add field, so a link no
   longer needs Expert.
 

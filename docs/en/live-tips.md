@@ -2298,7 +2298,7 @@ a tick, and the reason when it is left out (sign-in, cart, policy, feed, contact
 same text as another page). Only pages of that site are planned; other sites are shown as suggested sources and are
 never read. The pages are put in order by the goal of the call, its type and the audience (a page whose link text
 or path matches the goal comes first; with no goal, the usual order: about, team, product, pricing, customers, news).
-The budget is 15 pages with the home page counted, and a counter lets you raise it to 30. The plan shows the
+The budget is 15 pages with the home page counted, and the square - and + buttons next to the counter change it (1 to 30); when the budget is reached, a line says to untick a page or raise the number. The plan shows the
 estimated size and a **cost line** for the AI route you chose: tokens and money where the route has a price, and for
 a subscription or account route tokens and the share of one pass, never an invented dollar figure (a local model says
 there is no charge). **Read N pages** reads them one by one with "Reading page 4 of 12: /team"; **Cancel** stops at
@@ -2312,7 +2312,7 @@ hidden `.work/web/<host>` folder inside the call's folder. The pages are public 
 call folder, which Google Drive or another sync may copy to colleagues. The page text goes to your AI route with
 the other sources; nothing goes to Pacenote servers.
 
-**A link in Quick.** The Sources line of Quick has a **Link to add** field (Notion, Google Docs, a website, LinkedIn).
+**A link in Quick.** The Sources line of Quick has a **Link to add** field (a link to Notion, Google Docs, a website or LinkedIn).
 It works as in Expert: the same access check and fixes, and **Research this website** with the same plan, budget and
 cost line shows in place under the row, so you do not have to open Expert. A link typed into "Anything special
 today?" is still only offered with Move to Sources.

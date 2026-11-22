@@ -187,37 +187,42 @@ struct SheetSiteResearchPanel: View {
     }
 
     private func pageList(_ plan: SitePlan) -> some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                ForEach(plan.pages) { p in
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Toggle("", isOn: Binding(get: { p.ticked }, set: { _ in session.plan?.toggle(p.url) })).toggleStyle(.pnCheckbox).labelsHidden()
-                            .disabled(session.phase == .reading || !p.tickable || (!p.ticked && plan.tickedCount >= plan.budget))
-                            .accessibilityLabel(p.path)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(p.path).font(th.homeMono(12)).foregroundStyle(p.ticked ? PN.C.text : PN.C.text3).lineLimit(1).truncationMode(.middle)
-                            let line = pageLine(plan, p)
-                            if !line.isEmpty { Text(line).font(th.homeText(12)).foregroundStyle(PN.C.text3).lineLimit(2) }
-                        }
-                        Spacer(minLength: 6)
-                        if p.ticked { Text("~" + SheetLabels.tokens(p.estTokens)).font(th.homeMono(11)).foregroundStyle(PN.C.text3) }
+        // the list grows with the page (no inner scroll: the wheel would stick on it); at most 30 rows
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(plan.pages) { p in
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Toggle("", isOn: Binding(get: { p.ticked }, set: { _ in session.plan?.toggle(p.url) })).toggleStyle(.pnCheckbox).labelsHidden()
+                        .disabled(session.phase == .reading || !p.tickable || (!p.ticked && plan.tickedCount >= plan.budget))
+                        .accessibilityLabel(p.path)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(p.path).font(th.homeMono(12)).foregroundStyle(p.ticked ? PN.C.text : PN.C.text3).lineLimit(1).truncationMode(.middle)
+                        let line = pageLine(plan, p)
+                        if !line.isEmpty { Text(line).font(th.homeText(12)).foregroundStyle(PN.C.text3).lineLimit(2) }
                     }
-                    .padding(.vertical, 4)
+                    Spacer(minLength: 6)
+                    if p.ticked { Text("~" + SheetLabels.tokens(p.estTokens)).font(th.homeMono(11)).foregroundStyle(PN.C.text3) }
                 }
+                .padding(.vertical, 4)
             }
         }
-        .frame(maxHeight: 240)
     }
 
     private func summary(_ plan: SitePlan) -> some View {
         let tokens: Int = session.report?.tokens ?? plan.tickedTokens
         return VStack(alignment: .leading, spacing: 6) {
-            Stepper(value: Binding(get: { plan.budget }, set: { session.plan?.setBudget($0) }), in: 1...SiteResearch.maxBudget) {
+            // square buttons instead of the system Stepper (it draws the rounded macOS control)
+            HStack(spacing: 8) {
                 Text(L("sheet.ui.web.counter", ["n": "\(plan.tickedCount)", "b": "\(plan.budget)"])).font(th.homeText(13, .semibold)).foregroundStyle(PN.C.text)
+                Button("-") { session.plan?.setBudget(plan.budget - 1) }.buttonStyle(.pnSecondary).frame(minWidth: 28, minHeight: 28)
+                    .disabled(session.phase == .reading || plan.budget <= 1).accessibilityLabel(L("sheet.ui.web.fewer"))
+                Button("+") { session.plan?.setBudget(plan.budget + 1) }.buttonStyle(.pnSecondary).frame(minWidth: 28, minHeight: 28)
+                    .disabled(session.phase == .reading || plan.budget >= SiteResearch.maxBudget).accessibilityLabel(L("sheet.ui.web.more"))
             }
-            .disabled(session.phase == .reading).fixedSize()
-            Text("~" + SheetLabels.tokens(tokens) + " · " + costLine(tokens)).font(th.homeMono(11)).foregroundStyle(PN.C.text2)
-                .fixedSize(horizontal: false, vertical: true)
+            if session.phase != .reading, plan.tickedCount >= plan.budget, plan.pages.contains(where: { $0.tickable && !$0.ticked }) {
+                Text(L("sheet.ui.web.budgetReached")).font(th.homeText(12)).foregroundStyle(PN.C.text2).fixedSize(horizontal: false, vertical: true)
+            }
+            Text("~" + SheetLabels.tokens(tokens)).font(th.homeMono(11)).foregroundStyle(PN.C.text2)
+            Text(costLine(tokens)).font(th.homeText(12)).foregroundStyle(PN.C.text2).fixedSize(horizontal: false, vertical: true)
             Text(L("sheet.ui.web.found", ["n": "\(plan.found)", "k": "\(plan.tickedCount)"])).font(th.homeText(12)).foregroundStyle(PN.C.text3)
         }
     }

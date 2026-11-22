@@ -132,7 +132,9 @@ struct SheetQuickView: View {
 
     // 0.14.0 (D1, Get Ready redesign): three short lines (people, sources, setup), each opens in place with Change.
     // Orange only where something needs you; tokens only in a tooltip.
-    @State private var open: String?
+    /// Shot harness only: the row that starts open (SheetShotsResearch.swift).
+    nonisolated(unsafe) static var shotOpen: String?
+    @State private var open: String? = SheetQuickView.shotOpen
     @State private var quickLink = ""
 
     private func addQuickLink() { draft.add(pasted: quickLink); quickLink = "" }
@@ -165,7 +167,9 @@ struct SheetQuickView: View {
     private var sourcesRow: some View {
         let checked = draft.sources.filter(\.checked)
         let bad = checked.filter { ["denied", "unsupported"].contains($0.access) }
-        let line = checked.isEmpty ? L("sheet.ui.quick.noSources") : PeopleSides.summary(checked.filter { $0.parentURI == nil }.map(\.title), first: 3)
+        let pages = checked.filter { $0.parentURI != nil }
+        let titles = checked.isEmpty ? L("sheet.ui.quick.noSources") : PeopleSides.summary(checked.filter { $0.parentURI == nil }.map(\.title), first: 3)
+        let line = titles + (pages.first?.parentURI.map { " · " + L("sheet.ui.web.pagesOfSite", ["n": "\(pages.count)", "domain": SiteResearch.host($0)]) } ?? "")
         let problem: String? = checked.isEmpty ? L("sheet.ui.quick.noSourcesSub")
             : bad.isEmpty ? nil : bad.map { $0.title + ": " + ($0.reason ?? SheetLabels.access(source: $0)) }.joined(separator: "; ")
         return summaryRow("sources", L("sheet.ui.row.sources"), line, ok: problem == nil, problem: problem,
@@ -1267,6 +1271,7 @@ struct SheetDraftSourceRow: View {
     @ViewBuilder private var action: some View {
         if source.type == "web" && source.parentURI == nil && draft.research[source.id] == nil {
             Button(draft.pagesRead(of: source) ? L("sheet.ui.web.again") : L("sheet.ui.web.button")) { draft.researchSite(sourceID: source.id) }.buttonStyle(.pnSecondary)
+                .fixedSize()      // the label never wraps (the long Ukrainian one): the title takes the cut
         }
         switch source.fix {
         case "connect_notion", "connect_google": Button(SheetLabels.fix(FixAction(rawValue: source.fix!))) { SettingsWindow.show(tab: "integrations") }.buttonStyle(.pnSecondary)
