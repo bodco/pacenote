@@ -110,6 +110,29 @@ Pacenote. Earlier versions are described in the commit messages and in
   company rows still show with the error. Leads need the scopes `crm.objects.leads.read` and `crm.objects.leads.write`. The job title comes
   from the project's client team table (the calendar has none); without a match it stays empty.
 
+- **HubSpot deals (H4).** Update HubSpot now shows the deal the call is linked to, with a menu to pick another open
+  deal, and suggests next step, close date, stage and qualification fields from the call, each with the evidence from
+  the call page and a checkbox. A field with no evidence is not suggested. The stage is chosen from the portal's own
+  stages of the deal's pipeline instead of typed text, and never moves to Closed won or Closed lost. A stage is
+  suggested only when the call reports that its own milestone happened ("we sent the contract" for Contract sent),
+  never from a negated, planned, agreed or requested one ("the contract was never sent", "we will send it", "we agreed
+  to send it", "they asked for it") or a nearby one ("we reviewed the contract", "we presented the demo" for Proposal
+  sent). The action must refer to the stage's own thing: "we sent the proposal and reviewed the contract" and "we
+  sent the proposal for the contract" suggest Proposal sent, not Contract sent, and "we sent the contract template" or
+  "we sent the pricing sheet for the contract" suggest no stage. A doubtful or alternative report ("we discussed
+  whether they sent the contract", "we sent the contract, or maybe just the pricing sheet") suggests no stage either.
+  Quotes are shown
+  only to you and are never sent to HubSpot. Apply updates the deal once and Undo restores the old values. Picking
+  another deal clears the old suggestions at once, and Apply waits until the new deal is read. When you move the call
+  to another deal or to No deal, Apply also moves the HubSpot Call off the deal Pacenote linked it to; deals a person
+  added in HubSpot stay, and Undo takes the new deal off the Call and links the old deal again (a deal that was
+  already on the Call stays). Picking a deal that someone already added to the Call in HubSpot never makes it
+  Pacenote's, so a later No deal or another pick leaves that association. The Call is updated first, then the old deal is
+  taken off, then the new deal is linked, so a failure at any step (the Call update, the removal or the link) reports
+  the error, leaves nothing outside Undo, and applying again finishes the move. Applying the same call again keeps the close date it
+  suggested. A failed read of the company's deals or the stages says so with **Try again** instead of an empty list.
+  The deal preview, Apply and Undo first check that the call is linked in the HubSpot account of the current key.
+
 ## 0.26.4 (2026-11-20)
 
 - **A new organization project includes the person who made it (2026-11-20):** in New project > start a new

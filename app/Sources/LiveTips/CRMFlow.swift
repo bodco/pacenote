@@ -18,6 +18,7 @@ struct CRMLink: Codable, Equatable {
     var portalId = ""                   // H2: the portal these ids belong to; writes need it to match the key's portal
     var occurrence = ""                 // H2 (fix round 6): the calendar occurrence Refresh linked it for; carried only to that call
     var companyIds: [String] = []       // H3: the other companies of the call's people (a mixed call), besides companyId
+    var callDealId = ""                 // H4: the deal Pacenote associated the Call with, removed when the call moves to another
 
     init() {}
     init(from d: Decoder) throws {
@@ -28,6 +29,7 @@ struct CRMLink: Codable, Equatable {
         contactNames = (try? c.decodeIfPresent([String].self, forKey: .contactNames)) ?? nil ?? []
         callKey = s(.callKey); callId = s(.callId); portalId = s(.portalId); occurrence = s(.occurrence)
         companyIds = (try? c.decodeIfPresent([String].self, forKey: .companyIds)) ?? nil ?? []
+        callDealId = s(.callDealId)
     }
 
     static func url(base: String) -> URL { URL(fileURLWithPath: CallLayout.sidecar(base, ".crm.json")) }
@@ -170,10 +172,10 @@ enum CRMCallLogger {
                     if let e = problem { report(e) }     // the Call below is still logged with what was made
                 }
                 guard callAuto, let entry = log(file: file, link: &l) else { return }
-                _ = try await write(entry, base: base, link: l, connector: c)    // a link from another portal is not written
+                _ = try await writeWithDeal(entry, base: base, link: l, connector: c)    // a link from another portal is not written; H4: the Call follows the deal
                 UsageLog.log("update_crm", ["fields": 0, "call": 1])
             } catch {
-                report(error)
+                report((error as? CRMCallDeal.Partial)?.cause ?? error)
             }
         }
     }
@@ -317,7 +319,8 @@ struct CRMUpdateView: View {
     @ObservedObject var crm = CRMService.shared
     @State private var plan: CRMUpdatePlan? = nil
     @State private var link: CRMLink? = nil
-    @State private var stage = ""
+    @State private var dm = CRMDealModel()      // H4: the deal, its suggestions with evidence and the pipeline's stages
+    @State private var dealLoads = CRMLatestOnly()   // H4: a late answer for an earlier pick never replaces the current one
     @State private var busy = false
     @State private var status = ""
     @State private var undo: [CRMUndoItem] = []
@@ -346,7 +349,7 @@ struct CRMUpdateView: View {
                     .disabled(p.rows[i].id == "deal" && (l.dealId.isEmpty || l.dealId == "none"))
                 }
                 CRMPeopleSection(model: people)
-                TextField(L("crm.stage"), text: $stage, prompt: Text(L("crm.stage.prompt"))).help(L("crm.stage.help"))
+                CRMDealSection(model: $dm, dealName: l.dealId == "none" ? "" : l.dealName, setDeal: pickDeal, retry: loadDeal)
             } else {
                 Text(L("crm.update.noLink")).foregroundStyle(PN.C.text3)
             }
@@ -356,7 +359,8 @@ struct CRMUpdateView: View {
                 Spacer()
                 if let u = undoUntil, u > Date() { Button(L("crm.undo")) { runUndo() }.buttonStyle(.pnSecondary) }
                 if needsRelink { Button(L("crm.relink")) { relink() }.buttonStyle(.pnSecondary).disabled(busy).help(L("crm.relink.help")) }
-                Button(L("crm.apply")) { apply() }.buttonStyle(.pnPrimary).disabled(busy || applied || plan == nil || link == nil || needsRelink)
+                Button(L("crm.apply")) { apply() }.buttonStyle(.pnPrimary).disabled(busy || applied || plan == nil || link == nil || needsRelink
+                                                                                     || !dm.ready(for: link?.dealId ?? ""))   // H4: the deal on screen is the linked one
             }
         }
         .padding(18)
@@ -370,35 +374,62 @@ struct CRMUpdateView: View {
         let rec = CallHistory.shared.records.first { $0.file == file }
         let sales = (try? Data(contentsOf: URL(fileURLWithPath: CallLayout.sidecar(base, ".sales.json")))).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
         let next = (sales["next_step"] as? String) ?? ((sales["next_step"] as? [String: Any])?["what"] as? String) ?? ""
-        // 0.8.7 (I6.5): the qualification of the call page (criterion -> what) through the mapping of its method
-        var qual: [String: String] = [:]
-        for c in (sales["criteria"] as? [[String: Any]]) ?? [] {
-            if let k = c["criterion"] as? String, let w = c["what"] as? String, !w.isEmpty { qual[k] = w }
-        }
+        // H4: deal fields (next step, close date, stage, qualification) are suggested in the deal section with their evidence
         let crmCfg = SettingsWindow.model.config.crm
-        let mapping = crmCfg.qualification[(sales["method"] as? String) ?? ""] ?? [:]
         var callLog: CRMCallLog? = nil
         if var l = link { callLog = CRMCallLogger.log(file: file, link: &l); link = l }     // keeps the new call key in the view's link
         if let l = link, l.portalId.isEmpty { needsRelink = true; status = L("crm.relink.needed") }
         let transcript = SettingsWindow.model.config.crm.transcriptInNote ? (try? String(contentsOfFile: file, encoding: .utf8)) : nil
         plan = CRMUpdatePlan.build(title: CallPageView.title(file), date: rec.map { CallPageView.fmt("dMMMyyyy").string(from: $0.start) } ?? "",
                                    summary: o.onMe, decisions: o.decisions, nextSteps: o.onMe + o.theirs.map { $0.who + ": " + $0.what },
-                                   notionURL: rec?.notionURL ?? "", transcript: transcript, nextStep: next, closeDate: "", stage: nil,
-                                   qualification: qual, mapping: mapping, followUp: next.isEmpty ? nil : (next, nil),
+                                   notionURL: rec?.notionURL ?? "", transcript: transcript, nextStep: "", closeDate: "", stage: nil,
+                                   qualification: [:], mapping: [:], followUp: next.isEmpty ? nil : (next, nil),
                                    writeNote: crmCfg.writeNote, writeDeal: crmCfg.writeDeal, writeTask: crmCfg.writeTask,
                                    callLog: callLog, writeCall: crmCfg.writeCall)
         if let l = link, !needsRelink {      // H3: reads HubSpot, writes nothing; another portal gets no email and the call needs Relink
             Task {
-                link = await people.load(file: file, link: l, name: "")
+                var nl = await people.load(file: file, link: l, name: "")
+                if let cur = link { nl.dealId = cur.dealId; nl.dealName = cur.dealName }     // H4: a deal picked during the lookup stays
+                link = nl
                 if people.otherPortal { needsRelink = true; status = L("crm.relink.needed") }
             }
         }
+        loadDeal()
+    }
+
+    /// H4: reads the deal and builds the suggestions; the "deal" row appears when there is something to write.
+    func loadDeal() {
+        guard let l = link else { return }
+        let token = dealLoads.begin()
+        dm = dm.switching(to: l.dealId)       // the old deal and its suggestions leave the screen at once
+        Task {
+            let m = await CRMDealModel.load(link: l, file: file)
+            guard dealLoads.isLatest(token), link?.dealId == l.dealId else { return }    // an answer for an earlier pick
+            dm = m
+            if m.portalMismatch { needsRelink = true; status = L("crm.relink.needed") }
+            guard var p = plan else { return }
+            p.rows.removeAll { $0.id == "deal" }
+            if !dm.suggestions.isEmpty || dm.myStages.count > 1 {
+                let at = p.rows.firstIndex { $0.id == "task" || $0.id == "transcript" } ?? p.rows.endIndex
+                p.rows.insert(.init(id: "deal", title: "deal", detail: "", on: SettingsWindow.model.config.crm.writeDeal), at: at)
+            }
+            plan = p
+        }
+    }
+
+    /// The PM picks another open deal of the company (or No deal); the suggestions are built again for that deal.
+    func pickDeal(_ id: String, _ name: String) {
+        guard let l = link else { return }
+        // from the file, so the Call id and the deal Pacenote associated it with (written by Apply or Auto) are kept
+        var d = CRMLink.load(base: base) ?? l
+        d.dealId = id; d.dealName = name; d.save(base: base); link = d
+        loadDeal()
     }
 
     func apply() {
-        guard var p = plan, var l = link, let c = crm.connector() else { return }
+        guard var p = plan, var l = link, let c = crm.connector(), dm.ready(for: l.dealId) else { return }
         l = CRMCallLogger.keyed(base: base, l); link = l      // H3: one queue key with Auto and Relink, before any write
-        if !stage.isEmpty { p.dealFields["dealstage"] = stage }
+        let dealFields = dm.fields(for: l.dealId)      // H4: ticked suggestions and a stage of the deal's own pipeline; evidence is never part of it
         busy = true; status = L("crm.writing")
         Task {
             var done: [CRMUndoItem] = []
@@ -420,12 +451,21 @@ struct CRMUpdateView: View {
                     let id = try await c.createNote(text: p.note, associations: refs); done.append(CRMUndoItem("notes", id))
                 }
                 if p.rows.first(where: { $0.id == "call" })?.on == true, let entry = p.callLog {
-                    let r = try await CRMCallLogger.write(entry, base: base, link: l, connector: c)    // in turn with Auto
+                    let w: CRMCallDeal.Move
+                    do { w = try await CRMCallLogger.writeWithDeal(entry, base: base, link: l, connector: c) }    // in turn with Auto
+                    catch let e as CRMCallDeal.Partial {     // the old deal could not be taken off: what was written stays in Undo
+                        done.append(CRMUndoItem("calls", e.move.call.id, e.move.call.old))
+                        if let u = e.move.undoItem { done.append(u) }
+                        throw e.cause
+                    }
+                    let r = w.call
                     done.append(CRMUndoItem("calls", r.id, r.old))       // a new Call: old is empty and Undo deletes it; an update: Undo restores
+                    if let u = w.undoItem { done.append(u) }    // H4: Undo takes the new deal off and links the old deal again
                     link?.callId = CRMLink.load(base: base)?.callId ?? r.id      // the id as stored, never one the write declined to store
+                    link?.callDealId = CRMLink.load(base: base)?.callDealId ?? ""     // what the write stored: only a deal Pacenote added
                 }
-                if p.rows.first(where: { $0.id == "deal" })?.on == true, !l.dealId.isEmpty, l.dealId != "none", !p.dealFields.isEmpty {
-                    let old = try await c.updateDeal(id: l.dealId, fields: p.dealFields); done.append(CRMUndoItem("deals", l.dealId, old)); fields = p.dealFields.count
+                if p.rows.first(where: { $0.id == "deal" })?.on == true, !l.dealId.isEmpty, l.dealId != "none", !dealFields.isEmpty {
+                    let old = try await c.updateDeal(id: l.dealId, fields: dealFields); done.append(CRMUndoItem("deals", l.dealId, old)); fields = dealFields.count
                 }
                 if p.rows.first(where: { $0.id == "task" })?.on == true, let t = p.task {
                     let id = try await c.createTask(subject: t.subject, due: t.due, associations: refs); done.append(CRMUndoItem("tasks", id))
@@ -466,7 +506,8 @@ struct CRMUpdateView: View {
     }
 
     /// Undo: notes, tasks and the new Call, contacts, companies and leads are deleted, deal and Call fields get their
-    /// old values back. H3: only in the portal Apply wrote to; another portal gets nothing and the batch is kept.
+    /// old values back. H3: only in the portal Apply wrote to; another portal gets nothing and the batch is kept. H4: a
+    /// deal move is reversed (the new deal off the Call, the old one on again) and the managed deal is stored back.
     func runUndo() {
         guard let c = crm.connector() else { return }
         let items = undo, portal = undoPortal; undo = []; undoUntil = nil
@@ -477,6 +518,11 @@ struct CRMUpdateView: View {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 8.2) { if let u = undoUntil, u <= Date() { undoUntil = nil } }
                 status = e.code == CRMPortal.mismatchCode ? L("crm.undo.otherPortal", ["crm": c.providerName]) : e.message
                 return
+            }
+            for it in r.undone where it.type == "callDeal" {      // H4: the deal Pacenote managed before the move
+                let managed = it.old["managed"] ?? ""
+                if var d = CRMLink.load(base: base), d.portalId == portal, d.callId == it.id { d.callDealId = managed; d.save(base: base) }
+                if link?.callId == it.id { link?.callDealId = managed }
             }
             for it in r.undone where it.old.isEmpty {
                 if it.type == "calls" {     // the next Apply makes a new Call

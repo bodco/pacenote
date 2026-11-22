@@ -1,7 +1,8 @@
 # HubSpot CRM integration: spec (PB-57)
 
-Status: draft for the owner. Part 2 of the first slice (H2, PB-58, the Call engagement) and H3 (PB-59, find or create
-contacts, companies and leads) are built on this branch; the rest is planned. Source of truth for behavior today: `app/Sources/LiveTipsCore/CRM.swift`,
+Status: draft for the owner. Part 2 of the first slice (H2, PB-58, the Call engagement), H3 (PB-59, find or create
+contacts, companies and leads) and H4 (PB-60, deals) are built on this branch; the rest is planned. Source of truth
+for behavior today: `app/Sources/LiveTipsCore/CRM.swift`,
 `app/Sources/LiveTips/CRMFlow.swift`, `rules/crm.yaml`.
 
 ## 1. Where we are
@@ -19,6 +20,8 @@ Pacenote already connects to HubSpot with a service key (a private app key) kept
   the Call when the PM turns on the Auto switch (off by default, section 9) and the H3 people objects, each with its
   own Auto switch (off by default, section 12).
 - **H3 (built)**: Update HubSpot matches the invitees and proposes missing contacts, the company and Leads (section 12).
+- **H4 (built)**: Update HubSpot suggests deal fields with their evidence, offers the stages of the deal's own
+  pipeline and moves the Call's deal association with the call's deal (section 3).
 - **Not yet**: Meetings, Emails, OAuth, several portals.
 
 ## 2. Objects and associations
@@ -59,8 +62,46 @@ HubSpot association type ids below are HUBSPOT_DEFINED, from the object on the l
 |---|---|
 | Note `hs_note_body` | Summary, Decisions, Next steps, the Notion link; the transcript only when "Add the transcript to the CRM note" is on |
 | Task `hs_task_subject`, `hs_timestamp` | the next step, due date when one was said (else tomorrow) |
-| Deal `hs_next_step`, `closedate`, `dealstage` | the call page's next step; close date when said; stage only when the PM types one |
-| Deal qualification properties | per method criterion to a deal property chosen in Settings (or "Don't write") |
+| Deal `hs_next_step`, `closedate`, `dealstage` (H4, `LiveTipsCore/CRMDeals.swift`) | next step: the agreed step on the call page. Close date: a mutual-plan step with a closing word (close, sign, signature) and a real `YYYY-MM-DD` date not in the past, written as UTC midnight; the first such step is chosen and only then compared with the deal, so a re-run never alternates between two steps. Stage: only when a signal of the call reports that the milestone happened (a completion word such as sent, signed, presented, надіслали; no negation, plan, wish, request or question; "agreed to", "decided to" and the UK infinitive after погодились and the like are plans) and names a later open stage of the deal's own pipeline (generic stage words from `rules/sales.yaml > stages`, matched to the portal's stage labels). The signal must establish that stage's own milestone (`CRMDealSuggester.establishes`): it names the same thing as the label (contract, proposal or quote, demo or presentation, decision, negotiation, signature, closing), and when the label says what happened to it ("Contract sent") the signal says that or something that implies it (signed, received, shared, delivered or submitted imply sent; reviewed, discussed or agreed to send do not), both in the same clause of the signal, with the stage's thing as the object of that completion word: the first milestone noun after it, else the first of the clause, never one inside a phrase such as "for the contract" or "щодо контракту" ("we sent the proposal and reviewed the contract" and "we sent the proposal for the contract" establish Proposal sent, not Contract sent); plan steps and the next step are still to do and never move the stage; never a closed stage; or a stage the PM picks from that pipeline's list |
+| Deal qualification properties | per method criterion to a deal property chosen in Settings (or "Don't write"), only for a known or partial criterion that has a quote |
+
+H4 rules: every suggestion carries its evidence (the quote, or the agreed step itself for the next step and the close
+date) and a field without evidence is absent, not unticked. The evidence is shown in Update HubSpot and never sent
+(rule 2 of section 5). One `updateDeal` call writes the ticked fields and returns the old values for Undo. The stage id
+must belong to the deal's `pipeline`. The PM can switch the call to another open deal of the company or to No deal in
+the same window. A switch clears the old deal and its suggestions at once; Apply is enabled only when the preview on
+screen was read for the deal the call is linked to now, and a late answer for an earlier pick is dropped. The preview
+checks the link's portal first (section 8) and reads nothing from another portal; a failed read of the company's
+deals or the stages is shown with Try again, not as an empty list.
+
+Deal association of the Call (H4): `<stem>.crm.json` keeps `callDealId`, the deal Pacenote associated the Call with.
+When the call moves to another deal or to No deal, the next Call write (Apply or Auto, in the same turn of the per-call
+queue) removes only that association (`DELETE /crm/v4/objects/calls/{id}/associations/deals/{dealId}`, a 404 counts
+as removed) and stores the new deal only when Pacenote added it: a picked deal that was already on the Call (a person
+added it in HubSpot) is not stored, so a later No deal or another pick leaves it. Associations Pacenote did not make (a deal a person added, the company, the
+contacts) stay. Before an existing Call moves, its deal associations are read (`GET
+/crm/v4/objects/calls/{id}/associations/deals`), so the new deal counts as added only when it was not on the Call
+already. The Apply's Undo row (`callDeal`) keeps the removed deal, the added deal and the managed deal before the
+move; Undo takes the added deal off, associates the removed one again and stores the old managed deal, so a switch
+from D1 to D2 ends with D1 only and a deal a person had already added stays. A Call logged before `callDealId` existed
+has no managed deal, so nothing is removed for it. A Call found by search after `<stem>.crm.json` lost its id has no
+managed deal either; its deal associations are read before the new deal is added, as for any Call.
+
+Write order (review round 6): the deal is never part of the Call write. The Call is written first (company and
+contacts only), then the old managed deal is taken off, then the new deal is added; `callDealId` is stored after each
+step, so it always names the deal Pacenote has on the Call. A failure at any step stops there: a failed Call update
+changes no deal; a failed removal keeps the old deal managed and adds nothing; a failed add after the removal is in the
+Apply's Undo (which links the old deal again). If the add answered an error but may have reached HubSpot, Pacenote takes
+it off again; when that fails too, the new deal is stored as managed and kept in Undo, so Undo or the next No deal
+removes it. A new Call gets its deal by the same add after it is created, and its Undo deletes the whole Call.
+
+With the H2 fix round 8 rules (integration of PB-58 and PB-60): the deal move takes the same turn of the per-call
+queue as the Call write and Relink. The deal the Call should have is the link's deal read when the turn comes, with the
+other associations, never a value captured when Apply or Auto started. The Call id and `callDealId` are stored only
+while the link still names the portal and Pacenote call id the write used; if the link was relinked in between,
+nothing is stored and no deal is moved on that Call. Undo of a `callDeal` row goes through the same Undo as the rest of
+the batch (H3): the portal is checked first and, on another portal, nothing is sent and the batch is kept. A link
+carried from a preparation to a recorded call leaves out `callDealId` together with `callKey` and `callId`.
 
 ## 4. Required scopes
 
@@ -107,7 +148,8 @@ decides, the service key stays the only path.
 3. **Texts come from the call page as the PM edited it.** Pacenote never writes a text the PM could not see on the call
    page.
 4. **Undo.** A new object is deleted; an updated object gets its old property values back. Associations added during a
-   re-run are not removed by Undo (they are harmless and HubSpot has no history for them); the Undo failure line says
+   re-run are not removed by Undo (they are harmless and HubSpot has no history for them), except the deal
+   association Pacenote itself added on a deal move (H4, below); the Undo failure line says
    what is left. Undo first checks that the key still belongs to the portal the Apply wrote to (H3 keeps that portal
    with the batch); after a key change, or when the portal cannot be read, it sends nothing, says so and keeps the
    batch, as the same ids in another portal are other records. A re-run of the Call adds the associations first and
@@ -119,6 +161,9 @@ decides, the service key stays the only path.
    link now names another portal, adds nothing to the Call and saves nothing on the link (what it made stays for
    Undo). The save merges into the link read in that turn. The call key (the queue key) is made and stored before
    Auto, Apply or Relink starts any request, so all three share one queue even for a call that was never logged.
+   (H4) The one association Pacenote removes is the Call's link to the deal Pacenote itself associated, when the
+   call moves to another deal or to No deal (section 3); Undo of that Apply takes the deal Pacenote added off and
+   associates the old deal again, with the same portal check and batch keeping.
 5. **Errors are one line where the action was**, never a modal; 429 waits (Retry-After, else 1, 2, 4 s) and retries three
    times; 401 and 403 say what to fix (key, or the named scope).
 6. **No silent overwrites of the PM's own edits in HubSpot.** A re-run updates only the Pacenote-owned properties of the
@@ -172,6 +217,8 @@ is shown on the card. Behavior to keep and to define:
   per-call queue, so Relink waits for a write that is waiting for HubSpot. Each write reads the link (Call id, portal,
   associations) when its turn comes, and stores the Call id HubSpot returns only if the link still names the same
   portal and Pacenote call id when the answer comes; otherwise the id is dropped, never put into another portal's link.
+- (H4) The same check runs before the deal preview is read and before Undo, so stored deal and Call ids are never
+  used against another portal.
 - Several portals at once (an agency with client portals): one key per project in Settings > Projects, kept in the
   Keychain under a per-project name. Not built; decision 3.
 - Data hosting regions (US, EU) use the same base URL for the API; the region is only displayed.
