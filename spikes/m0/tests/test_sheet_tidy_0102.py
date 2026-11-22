@@ -119,3 +119,14 @@ def test_build_keeps_the_likely_goal_and_cleans_the_sheet(tmp_path):
     assert "Nothing about a discount limit" in md and "## Best outcome" not in md
     gaps = [f["text"] for b in sheet["blocks"] if b["type"] == "gaps" for f in b["facts"]]
     assert any("discount limit" in g for g in gaps)
+
+
+def test_header_goal_written_by_the_model_cites_the_researched_pages():
+    # PB-37: call sync leaves out a goal fact that cites a web_page source; a goal the user typed cites only the meeting
+    req = {"meeting": {"start": "2026-11-20T10:00"}, "goal": ""}
+    g = next(f for f in B.header_facts(req, "s-meeting", "x", "Likely: agree the pilot scope", ["w1", "w2"])
+             if f["label"] == "Goal")
+    assert g["id"] == "f-header-goal" and g["source_ids"] == ["s-meeting", "w1", "w2"]
+    req["goal"] = "Sign the SOW"
+    g = next(f for f in B.header_facts(req, "s-meeting", "x", None, []) if f["label"] == "Goal")
+    assert g["source_ids"] == ["s-meeting"]

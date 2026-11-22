@@ -349,8 +349,8 @@ public enum CallSync {
     /// PB-37: researched website content stays on this Mac. The upload is built from an allowlist of the keys the app's
     /// sheet model knows, so refresh history (top-level `gone_facts`, a fact's `was`) and any later key never go out.
     /// A fact that cites a page of a researched site is left out (its text may repeat the page), and so are the gap
-    /// facts that copy it (`about`) and links to it (`conflict_with`, `superseded_by`, a readiness gap); a `web_page`
-    /// source keeps only its address and state.
+    /// facts that copy it (`about`) and links to it (`conflict_with`, `superseded_by`, a readiness gap), and the meeting
+    /// goal when its header fact cites such a page (the AI wrote it); a `web_page` source keeps only its address and state.
     static func syncedSheet(_ raw: [String: Any]) -> [String: Any] {
         func only(_ o: [String: Any], _ keys: Set<String>) -> [String: Any] { o.filter { keys.contains($0.key) } }
         let topKeys = Set(MeetingSheet.CodingKeys.allCases.map(\.rawValue))
@@ -402,6 +402,12 @@ public enum CallSync {
             }
         }
         if o["blocks"] != nil { o["blocks"] = blocks }
+        // the Goal header fact cites the researched pages when the AI wrote the goal from them, so with researched pages the
+        // top-level goal goes only next to a kept Goal fact of the same text (a kept old fact says nothing of a new goal)
+        if !web.isEmpty, let g = o["goal"] as? String {
+            let hg = blocks.flatMap { ($0["facts"] as? [[String: Any]]) ?? [] }.first { $0["id"] as? String == "f-header-goal" }
+            if (hg?["text"] as? String) != g { o.removeValue(forKey: "goal") }
+        }
         return o
     }
 

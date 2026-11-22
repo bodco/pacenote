@@ -1247,6 +1247,17 @@ func meetingLaunch096() {
            "sync: a dropped researched fact leaves no dangling link")
     let webSrc = ((CallSync.sheetBody(webSheet)?["sheet"] as? [String: Any])?["sources"] as? [[String: Any]])?.first
     expect(webSrc?["title"] as? String == "https://example-company.com/team" && webSrc?["path"] == nil, "sync: a researched page keeps a title, its address")
+    // PB-37: a goal the AI wrote from researched pages (its header fact cites them) stays local in both copies; a typed goal goes
+    func goalSheet(_ cites: String, fact: String = "GOAL-7731") -> Data {
+        Data(#"{"goal":"GOAL-7731","sources":[{"id":"s-meeting","n":1,"type":"calendar","title":"Meeting","access":"ok","used":"full"},{"id":"w1","n":2,"type":"web_page","uri":"https://example-company.com/","title":"t","access":"ok","used":"full"}],"blocks":[{"id":"b0","type":"header","facts":[{"id":"f-header-goal","label":"Goal","text":"\#(fact)","source_ids":[\#(cites)],"locator":{},"status":"found"}]}]}"#.utf8)
+    }
+    // a refresh that kept the user's old Goal fact (protect_edits) next to a new goal the AI wrote: the new goal stays local
+    let goalKept = String(data: CallSync.json(CallSync.sheetBody(goalSheet(#""s-meeting""#, fact: "OLD-GOAL")) ?? [:]), encoding: .utf8) ?? ""
+    expect(!goalKept.contains("GOAL-7731") && goalKept.contains("OLD-GOAL"), "sync: a new goal next to a kept old Goal fact stays local")
+    let goalWeb = String(data: CallSync.json(CallSync.sheetBody(goalSheet(#""s-meeting","w1""#)) ?? [:]), encoding: .utf8) ?? ""
+    let goalTyped = String(data: CallSync.json(CallSync.sheetBody(goalSheet(#""s-meeting""#)) ?? [:]), encoding: .utf8) ?? ""
+    expect(!goalWeb.contains("GOAL-7731") && goalWeb.contains("example-company.com"), "sync: a goal written from researched pages stays local")
+    expect(goalTyped.components(separatedBy: "GOAL-7731").count == 3, "sync: a typed goal goes in both copies")
     var rm = RecordingMeta(); var rp = RecordingMeta.Part(file: "v.mp4", kind: "video", started: Date())
     rp.driveID = "1AbcDEFghijkLMNOPqrs"; rp.driveLink = "https://drive.google.com/file/d/1AbcDEFghijkLMNOPqrs/view"; rp.driveKind = "shared_drive"; rp.bytes = 10
     var bad = rp; bad.driveLink = "https://evil.example/x"

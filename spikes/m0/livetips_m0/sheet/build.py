@@ -567,7 +567,8 @@ def assign_ids(facts: Dict[str, List[dict]]) -> None:
 HEADER_NOISE = {"auto", "blank", "you", "я", ""}
 
 
-def header_facts(req: dict, src_id: str, checked_at: str, goal: Optional[str] = None) -> List[dict]:
+def header_facts(req: dict, src_id: str, checked_at: str, goal: Optional[str] = None,
+                 goal_sources: Optional[List[str]] = None) -> List[dict]:
     """0.10.2 (Q, v4): no meta lines: the meeting type is not shown, "Our side" only when it names someone, and the
     goal is the sheet's goal (the user's, else the model's "Likely: ..." guess)."""
     m = req.get("meeting") or {}
@@ -587,6 +588,8 @@ def header_facts(req: dict, src_id: str, checked_at: str, goal: Optional[str] = 
     add("Their side", ", ".join(x.get("name", "") + (f" ({x['role']})" if x.get("role") else "")
                                  + (f", {x['company']}" if x.get("company") else "") for x in p.get("theirs") or []))
     add("Goal", (goal if goal is not None else req.get("goal", "")) or "")
+    if out and out[-1]["label"] == "Goal" and goal_sources:
+        out[-1]["source_ids"] = [src_id] + [i for i in goal_sources if i != src_id]   # PB-37: what the goal was written from
     return out
 
 
@@ -979,6 +982,7 @@ def build(req: dict, refresh: bool = False, emit=say, responder: Optional[Callab
                             sheet_id=(old or {}).get("id") or req.get("id"))
     except KeyError as e:
         return {"error": str(e).strip("'\""), "code": 3}
+    goal_by_model = False
     if req.get("blocks"):
         lib = rules.get("blocks") or {}
         keep = {b["type"]: b for b in sheet["blocks"]}
@@ -1257,6 +1261,7 @@ def build(req: dict, refresh: bool = False, emit=say, responder: Optional[Callab
                 s["used"] = "full"
         if ans.get("goal") and not sheet.get("goal"):
             sheet["goal"] = ans["goal"]
+            goal_by_model = True
         asker.model = meta.get("model") or asker.model
         asker.tokens = meta.get("tokens") or asker.tokens
         asker.usd = meta.get("cost_usd") or 0.0
@@ -1336,6 +1341,7 @@ def build(req: dict, refresh: bool = False, emit=say, responder: Optional[Callab
                     parts.append(facts_from(ans, ask_blocks, src_ids, checked, n if len(passes) > 1 else 0))
                     if ans.get("goal") and not sheet.get("goal"):
                         sheet["goal"] = ans["goal"]
+                        goal_by_model = True
                     for s in (chunk if not (chunk and isinstance(chunk[0], tuple)) else [c[0] for c in chunk]):
                         if s.get("used") not in ("summarized",) and not s.get("reason", "").startswith("read in"):
                             s["used"] = "full"
@@ -1379,7 +1385,10 @@ def build(req: dict, refresh: bool = False, emit=say, responder: Optional[Callab
     for b in sheet["blocks"]:
         t = b["type"]
         if t == "header":
-            b["facts"] = header_facts(req, "s-meeting", checked, sheet.get("goal"))
+            # PB-37: a goal the model wrote may repeat a researched page, so its fact cites those pages too and call
+            # sync leaves it local (a goal the user typed cites only the meeting)
+            web = [s["id"] for s in srcs if s.get("type") == "web_page"] if goal_by_model else []
+            b["facts"] = header_facts(req, "s-meeting", checked, sheet.get("goal"), web)
         elif t == "gaps":
             b["facts"] = []
         elif b in ask_blocks:
