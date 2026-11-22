@@ -134,15 +134,50 @@ public enum CRMDealSuggester {
         let tokens = Set(text.lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init))
         return words.contains { tokens.contains($0) }
     }
+    /// "Agreed to send", "погодились надіслати": an agreement about a step still to do, not the step.
+    static let intentWords = ["agreed", "decided", "promised", "offered", "погодил", "узгодил", "домовил", "вирішил", "пообіцял"]
+    static func intent(_ text: String) -> Bool {
+        let t = text.lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init)
+        return t.indices.dropLast().contains { i in
+            has(t[i], intentWords) && (t[i + 1] == "to" || (!t[i + 1].allSatisfy(\.isASCII) && (t[i + 1].hasSuffix("ти") || t[i + 1].hasSuffix("тися"))))
+        }
+    }
     /// The text reports a milestone that took place: a completion word, no negation, no plan or request, not a question.
-    /// "The contract was never sent" and "We will send the contract" are not evidence for Contract sent.
+    /// "The contract was never sent", "We will send the contract" and "We agreed to send the contract" are not evidence
+    /// for Contract sent.
     public static func happened(_ text: String) -> Bool {
-        !text.contains("?") && has(text, doneWords) && !hasWord(text, notDoneWords)
+        !text.contains("?") && has(text, doneWords) && !hasWord(text, notDoneWords) && !intent(text)
     }
 
-    /// A stage only when a signal of the call reports that the stage's milestone took place (`happened`), only a later
-    /// open stage of the deal's own pipeline, never Closed won or Closed lost. Plan steps and the next step are things
-    /// still to do, so they never move the stage.
+    /// The thing a stage is about; the signal must name the same thing as the stage label ("we presented the demo" is
+    /// not evidence for Proposal sent). Cyrillic entries are stems.
+    static let milestoneNouns: [[String]] = [
+        ["contract", "контракт", "догов"], ["proposal", "quote", "пропоз"], ["demo", "presentation", "демо", "презент"],
+        ["decision", "рішен"], ["negotiate", "negotiation", "negotiating", "переговор"],
+        ["sign", "signed", "signing", "signature", "підпис"], ["closing", "close", "commit", "verbal", "закрит"],
+    ]
+    /// A completion word in a stage label and the words that establish it: a signed or received contract was sent,
+    /// a reviewed one may not have been. A label word not listed here needs that same word in the signal.
+    static let impliedBy: [String: [String]] = {
+        let sent = ["sent", "shared", "delivered", "submitted", "received", "signed", "countersigned",
+                    "надісл", "відправил", "передал", "отримал", "підписал", "підписан"]
+        let signed = ["signed", "countersigned", "підписал", "підписан"]
+        var m: [String: [String]] = [:]
+        for w in ["sent", "shared", "delivered", "submitted", "надісл", "відправил", "передал"] { m[w] = sent }
+        for w in signed { m[w] = signed }
+        return m
+    }()
+    /// The signal establishes this stage's own milestone: it names the stage's thing, and when the label says what
+    /// happened to it ("sent", "signed"), the signal says that or something that implies it.
+    public static func establishes(_ text: String, label: String) -> Bool {
+        guard milestoneNouns.contains(where: { has(label, $0) && has(text, $0) }) else { return false }
+        let need = doneWords.filter { has(label, [$0]) }
+        return need.isEmpty || has(text, need.flatMap { impliedBy[$0] ?? [$0] })
+    }
+
+    /// A stage only when a signal of the call reports that the stage's own milestone took place (`happened` and
+    /// `establishes`), only a later open stage of the deal's own pipeline, never Closed won or Closed lost. Plan steps
+    /// and the next step are things still to do, so they never move the stage.
     public static func stageSuggestion(sales: [String: Any], deal: CRMDeal, stages: [CRMStage]) -> CRMDealSuggestion? {
         let mine = pipelineStages(stages, pipeline: deal.pipeline)
         guard let cur = mine.first(where: { $0.id == deal.stage }) else { return nil }
@@ -150,7 +185,7 @@ public enum CRMDealSuggester {
         for words in stageWords {
             for text in texts where !text.isEmpty {
                 guard has(text, words) else { continue }
-                let target = mine.filter { !$0.closed && $0.order > cur.order && has($0.label, words) }
+                let target = mine.filter { !$0.closed && $0.order > cur.order && has($0.label, words) && establishes(text, label: $0.label) }
                     .max { $0.order < $1.order }
                 if let t = target { return CRMDealSuggestion(id: "dealstage", kind: "stage", current: cur.label, value: t.id, shown: t.label, evidence: text) }
             }
@@ -245,9 +280,17 @@ public final class CRMLatestOnly: @unchecked Sendable {
 public protocol CRMCallAssociations {
     func addCallAssociation(callId: String, type: String, id: String) async throws
     func removeCallAssociation(callId: String, type: String, id: String) async throws
+    /// The ids the Call is associated with now (a Call that is gone has none).
+    func callAssociations(callId: String, type: String) async throws -> [String]
 }
 
 extension HubSpotConnector: CRMCallAssociations {
+    public func callAssociations(callId: String, type: String) async throws -> [String] {
+        do {
+            let r = try await call("GET", "/crm/v4/objects/calls/\(callId)/associations/\(type)?limit=500")
+            return ((r["results"] as? [[String: Any]]) ?? []).compactMap { $0["toObjectId"].map { "\($0)" } }
+        } catch let e as CRMError where e.code == 404 { return [] }
+    }
     public func addCallAssociation(callId: String, type: String, id: String) async throws {
         _ = try await call("PUT", "/crm/v4/objects/calls/\(callId)/associations/default/\(type)/\(id)")
     }
@@ -265,26 +308,69 @@ public enum CRMCallDeal {
     /// The deal the Call should be associated with: "" for none.
     public static func target(_ linkDeal: String) -> String { linkDeal == "none" ? "" : linkDeal }
 
+    /// What one write did to the Call's deal associations, so Undo can reverse exactly that.
+    public struct Move: Equatable {
+        public var call: CRMCallResult
+        public var removed = ""        // the deal whose association Pacenote removed
+        public var added = ""          // the deal Pacenote associated that was not associated before
+        public var managedBefore = ""  // the managed deal before the write
+        public var moved: Bool { !removed.isEmpty || !added.isEmpty }
+        /// The Undo row of the move (type "callDeal"); nil when the associations did not change.
+        public var undoItem: CRMUndoItem? {
+            moved ? CRMUndoItem("callDeal", call.id, ["removed": removed, "added": added, "managed": managedBefore]) : nil
+        }
+    }
+
     /// The Call write of `CRMCallSync.log` plus the deal move, in the same turn of the per-call queue. `load` gives the
     /// stored Call id, portal and managed deal when the turn comes; `save` stores the Call id and the managed deal.
-    /// Returns the Call result and the deal whose association was removed ("" when none), for Undo.
+    /// Before an existing Call moves, its deal associations are read, so a deal that was already there (a person
+    /// added it in HubSpot) is not counted as added and Undo leaves it.
     public static func write(_ entry: CRMCallLog, connector c: CRMConnector, associations: [CRMRef], dealId: String,
                              queue: CRMCallQueue = .shared,
                              load: @escaping () -> (callId: String, portalId: String, managed: String),
-                             save: @escaping (_ callId: String, _ managed: String) -> Void) async throws -> (call: CRMCallResult, removed: String) {
+                             save: @escaping (_ callId: String, _ managed: String) -> Void) async throws -> Move {
         try await queue.run(entry.key) {
             let stored = load()
             try await CRMPortal.verify(link: stored.portalId, connector: c)
+            let now = target(dealId)
+            let a = c as? CRMCallAssociations
+            var before: [String]? = nil      // nil: not read, so nothing is counted as added
+            if !stored.callId.isEmpty, !now.isEmpty, now != stored.managed, let a {
+                before = try await a.callAssociations(callId: stored.callId, type: "deals")
+            }
             let r = try await c.upsertCall(entry, knownId: stored.callId, associations: associations)
             save(r.id, stored.managed)
-            let now = target(dealId)
-            var removed = ""
-            if !stored.managed.isEmpty, stored.managed != now, !r.created, let a = c as? CRMCallAssociations {
+            var m = Move(call: r, managedBefore: stored.managed)
+            guard !r.created else { save(r.id, now); return m }     // a new Call is deleted whole by its own Undo row
+            if r.id == stored.callId, let before, !before.contains(now) { m.added = now }
+            if !stored.managed.isEmpty, stored.managed != now, let a {
                 try await a.removeCallAssociation(callId: r.id, type: "deals", id: stored.managed)
-                removed = stored.managed
+                m.removed = stored.managed
             }
             save(r.id, now)
-            return (r, removed)
+            return m
         }
+    }
+
+    /// Undo of one Apply with deal moves: the portal is checked once before anything is sent; a "callDeal" row takes
+    /// the added deal off the Call and associates the removed one again (`restored` gets the row, to store its managed
+    /// deal back); every other row goes to `CRMCallSync.undo`. Returns how many rows failed.
+    public static func undo(_ items: [CRMUndoItem], portal: String, connector c: CRMConnector,
+                            deleted: (CRMUndoItem) -> Void = { _ in }, restored: (CRMUndoItem) -> Void = { _ in }) async throws -> Int {
+        try await CRMPortal.verify(link: portal, connector: c)
+        var failed = 0
+        for it in items.reversed() {
+            guard it.type == "callDeal" else {
+                do { failed += try await CRMCallSync.undo([it], portal: portal, connector: c, deleted: deleted) } catch { failed += 1 }
+                continue
+            }
+            do {
+                guard let a = c as? CRMCallAssociations else { failed += 1; continue }
+                if let d = it.old["added"], !d.isEmpty { try await a.removeCallAssociation(callId: it.id, type: "deals", id: d) }
+                if let d = it.old["removed"], !d.isEmpty { try await a.addCallAssociation(callId: it.id, type: "deals", id: d) }
+                restored(it)
+            } catch { failed += 1 }
+        }
+        return failed
     }
 }

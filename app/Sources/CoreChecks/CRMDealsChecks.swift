@@ -50,6 +50,10 @@ final class FakeHubSpotDeals: CRMTransport {
             let parts = bare.split(separator: "/").map(String.init)      // crm v4 objects calls <id> associations [default] <type> <toId>
             let id = parts[4], to = parts.suffix(2).joined(separator: "/")
             guard calls[id] != nil else { return (404, ["message": "not found"], [:]) }
+            if method == "GET" {      // the Call's associations of one type
+                let type = parts.last!
+                return (200, ["results": calls[id]!.filter { $0.hasPrefix(type + "/") }.map { ["toObjectId": String($0.dropFirst(type.count + 1))] }], [:])
+            }
             if method == "PUT" { if !calls[id]!.contains(to) { calls[id]!.append(to) }; return (200, [:], [:]) }
             if method == "DELETE" {
                 guard calls[id]!.contains(to) else { return (404, ["message": "no association"], [:]) }
@@ -117,9 +121,20 @@ func crmDeals() async {
     func stage(_ sales: [String: Any], _ d: CRMDeal) -> CRMDealSuggestion? { CRMDealSuggester.stageSuggestion(sales: sales, deal: d, stages: stages) }
     expect(stage(["signals": [["what": "Asked about the design review"]]], deal) == nil, "deals: design is not sign")
     expect(stage(["signals": [["what": "The contract is signed"]]], deal)?.value == "s4", "deals: signed moves to Contract sent, never to Closed won")
-    expect(stage(["signals": [["what": "We presented the demo to the team"]]], deal)?.value == "s3", "deals: a demo that took place moves Qualified forward to Proposal sent")
+    expect(stage(["signals": [["what": "We sent the proposal to the team"]]], deal)?.value == "s3", "deals: a proposal that was sent moves Qualified forward to Proposal sent")
     var late = deal; late.stage = "s4"
-    expect(stage(["signals": [["what": "We presented the demo to the team"]]], late) == nil, "deals: a stage before the current one is not proposed")
+    expect(stage(["signals": [["what": "We sent the proposal to the team"]]], late) == nil, "deals: a stage before the current one is not proposed")
+    // review round 2: the signal must establish the stage's own milestone, not a nearby one
+    expect(stage(["signals": [["what": "We presented the demo to the team"]]], deal) == nil, "deals: a demo given is not a proposal sent")
+    for text in ["We reviewed the contract", "We agreed to send the contract", "We agreed to send the contract on Monday",
+                 "Ми погодились надіслати контракт", "We discussed the proposal"] {
+        expect(stage(["signals": [["what": text]]], deal) == nil, "deals: no stage from \"\(text)\"")
+    }
+    expect(stage(["signals": [["what": "They received the contract"]]], deal)?.value == "s4" && stage(["signals": [["what": "We shared the proposal"]]], deal)?.value == "s3",
+           "deals: received and shared establish sent")
+    expect(CRMDealSuggester.establishes("The decision maker approved it", label: "Decision maker bought-in")
+           && !CRMDealSuggester.establishes("We reviewed the contract", label: "Decision maker bought-in"),
+           "deals: a label without a completion word needs its own thing in the signal")
     var other = deal; other.pipeline = "p2"; other.stage = "r1"
     expect(stage(["signals": [["what": "The contract was sent"]]], other) == nil, "deals: another pipeline's stage names are not used (the stage must be later in the same pipeline)")
     var lost = deal; lost.pipeline = ""
@@ -227,7 +242,7 @@ func crmDealsRound1(sales: [String: Any], mapping: [String: String], today: Date
     final class Disk { var callId = ""; var portal = "500"; var managed = "" }
     let disk = Disk(), q = CRMCallQueue()
     let entry = CRMCallLog(key: "k-move", title: "Orbit renewal", start: today, durationMs: 60_000, body: "<p>Summary</p>")
-    func write(_ deal: String) async -> (call: CRMCallResult, removed: String)? {
+    func write(_ deal: String) async -> CRMCallDeal.Move? {
         var refs = [CRMRef("companies", "C1"), CRMRef("contacts", "P1")]
         if CRMCallDeal.target(deal) != "" { refs.insert(CRMRef("deals", deal), at: 0) }
         return try? await CRMCallDeal.write(entry, connector: c, associations: refs, dealId: deal, queue: q,
@@ -246,9 +261,40 @@ func crmDealsRound1(sales: [String: Any], mapping: [String: String], today: Date
            "deals: No deal removes the deal Pacenote associated, nothing else")
     let w4 = await write("none")
     expect(w4?.removed == "" && Set(t.calls[id] ?? []) == ["deals/D9", "companies/C1", "contacts/P1"], "deals: a re-run with no move removes nothing")
-    // Undo of the move associates the old deal again
-    try? await c.addCallAssociation(callId: id, type: "deals", id: "D2")
-    expect(t.calls[id]?.contains("deals/D2") == true, "deals: Undo associates the old deal again")
+    expect(w1?.undoItem == nil && w4?.undoItem == nil && w2?.added == "D2" && w3?.added == "", "deals: only a move has an Undo row; No deal adds nothing")
+    // Undo reverses the move (review round 2): D1 -> D2 takes D2 off and puts D1 back; the others stay
+    final class Restored { var managed: [String] = [] }
+    let restored = Restored()
+    func undo(_ m: CRMCallDeal.Move?, portal: String = "500") async -> Int? {
+        try? await CRMCallDeal.undo([CRMUndoItem("calls", id, ["hs_call_title": "Orbit renewal"])] + [m?.undoItem].compactMap { $0 }, portal: portal, connector: c,
+                                    restored: { restored.managed.append($0.old["managed"] ?? "-"); disk.managed = $0.old["managed"] ?? "" })
+    }
+    t.calls[id] = ["deals/D1", "deals/D9", "companies/C1", "contacts/P1"]; disk.managed = "D1"
+    let m12 = await write("D2")
+    expect(Set(t.calls[id] ?? []) == ["deals/D2", "deals/D9", "companies/C1", "contacts/P1"] && m12?.added == "D2" && m12?.removed == "D1", "deals: the switch is recorded both ways")
+    let u12 = await undo(m12)
+    expect(u12 == 0 && Set(t.calls[id] ?? []) == ["deals/D1", "deals/D9", "companies/C1", "contacts/P1"] && disk.managed == "D1" && restored.managed == ["D1"],
+           "deals: Undo of a switch takes the new deal off, links the old one again and keeps the others")
+    // D1 -> No deal: Undo links D1 again
+    let m1n = await write("none")
+    let u1n = await undo(m1n)
+    expect(m1n?.removed == "D1" && u1n == 0 && Set(t.calls[id] ?? []) == ["deals/D1", "deals/D9", "companies/C1", "contacts/P1"] && disk.managed == "D1",
+           "deals: Undo of No deal links the old deal again")
+    // a deal a person had already added in HubSpot is not counted as added, so Undo leaves it
+    let m19 = await write("D9")
+    let u19 = await undo(m19)
+    expect(m19?.added == "" && m19?.removed == "D1" && u19 == 0 && Set(t.calls[id] ?? []) == ["deals/D1", "deals/D9", "companies/C1", "contacts/P1"],
+           "deals: Undo never removes a deal that was on the Call before")
+    // Undo after the key moved to another portal sends nothing
+    let m12b = await write("D2")
+    t.portal = 777
+    let sentBefore = t.log.count
+    let blockedUndo = await undo(m12b)
+    expect(blockedUndo == nil && t.log.dropFirst(sentBefore).allSatisfy { $0.hasPrefix("GET /account-info") } && t.calls[id]?.contains("deals/D2") == true,
+           "deals: Undo of a move from another portal changes nothing")
+    t.portal = 500
+    _ = await undo(m12b)
+    disk.managed = "D1"
     // an association that is already gone is not an error
     var gone: Error? = nil
     do { try await c.removeCallAssociation(callId: id, type: "deals", id: "D7") } catch { gone = error }

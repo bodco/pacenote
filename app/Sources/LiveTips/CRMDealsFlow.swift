@@ -22,7 +22,7 @@ extension CRMDealPreview {
 extension CRMCallLogger {
     /// The Call write with the deal move (`CRMCallDeal.write`), in turn with Auto; the ids are read from and stored in
     /// <base>.crm.json when the turn comes.
-    static func writeWithDeal(_ entry: CRMCallLog, base: String, link: CRMLink, connector c: CRMConnector) async throws -> (call: CRMCallResult, removed: String) {
+    static func writeWithDeal(_ entry: CRMCallLog, base: String, link: CRMLink, connector c: CRMConnector) async throws -> CRMCallDeal.Move {
         try await CRMCallDeal.write(entry, connector: c, associations: refs(link), dealId: link.dealId,
                                     load: { let d = CRMLink.load(base: base) ?? link; return (d.callId, d.portalId, d.callDealId) },
                                     save: { id, managed in var d = CRMLink.load(base: base) ?? link; d.callId = id; d.callDealId = managed; d.save(base: base) })

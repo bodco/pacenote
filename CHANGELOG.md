@@ -18,7 +18,9 @@ Pacenote. Earlier versions are described in the commit messages and in
 - **The call is logged in HubSpot (H2).** Update HubSpot has a new Call row: a HubSpot Call with the title, start
   time, duration, direction, outcome, participants, the call page's Summary, the next steps, and a link back to the
   call, associated with the matched contacts, company and open deal. Applying again, even while Auto runs, updates the
-  same Call instead of adding a second one, and Undo removes a new Call or restores the old values. Transcript text is
+  same Call instead of adding a second one, and Undo removes a new Call or restores the old values (it changes nothing
+  if the key was switched to another HubSpot account in between). A create that gets no answer is checked in HubSpot
+  three times over a few seconds before it is reported as failed. Transcript text is
   never sent. A call's HubSpot link now remembers its HubSpot account: after the key changes to another account, or
   for a call linked before this version, nothing is written and Update HubSpot offers **Relink**. A new
   switch in Settings > Integrations > HubSpot, **Log the call in HubSpot automatically after it ends**, is off by
@@ -28,12 +30,15 @@ Pacenote. Earlier versions are described in the commit messages and in
   deal, and suggests next step, close date, stage and qualification fields from the call, each with the evidence from
   the call page and a checkbox. A field with no evidence is not suggested. The stage is chosen from the portal's own
   stages of the deal's pipeline instead of typed text, and never moves to Closed won or Closed lost. A stage is
-  suggested only when the call reports that its milestone happened ("we sent the contract"), never from a negated,
-  planned or requested one ("the contract was never sent", "we will send it", "they asked for it"). Quotes are shown
+  suggested only when the call reports that its own milestone happened ("we sent the contract" for Contract sent),
+  never from a negated, planned, agreed or requested one ("the contract was never sent", "we will send it", "we agreed
+  to send it", "they asked for it") or a nearby one ("we reviewed the contract", "we presented the demo" for Proposal
+  sent). Quotes are shown
   only to you and are never sent to HubSpot. Apply updates the deal once and Undo restores the old values. Picking
   another deal clears the old suggestions at once, and Apply waits until the new deal is read. When you move the call
   to another deal or to No deal, Apply also moves the HubSpot Call off the deal Pacenote linked it to; deals a person
-  added in HubSpot stay, and Undo links the old deal again. Applying the same call again keeps the close date it
+  added in HubSpot stay, and Undo takes the new deal off the Call and links the old deal again (a deal that was
+  already on the Call stays). Applying the same call again keeps the close date it
   suggested. A failed read of the company's deals or the stages says so with **Try again** instead of an empty list.
   The deal preview, Apply and Undo first check that the call is linked in the HubSpot account of the current key.
 

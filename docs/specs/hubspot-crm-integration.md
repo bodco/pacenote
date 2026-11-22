@@ -11,9 +11,12 @@ Pacenote already connects to HubSpot with a service key (a private app key) kept
 
 - **Read** (before a call): `CRMConnector.findCompany` (domain, then name), `findContacts` (emails), `deals`
   (open deal updated last), `recentActivity`, `pipelines`, `properties`, `owners`. The result is the local snapshot
-  `<stem>.crm.md` and the link `<stem>.crm.json` (ids only: company, deal, contacts).
+  `<stem>.crm.md` and the link `<stem>.crm.json`: the ids of the company, deal and contacts, the company, deal and
+  participant names, and since H2 the Pacenote call id (`callKey`), the HubSpot Call id (`callId`) and the portal id
+  (`portalId`). The names stay on the Mac; they go to HubSpot only inside the Call.
 - **Write** (after a call): "Update HubSpot" on the call page. A reviewed list of checkboxes (note, deal fields,
-  follow-up task, and since H2 the Call), **Apply**, then **Undo** for 8 seconds. Nothing is written without a click.
+  follow-up task, and since H2 the Call), **Apply**, then **Undo** for 8 seconds. Every write needs that click, except
+  the Call when the PM turns on the Auto switch (off by default, section 9).
 - **Not yet**: Leads, Meetings, Emails, creating contacts and companies, OAuth, several portals.
 
 ## 2. Objects and associations
@@ -54,7 +57,7 @@ HubSpot association type ids below are HUBSPOT_DEFINED, from the object on the l
 |---|---|
 | Note `hs_note_body` | Summary, Decisions, Next steps, the Notion link; the transcript only when "Add the transcript to the CRM note" is on |
 | Task `hs_task_subject`, `hs_timestamp` | the next step, due date when one was said (else tomorrow) |
-| Deal `hs_next_step`, `closedate`, `dealstage` (H4, `LiveTipsCore/CRMDeals.swift`) | next step: the agreed step on the call page. Close date: a mutual-plan step with a closing word (close, sign, signature) and a real `YYYY-MM-DD` date not in the past, written as UTC midnight; the first such step is chosen and only then compared with the deal, so a re-run never alternates between two steps. Stage: only when a signal of the call reports that the milestone happened (a completion word such as sent, signed, presented, надіслали; no negation, plan, wish, request or question) and names a later open stage of the deal's own pipeline (generic stage words from `rules/sales.yaml > stages`, matched to the portal's stage labels); plan steps and the next step are still to do and never move the stage; never a closed stage; or a stage the PM picks from that pipeline's list |
+| Deal `hs_next_step`, `closedate`, `dealstage` (H4, `LiveTipsCore/CRMDeals.swift`) | next step: the agreed step on the call page. Close date: a mutual-plan step with a closing word (close, sign, signature) and a real `YYYY-MM-DD` date not in the past, written as UTC midnight; the first such step is chosen and only then compared with the deal, so a re-run never alternates between two steps. Stage: only when a signal of the call reports that the milestone happened (a completion word such as sent, signed, presented, надіслали; no negation, plan, wish, request or question; "agreed to", "decided to" and the UK infinitive after погодились and the like are plans) and names a later open stage of the deal's own pipeline (generic stage words from `rules/sales.yaml > stages`, matched to the portal's stage labels). The signal must establish that stage's own milestone (`CRMDealSuggester.establishes`): it names the same thing as the label (contract, proposal or quote, demo or presentation, decision, negotiation, signature, closing), and when the label says what happened to it ("Contract sent") the signal says that or something that implies it (signed, received, shared, delivered or submitted imply sent; reviewed, discussed or agreed to send do not); plan steps and the next step are still to do and never move the stage; never a closed stage; or a stage the PM picks from that pipeline's list |
 | Deal qualification properties | per method criterion to a deal property chosen in Settings (or "Don't write"), only for a known or partial criterion that has a quote |
 
 H4 rules: every suggestion carries its evidence (the quote, or the agreed step itself for the next step and the close
@@ -70,8 +73,15 @@ Deal association of the Call (H4): `<stem>.crm.json` keeps `callDealId`, the dea
 When the call moves to another deal or to No deal, the next Call write (Apply or Auto, in the same turn of the per-call
 queue) removes only that association (`DELETE /crm/v4/objects/calls/{id}/associations/deals/{dealId}`, a 404 counts
 as removed) and stores the new deal. Associations Pacenote did not make (a deal a person added, the company, the
-contacts) stay. Undo of that Apply associates the old deal again. A Call logged before `callDealId` existed has no
-managed deal, so nothing is removed for it.
+contacts) stay. Before an existing Call moves, its deal associations are read (`GET
+/crm/v4/objects/calls/{id}/associations/deals`), so the new deal counts as added only when it was not on the Call
+already. The Apply's Undo row (`callDeal`) keeps the removed deal, the added deal and the managed deal before the
+move; Undo takes the added deal off, associates the removed one again and stores the old managed deal, so a switch
+from D1 to D2 ends with D1 only and a deal a person had already added stays. A Call logged before `callDealId` existed
+has no managed deal, so nothing is removed for it. Known gap: when `<stem>.crm.json` lost the Call id and the Call is
+found by search, the associations are not read first, so Undo leaves the new deal on the Call. If the Call write
+succeeds and removing the old deal then fails, the Apply reports the error and the new deal stays on the Call
+outside Undo; the next Apply removes the old deal again.
 
 ## 4. Required scopes
 
@@ -118,11 +128,13 @@ decides, the service key stays the only path.
 3. **Texts come from the call page as the PM edited it.** Pacenote never writes a text the PM could not see on the call
    page.
 4. **Undo.** A new object is deleted; an updated object gets its old property values back. Associations added during a
-   re-run are not removed by Undo (they are harmless and HubSpot has no history for them); the Undo failure line says
-   what is left. A re-run of the Call adds the associations first and changes the fields last, so a failed association
+   re-run are not removed by Undo (they are harmless and HubSpot has no history for them), except the deal
+   association Pacenote itself added on a deal move (H4, below); the Undo failure line says
+   what is left. Undo first checks that the key still belongs to the portal the Apply wrote to; after a key change
+   it sends nothing and says so, as the same ids in another portal are other records. A re-run of the Call adds the associations first and changes the fields last, so a failed association
    leaves the Call's fields as they were and nothing changed is outside Undo. (H4) The one association Pacenote
    removes is the Call's link to the deal Pacenote itself associated, when the call moves to another deal or to No
-   deal (section 3); Undo of that Apply associates the old deal again.
+   deal (section 3); Undo of that Apply takes the deal Pacenote added off and associates the old deal again.
 5. **Errors are one line where the action was**, never a modal; 429 waits (Retry-After, else 1, 2, 4 s) and retries three
    times; 401 and 403 say what to fix (key, or the named scope).
 6. **No silent overwrites of the PM's own edits in HubSpot.** A re-run updates only the Pacenote-owned properties of the
@@ -135,13 +147,17 @@ decides, the service key stays the only path.
 |---|---|---|
 | Contact | email (lowercase, trimmed) | search `email EQ`; found: use it; several: take the one on the matched company, else the oldest; never create a second contact with the same email. Creating a missing contact is a later, opt-in step (decision 4) |
 | Company | domain, then name | search `domain EQ`, then `name EQ`; free-mail domains (gmail.com, outlook.com, icloud.com, yahoo.com, hotmail.com) and the PM's own domains never match a company |
-| Call | the Pacenote call id | the id is made once and stored with the call (`<stem>.crm.json`, `callKey`) together with the HubSpot Call id (`callId`). A re-run PATCHes `callId`. If `callId` is missing, HubSpot is searched by `hs_call_external_id = pacenote:<id>`. If the stored id was deleted in HubSpot (404), the same search runs, then a new Call is created. Auto and Apply of one call take turns (a queue per call id) and each reads the stored `callId` when its turn comes. A create that gets no answer or a 5xx is checked by the same search before it is reported as failed. A second Call for one call id is never created |
+| Call | the Pacenote call id | the id is made once and stored with the call (`<stem>.crm.json`, `callKey`) together with the HubSpot Call id (`callId`). A re-run PATCHes `callId`. If `callId` is missing, HubSpot is searched by `hs_call_external_id = pacenote:<id>`. If the stored id was deleted in HubSpot (404), the same search runs, then a new Call is created. Auto and Apply of one call take turns (a queue per call id) and each reads the stored `callId` when its turn comes. A create that gets no answer or a 5xx is checked by the same search, three times over about 6 seconds (HubSpot's search lags a new record), before it is reported as failed; the next run searches first, so a Call that shows up later is updated, not made again. A second Call is possible only if the search still misses it on that next run (see the known gaps) |
 | Note, Task | none | created per Apply; the 8 second Undo and the "already applied" lock protect against a double click. No dedupe across sessions (decision 8) |
 | Deal | the PM's link | the open deal updated last, or what the PM chose in Start call; "No deal" is kept for the series |
 
 Known gap: if both `<stem>.crm.json` is lost and the Call has no `hs_call_external_id` (for example a portal that
 rejects the property), a re-run creates a second Call. Mitigation: the body carries `Pacenote call id: <id>`; a
 manual search in HubSpot finds it.
+
+Known gap: a create whose answer is lost, followed by a retry while HubSpot's search still does not show the new
+Call (longer than the 6 seconds above), makes a second Call. Auto runs once per call and Apply is a click, so this
+needs a lost answer and a fast manual retry; the body's `Pacenote call id: <id>` finds both in HubSpot.
 
 ## 7. Owner mapping
 

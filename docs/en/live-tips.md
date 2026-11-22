@@ -1664,7 +1664,8 @@ time, duration, direction (Settings > Integrations > HubSpot, default Outbound),
 names, the call page's Summary, the next steps, and a link back to the call (the Notion page when there is one),
 associated with the matched contacts, the company and the open deal. No transcript text is sent. Pacenote keeps the
 call's own id with the call, so applying again, or the Auto switch, updates the same HubSpot Call and never adds a
-second one; Undo deletes a new Call or puts the old values back. The link also remembers its HubSpot account: after
+second one; Undo deletes a new Call or puts the old values back, and does nothing if the key now belongs to another
+HubSpot account. The link also remembers its HubSpot account: after
 you change the key to another account, or for a call linked before this version, Pacenote writes nothing and Update
 HubSpot offers **Relink**. **Log the call in HubSpot automatically after it
 ends** is off by default; when on, it logs only the Call, about two and a half minutes after the call, without a
@@ -1674,14 +1675,16 @@ review. Notes, deal fields and tasks stay behind Apply. The design is in `docs/s
 menu to pick another open deal or No deal. Below it are the changes the call supports, each with a checkbox, the
 current and the new value and the evidence from the call page: the next step (the step both sides agreed on), the
 close date (only when a closing step such as a signature has a real date), a later stage of the deal's own pipeline
-(only when the call reports that its milestone happened, for example "we sent the contract" or "we presented the
-demo"; not when it was negated, planned or only asked for; never Closed won or Closed lost) and the qualification
+(only when the call reports that this stage's own milestone happened, for example "we sent the contract" for
+Contract sent; not when it was negated, planned, only agreed or asked for, and not from a nearby step such as "we
+reviewed the contract" or "we presented the demo" for Proposal sent; never Closed won or Closed lost) and the qualification
 fields you mapped in Settings (only for a criterion with a quote). A field with no evidence is not suggested. The Stage
 menu lists the portal's own stages of that pipeline, and Pacenote writes only an id from it. The quote is shown to you
 and never sent. Apply writes the ticked fields in one update and Undo puts the old values back. When you pick another
 deal, the old suggestions disappear at once and Apply waits until the new deal is read. Moving the call to another
 deal or to No deal also moves the HubSpot Call off the deal Pacenote linked it to when you Apply; deals someone added
-in HubSpot stay, and Undo links the old deal again. If the company's deals or the stages cannot be read, the window
+in HubSpot stay, and Undo takes the new deal off the Call and links the old deal again (a deal that was already on
+the Call stays). If the company's deals or the stages cannot be read, the window
 says so with **Try again**. The deal is read, and Apply and Undo write, only when the call is linked in the HubSpot
 account of the current key.
 

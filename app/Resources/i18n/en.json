@@ -1780,6 +1780,7 @@
  "callEdit.err.noAccess": "the Notion page was not found or is not shared with your integration (in Notion: ⋯ > Connections)",
  "callEdit.err.token": "Notion did not accept the token (Settings > Integrations > Notion)",
  "crm.undoFailed": "Undo did not finish: {n} change(s) are still in {crm}, remove them there",
+ "crm.undo.portal": "Undo did nothing: the {crm} key now belongs to another account than the one these changes went to. Remove them there",
  "crm.deal.heading": "Deal: {deal}",
  "crm.deal.none": "Nothing on the call page supports a change to this deal, so nothing is suggested.",
  "crm.deal.field.nextStep": "Next step",
