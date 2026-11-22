@@ -20,6 +20,9 @@ public struct CRMMeetingLog: Equatable {
     /// The PM's pick after Update HubSpot asked (`CRMTimelineResult.pick`): a Meeting id to add the notes to, or
     /// `newTarget` for a new Meeting. Empty: HubSpot is searched.
     public var target: String = ""
+    /// The portal whose search offered the pick (`CRMTimelineSync.Outcome.portal`). A target is written only in that
+    /// portal: after a Relink the same id may name an unrelated Meeting of another portal.
+    public var targetPortal: String = ""
     public static let newTarget = "new"
     /// How far apart two starts may be and still be the same meeting (calendar sync and the call start differ by minutes).
     public static let tolerance: TimeInterval = 15 * 60
@@ -169,7 +172,11 @@ public struct CRMTimelineIds: Equatable {
 /// stored ids and the portal are read when the turn comes, each new id is stored as soon as it is known, and what was
 /// written before a failure is returned for Undo.
 public enum CRMTimelineSync {
-    public struct Outcome { public var undo: [(String, String, [String: String])] = []; public var ids: CRMTimelineIds; public var pick: [CRMMeetingCandidate] = []; public var error: Error? }
+    /// portal: the portal checked before the writes; the Undo records and the pick belong to it.
+    public struct Outcome { public var undo: [(String, String, [String: String])] = []; public var ids: CRMTimelineIds; public var pick: [CRMMeetingCandidate] = []; public var error: Error?
+        public var portal = "" }
+    /// A pick from another portal: nothing was written, the PM applies again to search the portal of the link.
+    public static let stalePickCode = 410
 
     public static func log(key: String, writer w: CRMTimelineWriter, connector c: CRMConnector, meeting: CRMMeetingLog?, email: CRMEmailLog?,
                            associations: [CRMRef], queue: CRMCallQueue = .shared,
@@ -182,6 +189,11 @@ public enum CRMTimelineSync {
                 var ids = load()
                 box.out.ids = ids
                 try await CRMPortal.verify(link: ids.portalId, connector: c)
+                box.out.portal = ids.portalId
+                // a pick offered by another portal (the call was relinked since) is not a Meeting of this one
+                if let m = meeting, !m.target.isEmpty, !CRMPortal.matches(link: m.targetPortal, current: ids.portalId) {
+                    throw CRMError(code: stalePickCode, message: "This Meeting was offered by another HubSpot portal. Apply again to search this one.", scope: "portal")
+                }
                 if let m = meeting {
                     let r = try await w.upsertMeeting(m, knownId: ids.meetingId, associations: associations)
                     if r.pick.isEmpty {
@@ -199,6 +211,27 @@ public enum CRMTimelineSync {
             box.out.undo.append((l.type, l.id, l.fields)); box.out.error = l.error
         } catch { box.out.error = error }
         return box.out
+    }
+}
+
+/// Undo of one Update HubSpot: its records name ids of the portal they were written in, so they are undone only while
+/// the key in use is of that portal (never by the link's portal of now: a Relink changes it, the ids stay the old portal's).
+public enum CRMUndo {
+    /// Notes and tasks are deleted, deal fields and an updated Call, Meeting or Email get their old values back.
+    /// Throws the portal mismatch before any write; otherwise returns how many records failed and the (type, id) of
+    /// the ones deleted (their stored ids must go too, so the next Apply makes them again).
+    public static func run(_ items: [(String, String, [String: String])], portal: String, connector c: CRMConnector) async throws -> (failed: Int, deleted: [(String, String)]) {
+        try await CRMPortal.verify(link: portal, connector: c)
+        var failed = 0, deleted: [(String, String)] = []
+        for (type, id, old) in items.reversed() {
+            do {
+                if type == "deals" { _ = try await c.updateDeal(id: id, fields: old) }
+                else if type == "calls" && !old.isEmpty { try await c.restoreCall(id: id, fields: old) }
+                else if (type == "meetings" || type == "emails") && !old.isEmpty { try await (c as? CRMTimelineWriter)?.restore(type: type, id: id, fields: old) }
+                else { try await c.delete(type: type, id: id); deleted.append((type, id)) }
+            } catch { failed += 1 }
+        }
+        return (failed, deleted)
     }
 }
 

@@ -181,7 +181,9 @@ is shown on the card. Behavior to keep and to define:
   Auto skips the call and Update HubSpot says so and offers **Relink**. Relink and Refresh drop the old ids, keep the
   Pacenote call id, and find the company, deal and contacts again in the current portal (by the attendees' domains
   while the calendar still has the event, else by the linked company's name). H5: the Meeting and Email writes check
-  the portal again inside their turn, and Undo checks it before it writes.
+  the portal again inside their turn, and Undo checks it before it writes. The Meeting pick and the Undo records are
+  bound to the portal that produced them (not to the link's portal of now): a pick from another portal writes nothing,
+  Undo runs only while the key is of the portal it was written in, and a successful Relink clears both.
 - Several portals at once (an agency with client portals): one key per project in Settings > Projects, kept in the
   Keychain under a per-project name. Not built; decision 3.
 - Data hosting regions (US, EU) use the same base URL for the API; the region is only displayed.

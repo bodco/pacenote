@@ -1688,7 +1688,9 @@ it after you sent the email yourself, and HubSpot gets an email engagement with 
 contacts, the same subject and the same text above any quoted reply, in the last day), Pacenote never changes it and only adds the missing
 associations. Both rows need Apply; there is no automatic switch for them. Undo works for 8 seconds and also removes
 the associations Pacenote added; if a write fails halfway, what it changed is taken back, and an association HubSpot
-would not let it take back stays in Undo. No transcript text is sent.
+would not let it take back stays in Undo. The meetings offered to pick and Undo belong to the HubSpot account that
+was searched or written: after Relink to another account they are dropped, and a pick or Undo from the old account
+never writes to the new one, even when an id there is the same. No transcript text is sent.
 
 **What Pacenote can do.** Help > What Pacenote can do lists every feature with Try it and how often you used it
 (from the local usage log, Settings > General > Data). For the first 14 days it is also a card on Home.

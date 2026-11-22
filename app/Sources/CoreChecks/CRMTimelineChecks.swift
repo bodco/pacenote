@@ -280,7 +280,7 @@ func crmTimeline() async {
     let tg = FakeHubSpotTimeline(); let hsg = HubSpotConnector(transport: tg, sleep: { _ in })
     tg.objects["meetings"]!["91"] = ["hs_meeting_title": "Orbit renewal", "hs_timestamp": hubspotTime(start)]
     tg.assoc["meetings/91"] = ["P1#200"]; tg.failPut = 2; tg.failDelete = ["deals/D1"]
-    var pickedG = meeting(["Ours"]); pickedG.target = "91"
+    var pickedG = meeting(["Ours"]); pickedG.target = "91"; pickedG.targetPortal = "500"
     let og = await CRMTimelineSync.log(key: key, writer: hsg, connector: hsg, meeting: pickedG, email: nil, associations: refs, queue: CRMCallQueue(),
                                        load: { CRMTimelineIds(portalId: "500") }, save: { _ in })
     expect((og.error as? CRMError)?.code == 500 && og.undo.count == 1 && og.undo.first?.0 == "meetings" && og.undo.first?.1 == "91"
@@ -366,4 +366,43 @@ func crmTimeline() async {
     let o4 = await CRMTimelineSync.log(key: key, writer: hsp, connector: hsp, meeting: meeting(["Q"]), email: mail, associations: refs, queue: q,
                                        load: { CRMTimelineIds(portalId: "500") }, save: { _ in })
     expect((o4.error as? CRMError)?.code == CRMPortal.mismatchCode && tp.log.allSatisfy { $0.hasPrefix("GET /account-info") }, "timeline: a link from another portal writes nothing")
+
+    // review round 4: relinked from portal A (500) to portal B (600), both with a Meeting "91". The pick and the Undo
+    // records of A are never used on B's "91"
+    let pa = FakeHubSpotTimeline(), pb = FakeHubSpotTimeline(); pb.portal = 600
+    for f in [pa, pb] {
+        f.objects["meetings"]!["91"] = ["hs_meeting_title": f === pa ? "Orbit renewal sync" : "Board review", notesKey: f === pa ? "<p>A prep</p>" : "<p>B private</p>",
+                                        "hs_timestamp": hubspotTime(start.addingTimeInterval(-300))]
+        f.assoc["meetings/91"] = ["P1#200"]
+    }
+    let hpa = HubSpotConnector(transport: pa, sleep: { _ in }), hpb = HubSpotConnector(transport: pb, sleep: { _ in })
+    let oa = await CRMTimelineSync.log(key: key, writer: hpa, connector: hpa, meeting: meeting(["Ours"]), email: nil, associations: refs, queue: CRMCallQueue(),
+                                       load: { CRMTimelineIds(portalId: "500") }, save: { _ in })
+    expect(oa.error == nil && oa.pick.map(\.id) == ["91"] && oa.portal == "500", "portals: the pick names the portal that offered it")
+    var stale = meeting(["Ours"]); stale.target = "91"; stale.targetPortal = oa.portal
+    let ob = await CRMTimelineSync.log(key: key, writer: hpb, connector: hpb, meeting: stale, email: mail, associations: refs, queue: CRMCallQueue(),
+                                       load: { CRMTimelineIds(portalId: "600") }, save: { _ in })
+    expect((ob.error as? CRMError)?.code == CRMTimelineSync.stalePickCode && ob.undo.isEmpty && pb.objects["meetings"]?["91"]?[notesKey] == "<p>B private</p>"
+           && pb.linked("meetings/91") == ["contacts/P1"] && pb.objects["emails"]?.isEmpty == true && pb.log.allSatisfy { $0.hasPrefix("GET /account-info") },
+           "portals: a pick from portal A writes nothing to portal B's meeting with the same id")
+    var unbound = meeting(["Ours"]); unbound.target = "91"
+    let ou = await CRMTimelineSync.log(key: key, writer: hpb, connector: hpb, meeting: unbound, email: nil, associations: refs, queue: CRMCallQueue(),
+                                       load: { CRMTimelineIds(portalId: "600") }, save: { _ in })
+    expect((ou.error as? CRMError)?.code == CRMTimelineSync.stalePickCode && pb.objects["meetings"]?["91"]?[notesKey] == "<p>B private</p>", "portals: a pick that names no portal is not written")
+    // the PM picks A's "91" in A: written, and its Undo record belongs to A
+    let oa2 = await CRMTimelineSync.log(key: key, writer: hpa, connector: hpa, meeting: stale, email: nil, associations: refs, queue: CRMCallQueue(),
+                                        load: { CRMTimelineIds(portalId: "500") }, save: { _ in })
+    expect(oa2.error == nil && oa2.portal == "500" && oa2.undo.first?.1 == "91" && (pa.objects["meetings"]?["91"]?[notesKey] ?? "").contains("Ours"), "portals: the pick is written in its own portal")
+    // Undo of A's records with B's key: nothing is restored, deleted or taken off in B
+    let pbWrites = pb.log.count
+    let ub = try? await CRMUndo.run(oa2.undo + [("meetings", "91", [:])], portal: oa2.portal, connector: hpb)
+    expect(ub == nil && pb.objects["meetings"]?["91"] != nil && pb.objects["meetings"]?["91"]?[notesKey] == "<p>B private</p>" && pb.linked("meetings/91") == ["contacts/P1"]
+           && pb.log.dropFirst(pbWrites).allSatisfy { $0.hasPrefix("GET /account-info") }, "portals: Undo of portal A's records never touches portal B")
+    // and in A it puts A's meeting back
+    let ua = try? await CRMUndo.run(oa2.undo, portal: oa2.portal, connector: hpa)
+    expect(ua?.failed == 0 && pa.objects["meetings"]?["91"]?[notesKey] == "<p>A prep</p>" && pa.linked("meetings/91") == ["contacts/P1"], "portals: Undo in the portal it was written in restores")
+    // a new engagement's Undo deletes it and names it, so its stored id can go
+    pa.objects["emails"]!["700"] = ["hs_email_subject": "x"]
+    let ud2 = try? await CRMUndo.run([("emails", "700", [:])], portal: "500", connector: hpa)
+    expect(ud2?.failed == 0 && ud2?.deleted.first?.1 == "700" && pa.objects["emails"]?["700"] == nil, "portals: a deleted engagement is named for its stored id")
 }

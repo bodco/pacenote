@@ -35,7 +35,9 @@ Pacenote. Earlier versions are described in the commit messages and in
   written in the app, is never ticked for you, and records the email you sent as a HubSpot email engagement (Pacenote
   still sends no mail); an email HubSpot already logged is never changed, it only gets the missing associations. No
   automatic switch for either, Undo also removes the associations Pacenote added, a failed write leaves nothing half
-  done (an association HubSpot would not let it take back stays in Undo), and transcript text is never sent.
+  done (an association HubSpot would not let it take back stays in Undo), and transcript text is never sent. The
+  meetings to pick and Undo belong to the HubSpot account they came from: Relink to another account drops them, and
+  they never write to a record of the new account with the same id.
 
 ## 0.26.4 (2026-11-20)
 

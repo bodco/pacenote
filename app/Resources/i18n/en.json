@@ -1637,6 +1637,7 @@
  "crm.row.email": "The follow-up email you sent, on the timeline (Pacenote does not send mail: tick this only after you sent it)",
  "crm.meeting.pick": "HubSpot has meetings near this time with these contacts. Pacenote does not add notes to one without your word, even when the title or the time matches. Nothing was added to a Meeting yet: pick where the notes go.",
  "crm.meeting.waiting": "The Meeting waits for your pick below.",
+ "crm.meeting.stale": "That meeting was offered by another HubSpot account. Nothing was added: Apply again to search this one.",
  "crm.meeting.attach": "Add the notes to \"{title}\" at {time}",
  "crm.meeting.new": "Make a new Meeting instead",
  "crm.meeting.untitled": "Untitled meeting",

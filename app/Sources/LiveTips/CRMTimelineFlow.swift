@@ -51,14 +51,14 @@ enum CRMTimelineLogger {
     /// other's ids. Returns what Undo needs, the ids now stored, what was written before a failure, and the Meetings
     /// to pick from when HubSpot's own one is not sure (nothing was written to a Meeting then).
     static func apply(_ w: CRMTimelineWriter, connector c: CRMConnector, meeting: CRMMeetingLog?, email: CRMEmailLog?, base: String, link: CRMLink,
-                      refs: [CRMRef], on: (String) -> Bool) async -> (undo: [(String, String, [String: String])], link: CRMLink, pick: [CRMMeetingCandidate], error: Error?) {
+                      refs: [CRMRef], on: (String) -> Bool) async -> (undo: [(String, String, [String: String])], link: CRMLink, pick: [CRMMeetingCandidate], portal: String, error: Error?) {
         var e = on("email") ? email : nil
         e?.sent = Date()
         let o = await CRMTimelineSync.log(key: link.callKey, writer: w, connector: c, meeting: on("meeting") ? meeting : nil, email: e, associations: refs,
             load: { ids(CRMLink.load(base: base) ?? link) },
             save: { i in var d = CRMLink.load(base: base) ?? link; d.meetingId = i.meetingId; d.emailId = i.emailId; d.emailOurs = i.emailOurs; d.save(base: base) })
         var l = link; l.meetingId = o.ids.meetingId; l.emailId = o.ids.emailId; l.emailOurs = o.ids.emailOurs
-        return (o.undo, l, o.pick, o.error)
+        return (o.undo, l, o.pick, o.portal, o.error)
     }
 
     nonisolated static func ids(_ l: CRMLink) -> CRMTimelineIds {
