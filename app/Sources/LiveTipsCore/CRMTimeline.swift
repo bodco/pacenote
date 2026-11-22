@@ -12,7 +12,8 @@ public struct CRMMeetingLog: Equatable {
     public var start: Date
     public var end: Date
     public var notes: String            // Summary, Decisions, Next steps, link back; see `notes(...)`
-    /// The calendar event the call held, when the calendar still has it: a synced Meeting carries its title and start.
+    /// The calendar event the call held, known only by an identity captured for the call (`event(ref:...)`), never by
+    /// being the nearest event: a synced Meeting carries its title and start.
     public var eventTitle: String = ""
     public var eventStart: Date? = nil
     /// The PM's pick after Update HubSpot asked (`CRMTimelineResult.pick`): a Meeting id to add the notes to, or
@@ -27,6 +28,16 @@ public struct CRMMeetingLog: Equatable {
     public init(key: String, title: String, start: Date, end: Date, notes: String, eventTitle: String = "", eventStart: Date? = nil) {
         self.key = key; self.title = title; self.start = start; self.end = max(end, start); self.notes = notes
         self.eventTitle = eventTitle; self.eventStart = eventStart
+    }
+
+    /// The call's calendar event by the id its Meeting Sheet stored (`meeting_ref.event_id`, set only when the sheet was
+    /// made for that event): its title and start from the calendar, or from the sheet once the calendar no longer has
+    /// it. No id: none. The event nearest the call is never taken for it: an ad hoc call at the time of another invite
+    /// is not that invite, so a nearby Meeting is then only offered to pick.
+    public static func event(ref: MeetingRef?, sheetTitle: String, calendar: [(id: String, title: String, start: Date)]) -> (title: String, start: Date?) {
+        guard let id = ref?.eventId, !id.isEmpty else { return ("", nil) }
+        if let e = calendar.first(where: { $0.id == id }) { return (e.title, e.start) }
+        return (sheetTitle, ref.flatMap { ISO8601DateFormatter().date(from: $0.start) })
     }
 
     /// Pacenote's block in the notes field starts and ends with a line that names the call id, so a re-run finds its

@@ -290,10 +290,14 @@ struct CRMUpdateView: View {
             if !meetingPick.isEmpty {       // H5: the PM says which Meeting gets the notes; nothing was written to one yet
                 VStack(alignment: .leading, spacing: 6) {
                     Text(L("crm.meeting.pick")).font(PN.Font.caption).foregroundStyle(PN.C.text3).fixedSize(horizontal: false, vertical: true)
-                    ForEach(meetingPick.prefix(3), id: \.id) { m in
-                        Button(L("crm.meeting.attach", ["title": m.title.isEmpty ? L("crm.meeting.untitled") : m.title, "time": CallPageView.fmt("jmm").string(from: m.start)])) { pickMeeting(m.id) }
-                            .buttonStyle(.pnSecondary).disabled(busy)
-                    }
+                    ScrollView {        // every meeting HubSpot returned, closest first: the right one may be any of them
+                        VStack(alignment: .leading, spacing: 6) {
+                            ForEach(meetingPick, id: \.id) { m in
+                                Button(L("crm.meeting.attach", ["title": m.title.isEmpty ? L("crm.meeting.untitled") : m.title, "time": CallPageView.fmt("jmm").string(from: m.start)])) { pickMeeting(m.id) }
+                                    .buttonStyle(.pnSecondary).disabled(busy)
+                            }
+                        }
+                    }.frame(maxHeight: 150)
                     Button(L("crm.meeting.new")) { pickMeeting(CRMMeetingLog.newTarget) }.buttonStyle(.pnSecondary).disabled(busy)
                 }
             }

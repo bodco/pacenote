@@ -27,13 +27,14 @@ enum CRMTimelineLogger {
         let next = (sales["next_step"] as? String) ?? ((sales["next_step"] as? [String: Any])?["what"] as? String) ?? ""
         let s = CRMCallLog.sections(tldr: m?.tldr ?? "", recap: m?.recap ?? [], onMe: o.onMe, theirs: o.theirs.map { $0.who + ": " + $0.what }, salesNext: next)
         let end = rec.end ?? rec.start.addingTimeInterval((rec.minutes ?? 0) * 60)
-        // the calendar event the call held, while the calendar still has it (as in relink): its title and start make
-        // a synced Meeting sure; without them a nearby Meeting is only offered to pick
-        let ev = CalendarService.shared.events.filter { abs($0.start.timeIntervalSince(rec.start)) < CRMMeetingLog.tolerance }
-            .min { abs($0.start.timeIntervalSince(rec.start)) < abs($1.start.timeIntervalSince(rec.start)) }
+        // the calendar event the call held, only by the event id its Meeting Sheet kept (<stem>.sheet.json), never the
+        // nearest event: its title and start make a synced Meeting sure; without them a nearby Meeting is offered to pick
+        let sheet = try? MeetingSheetIO.load(CallLayout.sidecar(base, ".sheet.json"))
+        let ev = CRMMeetingLog.event(ref: sheet?.meetingRef, sheetTitle: sheet?.title ?? "",
+                                     calendar: CalendarService.shared.events.map { ($0.id, $0.title, $0.start) })
         return CRMMeetingLog(key: link.callKey, title: CallPageView.title(file), start: rec.start, end: end,
                              notes: CRMMeetingLog.notes(summary: s.summary, decisions: o.decisions, nextSteps: s.nextSteps, link: rec.notionURL ?? "", key: link.callKey),
-                             eventTitle: ev?.title ?? "", eventStart: ev?.start)
+                             eventTitle: ev.title, eventStart: ev.start)
     }
 
     /// Only once a follow-up draft was written in this session (the draft is not saved to a file): the subject and text as edited.

@@ -151,6 +151,22 @@ func crmTimeline() async {
     expect(m4t?.id == "77" && m4t?.pick.isEmpty == true, "meetings: starting with the calendar event makes the synced meeting sure")
     if let id = m4t?.id, let old = m4t?.old { try? await hss.restore(type: "meetings", id: id, fields: old) }
     expect(ts.objects["meetings"]?["77"]?[notesKey] == "<p>My own prep</p>", "meetings: undo of the sure matches puts the notes back")
+    // review round 3: the call's calendar event only by the id its sheet kept, never the nearest event
+    func mref(_ j: String) -> MeetingRef? { try? JSONDecoder().decode(MeetingRef.self, from: Data(j.utf8)) }
+    let near = [(id: "OTHER@1", title: "Board prep", start: start.addingTimeInterval(-60)), (id: "EV@2", title: "Orbit renewal sync", start: start.addingTimeInterval(-300))]
+    let noRef = CRMMeetingLog.event(ref: nil, sheetTitle: "", calendar: near)
+    let noId = CRMMeetingLog.event(ref: mref(#"{"start": "2026-05-28T21:00:00Z"}"#), sheetTitle: "Orbit renewal", calendar: near)
+    expect(noRef.title == "" && noRef.start == nil && noId.title == "" && noId.start == nil, "meetings: no event id, no calendar event (the nearest is not the call's)")
+    let byId = CRMMeetingLog.event(ref: mref(#"{"event_id": "EV@2", "start": "2026-05-28T21:00:00Z"}"#), sheetTitle: "Orbit", calendar: near)
+    expect(byId.title == "Orbit renewal sync" && byId.start == start.addingTimeInterval(-300), "meetings: the event id finds the call's own event, not the nearest")
+    let gone = CRMMeetingLog.event(ref: mref(#"{"event_id": "EV@9", "start": "2026-05-28T21:00:00+02:00"}"#), sheetTitle: "Orbit renewal", calendar: near)
+    expect(gone.title == "Orbit renewal" && gone.start == ISO8601DateFormatter().date(from: "2026-05-28T19:00:00Z"), "meetings: an event the calendar dropped keeps the sheet's title and start")
+    // an ad hoc call (no event id) at the time of another invite: that invite's synced meeting starts at its own
+    // start, but it is only offered to pick
+    var adHoc = meeting(["Ad hoc"]); let adEv = CRMMeetingLog.event(ref: nil, sheetTitle: "", calendar: near)
+    adHoc.eventTitle = adEv.title; adHoc.eventStart = adEv.start
+    let m4a = try? await hss.upsertMeeting(adHoc, knownId: "", associations: [CRMRef("contacts", "P1")])
+    expect(m4a?.id == "" && m4a?.pick.map(\.id) == ["77"] && ts.objects["meetings"]?["77"]?[notesKey] == "<p>My own prep</p>", "meetings: an ad hoc call at another invite's time asks before adding notes")
     ts.log = []
     var picked = meeting(["Synced"]); picked.target = "77"       // the PM picked it
     let m4 = try? await hss.upsertMeeting(picked, knownId: "", associations: refs)

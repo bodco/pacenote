@@ -1676,9 +1676,10 @@ and end, outcome Completed, associated with the matched contacts, the company an
 calendar sync already made that meeting (on one of the call's contacts, a start within 15 minutes), Pacenote does not
 add a second one: the notes are added to that meeting's internal notes, below your own text, and the meeting's title
 and invite stay as they are. A meeting that only shares the company or the deal is never used. Pacenote is sure of a
-meeting only when it has the call's title or the calendar event's title, or starts with the calendar event; when no
-meeting or more than one is sure, nothing is added to any meeting and Update HubSpot lists the meetings near that time
-with "Add the notes to ..." for each and "Make a new Meeting instead", so the notes never land in another call's
+meeting only when it has the call's title or the calendar event's title, or starts with the calendar event. The
+calendar event is the one the call was prepared for (its Meeting Sheet keeps the event), never just the event nearest
+the call: a call started at the time of another invite is not that invite. When no meeting or more than one is sure,
+nothing is added to any meeting and Update HubSpot lists all the meetings near that time, closest first, with "Add the notes to ..." for each and "Make a new Meeting instead", so the notes never land in another call's
 meeting without your pick. Pacenote's block starts and ends with a line that names the call, so applying again replaces only that block
 and keeps everything around it. The **Email** row appears once the call's follow-up draft has been written in this
 session of the app (the draft is not saved to a file) and is never ticked for you: Pacenote does not send mail, so tick
