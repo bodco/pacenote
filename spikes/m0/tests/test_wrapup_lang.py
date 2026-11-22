@@ -44,3 +44,63 @@ def test_the_prompt_names_the_language():
                                          cache_write_5m=0, cache_write_1h=0, cache_read=0, output_tokens=1)
     W.claude_wrapup("t", "", "m", "pl", provider=P())
     assert "Write in Polish" in seen["system"]
+
+
+def _with_page(call):
+    _retag(call, "uk")
+    call.state["pages"] = [{"id": "near", "url": "u-near", "properties": {"Date": {"date": {"start": "2026-10-01T10:05:00"}}}}]
+
+
+def test_notion_language_is_recorded_only_after_the_page_write(call, capsys, monkeypatch):
+    """PB-32 S6: Regenerate re-runs wrapup_notion for a call with a page; Notion counts as current only once it took the write."""
+    _with_page(call)
+    seen = []
+
+    def spy(method, path, body=None):
+        if method in ("PATCH", "POST"):
+            seen.append(CL.read_sidecar(call.md)["artifacts"].get("notion"))
+        return call.notion(method, path, body)
+    monkeypatch.setattr(W, "notion", spy)
+    assert W.main(call.base) == 0
+    assert seen and all(v is None for v in seen)
+    assert CL.read_sidecar(call.md)["artifacts"] == {"notion": "uk"}
+
+
+def test_notion_language_is_not_recorded_when_the_page_write_fails(call, capsys, monkeypatch):
+    _with_page(call)
+
+    def failing(method, path, body=None):
+        if method == "PATCH" and path.startswith("/blocks/"):
+            raise RuntimeError("PATCH -> 500")
+        return call.notion(method, path, body)
+    monkeypatch.setattr(W, "notion", failing)
+    assert W.main(call.base) == 1
+    assert "notion" not in CL.read_sidecar(call.md)["artifacts"]
+
+
+def test_page_argument_appends_to_that_page_and_never_creates(call, capsys, monkeypatch):
+    """PB-32 S6: Regenerate names the call's page; a date lookup that would miss it must not make a second page."""
+    _retag(call, "uk")
+    call.state["pages"] = []                                  # find_page would find nothing
+    pid = "0123456789abcdef0123456789abcdef"
+    got, parents = [], []
+
+    def spy(method, path, body=None):
+        got.append((method, path))
+        if method == "POST" and path == "/pages":
+            parents.append(body["parent"])
+        if method == "GET" and path == "/pages/" + pid:
+            return {"id": pid, "url": "u-call", "properties": {}}
+        return call.notion(method, path, body)
+    monkeypatch.setattr(W, "notion", spy)
+    assert W.main(call.base + ["--page", "https://www.notion.so/Weekly-sync-" + pid]) == 0
+    assert parents and all(p["type"] == "page_id" for p in parents)      # only the transcript sub-page, no page in the database
+    assert ("PATCH", "/blocks/" + pid + "/children") in got
+    assert CL.read_sidecar(call.md)["artifacts"] == {"notion": "uk"}
+
+
+def test_page_argument_that_is_not_a_page_fails_without_a_write(call, capsys, monkeypatch):
+    _retag(call, "uk")
+    assert W.main(call.base + ["--page", "nonsense"]) == 1
+    assert not [c for c in call.calls if c[0] in ("POST", "PATCH")]
+    assert "notion" not in CL.read_sidecar(call.md)["artifacts"]

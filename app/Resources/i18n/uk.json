@@ -4312,5 +4312,16 @@
  "ai.models.failed": "Не вдалося прочитати список від провайдера, показано останній ({n} моделей).",
  "ai.models.failed.builtin": "Не вдалося прочитати список від провайдера, показано вбудований.",
  "ai.models.builtin": "Вбудований список. Підключіть ключ, і список покаже усі текстові моделі провайдера.",
- "aiusage.noPrice": "без ціни"
+ "aiusage.noPrice": "без ціни",
+ "call.outlang.label": "Мова результату",
+ "call.outlang.regenerate": "Згенерувати знову",
+ "call.outlang.running": "Пишу знову обраною мовою...",
+ "call.outlang.help": "Пише нотатки, Підсумок, Recap і чернетку листа знову обраною мовою та знову додає Підсумок, Recap і нотатки зустрічі на сторінку Notion. Транскрипт не змінюється.",
+ "call.outlang.art.notes": "Нотатки",
+ "call.outlang.art.followup": "Лист",
+ "call.outlang.art.notion": "Notion",
+ "call.outlang.outOfDate": "застаріло",
+ "call.outlang.notionFailed": "Сторінку Notion не переписано: {why}",
+ "call.outlang.confirm.title": "Написати цей довгий дзвінок знову мовою {lang}?",
+ "call.outlang.confirm.body": "Дзвінок довший за годину, тож це може коштувати більше, ніж зазвичай. Транскрипт не змінюється."
 }

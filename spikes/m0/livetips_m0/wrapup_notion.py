@@ -535,6 +535,12 @@ def link_values(props: dict, ids: dict, project_name: str, workspace_value: str,
     return out
 
 
+def page_id_of(ref: str) -> str:
+    """The 32 hex characters of a Notion page id or url (dashes allowed), or ""."""
+    m = re.findall(r"[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}", ref or "")
+    return m[-1].replace("-", "").lower() if m else ""
+
+
 def find_page(ds: str, start: dt.datetime, date_prop: str | None = "Date") -> dict | None:
     if not date_prop:
         return None
@@ -572,6 +578,7 @@ def parse_args(argv=None):
     ap.add_argument("--when", default="", help="ISO date and time of the meeting set in Start call (title date)")
     ap.add_argument("--wait-notes", type=int, default=0,
                     help="0.9.5.2: seconds to wait for the call notes' Meeting notes being written (the app starts both)")
+    ap.add_argument("--page", default="", help="PB-32 S6: the call's existing Notion page (id or url): append to it, never look up by date, never create")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--find-only", action="store_true", help="only look up this meeting's page in Notion")
     return ap.parse_args(argv)
@@ -739,8 +746,16 @@ def run(a, res: dict) -> int:
         return 0
     res["cost_usd"] = w.get("_cost")
     charge(w.get("_cost"))
-    page = find_page(ids["meetings_db"], info["start"], sc["date"])
-    if page:
+    if a.page:      # Regenerate: the page of this call, found by id; a missing page is an error, not a second page
+        pid = page_id_of(a.page)
+        if not pid:
+            raise RuntimeError("--page is not a Notion page id or url")
+        page = notion("GET", f"/pages/{pid}")
+        if not page.get("id"):
+            raise RuntimeError("the call's Notion page was not found")
+        res.update(write_to_page(page, sc, ids, a, w, blocks, plain, info, lang))
+        res["created"] = False
+    elif (page := find_page(ids["meetings_db"], info["start"], sc["date"])):
         res.update(write_to_page(page, sc, ids, a, w, blocks, plain, info, lang))
     else:
         res.update(create_page(sc, ids, a, w, blocks, plain, info, lang))

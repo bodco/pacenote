@@ -288,6 +288,7 @@ struct CallPageView: View {
             ServerSyncRow(file: file)          // 0.12.1 (B8): the call's copy on the Pacenote server
             CallOrgRow(file: file)             // 0.17.0 (B6b): its organization, who sees it, Private
             OrgStateUpdateLine(file: file, decisions: decisions(o), risks: o.risks).padding(.top, 10)   // 0.17.0 (contract 9 block 5)
+            OutputLanguageBar(file: file, minutes: record?.minutes)     // PB-32 (FB2): only for a call with 2-3 languages
         }
         .overlay(alignment: .top) { Rectangle().fill(PN.C.rule).frame(height: 1) }
         .padding(.horizontal, PageMetrics.side).padding(.bottom, 16)
