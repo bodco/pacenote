@@ -35,7 +35,9 @@ Pacenote. Earlier versions are described in the commit messages and in
   to send it", "they asked for it") or a nearby one ("we reviewed the contract", "we presented the demo" for Proposal
   sent). The action must refer to the stage's own thing: "we sent the proposal and reviewed the contract" and "we
   sent the proposal for the contract" suggest Proposal sent, not Contract sent, and "we sent the contract template" or
-  "we sent the pricing sheet for the contract" suggest no stage. Quotes are shown
+  "we sent the pricing sheet for the contract" suggest no stage. A doubtful or alternative report ("we discussed
+  whether they sent the contract", "we sent the contract, or maybe just the pricing sheet") suggests no stage either.
+  Quotes are shown
   only to you and are never sent to HubSpot. Apply updates the deal once and Undo restores the old values. Picking
   another deal clears the old suggestions at once, and Apply waits until the new deal is read. When you move the call
   to another deal or to No deal, Apply also moves the HubSpot Call off the deal Pacenote linked it to; deals a person

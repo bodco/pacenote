@@ -128,8 +128,13 @@ public enum CRMDealSuggester {
                                "going", "plan", "plans", "planned", "planning", "next", "tomorrow", "later", "soon", "want", "wants",
                                "need", "needs", "hope", "hopes", "if", "once", "until", "may", "might", "could", "can", "expect",
                                "expects", "ask", "asks", "asked", "request", "requested", "pending", "waiting", "about",
+                               // uncertainty anywhere in the signal, also across a comma: "whether they sent", "or maybe just"
+                               "whether", "or", "either", "maybe", "perhaps", "possibly", "probably", "likely", "unsure", "unclear",
+                               "uncertain", "think", "thinks", "thought", "believe", "believes", "guess", "apparently", "supposedly",
+                               "wonder", "wondered",
                                "не", "ні", "ніколи", "ще", "без", "буде", "будемо", "будуть", "якщо", "завтра", "пізніше", "планує",
-                               "плануємо", "хоче", "хочуть", "треба", "потрібно", "просив", "просила", "просили", "чекаємо"]
+                               "плануємо", "хоче", "хочуть", "треба", "потрібно", "просив", "просила", "просили", "чекаємо",
+                               "чи", "або", "можливо", "мабуть", "напевно", "здається", "либонь", "ймовірно", "думаю", "вважаю"]
     static func hasWord(_ text: String, _ words: [String]) -> Bool {
         let tokens = Set(text.lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init))
         return words.contains { tokens.contains($0) }
@@ -142,9 +147,10 @@ public enum CRMDealSuggester {
             has(t[i], intentWords) && (t[i + 1] == "to" || (!t[i + 1].allSatisfy(\.isASCII) && (t[i + 1].hasSuffix("ти") || t[i + 1].hasSuffix("тися"))))
         }
     }
-    /// The text reports a milestone that took place: a completion word, no negation, no plan or request, not a question.
-    /// "The contract was never sent", "We will send the contract" and "We agreed to send the contract" are not evidence
-    /// for Contract sent.
+    /// The text reports a milestone that took place: a completion word, no negation, no plan or request, no doubt or
+    /// alternative, not a question. "The contract was never sent", "We will send the contract", "We agreed to send the
+    /// contract", "We discussed whether they sent the contract" and "We sent the contract, or maybe just the pricing
+    /// sheet" are not evidence for Contract sent.
     public static func happened(_ text: String) -> Bool {
         !text.contains("?") && has(text, doneWords) && !hasWord(text, notDoneWords) && !intent(text)
     }

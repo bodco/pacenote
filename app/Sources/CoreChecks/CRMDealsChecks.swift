@@ -161,6 +161,15 @@ func crmDeals() async {
                        ("We sent the contract draft to Emily Clark", "s4"), ("Пропозицію надіслали", "s3"), ("Ми вже надіслали нашу пропозицію", "s3")] {
         expect(stage(["signals": [["what": text]]], deal)?.value == id, "deals: \"\(text)\" is evidence for its own stage")
     }
+    // fix round 5: only an affirmative report counts; doubt or an alternative anywhere in the signal is no evidence
+    for text in ["We discussed whether they sent the contract", "We sent the contract, or maybe just the pricing sheet.",
+                 "I think we sent the contract", "Possibly the contract was signed", "We sent either the contract or the proposal",
+                 "Ми обговорили, чи надіслали вони контракт", "Ми надіслали контракт, або, можливо, лише прайс",
+                 "Здається, контракт уже надіслали"] {
+        expect(stage(["signals": [["what": text]]], deal) == nil && !CRMDealSuggester.happened(text), "deals: no stage from \"\(text)\"")
+    }
+    expect(stage(["signals": [["what": "We sent the contract and the pricing sheet"]]], deal)?.value == "s4",
+           "deals: a plain report with a second object is still evidence")
     var other = deal; other.pipeline = "p2"; other.stage = "r1"
     expect(stage(["signals": [["what": "The contract was sent"]]], other) == nil, "deals: another pipeline's stage names are not used (the stage must be later in the same pipeline)")
     var lost = deal; lost.pipeline = ""
