@@ -232,8 +232,10 @@ class LiveRun:
         self.seen_lines = set()
         self.row_total = {}                          # PB-30: (t, ch, text) -> "row" events read: rows the writer appended
         self.fed_rows = {}                           # PB-30: (t, ch, text) -> lines fed for it
-        self.tr_rows = {}                            # PB-30: (t, ch, translated text) -> "translated" events read
-        self.tr_seen = {}                            # PB-30: (t, ch, translated text) -> rewritten rows skipped for them
+        self.tr_events = {}                          # PB-30: (t, ch, translated text) -> "translated" events not matched to a row yet
+        self.row_seqs = {}                           # PB-30: (t, ch, text) -> seqs of the rows the writer appended, in order
+        self.read_seqs = set()                       # PB-30: seqs of the rows already read as lines
+        self.read_unknown = {}                       # PB-30: (t, ch, text) -> lines read before their row event
         self.last_new = self.t0 = time.monotonic()
         self.last_touch = 0.0
         self.first_written = self.last_written = None
@@ -256,11 +258,15 @@ class LiveRun:
                     if r["event"] == "translated":          # the translation replaces the line's text
                         self.translations.append((r, time.monotonic()))
                         k = self.row_key(r.get("t"), r.get("ch"), r.get("text"))
-                        self.tr_rows[k] = self.tr_rows.get(k, 0) + 1
+                        self.tr_events.setdefault(k, []).append(r)
                     elif r["event"] == "row":               # the writer appended this row: its stable seq
                         self.rows.setdefault((r.get("t"), r.get("ch")), []).append(r)
                         k = self.row_key(r.get("t"), r.get("ch"), r.get("text"))
                         self.row_total[k] = self.row_total.get(k, 0) + 1
+                        self.row_seqs.setdefault(k, []).append(r.get("seq"))
+                        if self.read_unknown.get(k, 0) > 0:          # its line was read already
+                            self.read_unknown[k] -= 1
+                            self.read_seqs.add(r.get("seq"))
                     continue
                 self.timing.setdefault((r.get("t"), r.get("ch")), []).append(r)
             except ValueError:
@@ -279,17 +285,33 @@ class LiveRun:
                 key = self.row_key(ln.t, ln.speaker, ln.text)
                 # a file read again (the recorder rewrote it) shows a row twice; the writer's row events say how many
                 # identical rows really exist, so the same speaker saying the same words twice is two lines
-                if identity in self.seen_lines and not self.row_total.get(key, 0) > self.fed_rows.get(key, 0):
+                # (a translated row whose seq is not read yet is also new: the rewrite shows it with a real row's text)
+                unread = any(e.get("seq") is not None and e["seq"] not in self.read_seqs
+                             for e in self.tr_events.get(key, []))
+                if (identity in self.seen_lines and not self.row_total.get(key, 0) > self.fed_rows.get(key, 0)
+                        and not unread):
                     continue
-                # the end-of-call rewrite shows a translated row with its new text: that line was already fed (it gets
-                # the text from the "translated" event), so it is not a new one, unless the writer appended such a row
-                if (self.tr_rows.get(key, 0) > self.tr_seen.get(key, 0)
-                        and not self.row_total.get(key, 0) > self.fed_rows.get(key, 0)):
-                    self.tr_seen[key] = self.tr_seen.get(key, 0) + 1
+                # the end-of-call rewrite shows a translated row with its new text (unless the writer appended such a
+                # row): it is the row of the "translated" event's seq. Read already: the line has the text from the
+                # event. Not read yet (the engine polled first after the rewrite): it is that row, fed now, once.
+                if self.tr_events.get(key) and not self.row_total.get(key, 0) > self.fed_rows.get(key, 0):
+                    ev = self.tr_events[key].pop(0)
+                    seq = ev.get("seq")
                     self.seen_lines.add(identity)
-                    continue
-                self.seen_lines.add(identity)
-                self.fed_rows[key] = self.fed_rows.get(key, 0) + 1
+                    if seq is None or seq in self.read_seqs:
+                        continue
+                    self.read_seqs.add(seq)
+                    ln.preset_seq = seq
+                    orig = self.row_key(ln.t, ln.speaker, ev.get("original"))
+                    self.fed_rows[orig] = self.fed_rows.get(orig, 0) + 1
+                else:
+                    self.seen_lines.add(identity)
+                    self.fed_rows[key] = self.fed_rows.get(key, 0) + 1
+                    seq = next((q for q in self.row_seqs.get(key, []) if q not in self.read_seqs), None)
+                    if seq is None:
+                        self.read_unknown[key] = self.read_unknown.get(key, 0) + 1
+                    else:
+                        self.read_seqs.add(seq)
                 self.n += 1
                 self.pending.append((ln, time.monotonic()))
                 self.last_new = time.monotonic()
@@ -313,7 +335,9 @@ class LiveRun:
         # the seq comes from the writer's "row" event for this exact row (time, channel, text), never from timing order:
         # the timing file also has entries for lines the writer dropped as echo
         ln.seq = None
-        if not self.claim_seq(ln):
+        if getattr(ln, "preset_seq", None) is not None:      # a rewritten row: its seq came from the "translated" event
+            self.claim_seq_of(ln, ln.preset_seq)
+        elif not self.claim_seq(ln):
             self.unseq.append(ln)                # the row event may land after the line was read: see reconcile_seq
         self.eng.on_line(ln)
         self.first_written = self.first_written or ln.written
@@ -328,6 +352,14 @@ class LiveRun:
         with self.eng.lock:
             ln.seq = rows.pop(i).get("seq")
         return True
+
+    def claim_seq_of(self, ln, seq) -> None:
+        rows = self.rows.get((getattr(ln, "t", None), getattr(ln, "speaker", None))) or []
+        i = next((k for k, r in enumerate(rows) if r.get("seq") == seq), None)
+        with self.eng.lock:
+            if i is not None:
+                rows.pop(i)
+            ln.seq = seq
 
     def reconcile_seq(self) -> None:
         """A line fed before its "row" event was read gets the seq now (the timing file is read before the Markdown)."""

@@ -4,12 +4,21 @@ import threading
 import time
 
 from conftest import FIX
+from livetips_m0 import live
 from livetips_m0.live import run
 from livetips_m0.providers import FakeProvider
 from test_engine import CFG, responder
 
 
-def test_live_tail_picks_up_appended_lines(tmp_path):
+def test_live_tail_picks_up_appended_lines(tmp_path, monkeypatch):
+    attached = threading.Event()
+    init = live.LiveRun.__init__
+
+    def init_and_signal(self, *a, **kw):
+        init(self, *a, **kw)
+        attached.set()                     # the starting offsets are taken: what is written now is read
+
+    monkeypatch.setattr(live.LiveRun, "__init__", init_and_signal)
     md = tmp_path / "live-call.md"
     md.write_text("# Live transcript: live-call\n\n")
     tm = tmp_path / "live-call.md.timing.jsonl"
@@ -17,14 +26,9 @@ def test_live_tail_picks_up_appended_lines(tmp_path):
     src = [l for l in (FIX / "demo-call.md").read_text().splitlines() if l.startswith("[")]
 
     def writer():
-        # the engine joins a running call and skips what is already there: write only after it attached (run()
-        # writes the run sidecar just before it starts tailing). A fixed head start lost the first line when the
-        # engine took longer than that to start on a busy machine.
-        attached = tmp_path / "out" / "live-call.app.run.json"
-        deadline = time.monotonic() + 30
-        while not attached.exists() and time.monotonic() < deadline:
-            time.sleep(0.05)
-        time.sleep(0.3)
+        # the engine joins a running call and skips what is already there: write only after it took the starting
+        # offsets. A fixed head start (or the run sidecar, written just before) lost the first line on a busy machine.
+        attached.wait(30)
         for line in src[:3]:
             now = dt.datetime.now()
             hms = now.strftime("%H:%M:%S")

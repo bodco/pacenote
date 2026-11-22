@@ -32,7 +32,10 @@ Pacenote. Earlier versions are described in the commit messages and in
   next route is asked, else the line stays marked). The local model is used only on this Mac (redirects included,
   never through a proxy); a model server elsewhere gets the text only with the call's permission. Two identical rows
   from one speaker stay two lines in the live view, and the end-of-call rewrite does not add a translated row to the
-  tips engine a second time. A failed translation is logged with its route and the reason (a timeout, an exit code,
+  tips engine a second time, nor drops it when the engine first reads the file after the rewrite. A line from outside
+  the set is translated into the language it was written for (the main one), also when Whisper wrote it in the
+  other language of the call (French with English as the main one, written in Ukrainian letters); Ukrainian heard as
+  Russian stays Ukrainian. A failed translation is logged with its route and the reason (a timeout, an exit code,
   a bad answer), never with the text.
 
 ## 0.26.4 (2026-11-20)
