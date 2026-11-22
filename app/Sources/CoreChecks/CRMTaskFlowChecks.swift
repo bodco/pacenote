@@ -406,6 +406,33 @@ func crmTaskFlowChecks() async {
     expect(creates() == createsAuto && relinks() == 1 && !box.notes.contains { if case .added = $0 { return true }; return false },
            "hflow: the after-call add on a link of another portal makes nothing and says so once")
 
+    // 19 (fix round 5). a call link as H2 (PB-58) writes it: the portal is "portalId", the task gets its deal,
+    // company and contacts. The key "portal" is not H2's and adds nothing.
+    let stem = dir + "/2026-11-25-1000-orbit"
+    let pb58: [String: Any] = ["provider": "hubspot", "companyId": "C1", "companyName": "Orbit Labs", "dealId": "D7", "dealName": "Orbit pilot",
+                               "contactIds": ["P1", "P2"], "contactNames": ["Emily Clark", "Michael Brown"], "callKey": "k1", "callId": "",
+                               "portalId": "111", "occurrence": "evt-1"]
+    let sidecar = CallLayout.sidecar(stem, ".crm.json")
+    try? FileManager.default.createDirectory(atPath: (sidecar as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
+    try? JSONSerialization.data(withJSONObject: pb58).write(to: URL(fileURLWithPath: sidecar))
+    let l58 = CRMTasks.callLink(base: stem)
+    expect(l58.portal == "111" && l58.refs == [CRMRef("deals", "D7"), CRMRef("companies", "C1"), CRMRef("contacts", "P1"), CRMRef("contacts", "P2")],
+           "hflow: an H2 call link gives its portal and its deal, company and contacts")
+    let n2 = CommitmentRegister.add(folder: folder, text: "Draft the pilot success criteria", project: "orbit", title: "Orbit", call: "2026-11-25-1000-orbit.md") ?? ""
+    let made58 = await flow.add(item(n2)!, properties: props("Draft the pilot success criteria"), refs: l58.refs, linkPortal: l58.portal)
+    expect(made58?.created == true && Set(hs.assoc[made58?.id ?? ""] ?? []) == ["deals:D7", "companies:C1", "contacts:P1", "contacts:P2"]
+           && item(n2)?.crmTask == made58?.id && item(n2)?.crmPortal == "111",
+           "hflow: Add on a call linked by H2 makes the task on its deal, company and contacts")
+    var old = pb58; old["portal"] = old.removeValue(forKey: "portalId")
+    try? JSONSerialization.data(withJSONObject: old).write(to: URL(fileURLWithPath: sidecar))
+    let lOld = CRMTasks.callLink(base: stem)
+    let n3 = CommitmentRegister.add(folder: folder, text: "Send the pilot timeline", project: "orbit", title: "Orbit", call: "2026-11-25-1000-orbit.md") ?? ""
+    let createsOld = creates()
+    let madeOld = await flow.add(item(n3)!, properties: props("Send the pilot timeline"), refs: lOld.refs, linkPortal: lOld.portal)
+    expect(lOld.portal == "" && madeOld == nil && creates() == createsOld, "hflow: a link without H2's portalId adds nothing")
+    let none = CRMTasks.callLink(base: dir + "/no-such-call")
+    expect(none.refs.isEmpty && none.portal.isEmpty, "hflow: a call without a link has no refs")
+
     // the cache keeps the portal; a queued write without one is never sent
     let again = makeFlow()
     expect(again.portal == flow.portal && again.tasks.count == flow.tasks.count, "hflow: the cache keeps the portal")

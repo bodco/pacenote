@@ -36,8 +36,8 @@ Pacenote. Earlier versions are described in the commit messages and in
   the change queued; a queued change HubSpot refuses later says so with Retry, also when the task list cannot be read,
   and refused queued ticks give the item back as HubSpot last had it; several queued changes of one task are sent in
   order, so an older tick HubSpot was busy for never lands over a newer reopen. A call linked to HubSpot records in
-  another account (or before Pacenote kept the account) gets no task and asks you to press Refresh on the call's
-  HubSpot line first. Ticking, removing or deleting (call page) an item linked to a HubSpot task updates the task from every list,
+  another account (or before Pacenote kept the account) gets no task and asks you to press Relink in Update
+  HubSpot on the call page first. Ticking, removing or deleting (call page) an item linked to a HubSpot task updates the task from every list,
   also when the task is not in your lists; Undo or a refused delete gives a completed item back completed, with its
   date. A task deleted in HubSpot unlinks its item even after you completed it, also with more than 80 linked items.
 

@@ -168,6 +168,19 @@ public enum CRMTasks {
         let host = region.lowercased().hasPrefix("eu") ? "app-eu1.hubspot.com" : "app.hubspot.com"
         return "https://\(host)/tasks/\(portal)/view/all/task/\(id)"
     }
+
+    /// The call's CRM link (<base>.crm.json, written by H2) as task associations, with the portal its ids belong to
+    /// (H2's "portalId"; "" for a link that does not say, which adds nothing until the PM refreshes it). Deal, company,
+    /// contacts: the same refs the Call engagement gets (CRMCallLogger.refs).
+    public static func callLink(base: String, fm: FileManager = .default) -> (refs: [CRMRef], portal: String) {
+        guard let d = fm.contents(atPath: CallLayout.sidecar(base, ".crm.json")),
+              let o = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any] else { return ([], "") }
+        var r: [CRMRef] = []
+        if let deal = o["dealId"] as? String, !deal.isEmpty, deal != "none" { r.append(CRMRef("deals", deal)) }
+        if let co = o["companyId"] as? String, !co.isEmpty { r.append(CRMRef("companies", co)) }
+        r += ((o["contactIds"] as? [String]) ?? []).filter { !$0.isEmpty }.map { CRMRef("contacts", $0) }
+        return (r, (o["portalId"] as? String) ?? "")
+    }
 }
 
 /// The HubSpot calls of the tasks, on the same client as everything else (retries, 401/403 lines).

@@ -15,7 +15,6 @@ struct CRMLink: Codable, Equatable {
     var contactNames: [String] = []     // H2: the participants named in the Call engagement
     var callKey = ""                    // H2: the Pacenote call id, made once and kept with the call
     var callId = ""                     // H2: the HubSpot Call engagement of this call, so a re-run updates it
-    var portal = ""                     // PB-17: the HubSpot portal the ids belong to ("" before it was kept)
 
     init() {}
     init(from d: Decoder) throws {
@@ -24,7 +23,7 @@ struct CRMLink: Codable, Equatable {
         provider = s(.provider, "hubspot"); companyId = s(.companyId); companyName = s(.companyName); dealId = s(.dealId); dealName = s(.dealName)
         contactIds = (try? c.decodeIfPresent([String].self, forKey: .contactIds)) ?? nil ?? []
         contactNames = (try? c.decodeIfPresent([String].self, forKey: .contactNames)) ?? nil ?? []
-        callKey = s(.callKey); callId = s(.callId); portal = s(.portal)
+        callKey = s(.callKey); callId = s(.callId)
     }
 
     static func url(base: String) -> URL { URL(fileURLWithPath: CallLayout.sidecar(base, ".crm.json")) }
@@ -50,17 +49,6 @@ extension CRMService {
         guard let c = connector() else { return (nil, L("crm.notConnected")) }
         do {
             var link = keep ?? CRMLink()
-            // PB-17: the ids belong to one portal. A kept link of another portal (or one that does not say) keeps only
-            // "no deal"; the company and deal are found again in the portal the key opens now. The Call of another
-            // recorded portal is made again; a link from before keeps its Call (H2).
-            var pid = ""
-            if let hs = c as? HubSpotConnector { pid = (try? await hs.portal().id) ?? "" }
-            if !pid.isEmpty && link.portal != pid {
-                if !link.portal.isEmpty { link.callId = "" }
-                link.companyId = ""; link.companyName = ""
-                if link.dealId != "none" { link.dealId = ""; link.dealName = "" }
-            }
-            link.portal = pid
             var company: CRMCompany? = nil
             if !link.companyId.isEmpty { company = CRMCompany(id: link.companyId, name: link.companyName, domain: "") }
             if company == nil, SettingsWindow.model.config.crm.matchByDomain {   // 0.8.7 (I6.2): the toggle in Matching

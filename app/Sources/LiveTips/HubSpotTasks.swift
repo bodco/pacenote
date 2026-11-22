@@ -97,11 +97,9 @@ final class HubSpotTasks: ObservableObject {
     func linkedCommitment(_ t: CRMTask) -> Commitment? { flow.linkedCommitment(t) }
 
     /// The CRM link (deal, company, contacts) of the call a commitment or a transcript belongs to, with the portal the
-    /// link was made in ("" for a link from before the portal was kept).
+    /// link was made in (H2's portalId; "" for a link that does not say).
     static func refs(callFile: String) -> (refs: [CRMRef], portal: String) {
-        let base = callFile.hasSuffix(".md") ? String(callFile.dropLast(3)) : callFile
-        let link = CRMLink.load(base: base)
-        return (link.map(CRMCallLogger.refs) ?? [], link?.portal ?? "")
+        CRMTasks.callLink(base: callFile.hasSuffix(".md") ? String(callFile.dropLast(3)) : callFile)
     }
 
     /// The Tracker's rows (the Tracker shows every task; the owner filter there works on "me").
@@ -176,9 +174,9 @@ final class HubSpotTasks: ObservableObject {
         guard ready else { return }
         startTimer()
         if flow.stale() && !flow.busy { refresh() }
-        let base = callFile.hasSuffix(".md") ? String(callFile.dropLast(3)) : callFile
-        let link = CRMLink.load(base: base).flatMap { !$0.portal.isEmpty && $0.portal == flow.portal ? $0 : nil }   // ids of this portal only
-        let ts = CRMTasks.forCall(shown, refs: link.map(CRMCallLogger.refs) ?? []).prefix(30)
+        let link = Self.refs(callFile: callFile)
+        let mine = !link.portal.isEmpty && link.portal == flow.portal        // ids of this portal only
+        let ts = CRMTasks.forCall(shown, refs: mine ? link.refs : []).prefix(30)
         let ids = Set(ts.map(\.id))
         let linkedIds = Set(Register.shared.items(in: CallLayout.liveFolder(of: callFile)).filter { ids.contains($0.crmTask) }.map(\.id))
         if var open = payload["open"] as? [[String: Any]] {
@@ -189,7 +187,8 @@ final class HubSpotTasks: ObservableObject {
             ["id": "hs-" + t.id, "text": t.title, "due": t.due.isEmpty ? "" : Register.dueText(t.due), "done": false, "mine": true,
              "badge": "HS", "status": L("htask.st." + t.status), "fromCall": linkedCommitment(t) != nil]
         }
-        payload["hubspotProject"] = link.map { $0.dealName.isEmpty ? $0.companyName : $0.dealName } ?? ""
+        let named = mine ? CRMLink.load(base: callFile.hasSuffix(".md") ? String(callFile.dropLast(3)) : callFile) : nil
+        payload["hubspotProject"] = named.map { $0.dealName.isEmpty ?$0.companyName : $0.dealName } ?? ""
     }
 
     /// A tick or Remove from the call window: "hs-<id>", or a register id linked to a HubSpot task. False when the id

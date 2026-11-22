@@ -1505,7 +1505,7 @@
  "htask.removeRefused": "HubSpot kept the task, so it is back in the list: {reason}",
  "htask.undoRefused": "{n} new HubSpot tasks stayed in HubSpot and stay linked: {reason}",
  "htask.accountChanged": "The HubSpot key now opens another account, so nothing was written there. The list is read again.",
- "htask.relinkCall": "This call's HubSpot link was made in another account (or before Pacenote kept the account), so no task was added. Press Refresh in the call's HubSpot line, then add it again.",
+ "htask.relinkCall": "This call's HubSpot link was made in another account (or before Pacenote kept the account), so no task was added. Press Relink in Update HubSpot on the call page, then add it again.",
  "htask.replayRefused": "HubSpot refused {n} waiting changes, so they were put back: {reason}",
  "htask.retry": "Retry",
  "htask.deleteQ": "Delete “{title}” in HubSpot?",

@@ -73,9 +73,10 @@ link: >-
   default, type, priority and queue from the settings, the owner, hs_task_body = "From the call <title>, <date>" and
   the link to the call page. Associations: contact 204, company 192, deal 216 from the call's CRM link. The register
   gets op crm_link with crm_task. An item is linked to Notion or HubSpot, never both. The call's CRM link keeps the
-  portal its ids were found in (<call>.crm.json portal); when it is another portal than the key opens now, or a link
-  from before the portal was kept, nothing is created or linked (no twin either) and the PM is asked to press Refresh
-  on the call's HubSpot line, which finds the company, deal and contacts again in the current portal. The after-call
+  portal its ids were found in (<call>.crm.json portalId, kept by H2); when it is another portal than the key opens
+  now, or a link from before the portal was kept, nothing is created or linked (no twin either) and the PM is asked
+  to press Relink in Update HubSpot on the call page (H2), which finds the company, deal and contacts again in the
+  current portal. The after-call
   add says this once per call. The call window's HubSpot group uses a call link of the current portal only.
 both_ways: >-
   A tick here completes the task there. A linked item whose task is closed in HubSpot gets done with source hubspot at
