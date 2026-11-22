@@ -753,6 +753,18 @@ func crmLinkCarry() {
     let flatPrep = root + "/live/prep-2026-11-22-1600-sync", flatCall = root + "/live/2026-11-22-1601-sync.app"
     write(link, CallLayout.sidecar(flatPrep, ".crm.json"))
     expect(CRMLinkCarry.carry(from: flatPrep, to: flatCall) && fm.fileExists(atPath: flatCall + ".crm.json"), "carry: flat layout")
+    // Refresh saves the link with the prep Start call copies: the chosen one over the planned one (PB-58 fix round 4)
+    let planned = folder + "/prep-2026-11-22-1500-orbit-renewal", picked = folder + "/prep-2026-11-22-1400-orbit-renewal"
+    expect(CRMLinkCarry.prepBase(chosen: picked + ".brief.md", planned: planned) == picked, "refresh base: the chosen brief over the planned prep")
+    expect(CRMLinkCarry.prepBase(chosen: picked + ".sheet.json", planned: planned) == picked, "refresh base: a chosen Meeting Sheet")
+    expect(CRMLinkCarry.prepBase(chosen: nil, planned: planned) == planned && CRMLinkCarry.prepBase(chosen: "", planned: planned) == planned,
+           "refresh base: no choice, the planned prep")
+    expect(CRMLinkCarry.prepBase(chosen: nil, planned: nil) == nil, "refresh base: nothing known")
+    // the link Refresh saved at the chosen prep is the one Start call carries
+    write(link, CallLayout.sidecar(picked, ".crm.json"))
+    let call2 = folder + "/2026-11-22-1405-orbit-renewal.app"
+    expect(CRMLinkCarry.carry(from: CRMLinkCarry.prepBase(chosen: picked + ".brief.md", planned: planned)!, to: call2)
+           && read(CallLayout.sidecar(call2, ".crm.json"))["companyId"] as? String == "c1", "refresh base: Start call carries the chosen prep's link")
     try? fm.removeItem(atPath: root)
 }
 

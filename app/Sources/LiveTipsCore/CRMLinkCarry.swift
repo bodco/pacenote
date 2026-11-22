@@ -17,4 +17,13 @@ public enum CRMLinkCarry {
         try? fm.createDirectory(atPath: (dst as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
         return (try? out.write(to: URL(fileURLWithPath: dst), options: .atomic)) != nil
     }
+
+    /// The preparation Refresh saves the link with, picked the way Start call picks the one it copies to the call: the
+    /// prep chosen by hand (its brief or Meeting Sheet) first, else the planned one. nil when neither is known.
+    public static func prepBase(chosen: String?, planned: String?) -> String? {
+        if let c = chosen, !c.isEmpty {
+            for ext in [".brief.md", ".sheet.json"] where c.hasSuffix(ext) { return String(c.dropLast(ext.count)) }
+        }
+        return planned
+    }
 }

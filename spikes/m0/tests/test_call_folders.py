@@ -152,3 +152,30 @@ def test_start_call_carries_the_hubspot_link(tmp_path):
     assert ".crm.json" in lt.adopt_prep(str(other / "2026-11-22-1601-weekly-sync.app"))
     # a link of another call is not taken
     assert ".crm.json" not in lt.adopt_prep(str(other / "2026-11-22-1700-board-review.app"))
+
+
+def test_hubspot_link_of_another_call_is_not_carried(tmp_path):
+    """PB-58 fix round 4: a "Renewal" call adopts its own brief (no link); the "Acme renewal" link, whose title only
+    contains the call's, is never carried, neither from another call folder nor through a partly matching prep."""
+    import json
+    lt = _load_script("lt_cli_crm_other", REC / "bin/lt")
+    live = tmp_path / "proj" / "live"
+    link = {"portalId": "4711", "companyId": "acme", "dealId": "d-acme", "contactIds": ["p-acme"]}
+    acme = live / "2026-11-22-acme-renewal"
+    (acme / ".work").mkdir(parents=True)
+    Path(str(acme / "prep-2026-11-22-1500-acme-renewal") + ".brief.md").write_text("# Live Brief: Acme renewal\n", encoding="utf-8")
+    (acme / ".work" / "prep-2026-11-22-1500-acme-renewal.crm.json").write_text(json.dumps(link), encoding="utf-8")
+    own = live / "2026-11-22-renewal"
+    (own / ".work").mkdir(parents=True)
+    Path(str(own / "prep-2026-11-22-1600-renewal") + ".brief.md").write_text("# Live Brief: Renewal\n", encoding="utf-8")
+    call = own / "2026-11-22-1602-renewal.app"
+    got = lt.adopt_prep(str(call))
+    assert got[".brief.md"] == "prep-2026-11-22-1600-renewal.brief.md" and ".crm.json" not in got
+    assert not (own / ".work" / "2026-11-22-1602-renewal.app.crm.json").exists()
+    # no prep of its own: the partly matching Acme prep is adopted for its brief, its link still stays out
+    Path(str(own / "prep-2026-11-22-1600-renewal") + ".brief.md").unlink()
+    lone = live / "2026-11-22-renewal-2"
+    lone.mkdir()
+    got = lt.adopt_prep(str(lone / "2026-11-22-1700-renewal.app"))
+    assert got[".brief.md"] == "prep-2026-11-22-1500-acme-renewal.brief.md" and ".crm.json" not in got
+    assert not (lone / ".work" / "2026-11-22-1700-renewal.app.crm.json").exists()

@@ -163,8 +163,9 @@ struct CRMCallRow: View {
     @State private var err = ""
 
     var base: String? {
-        if let p = PrepDocWindow.path(for: model) { return String(p.dropLast(9)) }
-        if let b = model.prepBase { return b }
+        // the same preparation Start call copies to the call (CallEngine.adoptPrep): the one chosen by hand, else the planned one
+        if let b = CRMLinkCarry.prepBase(chosen: model.chosenPrepPath, planned: model.prepBase) { return b }
+        if let p = PrepDocWindow.path(for: model), p.hasSuffix(".brief.md") { return String(p.dropLast(".brief.md".count)) }
         // 0.8.7.1: before Prepare, the snapshot goes where Prepare will write the brief (PrepRunner's base), so the first
         // brief already reads it; Refresh was greyed out until a brief existed
         guard let root = model.root, !root.isEmpty else { return nil }

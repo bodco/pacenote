@@ -166,7 +166,10 @@ is shown on the card. Behavior to keep and to define:
 1. Start call: Refresh links company, deal and contacts (`.crm.json` of the preparation). When the recording starts,
    the link is copied to the call's own `<stem>.crm.json` together with the preparation's files (the chosen
    preparation, a late one, or the automatic pick by title), without `callKey` and `callId`; a link the call already
-   has is kept.
+   has is kept. Refresh saves the link with the same preparation Start call copies (the one chosen by hand, else the
+   planned one). The automatic pick carries a link only from a preparation with exactly the call's title (not one
+   that contains it, such as "Acme renewal" for "Renewal"), else from a link alone in the call's own folder (Refresh
+   before Prepare); otherwise the call stays unlinked, so its Summary never goes to another customer's records.
 2. The call ends. If Auto is on and the call is linked in the portal of the current key (section 8), Pacenote waits for the call page's notes (about 2.5 minutes),
    then logs the Call. No review and no Undo in this path; the switch is the consent. The PM sees it in HubSpot and in
    the call's Update HubSpot window (Call row, ticked).

@@ -1667,7 +1667,9 @@ call's own id with the call, so applying again, or the Auto switch, updates the 
 second one. One rare case still makes a second Call: HubSpot creates the Call but its answer is lost, and you apply
 again before HubSpot's search shows the new Call; the Call text carries `Pacenote call id`, so a search in HubSpot
 finds both. The company, deal and contacts you link with Refresh in Start call go with the preparation to the
-recorded call. Undo deletes a new Call or puts the old values back, and does nothing if the key now belongs to another
+recorded call (Refresh saves them with the preparation you chose, else the planned one). A preparation Pacenote picks
+by title passes them on only when its title is exactly the call's: a "Renewal" call never takes the company and deal of
+"Acme renewal", it stays unlinked. To link it, choose its preparation in Start call and press Refresh before you start. Undo deletes a new Call or puts the old values back, and does nothing if the key now belongs to another
 HubSpot account. The link also remembers its HubSpot account: after
 you change the key to another account, or for a call linked before this version, Pacenote writes nothing and Update
 HubSpot offers **Relink**. **Log the call in HubSpot automatically after it

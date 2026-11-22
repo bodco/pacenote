@@ -24,7 +24,9 @@ Pacenote. Earlier versions are described in the commit messages and in
   never sent. A call's HubSpot link now remembers its HubSpot account: after the key changes to another account, or
   for a call linked before this version, nothing is written and Update HubSpot offers **Relink**. The company, deal
   and contacts linked with Refresh in Start call now go with the preparation to the recorded call, so Auto and Update
-  HubSpot find them (before, the call showed "not linked"). A new
+  HubSpot find them (before, the call showed "not linked"). Refresh saves the link with the preparation the call will
+  use (the one you chose, else the planned one), and a preparation picked by title passes its link on only when its
+  title is exactly the call's, so a "Renewal" call never takes the "Acme renewal" company and deal. A new
   switch in Settings > Integrations > HubSpot, **Log the call in HubSpot automatically after it ends**, is off by
   default and logs only the Call. The HubSpot integration design is in `docs/specs/hubspot-crm-integration.md`.
 

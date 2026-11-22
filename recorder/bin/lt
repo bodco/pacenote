@@ -560,18 +560,33 @@ def adopt_prep(s):
         shutil.copy(src, sc(s, ext))
         adopted[ext] = src.name
         bases.setdefault("prep", str(src)[: -len(ext)])
-    # H2 (PB-58): the HubSpot link Refresh saved with the preparation; from the adopted prep, else the freshest
-    # matching link (Refresh before Prepare)
+    # H2 (PB-58): the HubSpot link Refresh saved with the preparation, only from a prep of this very call (the same
+    # title, not one containing the other): a link sends the call's Summary to those HubSpot records, so a link of
+    # another call is never taken and the call stays unlinked. From the adopted prep; with no prep adopted, the freshest
+    # link in the call's own folder (Refresh before Prepare writes it there).
     crm = sc(s, ".crm.json")
     if not os.path.exists(crm):
-        src = sc(bases["prep"], ".crm.json") if "prep" in bases else ""
-        if not os.path.exists(src):
-            cands = [p for d in dirs for p in d.glob("prep-*.crm.json") if is_fresh(p)
-                     and title_match(prep_core(str(p), ".crm.json"), title)]
+        def same_call(p, ext):
+            return same_title(prep_core(str(p), ext), title)
+        src = ""
+        if "prep" in bases:
+            p = sc(bases["prep"], ".crm.json")
+            if os.path.exists(p) and same_call(p, ".crm.json"):
+                src = p
+        else:
+            own = Path(s).parent
+            cands = [p for d in (own, own / call_layout.WORK_DIR) for p in d.glob("prep-*.crm.json")
+                     if is_fresh(p) and same_call(p, ".crm.json")]
             src = str(max(cands, key=lambda p: p.stat().st_mtime)) if cands else ""
         if src and carry_crm_link(src, crm):
             adopted[".crm.json"] = os.path.basename(src)
     return adopted
+
+
+def same_title(a, b):
+    """The same call title, ignoring spaces and hyphens (title_match without the containment)."""
+    a, b = slugify(a).replace("-", ""), slugify(b).replace("-", "")
+    return bool(a) and a == b
 
 
 def carry_crm_link(src, dst):
