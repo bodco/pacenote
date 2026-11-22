@@ -1792,6 +1792,7 @@
  "memory.afterFirst": "After your first call",
  "callEdit.err.noAccess": "the Notion page was not found or is not shared with your integration (in Notion: ⋯ > Connections)",
  "callEdit.err.token": "Notion did not accept the token (Settings > Integrations > Notion)",
+ "crm.undo.otherPortal": "Undo sent nothing: the {crm} key now opens another portal. Switch back to the key used for Apply and press Undo again",
  "crm.undoFailed": "Undo did not finish: {n} change(s) are still in {crm}, remove them there",
  "set.scanNote": "Workspaces: {ws}, new projects: {new}",
  "set.foldersInside": "Folders inside: {n}",

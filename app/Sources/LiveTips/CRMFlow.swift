@@ -271,6 +271,7 @@ struct CRMUpdateView: View {
     @State private var status = ""
     @State private var undo: [(String, String, [String: String])] = []    // (type, id, old fields)
     @State private var undoUntil: Date? = nil
+    @State private var undoPortal = ""    // H3: the portal the undo ids belong to; Undo sends nothing to another one
     @State private var applied = false     // 0.8.7.1: a second Apply wrote the note and the task twice
     @State private var needsRelink = false // H2: the link is from another portal, or from before the portal was kept
     @StateObject private var people = CRMPeopleModel()     // H3: the call's contacts, company and leads
@@ -373,11 +374,11 @@ struct CRMUpdateView: View {
                     let id = try await c.createTask(subject: t.subject, due: t.due, associations: refs); done.append(("tasks", id, [:]))
                 }
                 UsageLog.log("update_crm", ["fields": fields])
-                undo = done; undoUntil = Date().addingTimeInterval(8); applied = true
+                undo = done; undoPortal = l.portalId; undoUntil = Date().addingTimeInterval(8); applied = true
                 status = L("crm.updated", ["crm": c.providerName])
-                DispatchQueue.main.asyncAfter(deadline: .now() + 8.2) { undoUntil = nil }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 8.2) { if let u = undoUntil, u <= Date() { undoUntil = nil } }     // a kept batch has its own 8 s
             } catch {
-                undo = done; undoUntil = done.isEmpty ? nil : Date().addingTimeInterval(8)
+                undo = done; undoPortal = l.portalId; undoUntil = done.isEmpty ? nil : Date().addingTimeInterval(8)
                 needsRelink = (error as? CRMError)?.code == CRMPortal.mismatchCode
                 status = needsRelink ? L("crm.relink.needed") : ((error as? CRMError)?.message ?? error.localizedDescription)
                 AnalyticsTracker.shared.error("crm", Analytics.errorCode(message: status), provider: "hubspot")   // S5: code only
@@ -400,31 +401,31 @@ struct CRMUpdateView: View {
         }
     }
 
-    /// Undo: notes and tasks are deleted, deal fields get their old values back.
+    /// Undo: notes, tasks and the new Call, contacts, companies and leads are deleted, deal and Call fields get their
+    /// old values back. H3: only in the portal Apply wrote to; another portal gets nothing and the batch is kept.
     func runUndo() {
         guard let c = crm.connector() else { return }
-        let items = undo; undo = []; undoUntil = nil
+        let items = undo, portal = undoPortal; undo = []; undoUntil = nil
         Task {
-            var failed = 0      // 0.8.7.1: a failed undo is said, not hidden behind "Undone"
-            for (type, id, old) in items.reversed() {
-                do {
-                    if type == "deals" { _ = try await c.updateDeal(id: id, fields: old) }
-                    else if type == "calls" && !old.isEmpty { try await c.restoreCall(id: id, fields: old) }
-                    else {
-                        try await c.delete(type: type, id: id)
-                        if type == "calls" {     // the next Apply makes a new Call
-                            if var d = CRMLink.load(base: base), d.callId == id { d.callId = ""; d.save(base: base) }
-                            link?.callId = ""
-                        }
-                        if ["contacts", "companies", "leads"].contains(type) {     // H3: on disk too, without overwriting a Call id Auto stored
-                            if let d = CRMLink.load(base: base) { CRMPeopleFlow.forget(type: type, id: id, in: d).save(base: base) }
-                            if let l = link { link = CRMPeopleFlow.forget(type: type, id: id, in: l) }
-                        }
-                    }
-                } catch { failed += 1 }
+            let r = await CRMUndo.run(items.map { CRMUndoItem($0.0, $0.1, $0.2) }, portal: portal, connector: c)
+            if let e = r.error {
+                undo = items; undoUntil = Date().addingTimeInterval(8)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 8.2) { if let u = undoUntil, u <= Date() { undoUntil = nil } }
+                status = e.code == CRMPortal.mismatchCode ? L("crm.undo.otherPortal", ["crm": c.providerName]) : e.message
+                return
             }
-            status = failed == 0 ? L("crm.undone") : L("crm.undoFailed", ["n": "\(failed)", "crm": c.providerName])
-            if failed == 0 { applied = false }
+            for it in r.undone where it.old.isEmpty {
+                if it.type == "calls" {     // the next Apply makes a new Call
+                    if var d = CRMLink.load(base: base), d.callId == it.id { d.callId = ""; d.save(base: base) }
+                    link?.callId = ""
+                }
+                if ["contacts", "companies", "leads"].contains(it.type) {     // H3: on disk too, without overwriting a Call id Auto stored
+                    if let d = CRMLink.load(base: base) { CRMPeopleFlow.forget(type: it.type, id: it.id, in: d).save(base: base) }
+                    if let l = link { link = CRMPeopleFlow.forget(type: it.type, id: it.id, in: l) }
+                }
+            }
+            status = r.failed == 0 ? L("crm.undone") : L("crm.undoFailed", ["n": "\(r.failed)", "crm": c.providerName])     // 0.8.7.1: said, not hidden
+            if r.failed == 0 { applied = false }
         }
     }
 }

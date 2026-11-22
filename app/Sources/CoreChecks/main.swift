@@ -804,6 +804,17 @@ func crmCalls() async {
     catch { perr = error as? CRMError }
     expect(perr?.code == CRMPortal.mismatchCode && pf.calls.isEmpty, "calls: a link with no portal needs Relink")
     expect(CRMPortal.matches(link: "777", current: "777") && !CRMPortal.matches(link: "", current: ""), "calls: portal match")
+    // H3: Undo of an Apply made in portal 500 while the key now opens 777: zero mutations, the batch is kept
+    let ub = [CRMUndoItem("contacts", "601"), CRMUndoItem("companies", "602"), CRMUndoItem("leads", "603"), CRMUndoItem("calls", "604"), CRMUndoItem("deals", "D1", ["amount": "10"])]
+    pf.log = []
+    let um = await CRMUndo.run(ub, portal: "500", connector: hp)
+    expect(um.error?.code == CRMPortal.mismatchCode && um.undone.isEmpty && um.failed == 0 && pf.log == ["GET /account-info/v3/details"],
+           "people: Undo with the key on another portal sends no archive, restore or deal update")
+    let un = await CRMUndo.run(ub, portal: "", connector: hp)
+    expect(un.error?.code == CRMPortal.mismatchCode && pf.log.allSatisfy { $0.hasPrefix("GET /account-info") }, "people: Undo of a batch with no portal sends nothing")
+    let uo = FakeHubSpotCalls(); uo.calls["604"] = ["hs_call_title": "Orbit"]
+    let uok = await CRMUndo.run([CRMUndoItem("calls", "604")], portal: "500", connector: HubSpotConnector(transport: uo, sleep: { _ in }))
+    expect(uok.error == nil && uok.undone.map(\.id) == ["604"] && uo.calls["604"] == nil && uo.log.contains("DELETE /crm/v3/objects/calls/604"), "people: Undo in the same portal deletes the new Call")
     // an association fails on a re-run: the Call keeps its old fields (no PATCH), so nothing is left outside Undo
     let af = FakeHubSpotCalls()
     let ha = HubSpotConnector(transport: af, sleep: { _ in })

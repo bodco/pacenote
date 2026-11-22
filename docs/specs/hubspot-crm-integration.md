@@ -101,7 +101,8 @@ decides, the service key stays the only path.
    page.
 4. **Undo.** A new object is deleted; an updated object gets its old property values back. Associations added during a
    re-run are not removed by Undo (they are harmless and HubSpot has no history for them); the Undo failure line says
-   what is left.
+   what is left. H3: Undo keeps the portal of the Apply it undoes and checks it first; when the key now opens another
+   portal (or the portal cannot be read) Undo sends nothing and keeps the batch.
 5. **Errors are one line where the action was**, never a modal; 429 waits (Retry-After, else 1, 2, 4 s) and retries three
    times; 401 and 403 say what to fix (key, or the named scope).
 6. **No silent overwrites of the PM's own edits in HubSpot.** A re-run updates only the Pacenote-owned properties of the

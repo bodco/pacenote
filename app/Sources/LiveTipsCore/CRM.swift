@@ -76,6 +76,29 @@ public enum CRMPortal {
     }
 }
 
+/// H3: Undo of one Apply. The ids are of the portal Apply wrote to; when the key now opens another portal (or the
+/// portal cannot be read) nothing is sent and the whole batch is returned to keep.
+public struct CRMUndoItem: Equatable {
+    public var type: String, id: String, old: [String: String]
+    public init(_ type: String, _ id: String, _ old: [String: String] = [:]) { self.type = type; self.id = id; self.old = old }
+}
+public enum CRMUndo {
+    public static func run(_ items: [CRMUndoItem], portal: String, connector c: CRMConnector) async -> (undone: [CRMUndoItem], failed: Int, error: CRMError?) {
+        do { try await CRMPortal.verify(link: portal, connector: c) }
+        catch { return ([], 0, (error as? CRMError) ?? CRMError(code: 0, message: error.localizedDescription)) }
+        var undone: [CRMUndoItem] = [], failed = 0
+        for it in items.reversed() {
+            do {
+                if it.type == "deals" { _ = try await c.updateDeal(id: it.id, fields: it.old) }
+                else if it.type == "calls" && !it.old.isEmpty { try await c.restoreCall(id: it.id, fields: it.old) }
+                else { try await c.delete(type: it.type, id: it.id) }
+                undone.append(it)
+            } catch { failed += 1 }
+        }
+        return (undone, failed, nil)
+    }
+}
+
 /// H2: Auto and Apply of one call take turns, and each reads the stored Call id when its turn comes, so the two paths
 /// never both create a Call for the same call.
 public actor CRMCallQueue {
