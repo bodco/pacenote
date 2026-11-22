@@ -141,16 +141,31 @@ func crmTimeline() async {
     let m4q = try? await hss.upsertMeeting(meeting(["Synced"]), knownId: "", associations: refs)
     expect(m4q?.id == "" && m4q?.pick.map(\.id) == ["77"] && m4q?.pick.first?.title == "Orbit renewal sync" && ts.objects["meetings"]?["77"]?[notesKey] == "<p>My own prep</p>"
            && !ts.log.contains { $0.hasPrefix("PUT ") || $0.hasPrefix("PATCH ") || $0 == "POST /crm/v3/objects/meetings" }, "meetings: a nearby meeting with another title is offered, nothing is written")
+    // review round 3 (reused sheet): a title or a start alone never writes; the calendar event may be another meeting's (a reused
+    // sheet), so even the event's title or start only orders the pick
     var sure = meeting(["Synced"]); sure.eventTitle = "Orbit Renewal  sync"
     let m4s = try? await hss.upsertMeeting(sure, knownId: "", associations: [CRMRef("contacts", "P1")])
-    expect(m4s?.id == "77" && m4s?.pick.isEmpty == true, "meetings: the calendar event's title makes the synced meeting sure")
-    if let id = m4s?.id, let old = m4s?.old { try? await hss.restore(type: "meetings", id: id, fields: old) }
+    expect(m4s?.id == "" && m4s?.pick.map(\.id) == ["77"], "meetings: the calendar event's title alone only offers the synced meeting")
     var atStart = meeting(["Synced"]); atStart.eventStart = start.addingTimeInterval(-300)
     ts.objects["meetings"]!["77"]!["hs_meeting_start_time"] = hubspotTime(start.addingTimeInterval(-290))
     let m4t = try? await hss.upsertMeeting(atStart, knownId: "", associations: [CRMRef("contacts", "P1")])
-    expect(m4t?.id == "77" && m4t?.pick.isEmpty == true, "meetings: starting with the calendar event makes the synced meeting sure")
-    if let id = m4t?.id, let old = m4t?.old { try? await hss.restore(type: "meetings", id: id, fields: old) }
-    expect(ts.objects["meetings"]?["77"]?[notesKey] == "<p>My own prep</p>", "meetings: undo of the sure matches puts the notes back")
+    expect(m4t?.id == "" && m4t?.pick.map(\.id) == ["77"], "meetings: starting with the calendar event alone only offers the synced meeting")
+    // the PM started an ad hoc call with another meeting's preparation: its sheet came along with that invite's event
+    // id, title and start (another title than the call's). The invite's synced meeting matches both, and is only offered
+    let tu = FakeHubSpotTimeline(); let hsu = HubSpotConnector(transport: tu, sleep: { _ in })
+    tu.objects["meetings"]!["90"] = ["hs_meeting_title": "Board prep", notesKey: "<p>Board prep, private</p>",
+                                     "hs_timestamp": hubspotTime(start.addingTimeInterval(600)), "hs_meeting_start_time": hubspotTime(start.addingTimeInterval(600))]
+    tu.objects["meetings"]!["91"] = ["hs_meeting_title": "Quick check-in", "hs_timestamp": hubspotTime(start.addingTimeInterval(-120))]
+    tu.assoc["meetings/90"] = ["P1#200"]; tu.assoc["meetings/91"] = ["P1#200"]
+    let reusedRef = try? JSONDecoder().decode(MeetingRef.self, from: Data(#"{"event_id": "BOARD@1", "start": "2026-05-28T21:00:00Z"}"#.utf8))
+    let reusedEv = CRMMeetingLog.event(ref: reusedRef, sheetTitle: "Board prep",
+                                       calendar: [(id: "BOARD@1", title: "Board prep", start: start.addingTimeInterval(600))])
+    var reused = meeting(["Ad hoc"]); reused.eventTitle = reusedEv.title; reused.eventStart = reusedEv.start
+    let mr = try? await hsu.upsertMeeting(reused, knownId: "", associations: refs)
+    expect(mr?.id == "" && mr?.created == false && mr?.pick.map(\.id) == ["90", "91"] && tu.objects["meetings"]?["90"]?[notesKey] == "<p>Board prep, private</p>"
+           && tu.assoc["meetings/90"] == ["P1#200"] && !tu.log.contains { $0.hasPrefix("PUT ") || $0.hasPrefix("PATCH ") || $0 == "POST /crm/v3/objects/meetings" },
+           "meetings: a reused sheet's event never writes to that invite's meeting; every nearby one is offered, the event's first")
+    expect(ts.objects["meetings"]?["77"]?[notesKey] == "<p>My own prep</p>", "meetings: nothing was written to the matched meetings")
     // review round 3: the call's calendar event only by the id its sheet kept, never the nearest event
     func mref(_ j: String) -> MeetingRef? { try? JSONDecoder().decode(MeetingRef.self, from: Data(j.utf8)) }
     let near = [(id: "OTHER@1", title: "Board prep", start: start.addingTimeInterval(-60)), (id: "EV@2", title: "Orbit renewal sync", start: start.addingTimeInterval(-300))]
@@ -207,7 +222,8 @@ func crmTimeline() async {
     ta.objects["meetings"]![mn?.id ?? ""] = nil
     ta.objects["meetings"]!["82"]!["hs_meeting_title"] = "Orbit renewal"
     let mt = try? await hsa.upsertMeeting(meeting(["Ours"]), knownId: "", associations: refs)
-    expect(mt?.id == "82" && ta.objects["meetings"]?["81"]?[notesKey] == "<p>81 private</p>", "meetings: of two at the time, the one with the call's title is used")
+    expect(mt?.id == "" && mt?.pick.map(\.id) == ["82", "81"] && ta.objects["meetings"]?["82"]?[notesKey] == "<p>82 private</p>",
+           "meetings: of two at the time, the one with the call's title is offered first, both are offered, none is written")
     let tk = FakeHubSpotTimeline(); let hsk = HubSpotConnector(transport: tk, sleep: { _ in })
     let other = "33333333-3333-3333-3333-333333333333"
     tk.objects["meetings"]!["83"] = ["hs_meeting_title": "Orbit renewal", notesKey: meeting(["Another call"], key: other).notes, "hs_timestamp": hubspotTime(start)]
@@ -234,7 +250,8 @@ func crmTimeline() async {
     tf.objects["meetings"]!["90"] = ["hs_meeting_title": "Orbit renewal", notesKey: "<p>Mine</p>", "hs_timestamp": hubspotTime(start)]
     tf.assoc["meetings/90"] = ["P1#200"]
     tf.failPut = 2      // the deal is added, the company fails
-    let mf = try? await hsf.upsertMeeting(meeting(["Ours"]), knownId: "", associations: refs)
+    var pickedF = meeting(["Ours"]); pickedF.target = "90"        // the PM picked the synced meeting
+    let mf = try? await hsf.upsertMeeting(pickedF, knownId: "", associations: refs)
     expect(mf == nil && tf.objects["meetings"]?["90"]?[notesKey] == "<p>Mine</p>" && tf.linked("meetings/90") == ["contacts/P1"] && !tf.log.contains { $0.hasPrefix("PATCH") },
            "meetings: a failed association changes nothing and takes off the ones just added")
     tf.failPatch = true
@@ -263,7 +280,8 @@ func crmTimeline() async {
     let tg = FakeHubSpotTimeline(); let hsg = HubSpotConnector(transport: tg, sleep: { _ in })
     tg.objects["meetings"]!["91"] = ["hs_meeting_title": "Orbit renewal", "hs_timestamp": hubspotTime(start)]
     tg.assoc["meetings/91"] = ["P1#200"]; tg.failPut = 2; tg.failDelete = ["deals/D1"]
-    let og = await CRMTimelineSync.log(key: key, writer: hsg, connector: hsg, meeting: meeting(["Ours"]), email: nil, associations: refs, queue: CRMCallQueue(),
+    var pickedG = meeting(["Ours"]); pickedG.target = "91"
+    let og = await CRMTimelineSync.log(key: key, writer: hsg, connector: hsg, meeting: pickedG, email: nil, associations: refs, queue: CRMCallQueue(),
                                        load: { CRMTimelineIds(portalId: "500") }, save: { _ in })
     expect((og.error as? CRMError)?.code == 500 && og.undo.count == 1 && og.undo.first?.0 == "meetings" && og.undo.first?.1 == "91"
            && og.undo.first?.2[CRMTimeline.addedKey] == "deals/D1", "timeline: an association a failed rollback left stays in Undo")

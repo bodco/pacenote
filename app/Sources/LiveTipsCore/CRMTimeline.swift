@@ -13,7 +13,8 @@ public struct CRMMeetingLog: Equatable {
     public var end: Date
     public var notes: String            // Summary, Decisions, Next steps, link back; see `notes(...)`
     /// The calendar event the call held, known only by an identity captured for the call (`event(ref:...)`), never by
-    /// being the nearest event: a synced Meeting carries its title and start.
+    /// being the nearest event. Only an order hint: a Meeting with its title or start is offered first, never written
+    /// to without the PM's pick.
     public var eventTitle: String = ""
     public var eventStart: Date? = nil
     /// The PM's pick after Update HubSpot asked (`CRMTimelineResult.pick`): a Meeting id to add the notes to, or
@@ -262,10 +263,10 @@ extension HubSpotConnector: CRMTimelineWriter {
     enum Match: Equatable { case none, one(String), several, pick([CRMMeetingCandidate]) }
 
     /// HubSpot's own Meeting of this call (its calendar sync, or ours from a run whose id was lost): on one of the
-    /// call's contacts, starting within 15 minutes. Ours (our block in the notes) wins; a meeting holding another call's
-    /// block is never it. Of the rest a meeting is sure only when it has the call's or the calendar event's title, or
-    /// starts with the calendar event (within a minute); exactly one sure one is used. Otherwise the ones left go to
-    /// the PM to pick, and nothing is written until then.
+    /// call's contacts, starting within 15 minutes. Ours (our block in the notes) is used; a meeting holding another
+    /// call's block is never it. Every other one goes to the PM to pick and nothing is written until then: a title or
+    /// a start alone never decides (the calendar event may come from another meeting's sheet the PM reused). The ones
+    /// with the call's or the calendar event's title, or starting with that event (within a minute), come first.
     func findMeeting(_ log: CRMMeetingLog, _ refs: [CRMRef]) async throws -> Match {
         let lo = Int((log.start.timeIntervalSince1970 - CRMMeetingLog.tolerance) * 1000), hi = Int((log.start.timeIntervalSince1970 + CRMMeetingLog.tolerance) * 1000)
         let groups = contactFilters(refs, [["propertyName": "hs_timestamp", "operator": "GTE", "value": String(lo)],
@@ -283,16 +284,17 @@ extension HubSpotConnector: CRMTimelineWriter {
         if free.isEmpty { return .none }
         func norm(_ s: String) -> String { s.lowercased().split(whereSeparator: { $0.isWhitespace }).joined(separator: " ") }
         let titles = Set([log.title, log.eventTitle].map(norm).filter { !$0.isEmpty })
-        let sure = free.filter { m in
+        func likely(_ m: CRMMeetingCandidate) -> Bool {
             titles.contains(norm(m.title)) || (log.eventStart.map { abs($0.timeIntervalSince(m.start)) <= CRMMeetingLog.sameStart } ?? false)
         }
-        if sure.count == 1 { return .one(sure[0].id) }
-        return .pick((sure.isEmpty ? free : sure).sorted { abs($0.start.timeIntervalSince(log.start)) < abs($1.start.timeIntervalSince(log.start)) })
+        return .pick(free.sorted { a, b in
+            likely(a) != likely(b) ? likely(a) : abs(a.start.timeIntervalSince(log.start)) < abs(b.start.timeIntervalSince(log.start))
+        })
     }
 
     /// The known id (kept with the call) first; else the PM's pick (`log.target`); else HubSpot's own Meeting of this
-    /// call when it is sure (`findMeeting`): the notes go into it. Not sure: nothing is written and the candidates come
-    /// back in `pick`. Else a new one. Associations are added before the notes change; a failure leaves nothing changed.
+    /// call when it holds this call's block (`findMeeting`): the notes go into it. Any other Meeting near the call:
+    /// nothing is written and the candidates come back in `pick`. Else a new one. Associations are added before the notes change; a failure leaves nothing changed.
     public func upsertMeeting(_ log: CRMMeetingLog, knownId: String, associations: [CRMRef]) async throws -> CRMTimelineResult {
         let keys = [Self.meetingNotes, "hs_meeting_title", "hs_meeting_start_time", "hs_meeting_end_time", "hs_meeting_outcome"]
         var id = knownId

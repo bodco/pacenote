@@ -28,7 +28,8 @@ enum CRMTimelineLogger {
         let s = CRMCallLog.sections(tldr: m?.tldr ?? "", recap: m?.recap ?? [], onMe: o.onMe, theirs: o.theirs.map { $0.who + ": " + $0.what }, salesNext: next)
         let end = rec.end ?? rec.start.addingTimeInterval((rec.minutes ?? 0) * 60)
         // the calendar event the call held, only by the event id its Meeting Sheet kept (<stem>.sheet.json), never the
-        // nearest event: its title and start make a synced Meeting sure; without them a nearby Meeting is offered to pick
+        // nearest event. The sheet may be another meeting's (reused at Start call), so this only puts a nearby Meeting with
+        // its title or start first in the pick; HubSpot's own Meeting is never written to without the PM's pick
         let sheet = try? MeetingSheetIO.load(CallLayout.sidecar(base, ".sheet.json"))
         let ev = CRMMeetingLog.event(ref: sheet?.meetingRef, sheetTitle: sheet?.title ?? "",
                                      calendar: CalendarService.shared.events.map { ($0.id, $0.title, $0.start) })

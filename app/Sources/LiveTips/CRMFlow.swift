@@ -369,6 +369,7 @@ struct CRMUpdateView: View {
                     let t = await CRMTimelineLogger.apply(w, connector: c, meeting: meetingLog, email: emailLog, base: base, link: link ?? l, refs: refs) { id in p.rows.first(where: { $0.id == id })?.on == true }
                     done += t.undo; link?.meetingId = t.link.meetingId; link?.emailId = t.link.emailId; link?.emailOurs = t.link.emailOurs
                     meetingPick = t.pick        // the pick block below says what is waiting
+                    if !t.pick.isEmpty { extra = " " + L("crm.meeting.waiting") }
                     if let e = t.error { throw e }
                 }
                 if p.rows.first(where: { $0.id == "deal" })?.on == true, !l.dealId.isEmpty, l.dealId != "none", !p.dealFields.isEmpty {
