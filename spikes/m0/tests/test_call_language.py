@@ -147,3 +147,24 @@ def test_intentional_client_followup_is_fresh_until_replaced(tmp_path):
     sidecar = CL.read_sidecar(t)
     assert "followup_uses_client_language" not in sidecar
     assert CL.stale_artifacts(sidecar["artifacts"], sidecar["output_language"]) == ["notes", "followup"]
+
+
+def test_no_dominant_field_uses_the_largest_share():
+    assert CL.spoken("", {"languages": {"en": 0.3, "uk": 0.7}}).dominant == "uk"
+
+
+def test_named_and_plain_transcript_share_one_sidecar(tmp_path):
+    plain = _call(tmp_path)
+    named = plain.with_name(plain.name[:-3] + ".named.md")
+    assert CL.sidecar_path(named) == CL.sidecar_path(plain)
+    CL.write_sidecar(plain, output_language="en")
+    assert CL.read_sidecar(named)["output_language"] == "en"
+
+
+def test_adapter_loads_the_call_meta_itself(tmp_path):
+    t = _call(tmp_path)
+    CL.call_layout.sidecar_of(t, ".recording.json").parent.mkdir(parents=True, exist_ok=True)
+    CL.call_layout.sidecar_of(t, ".recording.json").write_text(json.dumps({"dominant_language": "uk"}), "utf-8")
+    text = "[00:00:01] Mike (en): hi"
+    assert CL.output_language(t, text) == "uk"
+    assert CL.output_language(t, text, {}) == "en"       # an explicit meta is not replaced

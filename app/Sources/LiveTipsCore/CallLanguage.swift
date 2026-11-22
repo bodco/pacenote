@@ -87,6 +87,9 @@ public enum CallLanguage {
             let list = codes(l.compactMap { $0 as? String })
             shares = list.map { ($0, 1.0 / Double(list.count)) }
         }
+        if dom == nil, let top = shares.max(by: { $0.share < $1.share }) {   // no dominant field: the largest share (ties: first in key order)
+            dom = shares.first { $0.share == top.share }?.code
+        }
         if shares.isEmpty || dom == nil {
             let tags = firstGroup(tagRE, transcript)
             if !tags.isEmpty {
@@ -133,7 +136,16 @@ public enum CallLanguage {
         }
     }
 
-    public static func sidecarPath(transcript: String) -> String { CallLayout.sidecar(of: transcript, suffix) }
+    /// "X.named.md" and "X.md" are one call: one sidecar.
+    static func plainTranscript(_ t: String) -> String { t.hasSuffix(".named.md") ? String(t.dropLast(9)) + ".md" : t }
+
+    public static func sidecarPath(transcript: String) -> String { CallLayout.sidecar(of: plainTranscript(transcript), suffix) }
+
+    /// The call's own metadata (<stem>.recording.json), nil when absent or unreadable.
+    static func loadMeta(transcript: String) -> [String: Any]? {
+        guard let d = FileManager.default.contents(atPath: CallLayout.sidecar(of: plainTranscript(transcript), ".recording.json")) else { return nil }
+        return (try? JSONSerialization.jsonObject(with: d)) as? [String: Any]
+    }
 
     /// Absent, empty, half-written or unreadable: nothing chosen; never an error.
     public static func readSidecar(transcript: String) -> Sidecar {
@@ -183,7 +195,7 @@ public enum CallLanguage {
     /// The whole chain for a call with a transcript: sidecar choice > dominant (adapter) > the rest.
     public static func outputLanguage(transcript: String, text: String = "", meta: [String: Any]? = nil, startLangs: [String] = [],
                                       clientLanguage: String = "", settings: String = "") -> String {
-        resolve(explicit: readSidecar(transcript: transcript).outputLanguage, dominant: spoken(transcript: text, meta: meta).dominant,
+        resolve(explicit: readSidecar(transcript: transcript).outputLanguage, dominant: spoken(transcript: text, meta: meta ?? loadMeta(transcript: transcript)).dominant,
                 startLangs: startLangs, clientLanguage: clientLanguage, settings: settings)
     }
 }

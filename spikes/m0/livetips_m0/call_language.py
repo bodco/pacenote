@@ -85,6 +85,22 @@ class Spoken:
 
 
 
+def _named_to_md(transcript) -> str:
+    """'X.named.md' -> 'X.md': both names are one call and share one sidecar."""
+    t = str(transcript)
+    return t[:-len(".named.md")] + ".md" if t.endswith(".named.md") else t
+
+
+def load_meta(transcript) -> Optional[dict]:
+    """The call's own metadata (<stem>.recording.json, where PB-30 puts `dominant_language` and `languages`);
+    None when absent or unreadable."""
+    try:
+        d = json.loads(call_layout.sidecar_of(_named_to_md(transcript), ".recording.json").read_text("utf-8"))
+    except (OSError, ValueError):
+        return None
+    return d if isinstance(d, dict) else None
+
+
 def spoken(transcript_text: str = "", meta: Optional[dict] = None) -> Spoken:
     """The adapter (the only function that knows the recorder's shape; PB-30 may change it, nothing else does).
     1. `meta` of the call, when PB-30 writes it: `dominant_language` ("uk" or empty) and `languages` ({"uk": 0.71, ...}
@@ -103,6 +119,8 @@ def spoken(transcript_text: str = "", meta: Optional[dict] = None) -> Spoken:
     elif isinstance(langs, (list, tuple)):
         c_list = _codes(langs)
         shares = {c: 1.0 / len(c_list) for c in c_list}
+    if shares and not dom:
+        dom = max(shares, key=shares.get)           # no dominant field: the largest share (ties: first listed)
     if not shares or not dom:
         tags = _TAG.findall(transcript_text or "")
         if tags:
@@ -139,7 +157,7 @@ def is_multi(languages: list) -> bool:
 
 
 def sidecar_path(transcript) -> Path:
-    return call_layout.sidecar_of(transcript, SIDECAR_SUFFIX)
+    return call_layout.sidecar_of(_named_to_md(transcript), SIDECAR_SUFFIX)
 
 
 def read_sidecar(transcript) -> dict:
@@ -199,5 +217,7 @@ def stale_artifacts(artifacts: dict, output_language, followup_uses_client_langu
 def output_language(transcript, transcript_text: str = "", meta: Optional[dict] = None, start_langs=None,
                     client_language: str = "", settings: str = "") -> str:
     """The whole chain for a call with a transcript: sidecar choice > dominant (adapter) > the rest."""
+    if meta is None:
+        meta = load_meta(transcript)
     return resolve(read_sidecar(transcript)["output_language"], spoken(transcript_text, meta).dominant, start_langs,
                    client_language, settings)

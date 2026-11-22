@@ -202,7 +202,7 @@ extension PrompterController {
         if let b = d["body"] as? String { fu.body = b }
         if let s = d["subject"] as? String { fu.subject = s }
         switch d["item"] as? String ?? "" {
-        case "write": fu.write()
+        case "write": fu.write(replacingDraft: fu.body.isEmpty)   // a cleared draft with a remembered language must not make Write a no-op
         case "revise": fu.revise(d["instruction"] as? String ?? "")
         case "edited": fu.logHandEdits()
         case "copy": fu.copy()

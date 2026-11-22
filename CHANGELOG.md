@@ -8,7 +8,8 @@ Pacenote. Earlier versions are described in the commit messages and in
 - **Call notes, Summary, Recap and the Notion page follow the language of the call (PB-32, FB2):** they were written
   in the language most transcript lines were tagged with, so a Ukrainian call tagged mostly `en` by mistake got English
   notes, and the Notion page knew only English and Ukrainian. They now use one call language: your choice for the
-  call, else the dominant language of the call, never the interface language. A call in another language (Polish,
+  call, else the dominant language of the call (the language of most transcript lines until the recorder reports
+  one, so a call tagged wrongly is not fixed by this change alone), never the interface language. A call in another language (Polish,
   German...) gets the text in it with English headings and labels. Notes already written are not changed. The tips
   window no longer falls back to the interface language when the call has no language set.
 - **Output language on the call page (PB-32, FB2):** a call with two or three languages (each at least 10% of the
