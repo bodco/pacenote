@@ -172,6 +172,7 @@ final class CRMService: ObservableObject {
     static let shared = CRMService()
     enum State: Equatable { case idle, testing, ok(String), failed(String) }
     @Published var state: State = .idle
+    @Published var unverifiedScopes: [String] = []     // H6: probes of the last check that failed for another reason than 403
     var store: SecretStore { SecretStore(service: Bundle.main.bundleIdentifier ?? "io.github.example.livetips") }
 
     var connected: Bool { store.has(.hubspotKey) }     // 0.8.7.1: presence only, no Keychain prompt
@@ -191,8 +192,9 @@ final class CRMService: ObservableObject {
             do {
                 let a = try await c.testConnection()
                 // the scopes the key lacks show up as 403 on a read (H6: every read-provable scope, CRMScopeCheck)
-                var missing: [String] = []
-                if let hs = c as? HubSpotConnector { missing = await CRMScopeCheck.missing(hs) }
+                var missing: [String] = [], unverified: [String] = []
+                if let hs = c as? HubSpotConnector { (missing, unverified) = await CRMScopeCheck.check(hs) }
+                unverifiedScopes = unverified
                 // 0.8.7 (I6.2): the owner is picked by the user's email until the PM chooses one
                 let picked = SettingsWindow.model.config.crm.ownerAuto ? (try? await c.owners()).flatMap { CRMOwner.pick($0, emails: Self.ownEmails) } : nil
                 // H6: only the fields the test owns, read fresh, so a switch changed during the test is kept

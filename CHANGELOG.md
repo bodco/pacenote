@@ -18,9 +18,11 @@ Pacenote. Earlier versions are described in the commit messages and in
 ### HubSpot CRM
 
 - **The call is logged in HubSpot (H2).** Update HubSpot has a new Call row: a HubSpot Call with the title, start
-  time, duration, direction, outcome, participants, the Summary and next steps, and a link back to the call,
-  associated with the matched contacts, company and open deal. Applying again updates the same Call instead of
-  adding a second one, and Undo removes a new Call or restores the old values. Transcript text is never sent. A new
+  time, duration, direction, outcome, participants, the call page's Summary, the next steps, and a link back to the
+  call, associated with the matched contacts, company and open deal. Applying again, even while Auto runs, updates the
+  same Call instead of adding a second one, and Undo removes a new Call or restores the old values. Transcript text is
+  never sent. A call's HubSpot link now remembers its HubSpot account: after the key changes to another account, or
+  for a call linked before this version, nothing is written and Update HubSpot offers **Relink**. A new
   switch in Settings > Integrations > HubSpot, **Log the call in HubSpot automatically after it ends**, is off by
   default and logs only the Call. The HubSpot integration design is in `docs/specs/hubspot-crm-integration.md`.
 
@@ -29,7 +31,11 @@ Pacenote. Earlier versions are described in the commit messages and in
   companies, Deals, Meetings; all off by default, Calls is the existing Auto switch), field mapping with HubSpot's own
   properties as defaults, and owner mapping from Pacenote users to HubSpot owners. Update HubSpot now ends with the
   call's sync log: what was written, when and the result, with Retry for a failed write and Undo of the latest write
-  for 24 hours unless the record was changed in HubSpot since.
+  for 24 hours unless the record was changed in HubSpot since. Auto, Retry and Apply of the Call take turns, and Auto
+  writes nothing if you turned it off while it waited. A field cannot be mapped onto the Call's dedupe id, an owner,
+  a status or a property another field writes. Undo restores exactly the properties that were written and only
+  while HubSpot shows no change after Pacenote's write. When HubSpot does not answer a scope probe, the live check
+  says the check is not complete instead of showing everything as fine.
 
 ## 0.26.4 (2026-11-20)
 

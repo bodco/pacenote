@@ -674,10 +674,23 @@ final class FakeHubSpotCalls: CRMTransport {
     var log: [String] = []
     var bodies: [[String: Any]] = []
     var next = 100
+    var portal = 500                // the portal of the key, from account-info
+    var createDelay: UInt64 = 0     // ns a create takes, so two writers can overlap
+    var createThenFail = false      // the Call is made but the answer is a 502 (an ambiguous create)
+    var failPut = false             // adding an association fails with a 500
+    let lock = NSLock()             // the race checks send from two tasks at once; unguarded state crashed the gate
+    var rev: [String: Int] = [:]    // H6: id -> HubSpot's revision, moved by every create and update
+    func updatedAt(_ id: String) -> String { ISO8601DateFormatter().string(from: Date(timeIntervalSince1970: 1_780_000_000 + Double(rev[id] ?? 0))) }
     func send(_ method: String, _ path: String, _ body: [String: Any]?) async throws -> (Int, [String: Any], [String: String]) {
+        // the delay is waited before the lock, never inside it
+        if method == "POST" && path == "/crm/v3/objects/calls" && createDelay > 0 { try? await Task.sleep(nanoseconds: createDelay) }
+        return lock.withLock { handle(method, path, body) }
+    }
+    func handle(_ method: String, _ path: String, _ body: [String: Any]?) -> (Int, [String: Any], [String: String]) {
         log.append(method + " " + path.split(separator: "?")[0])
         if let b = body { bodies.append(b) }
         let props = { (b: [String: Any]?) -> [String: String] in ((b?["properties"] as? [String: Any]) ?? [:]).mapValues { "\($0)" } }
+        if path == "/account-info/v3/details" { return (200, ["portalId": portal], [:]) }
         if method == "POST" && path == "/crm/v3/objects/calls/search" {
             let want = ((((body?["filterGroups"] as? [[String: Any]])?.first?["filters"]) as? [[String: Any]])?.first?["value"] as? String) ?? ""
             let hit = calls.first { $0.value["hs_call_external_id"] == want }
@@ -688,16 +701,19 @@ final class FakeHubSpotCalls: CRMTransport {
             calls[id] = props(body)
             assoc[id] = ((body?["associations"] as? [[String: Any]]) ?? []).map { a in
                 "\((a["to"] as! [String: Any])["id"]!)#\(((a["types"] as! [[String: Any]])[0])["associationTypeId"]!)" }
-            return (200, ["id": id], [:])
+            if createThenFail { return (502, ["message": "Bad gateway"], [:]) }
+            rev[id, default: 0] += 1
+            return (200, ["id": id, "updatedAt": updatedAt(id)], [:])
         }
         let id = String(path.split(separator: "?")[0].split(separator: "/")[4])
         if path.hasPrefix("/crm/v4/objects/calls/") && method == "PUT" {
+            if failPut { return (500, ["message": "association failed"], [:]) }
             assoc[id, default: []].append(String(path.split(separator: "/").suffix(2).joined(separator: "/"))); return (200, [:], [:])
         }
         guard calls[id] != nil else { return (404, ["message": "not found"], [:]) }
         switch method {
-        case "GET": return (200, ["id": id, "properties": calls[id]!], [:])
-        case "PATCH": for (k, v) in props(body) { calls[id]![k] = v }; return (200, ["id": id], [:])
+        case "GET": return (200, ["id": id, "properties": calls[id]!, "updatedAt": updatedAt(id)], [:])
+        case "PATCH": for (k, v) in props(body) { calls[id]![k] = v }; rev[id, default: 0] += 1; return (200, ["id": id, "updatedAt": updatedAt(id)], [:])
         case "DELETE": calls[id] = nil; return (204, [:], [:])
         default: return (400, [:], [:])
         }
@@ -757,6 +773,76 @@ func crmCalls() async {
     let old = try? JSONDecoder().decode(CRMSettings.self, from: Data("{\"provider\":\"hubspot\"}".utf8))
     expect(old?.autoLogCall == false && old?.writeCall == true && old?.callDirection == "OUTBOUND" && CRMSettings().autoLogCall == false, "calls: Auto is off by default")
     expect(CRMCallLog(key: "k", title: "t", start: start, durationMs: -5, direction: "sideways", body: "").direction == "OUTBOUND", "calls: direction and duration are clamped")
+
+    // Auto and Apply overlap on one call: without the queue the fake makes two Calls, through it one
+    final class Stored { var id = ""; var portal = "500" }
+    let race = FakeHubSpotCalls(); race.createDelay = 50_000_000
+    let hr = HubSpotConnector(transport: race, sleep: { _ in })
+    let ea = entry(["a"])
+    async let x1 = try? hr.upsertCall(ea, knownId: "", associations: [])
+    async let x2 = try? hr.upsertCall(ea, knownId: "", associations: [])
+    _ = await (x1, x2)
+    expect(race.calls.count == 2, "calls: the fake shows the double create when two writers overlap")
+    let race2 = FakeHubSpotCalls(); race2.createDelay = 50_000_000
+    let hq = HubSpotConnector(transport: race2, sleep: { _ in })
+    let st = Stored(), q = CRMCallQueue()
+    func sync() async -> CRMCallResult? {
+        try? await CRMCallSync.log(ea, connector: hq, associations: [], queue: q,
+                                   load: { (st.id, st.portal) }, save: { st.id = $0 })
+    }
+    async let y1 = sync()
+    async let y2 = sync()
+    let (z1, z2) = await (y1, y2)
+    expect(race2.calls.count == 1 && z1?.id == z2?.id && st.id == z1?.id && Set([z1?.created, z2?.created]) == [true, false],
+           "calls: Auto and Apply at the same time make one Call; the second updates it")
+    // the link's portal must be the key's portal; another or an unknown one writes nothing
+    let pf = FakeHubSpotCalls(); pf.portal = 777
+    let hp = HubSpotConnector(transport: pf, sleep: { _ in })
+    var perr: CRMError? = nil
+    do { _ = try await CRMCallSync.log(entry(["a"]), connector: hp, associations: [], queue: q, load: { ("101", "500") }, save: { _ in }) }
+    catch { perr = error as? CRMError }
+    expect(perr?.code == CRMPortal.mismatchCode && pf.calls.isEmpty && !pf.log.contains { !$0.hasPrefix("GET /account-info") }, "calls: a link from another portal writes nothing")
+    perr = nil
+    do { _ = try await CRMCallSync.log(entry(["a"]), connector: hp, associations: [], queue: q, load: { ("", "") }, save: { _ in }) }
+    catch { perr = error as? CRMError }
+    expect(perr?.code == CRMPortal.mismatchCode && pf.calls.isEmpty, "calls: a link with no portal needs Relink")
+    expect(CRMPortal.matches(link: "777", current: "777") && !CRMPortal.matches(link: "", current: ""), "calls: portal match")
+    // an association fails on a re-run: the Call keeps its old fields (no PATCH), so nothing is left outside Undo
+    let af = FakeHubSpotCalls()
+    let ha = HubSpotConnector(transport: af, sleep: { _ in })
+    let made = try? await ha.upsertCall(entry(["Old summary"]), knownId: "", associations: [])
+    af.failPut = true
+    var aerr: Error? = nil
+    do { _ = try await ha.upsertCall(entry(["New summary"]), knownId: made?.id ?? "", associations: refs) } catch { aerr = error }
+    expect(aerr != nil && (af.calls[made?.id ?? ""]?["hs_call_body"] ?? "").contains("Old summary") && !af.log.contains { $0.hasPrefix("PATCH") },
+           "calls: a failed association leaves the Call's fields unchanged")
+    // an ambiguous create (the Call is made, the answer is a 502): found by the Pacenote call id, not made again
+    let amb = FakeHubSpotCalls(); amb.createThenFail = true
+    let hb = HubSpotConnector(transport: amb, sleep: { _ in })
+    let rb = try? await hb.upsertCall(entry(["a"]), knownId: "", associations: [])
+    amb.createThenFail = false
+    let rb2 = try? await hb.upsertCall(entry(["b"]), knownId: "", associations: [])
+    expect(rb?.id != nil && rb?.id == amb.calls.keys.first && amb.calls.count == 1 && rb2?.id == rb?.id, "calls: an ambiguous create is reconciled, never a second Call")
+    // a 4xx create is a real failure and is not reconciled
+    let rejected = try? await HubSpotConnector(transport: FakeBadCreate(), sleep: { _ in }).upsertCall(entry(["a"]), knownId: "", associations: [])
+    expect(rejected == nil, "calls: a rejected create fails")
+    // Summary is the notes' In short and Recap, next steps are what people took on; distinct texts stay distinct
+    let sec = CRMCallLog.sections(tldr: "**Budget** approved for Q3.", recap: ["Legal reviewed the terms"], onMe: ["Send the demo link"],
+                                  theirs: ["Emily Clark: share the security review"], salesNext: "Book the pilot")
+    expect(sec.summary == ["Budget approved for Q3.", "Legal reviewed the terms"] && sec.nextSteps == ["Send the demo link", "Emily Clark: share the security review"],
+           "calls: Summary from the notes, next steps from the commitments")
+    let body = CRMCallLog.body(summary: sec.summary, nextSteps: sec.nextSteps, participants: [], link: "", key: "k")
+    expect(body.contains("<b>Summary</b></p><ul><li>Budget approved") && body.components(separatedBy: "Send the demo link").count == 2,
+           "calls: next steps are not repeated as the Summary")
+    expect(CRMCallLog.sections(tldr: "", recap: [], onMe: [], theirs: [], salesNext: "Book the pilot").nextSteps == ["Book the pilot"], "calls: the sales next step when nobody took anything on")
+}
+
+/// H2: a create HubSpot rejects (400): never reconciled by search.
+final class FakeBadCreate: CRMTransport {
+    func send(_ method: String, _ path: String, _ body: [String: Any]?) async throws -> (Int, [String: Any], [String: String]) {
+        if path == "/crm/v3/objects/calls/search" { return (200, ["results": []], [:]) }
+        return (400, ["message": "Property values were not valid"], [:])
+    }
 }
 
 final class BodyFake: CRMTransport {
@@ -822,6 +908,71 @@ func crmSync() async {
     let before = bf.bodies.count
     let none = try? await hb.updateDeal(id: "D1", fields: ["hs_next_step": "Call back"])
     expect(none == [:] && bf.bodies.count == before, "sync: a deal update with every field set to Don't write sends nothing")
+    // reserved targets: a dedupe key, the owner, a status or another field's property is never a target
+    var rs = CRMSyncSettings()
+    rs.setProperty(.calls, "hs_call_title", to: "hs_call_external_id")
+    rs.setProperty(.deals, "hs_next_step", to: "hubspot_owner_id")
+    rs.setProperty(.calls, "hs_call_duration", to: "hs_call_body")
+    expect(rs.fields.isEmpty, "mapping: the picker's setter refuses the dedupe key, the owner and another field's property")
+    expect(!rs.canTarget(.calls, "hs_call_title", "hs_call_external_id") && !rs.canTarget(.deals, "closedate", "hubspot_owner_id") && !rs.canTarget(.deals, "hs_next_step", "dealstage")
+           && !rs.canTarget(.tasks, "hs_task_subject", "hs_task_status") && rs.canTarget(.calls, "hs_call_title", "pn_call_title") && rs.canTarget(.calls, "hs_call_title", ""),
+           "mapping: reserved targets are not offered")
+    // the same from a settings file edited by hand: the write path ignores the bad mapping
+    rs.fields = ["calls": ["hs_call_title": "hs_call_external_id"], "deals": ["hs_next_step": "hubspot_owner_id"]]
+    let rm = rs.mapped(.calls, ["hs_call_title": "Orbit renewal", "hs_call_external_id": "pacenote:k1"])
+    expect(rm["hs_call_external_id"] as? String == "pacenote:k1" && rm["hs_call_title"] as? String == "Orbit renewal", "mapping: a stored mapping onto the dedupe key keeps the key")
+    let rh = HubSpotConnector(transport: bf, sleep: { _ in }); rh.sync = rs
+    _ = try? await rh.updateDeal(id: "D1", fields: ["hs_next_step": "Call back"])
+    let dp = (bf.bodies.last?["properties"] as? [String: Any]) ?? [:]
+    expect(dp["hubspot_owner_id"] == nil && dp["hs_next_step"] as? String == "Call back", "mapping: a deal field never writes the deal's owner")
+    // collisions: two fields onto one property, or a field onto a property another input writes
+    var cs = CRMSyncSettings(); cs.setProperty(.calls, "hs_call_title", to: "pn_x")
+    expect(!cs.canTarget(.calls, "hs_call_body", "pn_x"), "mapping: a property one field writes is not offered to another")
+    cs.fields["calls"]?["hs_call_body"] = "pn_x"
+    let cm = cs.mapped(.calls, ["hs_call_title": "t", "hs_call_body": "b"])
+    expect(cm["pn_x"] as? String == "t" && cm["hs_call_body"] as? String == "b" && cm.count == 2, "mapping: a second field onto the same property writes its default")
+    var qs = CRMSyncSettings(); qs.setProperty(.deals, "hs_next_step", to: "budget_notes")
+    let qm = qs.mapped(.deals, ["hs_next_step": "Call back", "budget_notes": "Approved"])
+    expect(qm["budget_notes"] as? String == "Approved" && qm["hs_next_step"] as? String == "Call back", "mapping: a mapped field never overwrites another input's property")
+    // Undo of a deal update restores exactly the properties written, whatever the mapping is now
+    var later1 = CRMSyncSettings(); later1.setProperty(.deals, "hs_next_step", to: "pn_next"); hb.sync = later1
+    try? await hb.restoreDeal(id: "D1", fields: ["hs_next_step": "Old"])
+    expect(((bf.bodies.last?["properties"] as? [String: Any]) ?? [:]).mapValues { "\($0)" } == ["hs_next_step": "Old"], "undo: a remapped field is restored to the property written")
+    hb.sync = ds      // hs_next_step set to Don't write since
+    let sent = bf.bodies.count
+    try? await hb.restoreDeal(id: "D1", fields: ["hs_next_step": "Old"])
+    expect(bf.bodies.count == sent + 1 && ((bf.bodies.last?["properties"] as? [String: Any]) ?? [:]).mapValues { "\($0)" } == ["hs_next_step": "Old"],
+           "undo: a field set to Don't write since is still restored")
+    var emptyErr: Error? = nil
+    do { try await hb.restoreDeal(id: "D1", fields: [:]) } catch { emptyErr = error }
+    expect(emptyErr != nil && bf.bodies.count == sent + 1, "undo: nothing to restore is an error, never a silent success")
+    // revisions: HubSpot's updatedAt from the answer to our write; a later change in HubSpot moves it
+    let rt = FakeHubSpotCalls()
+    let hv = HubSpotConnector(transport: rt, sleep: { _ in })
+    let made = try? await hv.upsertCall(entry, knownId: "", associations: [])
+    let mid = made?.id ?? ""
+    let kept = hv.revision(type: "calls", id: mid)
+    let nowRev = (try? await hv.updatedAt(type: "calls", id: mid)) ?? ""
+    expect(!kept.isEmpty && kept == rt.updatedAt(mid) && CRMSyncLog.unchanged(revision: kept, current: nowRev), "undo: the write's revision is kept and matches while nobody changed the Call")
+    rt.calls[mid]?["hs_call_title"] = "Edited in HubSpot"; rt.rev[mid, default: 0] += 1
+    let edited = (try? await hv.updatedAt(type: "calls", id: mid)) ?? ""
+    expect(!CRMSyncLog.unchanged(revision: kept, current: edited), "undo: an edit in HubSpot after the write stops the Undo")
+    expect(hv.revision(type: "calls", id: "nope").isEmpty, "undo: no revision for an object Pacenote did not write")
+    // Auto's consent is asked when its turn comes: switched off while Apply wrote, Auto sends nothing
+    final class Consent { var on = true; var id = "" }
+    let ct = FakeHubSpotCalls(); ct.createDelay = 50_000_000
+    let hc = HubSpotConnector(transport: ct, sleep: { _ in })
+    let cq = CRMCallQueue(), consent = Consent()
+    async let applyW = try? CRMCallSync.log(entry, connector: hc, associations: [], queue: cq,
+                                            load: { (consent.id, "500") }, save: { consent.id = $0; consent.on = false })
+    try? await Task.sleep(nanoseconds: 5_000_000)
+    var autoErr: CRMError? = nil
+    do { _ = try await CRMCallSync.log(entry, connector: hc, associations: [], queue: cq, allowed: { consent.on },
+                                       load: { (consent.id, "500") }, save: { consent.id = $0 }) } catch { autoErr = error as? CRMError }
+    let applied1 = await applyW
+    expect(applied1?.created == true && ct.calls.count == 1 && autoErr?.code == CRMCallSync.notAllowedCode
+           && ct.log.filter { $0 == "GET /account-info/v3/details" }.count == 1 && !ct.log.contains { $0.hasPrefix("PATCH") },
+           "auto: turned off while waiting for its turn, Auto sends nothing: \(ct.log)")
     // owners: the mapping, then the user of this Mac gets the Matching owner, then the same email, else HubSpot's default
     var o = CRMSettings(); o.ownerId = "7"
     let hsOwners = [CRMOwner(id: "11", name: "Emily Clark", email: "emily.clark@example.com"), CRMOwner(id: "12", name: "James Miller", email: "james.miller@example.com")]
@@ -835,7 +986,8 @@ func crmSync() async {
                                    nextStep: "Call back", closeDate: "", stage: nil, qualification: [:], mapping: [:], followUp: ("Call back", nil), callLog: entry)
     let now = Date(timeIntervalSince1970: 1_780_100_000)
     let lines = CRMSyncLog.applyEntries(plan: plan, dealLinked: true, done: [("notes", "N1", [:]), ("calls", "C1", [:])], error: "HubSpot is busy (429); try again in a minute.",
-                                        source: "click", sync: CRMSyncSettings(), now: now)
+                                        source: "click", sync: CRMSyncSettings(), revisions: ["calls/C1": "2026-05-30T00:50:00.123Z"], now: now)
+    expect(lines[1].revision == "2026-05-30T00:50:00.123Z" && lines[0].revision.isEmpty, "log: each line keeps HubSpot's revision of its own write")
     expect(lines.map(\.object) == ["notes", "calls", "deals"] && lines.map(\.ok) == [true, true, false] && lines[1].action == "create" && lines[2].error.contains("429"),
            "log: written objects, then the failed one")
     expect(lines[1].fields.contains("hs_call_title") && lines[1].fields.contains("hs_call_body") && lines[0].fields == ["hs_note_body"], "log: property names of what was written")
@@ -852,21 +1004,26 @@ func crmSync() async {
     expect(allDone.count == 5 && allDone.allSatisfy(\.ok), "log: an error after every known row was written blames none of them")
     // Retry and Undo
     expect(CRMSyncLog.canRetry(lines[2], in: lines) && !CRMSyncLog.canRetry(lines[0], in: lines), "log: a failed write can be retried")
-    var later = CRMSyncEntry(at: now.addingTimeInterval(60), object: "deals", action: "update", source: "retry", hubspotId: "D1", fields: ["hs_next_step"], old: ["hs_next_step": "Old"])
+    var later = CRMSyncEntry(at: now.addingTimeInterval(60), object: "deals", action: "update", source: "retry", hubspotId: "D1", fields: ["hs_next_step"], old: ["hs_next_step": "Old"], revision: "r")
     expect(!CRMSyncLog.canRetry(lines[2], in: lines + [later]), "log: no Retry after a later good write")
     expect(CRMSyncLog.canUndo(lines[1], in: lines, now: now.addingTimeInterval(3600)), "log: Undo within the window")
     expect(!CRMSyncLog.canUndo(lines[1], in: lines, now: now.addingTimeInterval(CRMSyncLog.logUndoSeconds + 1)), "log: no Undo after the window")
-    let superseded = lines + [CRMSyncEntry(at: now.addingTimeInterval(30), object: "calls", action: "update", source: "auto", hubspotId: "C1", old: ["hs_call_title": "a"])]
+    let superseded = lines + [CRMSyncEntry(at: now.addingTimeInterval(30), object: "calls", action: "update", source: "auto", hubspotId: "C1", old: ["hs_call_title": "a"], revision: "r")]
     expect(!CRMSyncLog.canUndo(lines[1], in: superseded, now: now) && CRMSyncLog.canUndo(superseded.last!, in: superseded, now: now), "log: only the latest write of an object can be undone")
+    expect(!CRMSyncLog.canUndo(lines[0], in: lines, now: now), "log: a write without HubSpot's revision is never undone from the log")
     later.old = [:]
     expect(!CRMSyncLog.canUndo(later, in: [later], now: now), "log: an update without old values cannot be undone")
     let undone = CRMSyncLog.withUndo(lines, object: "calls", hubspotId: "C1", error: nil, source: "log", now: now)
     expect(undone[1].undone && undone.last?.action == "undo" && !CRMSyncLog.canUndo(undone[1], in: undone, now: now), "log: Undo marks the write and is not offered twice")
     let failedUndo = CRMSyncLog.withUndo(lines, object: "calls", hubspotId: "C1", error: "HTTP 500", source: "log", now: now)
     expect(!failedUndo[1].undone && failedUndo.last?.ok == false, "log: a failed Undo keeps the write")
-    expect(CRMSyncLog.changedSince(updatedAt: "2026-05-30T01:00:00.000Z", writtenAt: ISO8601DateFormatter().date(from: "2026-05-30T00:50:00Z")!)
-           && !CRMSyncLog.changedSince(updatedAt: "2026-05-30T00:51:00.000Z", writtenAt: ISO8601DateFormatter().date(from: "2026-05-30T00:50:00Z")!)
-           && !CRMSyncLog.changedSince(updatedAt: "", writtenAt: now), "log: changed in HubSpot after the write, with slack for the clocks")
+    // Undo needs HubSpot's revision unchanged since the write: a change a second later, a missing or unreadable one stops it
+    expect(CRMSyncLog.unchanged(revision: "2026-05-30T00:50:00.123Z", current: "2026-05-30T00:50:00.123Z")
+           && CRMSyncLog.unchanged(revision: "2026-05-30T00:50:00Z", current: "2026-05-30T00:50:00.000Z")
+           && !CRMSyncLog.unchanged(revision: "2026-05-30T00:50:00.123Z", current: "2026-05-30T00:50:01.123Z")
+           && !CRMSyncLog.unchanged(revision: "2026-05-30T00:50:00.123Z", current: "")
+           && !CRMSyncLog.unchanged(revision: "", current: "2026-05-30T00:50:00.123Z")
+           && !CRMSyncLog.unchanged(revision: "2026-05-30T00:50:00.123Z", current: "yesterday"), "log: Undo only while HubSpot's revision is the one of the write")
     // the file next to the call: append, load, cap
     let dir = NSTemporaryDirectory() + "pn-crm-log-\(getpid())"
     let stem = dir + "/2026-11-22-1400-orbit"
@@ -874,6 +1031,14 @@ func crmSync() async {
     CRMSyncLog.recordUndo(object: "calls", hubspotId: "C1", error: nil, source: "click", stem: stem)
     let loaded = CRMSyncLog.load(path: CRMSyncLog.path(stem: stem))
     expect(loaded.count == 4 && loaded[1].undone && loaded[0].at == now, "log: saved next to the call and read back")
+    // the click rechecks the log on disk: a button drawn earlier does not undo an expired or replaced write
+    let stem2 = dir + "/2026-11-22-1500-orbit"
+    let w = CRMSyncEntry(at: now, object: "deals", action: "update", source: "click", hubspotId: "D1", fields: ["hs_next_step"], old: ["hs_next_step": "Old"], revision: "r1")
+    CRMSyncLog.append([w], stem: stem2)
+    expect(CRMSyncLog.undoable(id: w.id, stem: stem2, now: now.addingTimeInterval(60))?.id == w.id, "log: Undo on the click within the window")
+    expect(CRMSyncLog.undoable(id: w.id, stem: stem2, now: now.addingTimeInterval(CRMSyncLog.logUndoSeconds + 1)) == nil, "log: no Undo on a click after the window")
+    CRMSyncLog.append([CRMSyncEntry(at: now.addingTimeInterval(10), object: "deals", action: "update", source: "click", hubspotId: "D1", old: ["hs_next_step": "x"], revision: "r2")], stem: stem2)
+    expect(CRMSyncLog.undoable(id: w.id, stem: stem2, now: now.addingTimeInterval(60)) == nil, "log: no Undo on a click after a later write of the object")
     CRMSyncLog.append((0..<250).map { CRMSyncEntry(object: "calls", action: "create", source: "auto", hubspotId: "\($0)") }, stem: stem)
     expect(CRMSyncLog.load(path: CRMSyncLog.path(stem: stem)).count == CRMSyncLog.maxEntries, "log: capped")
     try? FileManager.default.removeItem(atPath: dir)
@@ -882,6 +1047,8 @@ func crmSync() async {
     sf.status = ["/crm/v3/owners": 403, "/crm/v3/properties/deals": 403, "/crm/v3/objects/companies": 500]
     let missing = await CRMScopeCheck.missing(HubSpotConnector(transport: sf, sleep: { _ in }))
     expect(missing == ["crm.objects.owners.read", "crm.schemas.deals.read"], "scopes: 403 probes are missing, 500 is not: \(missing)")
+    let full = await CRMScopeCheck.check(HubSpotConnector(transport: sf, sleep: { _ in }))
+    expect(full.missing == missing && full.unverified == ["crm.objects.companies.read"], "scopes: a probe that failed another way is reported as not verified: \(full.unverified)")
     expect(CRMScopeCheck.blocking(.deals, missing: ["crm.objects.deals.write"]) == ["crm.objects.deals.write"] && CRMScopeCheck.blocking(.deals, missing: missing).isEmpty,
            "scopes: a switch shows the scope it needs")
     // what the live check finds must be able to reach a switch: every probed scope blocks some object, and a refused owners read blocks Calls

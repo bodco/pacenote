@@ -9,14 +9,15 @@ import LiveTipsCore
 enum CRMSyncRecorder {
     static var sync: CRMSyncSettings { SettingsWindow.model.config.crm.sync }
 
-    static func applied(plan: CRMUpdatePlan, link: CRMLink, done: [(String, String, [String: String])], error: String?, stem: String, source: String) {
+    static func applied(plan: CRMUpdatePlan, link: CRMLink, done: [(String, String, [String: String])], error: String?, stem: String, source: String,
+                        revisions: [String: String]) {
         let linked = !link.dealId.isEmpty && link.dealId != "none"
-        CRMSyncLog.append(CRMSyncLog.applyEntries(plan: plan, dealLinked: linked, done: done, error: error, source: source, sync: sync), stem: stem)
+        CRMSyncLog.append(CRMSyncLog.applyEntries(plan: plan, dealLinked: linked, done: done, error: error, source: source, sync: sync, revisions: revisions), stem: stem)
         CRMSyncLogStore.shared.version += 1
     }
 
-    static func call(_ r: CRMCallResult, log: CRMCallLog, stem: String, source: String) {
-        CRMSyncLog.append([CRMSyncLog.callEntry(r, log: log, source: source, sync: sync)], stem: stem)
+    static func call(_ r: CRMCallResult, log: CRMCallLog, stem: String, source: String, revision: String) {
+        CRMSyncLog.append([CRMSyncLog.callEntry(r, log: log, source: source, sync: sync, revision: revision)], stem: stem)
         CRMSyncLogStore.shared.version += 1
     }
 
@@ -97,17 +98,21 @@ struct CRMSyncLogView: View {
         }
     }
 
-    func undo(_ e: CRMSyncEntry) {
+    func undo(_ shown: CRMSyncEntry) {
+        // the button may be older than the log: the window and the latest write are checked again on the click
+        guard let e = CRMSyncLog.undoable(id: shown.id, stem: stem) else { line = L("crm.log.expired"); store.version += 1; return }
         guard let hs = CRMService.shared.connector() as? HubSpotConnector else { line = L("crm.notConnected"); return }
         busy = true; line = ""
         Task {
             do {
-                // never overwrite a change made in HubSpot after Pacenote's write (rule 6)
-                if CRMSyncLog.changedSince(updatedAt: try await hs.updatedAt(type: e.object, id: e.hubspotId), writtenAt: e.at) {
+                // never overwrite a change made in HubSpot after Pacenote's write (rule 6): the revision must be the one
+                // HubSpot gave our write; a later change, or one that cannot be read, stops the Undo
+                guard CRMSyncLog.unchanged(revision: e.revision, current: try await hs.updatedAt(type: e.object, id: e.hubspotId)) else {
                     line = L("crm.log.changed"); busy = false; return
                 }
                 if e.action == "update" {
-                    if e.object == "deals" { _ = try await hs.updateDeal(id: e.hubspotId, fields: e.old) } else { try await hs.restoreCall(id: e.hubspotId, fields: e.old) }
+                    // exactly the properties written, never through today's field mapping
+                    if e.object == "deals" { try await hs.restoreDeal(id: e.hubspotId, fields: e.old) } else { try await hs.restoreCall(id: e.hubspotId, fields: e.old) }
                 } else {
                     try await hs.delete(type: e.object, id: e.hubspotId)
                     if e.object == "calls", var l = CRMLink.load(base: stem), l.callId == e.hubspotId { l.callId = ""; l.save(base: stem) }
@@ -166,6 +171,10 @@ struct HubSpotSyncSection: View {
                 Text(L("int.hubspot.sync.missing", ["list": cfg.missingScopes.joined(separator: ", ")])).foregroundStyle(PN.C.danger)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            if case .ok = crm.state, !crm.unverifiedScopes.isEmpty {
+                Text(L("int.hubspot.sync.unverified", ["list": crm.unverifiedScopes.joined(separator: ", ")])).foregroundStyle(PN.C.notreadyText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         } header: { Text(L("int.hubspot.sync.live")).settingsAnchor("int.hubspot.sync") } footer: {
             Text(L("int.hubspot.sync.liveFooter")).font(PN.Font.caption).foregroundStyle(PN.C.text3).fixedSize(horizontal: false, vertical: true)
         }
@@ -201,7 +210,8 @@ struct HubSpotSyncSection: View {
                             Text(L("int.hubspot.sync.default", ["name": f.property])).tag(f.property)
                             Text(L("int.hubspot.dontWrite")).tag("")
                             let cur = cfg.sync.property(o, f.property)
-                            let list = (props[o.objectType(field: f.field)] ?? []).filter { $0.name != f.property }
+                            // never a dedupe key, the owner, a status or what another field writes (CRMSyncSettings.canTarget)
+                            let list = (props[o.objectType(field: f.field)] ?? []).filter { $0.name != f.property && cfg.sync.canTarget(o, f.property, $0.name) }
                             if !cur.isEmpty, cur != f.property, !list.contains(where: { $0.name == cur }) { Text(cur).tag(cur) }
                             ForEach(list, id: \.self) { p in Text(p.label).tag(p.name) }
                         }
