@@ -37,6 +37,14 @@ public enum CRMLinkCarry {
         fm.contents(atPath: CallLayout.sidecar(base, ".crm.json"))
     }
 
+    /// The preparation was chosen by hand (sent as crm_chosen): the file the PM picked in Start call is still the one the
+    /// call uses (`current`, with its full path). Start call fills the same field by title and time when nothing was
+    /// picked, so a filled field alone never proves a choice (fix round 7): a retry after a failed start stays automatic.
+    public static func chosenByHand(picked: String?, current: String?, path: String?) -> Bool {
+        guard let p = picked, !p.isEmpty, p == current else { return false }
+        return prepBase(chosen: path, planned: nil) != nil
+    }
+
     /// The preparation Refresh saves the link with, picked the way Start call picks the one it copies to the call: the
     /// prep chosen by hand (its brief or Meeting Sheet) first, else the planned one. nil when neither is known.
     public static func prepBase(chosen: String?, planned: String?) -> String? {

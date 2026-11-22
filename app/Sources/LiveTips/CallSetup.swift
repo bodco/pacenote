@@ -567,7 +567,7 @@ struct CallSetupView: View {
                 if !model.prepList.isEmpty {
                     optRow(L("call.useBrief")) {
                         Picker("", selection: Binding(get: { model.chosenPrep ?? "" },
-                                                      set: { model.chosenPrep = $0.isEmpty ? nil : $0; model.scanPrep() })) {
+                                                      set: { model.pickedPrep = $0.isEmpty ? nil : $0; model.chosenPrep = model.pickedPrep; model.scanPrep() })) {
                             Text(L("call.useBrief.auto")).tag("")
                             ForEach(model.prepList, id: \.file) { p in Text("\(p.heading) · \(p.made.formatted(date: .abbreviated, time: .shortened))").tag(p.file) }
                         }.labelsHidden().fixedSize()

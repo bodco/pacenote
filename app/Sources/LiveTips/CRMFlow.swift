@@ -160,8 +160,9 @@ enum CRMCallLogger {
 extension StartCallModel {
     /// The calendar occurrence this window is for (event id + start), sent as crm_event; "" without an event.
     var crmOccurrence: String { calEventID ?? "" }
-    /// The preparation was chosen by hand in this window (sent as crm_chosen): its link is the PM's own choice.
-    var crmChosen: Bool { CRMLinkCarry.prepBase(chosen: chosenPrepPath, planned: nil) != nil }
+    /// The preparation was chosen by hand in this window (sent as crm_chosen): its link is the PM's own choice. Not the
+    /// one Start call filled by title and time (fix round 7).
+    var crmChosen: Bool { CRMLinkCarry.chosenByHand(picked: pickedPrep, current: chosenPrep, path: chosenPrepPath) }
     /// The link at crmBase goes to the call (fix round 6): chosen by hand, or Refresh saved it for this occurrence. The
     /// planned preparation is found by title and time, which never proves it is this call's, so its link alone is not used.
     var crmLinkVerified: Bool { crmBase.map { CRMLinkCarry.verified(base: $0, occurrence: crmOccurrence, chosen: crmChosen) } ?? false }

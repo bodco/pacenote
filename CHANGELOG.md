@@ -29,7 +29,8 @@ Pacenote. Earlier versions are described in the commit messages and in
   another one. The link goes with the call only when Pacenote knows it is this call's: Refresh was pressed for the
   call's calendar event, or you chose the preparation yourself. A title or a time is never enough, so two "Renewal"
   calls of different customers never share one; a call without a calendar event and without a chosen preparation, or
-  started another way, stays unlinked. A new
+  started another way, stays unlinked. A preparation Pacenote found by itself does not count as chosen, also when
+  you press Start again after a start failed. A new
   switch in Settings > Integrations > HubSpot, **Log the call in HubSpot automatically after it ends**, is off by
   default and logs only the Call. The HubSpot integration design is in `docs/specs/hubspot-crm-integration.md`.
 

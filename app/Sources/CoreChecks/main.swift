@@ -792,6 +792,21 @@ func crmLinkCarry() {
     let call3 = folder + "/2026-11-22-1312-globex.app"
     expect(CRMLinkCarry.carry(from: globex, to: call3, occurrence: "", chosen: true) && read(CallLayout.sidecar(call3, ".crm.json"))["companyId"] as? String == "globex",
            "refresh keep: Start call carries the second preparation's customer")
+    // fix round 7: Start call fills the chosen preparation by title and time when the PM picked none. A first start
+    // that fails and a retry with the same window must stay automatic, so a preparation saved for another occurrence
+    // stays unlinked; only the PM's own pick vouches for the link
+    let autoFile = (prep as NSString).lastPathComponent + ".brief.md", autoPath = prep + ".brief.md"
+    let call4 = folder + "/2026-11-22-1503-orbit-renewal.app"
+    for attempt in 1...2 {
+        let byHand = CRMLinkCarry.chosenByHand(picked: nil, current: autoFile, path: autoPath)
+        expect(!byHand, "start retry \(attempt): a preparation found by title and time is not chosen by hand")
+        expect(!CRMLinkCarry.carry(from: prep, to: call4, occurrence: "ev-other@1795870800", chosen: byHand)
+               && !fm.fileExists(atPath: CallLayout.sidecar(call4, ".crm.json")), "start retry \(attempt): another occurrence's link stays off the call")
+    }
+    expect(CRMLinkCarry.chosenByHand(picked: autoFile, current: autoFile, path: autoPath), "start: the preparation the PM picked is chosen by hand")
+    expect(!CRMLinkCarry.chosenByHand(picked: "prep-2026-11-22-1400-orbit-renewal.brief.md", current: autoFile, path: autoPath),
+           "start: a pick replaced since is not this preparation")
+    expect(!CRMLinkCarry.chosenByHand(picked: autoFile, current: autoFile, path: nil), "start: a picked file that is gone is not a choice")
     try? fm.removeItem(atPath: root)
 }
 
