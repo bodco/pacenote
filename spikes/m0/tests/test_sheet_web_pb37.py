@@ -264,6 +264,20 @@ def test_cancel_during_a_redirect_makes_no_further_request(http_fixture):
     assert hits == ["/start"]
 
 
+def test_cancel_after_the_redirect_check_still_stops_the_destination(http_fixture):
+    pages, hits, _, redirects = http_fixture
+    pages["/other"] = page("Other", LOREM)
+    redirects["/start"] = "http://127.0.0.1:8000/other"
+    calls = []
+
+    def stop():                                         # false before the request and in redirect_request, then true
+        calls.append(1)
+        return len(calls) > 2
+    with pytest.raises(web.Cancelled):
+        web.http_get("http://127.0.0.1:8000/start", stop=stop)
+    assert hits == ["/start"] and len(calls) == 3
+
+
 def test_planning_stops_before_its_next_request(http_fixture):
     _, hits, _, _ = http_fixture
     with pytest.raises(web.Cancelled):

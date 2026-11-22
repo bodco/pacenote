@@ -442,13 +442,23 @@ def _public_connection(connection_type):
     return make
 
 
+def _stopped(req):
+    """A redirect destination carries the cancel check: urllib reads the redirect body after redirect_request, so the
+    last check runs here, right before the destination request."""
+    stop = getattr(req, "_pacenote_stop", None)
+    if stop and stop():
+        raise Cancelled()
+
+
 class _PublicHTTP(urllib.request.HTTPHandler):
     def http_open(self, req):
+        _stopped(req)
         return self.do_open(_public_connection(http.client.HTTPConnection), req)
 
 
 class _PublicHTTPS(urllib.request.HTTPSHandler):
     def https_open(self, req):
+        _stopped(req)
         return self.do_open(_public_connection(http.client.HTTPSConnection), req, context=self._context)
 
 
@@ -470,7 +480,10 @@ class _SiteRedirect(urllib.request.HTTPRedirectHandler):
             raise FetchError(code, "redirect points to a skipped page")
         if self.allow is not None and not self.allow(newurl):
             raise FetchError(code, "redirect points to a page robots.txt does not allow")
-        return super().redirect_request(req, fp, code, msg, headers, newurl)
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is not None and self.stop:
+            new._pacenote_stop = self.stop
+        return new
 
 
 def http_get(url: str, timeout: float = 15.0, total_s: float = 30.0, allow=None, stop=None, max_bytes: int = 0):

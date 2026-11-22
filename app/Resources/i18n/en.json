@@ -2757,7 +2757,7 @@
  "sheet.ui.web.state.skipped": "{n} skipped",
  "sheet.ui.web.state.duplicate": "{n} duplicates",
  "sheet.ui.web.js": "These pages are empty. The site may need JavaScript, which Pacenote does not run. Save a page from the Pacenote browser, or paste the text.",
- "sheet.ui.web.sent": "Page text goes with the other sources to this route: {route}. Copies are kept in the call folder, in the hidden .work/web folder.",
+ "sheet.ui.web.sent": "Page text goes with the other sources to this route: {route}. Copies are kept in the call folder, in the hidden .work/web folder, which Google Drive may sync to colleagues.",
  "sheet.ui.web.linkedFrom": "linked from {domain}",
  "sheet.ui.s3.pastePh": "Paste a link or text",
  "sheet.ui.s3.saveText": "Save text",

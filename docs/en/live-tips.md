@@ -2310,7 +2310,8 @@ this sheet, each with its own size and tick, and are counted in Size. Every rout
 page, so a page is fetched once, not again at build time. **Where the copies live:** one text file per page in the
 hidden `.work/web/<host>` folder inside the call's folder. The pages are public text, but that folder is part of the
 call folder, which Google Drive or another sync may copy to colleagues. The page text goes to your AI route with
-the other sources; nothing goes to Pacenote servers.
+the other sources; nothing goes to Pacenote servers. Call sync leaves researched pages out of the sheet copy it
+sends: facts drawn from them, their titles and quotes stay on this Mac, and so does the sheet's refresh history.
 
 **A link in Quick.** The Sources line of Quick has a **Link to add** field (a link to Notion, Google Docs, a website or LinkedIn).
 It works as in Expert: the same access check and fixes, and **Research this website** with the same plan, budget and

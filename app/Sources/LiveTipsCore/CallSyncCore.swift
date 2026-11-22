@@ -342,24 +342,64 @@ public enum CallSync {
 
     /// The Meeting Sheet as built for the call, if it is a JSON object under 1 MB.
     public static func sheetBody(_ data: Data?) -> [String: Any]? {
-        guard let d = data, d.count < 1_000_000, var o = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any] else { return nil }
-        // PB-37: researched website text stays on this Mac. A fact that cites a page of a researched site keeps its text and
-        // its sources, but its locator loses the verbatim quote (the page text itself is never in the sheet).
-        let web = Set(((o["sources"] as? [[String: Any]]) ?? []).filter { ($0["type"] as? String) == "web_page" }.compactMap { $0["id"] as? String })
-        if !web.isEmpty, var blocks = o["blocks"] as? [[String: Any]] {
+        guard let d = data, d.count < 1_000_000, let raw = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any] else { return nil }
+        return ["sheet": syncedSheet(raw)]
+    }
+
+    /// PB-37: researched website content stays on this Mac. The upload is built from an allowlist of the keys the app's
+    /// sheet model knows, so refresh history (top-level `gone_facts`, a fact's `was`) and any later key never go out.
+    /// A fact that cites a page of a researched site is left out (its text may repeat the page), and so are links to it
+    /// (`conflict_with`, `superseded_by`, a readiness gap); a `web_page` source keeps only its address and state.
+    static func syncedSheet(_ raw: [String: Any]) -> [String: Any] {
+        func only(_ o: [String: Any], _ keys: Set<String>) -> [String: Any] { o.filter { keys.contains($0.key) } }
+        let topKeys = Set(MeetingSheet.CodingKeys.allCases.map(\.rawValue))
+        let blockKeys = Set(SheetBlock.CodingKeys.allCases.map(\.rawValue))
+        let factKeys = Set(SheetFact.CodingKeys.allCases.map(\.rawValue))
+        let sourceKeys = Set(SheetSource.CodingKeys.allCases.map(\.rawValue))
+        let webSourceKeys: Set<String> = ["id", "n", "type", "uri", "parent", "access", "used"]
+        var o = only(raw, topKeys)
+        let sources = (o["sources"] as? [[String: Any]]) ?? []
+        let web = Set(sources.filter { ($0["type"] as? String) == "web_page" }.compactMap { $0["id"] as? String })
+        if o["sources"] != nil {
+            o["sources"] = sources.map { s -> [String: Any] in
+                guard (s["type"] as? String) == "web_page" else { return only(s, sourceKeys) }
+                var w = only(s, webSourceKeys)
+                w["title"] = (s["uri"] as? String) ?? ""      // a title is required; the page's own title stays local
+                return w
+            }
+        }
+        var dropped = Set<String>()
+        var blocks = ((o["blocks"] as? [[String: Any]]) ?? []).map { only($0, blockKeys) }
+        for bi in blocks.indices {
+            guard let facts = blocks[bi]["facts"] as? [[String: Any]] else { continue }
+            blocks[bi]["facts"] = facts.compactMap { f -> [String: Any]? in
+                if ((f["source_ids"] as? [String]) ?? []).contains(where: { web.contains($0) }) {
+                    if let id = f["id"] as? String { dropped.insert(id) }
+                    return nil
+                }
+                return only(f, factKeys)
+            }
+        }
+        if !dropped.isEmpty {
             for bi in blocks.indices {
                 guard var facts = blocks[bi]["facts"] as? [[String: Any]] else { continue }
                 for fi in facts.indices {
-                    let ids = (facts[fi]["source_ids"] as? [String]) ?? []
-                    guard ids.contains(where: { web.contains($0) }), var loc = facts[fi]["locator"] as? [String: Any] else { continue }
-                    loc["quote"] = nil
-                    facts[fi]["locator"] = loc
+                    if let cw = facts[fi]["conflict_with"] as? [String] {
+                        let left = cw.filter { !dropped.contains($0) }
+                        facts[fi]["conflict_with"] = left
+                        if left.isEmpty, facts[fi]["status"] as? String == "conflict" { facts[fi]["status"] = "needs_check" }
+                    }
+                    if let sb = facts[fi]["superseded_by"] as? String, dropped.contains(sb) { facts[fi]["superseded_by"] = nil }
                 }
                 blocks[bi]["facts"] = facts
             }
-            o["blocks"] = blocks
+            if var r = o["readiness"] as? [String: Any], let gaps = r["gaps"] as? [[String: Any]] {
+                r["gaps"] = gaps.filter { !dropped.contains(($0["fact"] as? String) ?? "") }
+                o["readiness"] = r
+            }
         }
-        return ["sheet": o]
+        if o["blocks"] != nil { o["blocks"] = blocks }
+        return o
     }
 
     static func driveID(_ s: String) -> Bool { s.range(of: "^[A-Za-z0-9_-]{10,200}$", options: .regularExpression) != nil }

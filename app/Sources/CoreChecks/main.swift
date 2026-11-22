@@ -1232,10 +1232,17 @@ func meetingLaunch096() {
     mn.actions = [MeetingNotes.Item(t: "00:20", text: "Mike sends the proposal")]
     expect(CallSync.decisions(mn).count == 1 && CallSync.tasks(mn).first?["text"] as? String == "Mike sends the proposal", "sync: decisions and tasks")
     expect(CallSync.sheetBody(Data("[1]".utf8)) == nil && CallSync.sheetBody(Data("{\"a\":1}".utf8)) != nil, "sync: sheet is an object")
-    // PB-37: a verbatim quote from a researched page never reaches the server payload; other quotes stay
-    let webSheet = Data(#"{"sources":[{"id":"w1","type":"web_page"},{"id":"s1","type":"pdf"}],"blocks":[{"type":"company","facts":[{"text":"a","source_ids":["w1"],"locator":{"quote":"ZEBRA-QUOTE-7731","url":"https://example-company.com/"}},{"text":"b","source_ids":["s1"],"locator":{"quote":"keep-this"}}]}]}"#.utf8)
+    // PB-37: nothing from a researched page reaches the server payload (title, path, fact text, quote, refresh history);
+    // facts from other sources stay, and the page's address and state stay
+    let webSheet = Data(#"{"sources":[{"id":"w1","n":1,"type":"web_page","uri":"https://example-company.com/team","title":"ZEBRA-TITLE-7731","path":"/tmp/ZEBRA-PATH-7731.txt","why":["ZEBRA-WHY-7731"],"access":"ok","used":"full"},{"id":"s1","n":2,"type":"file","title":"Brief.pdf","access":"ok","used":"full"}],"blocks":[{"id":"b1","type":"company","facts":[{"id":"f1","text":"ZEBRA-FACT-7731","was":"ZEBRA-WAS-7731","source_ids":["w1"],"locator":{"quote":"ZEBRA-QUOTE-7731","url":"https://example-company.com/team"}},{"id":"f2","text":"keep-this","was":"ZEBRA-OLD-7731","source_ids":["s1"],"status":"conflict","conflict_with":["f1"],"locator":{"quote":"keep-quote"}}],"zebra_block":"ZEBRA-BLOCK-7731"}],"gone_facts":[{"id":"f0","text":"ZEBRA-GONE-7731"}],"readiness":{"state":"almost","gaps":[{"id":"g1","fact":"f1","text":"ZEBRA-GAP-7731"},{"id":"g2","text":"keep-gap"}]},"zebra_later":"ZEBRA-LATER-7731"}"#.utf8)
     let webJSON = String(data: CallSync.json(CallSync.sheetBody(webSheet) ?? [:]), encoding: .utf8) ?? ""
-    expect(!webJSON.contains("ZEBRA-QUOTE-7731") && webJSON.contains("keep-this") && webJSON.contains("example-company.com"), "sync: researched page quotes stay local")
+    expect(!webJSON.contains("ZEBRA") && webJSON.contains("keep-this") && webJSON.contains("keep-quote") && webJSON.contains("keep-gap")
+           && webJSON.contains("Brief.pdf") && webJSON.contains("example-company.com/team"), "sync: researched page content stays local")
+    let webFacts = (((CallSync.sheetBody(webSheet)?["sheet"] as? [String: Any])?["blocks"] as? [[String: Any]])?.first?["facts"] as? [[String: Any]]) ?? []
+    expect(webFacts.count == 1 && (webFacts[0]["conflict_with"] as? [String]) == [] && webFacts[0]["status"] as? String == "needs_check",
+           "sync: a dropped researched fact leaves no dangling link")
+    let webSrc = ((CallSync.sheetBody(webSheet)?["sheet"] as? [String: Any])?["sources"] as? [[String: Any]])?.first
+    expect(webSrc?["title"] as? String == "https://example-company.com/team" && webSrc?["path"] == nil, "sync: a researched page keeps a title, its address")
     var rm = RecordingMeta(); var rp = RecordingMeta.Part(file: "v.mp4", kind: "video", started: Date())
     rp.driveID = "1AbcDEFghijkLMNOPqrs"; rp.driveLink = "https://drive.google.com/file/d/1AbcDEFghijkLMNOPqrs/view"; rp.driveKind = "shared_drive"; rp.bytes = 10
     var bad = rp; bad.driveLink = "https://evil.example/x"
