@@ -119,10 +119,12 @@ enum CRMCallLogger {
     /// H2: writes the Call through the per-call queue; the stored id and portal are read from <base>.crm.json when the
     /// turn comes and the new id is stored before the next turn. H6: `allowed` is asked when the turn comes; a Retry's
     /// `bound` portal (the failed line's) must still be the link's, else nothing is sent (CRMSyncLog.retryPortal).
+    /// `attempt` keeps the portal the turn was checked against, for the sync line (PB-62 fix round 4).
     static func write(_ entry: CRMCallLog, base: String, link: CRMLink, connector c: CRMConnector,
-                      allowed: @escaping () async -> Bool = { true }, bound: String? = nil) async throws -> CRMCallResult {
+                      allowed: @escaping () async -> Bool = { true }, bound: String? = nil,
+                      attempt: CRMSyncLog.Attempt = CRMSyncLog.Attempt()) async throws -> CRMCallResult {
         try await CRMCallSync.log(entry, connector: c, associations: refs(link), allowed: allowed,
-                                  load: { let d = CRMLink.load(base: base) ?? link
+                                  load: attempt.load { let d = CRMLink.load(base: base) ?? link
                                           return (d.callId, bound.map { CRMSyncLog.retryPortal(bound: $0, link: d.portalId) } ?? d.portalId) },
                                   save: { id in var d = CRMLink.load(base: base) ?? link; d.callId = id; d.save(base: base) })
     }
@@ -169,12 +171,14 @@ enum CRMCallLogger {
         guard var l = CRMLink.load(base: base), let c = CRMService.shared.connector(),
               let entry = log(file: file, link: &l) else { return (L("crm.update.noLink"), true) }    // log() stores a new call key at once
         let allowed: () async -> Bool = source == "auto" ? { await MainActor.run { SettingsWindow.model.config.crm.autoWrites(.calls) } } : { true }
+        // the portal the write was checked against when its turn came, never the link read again after the request:
+        // a relink while it was out must not move the line (and its Retry) to the new portal
+        let attempt = CRMSyncLog.Attempt()
         do {
-            let r = try await write(entry, base: base, link: l, connector: c, allowed: allowed, bound: bound)    // a link from another portal is not written
+            let r = try await write(entry, base: base, link: l, connector: c, allowed: allowed, bound: bound, attempt: attempt)    // a link from another portal is not written
             UsageLog.log("update_crm", ["fields": 0, "call": 1])
-            // the portal the write was checked against: the stored link's when its turn came
             let saved = CRMSyncRecorder.call(r, log: entry, stem: base, source: source, revision: (c as? HubSpotConnector)?.revision(type: "calls", id: r.id) ?? "",
-                                             portal: (CRMLink.load(base: base) ?? l).portalId)
+                                             portal: attempt.portal)
             return ("", saved)
         } catch let e as CRMError where e.code == CRMCallSync.notAllowedCode && e.scope == "auto" {
             return ("", true)       // the switch was turned off while the write waited: nothing sent, nothing logged
@@ -182,8 +186,8 @@ enum CRMCallLogger {
             return (L("crm.log.otherPortal"), true)     // Retry for another portal: nothing sent, the line stays as it is
         } catch {
             let msg = (error as? CRMError)?.message ?? error.localizedDescription
-            // the portal this write was meant for, so its Retry goes nowhere else
-            let saved = CRMSyncRecorder.failed("calls", stem: base, source: source, error: msg, portal: (CRMLink.load(base: base) ?? l).portalId)
+            // the portal this write was meant for, so its Retry goes nowhere else ("" when the turn never came: no Retry target)
+            let saved = CRMSyncRecorder.failed("calls", stem: base, source: source, error: msg, portal: attempt.portal)
             AnalyticsTracker.shared.error("crm", Analytics.errorCode(message: msg), provider: "hubspot")
             return (msg, saved)
         }

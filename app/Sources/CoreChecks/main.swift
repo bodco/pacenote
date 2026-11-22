@@ -678,6 +678,7 @@ final class FakeHubSpotCalls: CRMTransport {
     var createDelay: UInt64 = 0     // ns a create takes, so two writers can overlap
     var createThenFail = false      // the Call is made but the answer is a 502 (an ambiguous create)
     var failPut = false             // adding an association fails with a 500
+    var failCreate = false          // PB-62: a create fails with a 500 and makes nothing
     var searchLag = 0               // searches that miss a new Call, as HubSpot's index lags a create
     let lock = NSLock()             // the race checks send from two tasks at once; unguarded state crashed the gate
     var rev: [String: Int] = [:]    // H6: id -> HubSpot's revision, moved by every create and update
@@ -699,6 +700,7 @@ final class FakeHubSpotCalls: CRMTransport {
             return (200, ["results": hit.map { [["id": $0.key]] } ?? []], [:])
         }
         if method == "POST" && path == "/crm/v3/objects/calls" {
+            if failCreate { return (500, ["message": "HTTP 500"], [:]) }
             next += 1; let id = "\(next)"
             calls[id] = props(body)
             assoc[id] = ((body?["associations"] as? [[String: Any]]) ?? []).map { a in
@@ -1168,6 +1170,29 @@ func crmSync() async {
     let failedLine = CRMSyncEntry(object: "calls", action: "create", source: "auto", ok: false, error: "HTTP 500", portal: "500")
     let failedJSON = (try? JSONEncoder().encode([failedLine])).flatMap { try? JSONDecoder().decode([CRMSyncEntry].self, from: $0) }
     expect(failedJSON?.first?.portal == "500", "retry: a failed line keeps the portal it was meant for")
+    // PB-62 review round 3: the Call write to portal 500 is out when the PM reconnects and relinks to 600, then it fails.
+    // The line keeps the portal the turn was checked against (500), not the link read after the request, so its Retry
+    // sends nothing to 600
+    final class LinkBox: @unchecked Sendable { var portal = "500" }
+    let inflight = FakeHubSpotCalls(); inflight.createDelay = 50_000_000; inflight.failCreate = true
+    let box = LinkBox(), attempt = CRMSyncLog.Attempt()
+    async let outW: Error? = { do { _ = try await CRMCallSync.log(entry, connector: HubSpotConnector(transport: inflight, sleep: { _ in }), associations: [CRMRef("companies", "C7")],
+                                                              queue: CRMCallQueue(), load: attempt.load { ("", box.portal) }, save: { _ in }); return nil } catch { return error } }()
+    try? await Task.sleep(nanoseconds: 5_000_000)
+    box.portal = "600"; inflight.lock.withLock { inflight.portal = 600 }     // reconnected and relinked while the create waits
+    let outErr = await outW
+    expect(outErr != nil && attempt.portal == "500" && box.portal == "600", "retry: a failure keeps the portal it was sent to, not the one relinked to meanwhile")
+    let relinked = FakeHubSpotCalls(); relinked.portal = 600
+    var relinkErr: CRMError? = nil
+    do { _ = try await CRMCallSync.log(entry, connector: HubSpotConnector(transport: relinked, sleep: { _ in }), associations: [CRMRef("companies", "C7")], queue: CRMCallQueue(),
+                                       load: { ("", CRMSyncLog.retryPortal(bound: attempt.portal, link: box.portal)) }, save: { _ in }) } catch { relinkErr = error as? CRMError }
+    expect(relinkErr?.code == CRMPortal.mismatchCode && relinked.calls.isEmpty && relinked.log == ["GET /account-info/v3/details"],
+           "retry: a failure from before a relink sends nothing to the new portal: \(relinked.log)")
+    // the turn never came (Auto switched off while waiting): no portal, so no Retry target
+    let never = CRMSyncLog.Attempt()
+    _ = try? await CRMCallSync.log(entry, connector: HubSpotConnector(transport: FakeHubSpotCalls(), sleep: { _ in }), associations: [], queue: CRMCallQueue(),
+                                   allowed: { false }, load: never.load { ("", "500") }, save: { _ in })
+    expect(never.portal == "", "retry: a write that never had its turn names no portal")
     // owners: the mapping, then the user of this Mac gets the Matching owner, then the same email, else HubSpot's default
     var o = CRMSettings(); o.ownerId = "7"
     let hsOwners = [CRMOwner(id: "11", name: "Emily Clark", email: "emily.clark@example.com"), CRMOwner(id: "12", name: "James Miller", email: "james.miller@example.com")]
