@@ -1,115 +1,89 @@
 # PB-49 + PB-33: design review after code
 
-Role: Design, step "after code". Branch `team/PB-49-transcript-button-language`, commit `1dcd99b`.
+Role: Design, step "after code". Branch `team/PB-49-transcript-button-language`, HEAD `d106858` (on top of `1dcd99b`).
 Compared against `docs/design/PB-49-strip-transcript-language.md` (owner accepted Q1–Q8 as recommended).
-Screens read: `private/team/shots/gate-wave18-2026-11-22-PB-49-dev/tips/` (`live-wide`, `live-narrow`, `live-dark`,
-`live-uk`, `ready`, `empty`, `presentation`, `compact`, `onme-wide`). Code read: the diff of `1dcd99b` in
-`tips.css`, `tips.js`, `index.html`, `Prompter.swift`. Baselines were not used (L34); every screen is judged on its own.
-Nothing was run or launched (L33).
+Screens read (newest gate for this task): `private/team/shots/gate-dispatch-2026-11-22-PB-49-r1-dev-0711/tips/`
+(`live-narrow`, `compact`, `ready`). Also read from the earlier gate `gate-wave18-2026-11-22-PB-49-dev/tips/`:
+`live-wide`, `live-narrow`, `compact`, `ready`. Code read: `tips.js` (`renderLangSwitch`, `renderLangMenu`, `pickLang`,
+`tipsLangSet`, key handler at 1985), `tips.css`. Baselines were not used (L34): `compare.json` reports every shot as
+changed, which is expected and says nothing about quality. Nothing was run or launched (L33).
 
 ## Verdict
 
-**Not approvable yet.** Two blocking items (B1, B2) are about states the gate did not show and one state it did show
-(Ready) that breaks the spec. The part that was rendered is good: it matches the doc and the owner rules. Fix B1 and B2,
-re-run the gate with the extra shots below, and this should be approvable with the polish items as follow-ups.
+**CHANGES.** What the gate rendered is good and matches the doc. The earlier blocker B1 (chip in Ready) is fixed in the
+new gate. The remaining blocker is evidence: the new language menu, the mixed and pending chip, the compact card and the
+sheet fallback have still never been rendered, so Design cannot approve them.
 
 ## What matches (rendered, OK)
 
-- Transcript icon: speech bubble with three lines, 16 px, same stroke as mic/pause/bulb, icon only, left of On me
-  (`live-wide`, `live-narrow`, `live-uk`). It does not depend on the On me count.
-- Wide, panel on Transcript (`live-wide`, `live-dark`): the button is pressed. In Roadbook it is an amber underline,
-  no red, square. With the panel on On me (`onme-wide`) the button is not pressed and On me is. Correct.
-- Narrow 600 px (`live-narrow`, `empty`): two deliberate rows. Row 1 status, End call, Home, ⋯. Row 2 Transcript, On me
-  on the left, mic, pause, bulb, chip, record on the right. Nothing hidden, nothing orphaned. Row 2 adds about 42 px,
-  close to the 36 px estimate.
-- Chip: ISO `EN` (not `EN`/`УК` mix), 12 px bold, square-ish, small ▾, ink text, not red (`live-uk` keeps `EN` in the UK
-  interface, as designed).
-- UK interface (`live-uk`): `НА МЕНІ`, `ЗАВЕРШИТИ`, `ТРАНСКРИПТ` fit; no overflow in the strip at the wide width.
-- Dark theme: same tokens, no contrast problem seen.
-- Owner rules: square buttons yes, no NSAlert (toast only, in code), no red for actions (End call keeps its existing
-  red outline, unchanged), US example names yes.
+- Transcript icon: speech bubble with lines, same stroke as mic/pause/bulb, icon only, left of On me, shown even with
+  On me count 0 as designed (`live-wide`, `live-narrow`).
+- Wide, panel on Transcript (`live-wide`, `ready`): the button is pressed (amber underline, square, no red). Not pressed
+  in the narrow shots, where no panel is open. Correct.
+- Narrow 600 px (`live-narrow`, `compact`): two deliberate rows. Row 1: status, End call, Home, ⋯. Row 2: Transcript,
+  On me left; mic, pause, bulb, `EN ▾`, record right. Nothing hidden or orphaned.
+- Chip: ISO `EN`, 12 px, square, ink text, small ▾, not red.
+- **B1 fixed:** `ready.png` (new gate) has no chip; the old gate showed `EN ▾` in Ready. The Transcript button stays.
+- Owner rules: square buttons yes; no NSAlert (toast only); no red for actions (End call keeps its existing red
+  outline, unchanged); US example names (Emily, David) yes.
 
-## Missing shots (the gate did not render these) and why
+## Requested states: in the shots or not
 
-| State asked | In the shots? | Why it is missing |
+| State | In the shots? | Why not |
 |---|---|---|
-| Wide + Transcript pressed | **Yes** (`live-wide`, `live-dark`, `live-uk`, `ready`, `presentation`) | – |
-| Narrow, two rows | **Yes** (`live-narrow`, `empty`) | – |
-| Language menu open | **No** | No scenario for it. The page already supports `?lang_menu=open`, `?pending=1`, `?call_lang=uk+en`, `?mode=card`, `?pane=off` (added in `tips.js`), but the gate's shot list was not extended to use them. |
-| Compact card | **No** | `compact.png` is a 600 × 400 window with the two-row strip, not `body.card` (`.tc-bar`). The card's Transcript icon was never rendered. Needs `?mode=card`. |
-| Mixed chip `UK+EN`, `UK+2` | **No** | Same: needs `?call_lang=uk+en`. |
-| Pending chip (amber + dotted code) | **No** | Needs `?pending=1`. |
-| Narrow with transcript open (sheet or grown window) | **No** | Not in the list. |
-| Widths 480 and 760 (and 459 / 400 breakpoints) | **No** | Only 600 and the wide width were rendered. The spec asked for 480 and 760. |
-| Ready with empty pane text | **No** | `ready.png` shows a full transcript (fixture), not the empty-pane copy. |
-| Presentation, narrow split | **No** | Only the wide presentation was rendered. |
-
-Also note that `speakers-open` and `diff/*` were not needed for this review.
+| Wide + Transcript pressed | Yes (`live-wide`, `ready`, `live-dark`, `live-uk`, `presentation`) | – |
+| Narrow, two rows | Yes (`live-narrow`, `empty`, `compact`) | – |
+| Language menu open | **No** | Gate has no scenario. The page supports `?lang_menu=open`, `?pending=1`, `?call_lang=uk+en`, `?mode=card`, `?pane=off`; the gate shot list never calls them. |
+| Compact card (`body.card`) | **No** | `compact.png` is a 600 × 400 window with the two-row strip, not the card. Needs `?mode=card`. |
+| Mixed chip `UK+EN`, `UK+2`, Tips-in row | **No** | Needs `?call_lang=uk+en`. |
+| Pending chip (amber, dotted code) | **No** | Needs `?pending=1`. |
+| Ended (chip absent) | **No** | No Ended scenario. |
+| Narrow, transcript open (grown window or sheet fallback) | **No** | Not in the shot list. The sheet fallback is new in `d106858`. |
+| Widths 480 and 760 | **No** | Only 600 and the wide width are rendered. |
+| Ready narrow, empty-pane copy | **No** | `ready.png` is wide with a fixture transcript. |
+| Presentation, narrow split | **No** | Only wide presentation. |
 
 ## Blocking
 
-**B1. The language chip shows in Ready (and will in Ended).** Screen: `ready.png` (chip `EN ▾` next to a "Ready" strip
-with no recorder running). Spec section 4.1/5: hidden in Ready and Ended. Code: `renderLangSwitch` hides only when there
-is no main language (`b.hidden = !l.main`), with no call-state check. Failure: a PM opens the menu before listening, picks
-Ukrainian, the setting goes nowhere, the chip shows the amber pending state for 4 s, then the "Could not change the
-language" toast. Fix: also hide when `S.call.state` is `ready` or `ended`, and close the menu in those states.
-Add a gate shot for Ready and one for Ended with the chip absent.
-
-**B2. Four spec states have no evidence, and one is a real risk: the compact card.** The card's Transcript icon, the
-open menu (focus ring, selected row ◉, footnote, clipping at 480 px: the menu is positioned from the chip with
-`left` clamped to the window, `min-width:230px`), the mixed chip and the pending state were never rendered, so Design
-cannot approve them. Fix: add gate scenarios for `?lang_menu=open` at 480 and 600, `?call_lang=uk+en` (menu with the Tips-in
-row), `?pending=1`, `?mode=card`, and re-run. Any layout bug found in those goes back to Dev.
+**B2. Evidence for the new UI is missing.** The open menu (focus ring, ◉ row, footnote, clipping at 480 px: `left` is
+clamped to the window and `min-width` is 230 px, `tips.js:1169`), the mixed chip with Tips-in row, the pending state, the
+card's Transcript icon, Ended with no chip, and the sheet fallback were never rendered. Fix: add gate scenarios for
+`?lang_menu=open` at 480 and 600, `?call_lang=uk+en` with the menu open, `?pending=1`, `?mode=card`, Ended, narrow with
+the transcript open (sheet), Ready narrow. Re-run; any layout bug goes back to Dev. This is the only blocker.
 
 ## Polish (not blocking)
 
-**P1. Height at the default window.** Screen `compact.png` (600 × 400): with the second row, the hero card is cut by the
-"Team retro" banner and the hint toast covers the banner text. The default window is 520 × 420, so the feed has about 42 px
-less than before. The overlap of the toast is not new, but the clipped answer is more likely now. Fix: Dev/Tech lead check
-that the feed area scrolls under the banner at 420 px (no content lost), or grow the default window height by the 42 px of
-row 2 in `Prompter.swift:1214`. Recommend the window height change (420 → 460).
-
-**P2. Pressed state in narrow.** In narrow with the grown panel or sheet, `transcriptShown()` marks the button pressed;
-confirm in a shot (`?mode=…` with the transcript open) that the amber underline is visible on row 2 and not clipped by the
-row border.
-
-**P3. Icon size next to On me.** The 16 px bubble looks light beside the 32 px On me chip (`live-narrow`). Acceptable; if the
-owner finds it hard to hit, raise the glyph to 18 px, keep the 28 px target. No change needed now.
-
-**P4. Tab order and focus.** Code adds `:focus-visible` rings and arrow-key movement in the menu. After the
-row move to two rows, check with VoiceOver that tab order still follows the visual order: DOM order is status, Transcript,
-On me, tools, chip, record, End call, Home, ⋯, while visually End call, Home, ⋯ come first on narrow (CSS `order`). That is
-a visual/DOM mismatch (WCAG 2.4.3). Fix: either accept it (document it) or move End call/Home/⋯ earlier in the DOM; a
-low-risk fix is `order` only on narrow plus a note. Recommend accepting, because End call first on Tab is also not
-helpful during a call. Mark as known.
+- **P1. Height at 400 px** (`compact.png`, both gates): row 2 costs about 42 px, so the hero answer is cut by the
+  "Team retro" banner and the hint toast covers the banner text. Dev/Tech lead: confirm the feed scrolls (no content
+  lost) or raise the default window height 420 → 460 (`Prompter.swift:1214`). Recommended: raise it.
+- **P2. Pressed state in narrow:** once the shot exists, confirm the amber underline is not clipped by the row border.
+- **P3. Icon weight:** the 16 px bubble looks light next to the On me chip; acceptable, 18 px glyph if the owner asks.
+- **P4. Tab order vs visual order on narrow:** End call, Home, ⋯ come first visually but last in the DOM (CSS `order`).
+  Accept and document: End call first on Tab is not helpful during a call.
 
 ## Dev's open questions
 
-**1. Row 2 alignment: `margin-left:auto` on mic/pause/bulb/chip/record vs the sketch grouping them left.**
-Keep the dev's right alignment and change the doc sketch. Reasons (from `live-narrow`): (a) views on the left, call controls
-on the right is the same split the wide layout has, so the two layouts read alike; (b) a left-packed row 2 leaves a large
-empty area on the right at 520–759 px and the controls move when On me appears or disappears; (c) the right edge keeps
-mic/pause under End call, which is the PM's call-control corner. Approved as built. Update the sketch in section 3.3.
+**1. Row 2 alignment (`margin-left:auto` vs sketch).** Keep the dev's right alignment and fix the sketch in 3.3. Views
+on the left and call controls on the right is the same split as wide; a left-packed row leaves a hole on the right at
+520–759 px and shifts when On me appears; mic/pause stay under End call. Approved as built (`live-narrow`).
 
-**2. Cmd+Shift+T while typing in the ask field.** Let it work. It is a modifier chord, not text input, so it never
-conflicts with typing; the app's global key handler (`tips.js:1973`) fires, calls `preventDefault`, and toggles. The ask
-input is a static element (not re-rendered), so the draft text and caret survive. Requirements: (a) do not move focus away
-from the ask field, so after the toggle the PM keeps typing (check that `openTab` does not call `focus()` elsewhere);
-(b) ignore the chord during IME composition (`e.isComposing`); (c) also work from the Transcript pane. Add one test for
-(a). Do not add a "disabled while typing" rule: a PM who is typing a question and wants to check what was just said is
-exactly the case for the shortcut.
+**2. Cmd+Shift+T while typing in the ask field.** Let it work. It is a modifier chord, not text; the handler
+(`tips.js:1985`) sits after the ask-field Enter branch and is not gated on the target, so it fires. Conditions: (a) the
+toggle must not move focus out of the ask field, so the PM keeps typing (add one test); (b) ignore it when
+`e.isComposing`; (c) it also works from the Transcript pane. Do not add a "disabled while typing" rule: checking what was
+just said while composing a question is the reason for the shortcut.
 
-**3. Should tips language follow the main language after a single-language switch?** Yes, as built (`pickLang`
-posts `tips_lang` for a one-language pick), with one change: tell the user. Today the toast says only
-"Call language: English. Applies from the next phrase.", but the tips language also changed, which is a second effect. Fix:
-when the tips language changes with the pick, the toast says "Call and tips language: English. Applies from the next
-phrase." (UK: "Мова дзвінка і підказок: англійська. Діє з наступної фрази."). In a mixed call the tips language stays as
-chosen in the Tips-in row (as built). This matches section 2 of the design doc ("tips follow the main language").
+**3. Tips language after a single-language switch.** Yes, follow the main language, as built (`tips.js:1184`), but say
+so. Today the toast `cl.ok` names only the call language. When the tips language also changes, the toast should read
+"Call and tips language: English. Applies from the next phrase." (UK: "Мова дзвінка і підказок: англійська. Діє з
+наступної фрази."). In a mixed call the tips language stays as chosen in the Tips-in row. Non-blocking copy fix.
 
-## Checklist for the re-run
+## Re-run checklist
 
-1. Add shots: Ready (no chip), Ended (no chip), menu open at 480 and 600, mixed chip with Tips-in row, pending chip,
-   `body.card` with the Transcript icon, narrow with the transcript open, widths 480 and 760, Ready empty-pane copy.
-2. Confirm B1 fixed in the Ready/Ended shots.
-3. Design re-reads the new shots; if they show only the expected change, propose the baseline approval to the owner
-   (the old `tips/` baselines change in every shot with a strip; owner's decision under Questions for client).
+1. Add the shots listed under B2 (plus 480 and 760 widths).
+2. Design re-reads them. If they show only the expected change, propose baseline approval for the `tips/` baselines to
+   the owner (every strip shot changes; decision goes to Questions for client).
+
+Verdict: CHANGES
+Blocking: B2 (no rendered evidence for the language menu, mixed and pending chip, compact card, Ended, narrow
+transcript/sheet, 480 and 760 widths).
