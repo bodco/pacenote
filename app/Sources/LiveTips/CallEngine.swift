@@ -299,6 +299,9 @@ final class CallEngine {
                 if fm.fileExists(atPath: tmp) { try? fm.moveItem(atPath: tmp, toPath: dst) }
             }
         }
+        // H2: the HubSpot link from Refresh, when the call has none. Fix round 6: only one saved for this call's calendar
+        // occurrence; a late preparation also joins by title and day, which never proves whose call it is.
+        CRMLinkCarry.carry(from: base, to: stem, occurrence: callRequest["crm_event"] as? String ?? "", chosen: false)
         notify(L("eng.prepLoaded"))
         // the tips engine reloads now instead of at its next fifth line
         if let inbox = EngineStatus.load(path: statusPath).inboxFile, let h = FileHandle(forWritingAtPath: inbox) {
@@ -308,6 +311,13 @@ final class CallEngine {
     }
 
     func adoptPrep(file: String) {
+        // H2 (PB-58, fix round 5): the HubSpot link Refresh saved with the preparation this Start call window showed. A call
+        // started without it (no crm_base) stays unlinked: lt never adopts a link. Fix round 6: only when it is verified for
+        // this call (the prep chosen by hand, or a link saved for this calendar occurrence), never by title and time.
+        if let crm = callRequest["crm_base"] as? String, !crm.isEmpty {
+            CRMLinkCarry.carry(from: crm, to: file.hasSuffix(".md") ? String(file.dropLast(3)) : file,
+                               occurrence: callRequest["crm_event"] as? String ?? "", chosen: callRequest["crm_chosen"] as? Bool ?? false)
+        }
         let c = config
         let lt = (appRoot as NSString).appendingPathComponent("bin/lt")
         guard FileManager.default.fileExists(atPath: lt) else { return }

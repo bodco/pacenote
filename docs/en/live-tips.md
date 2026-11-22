@@ -1676,6 +1676,30 @@ call. It writes only from the call page's menu, Update HubSpot: a note on the de
 (next step, the stage only if you type one), a follow-up task, each with a checkbox; Apply writes, Undo works for 8
 seconds. The transcript goes into the note only if you turn that on.
 
+**The call in HubSpot.** Update HubSpot also has a Call row, ticked by default: a HubSpot Call with the title, start
+time, duration, direction (Settings > Integrations > HubSpot, default Outbound), outcome Connected, the participants'
+names, the call page's Summary, the next steps, and a link back to the call (the Notion page when there is one),
+associated with the matched contacts, the company and the open deal. No transcript text is sent. Pacenote keeps the
+call's own id with the call, so applying again, or the Auto switch, updates the same HubSpot Call instead of adding a
+second one. One rare case still makes a second Call: HubSpot creates the Call but its answer is lost, and you apply
+again before HubSpot's search shows the new Call; the Call text carries `Pacenote call id`, so a search in HubSpot
+finds both. The company, deal and contacts you link with Refresh in Start call go to the recorded call you start
+from that window (Refresh saves them with the preparation you chose, else the planned one). The link goes with the
+call only when Pacenote knows it is this call's: you started the call from its calendar event and pressed Refresh for
+that event, or you chose the preparation yourself. A title or a time is never enough, so a same-title meeting of
+another customer never passes its link on. A call without a calendar event and without a chosen preparation stays
+unlinked, and the row says so after Refresh. A call started another way stays unlinked too, and Update HubSpot says so; to link a call,
+press Refresh in Start call before you start it. When you pick another preparation in Start call, the row shows that
+preparation's own link, and Refresh starts from it. Undo deletes a new Call or puts the old values back, and does nothing if the key now belongs to another
+HubSpot account. The link also remembers its HubSpot account: after
+you change the key to another account, or for a call linked before this version, Pacenote writes nothing and Update
+HubSpot offers **Relink**. Relink takes the attendees only from the calendar event the link was made for, never from
+another meeting at about the same time; when that event is unknown or no longer in the calendar, it finds the company by
+its saved name, without contacts. Relink waits for a Call that is being written for this call, and a Call written
+for the old account never ends up in the new link. **Log the call in HubSpot automatically after it
+ends** is off by default; when on, it logs only the Call, about two and a half minutes after the call, without a
+review. Notes, deal fields and tasks stay behind Apply. The design is in `docs/specs/hubspot-crm-integration.md`.
+
 **What Pacenote can do.** Help > What Pacenote can do lists every feature with Try it and how often you used it
 (from the local usage log, Settings > General > Data). For the first 14 days it is also a card on Home.
 

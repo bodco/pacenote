@@ -667,6 +667,387 @@ func part2_087() async {
     expect(old?.matchByDomain == true && old?.ownerAuto == true && old?.writeNote == true && old?.qualification.isEmpty == true, "CRM settings defaults")
 }
 
+/// H2: a small in-memory HubSpot for Call engagements. Never the network.
+final class FakeHubSpotCalls: CRMTransport {
+    var calls: [String: [String: String]] = [:]       // id -> properties
+    var assoc: [String: [String]] = [:]                // id -> "type/id" added by PUT or at create
+    var log: [String] = []
+    var bodies: [[String: Any]] = []
+    var next = 100
+    var portal = 500                // the portal of the key, from account-info
+    var createDelay: UInt64 = 0     // ns a create takes, so two writers can overlap
+    var createThenFail = false      // the Call is made but the answer is a 502 (an ambiguous create)
+    var failPut = false             // adding an association fails with a 500
+    var failPutAfter = -1           // PUTs that succeed before the next ones fail (-1: none fail this way)
+    var hold = false                // a create waits until the test lets it go, so a Relink can land in between
+    var holding = false             // a create is waiting on hold
+    var searchLag = 0               // searches that miss a new Call, as HubSpot's index lags a create
+    let lock = NSLock()             // the race checks send from two tasks at once; unguarded state crashed the gate
+    func send(_ method: String, _ path: String, _ body: [String: Any]?) async throws -> (Int, [String: Any], [String: String]) {
+        // the delay is waited before the lock, never inside it
+        if method == "POST" && path == "/crm/v3/objects/calls" && createDelay > 0 { try? await Task.sleep(nanoseconds: createDelay) }
+        if method == "POST" && path == "/crm/v3/objects/calls" {
+            lock.withLock { if hold { holding = true } }
+            while lock.withLock({ hold }) { try? await Task.sleep(nanoseconds: 1_000_000) }
+        }
+        return lock.withLock { handle(method, path, body) }
+    }
+    func handle(_ method: String, _ path: String, _ body: [String: Any]?) -> (Int, [String: Any], [String: String]) {
+        log.append(method + " " + path.split(separator: "?")[0])
+        if let b = body { bodies.append(b) }
+        let props = { (b: [String: Any]?) -> [String: String] in ((b?["properties"] as? [String: Any]) ?? [:]).mapValues { "\($0)" } }
+        if path == "/account-info/v3/details" { return (200, ["portalId": portal], [:]) }
+        if method == "POST" && path == "/crm/v3/objects/calls/search" {
+            let want = ((((body?["filterGroups"] as? [[String: Any]])?.first?["filters"]) as? [[String: Any]])?.first?["value"] as? String) ?? ""
+            if searchLag > 0 { searchLag -= 1; return (200, ["results": []], [:]) }
+            let hit = calls.first { $0.value["hs_call_external_id"] == want }
+            return (200, ["results": hit.map { [["id": $0.key]] } ?? []], [:])
+        }
+        if method == "POST" && path == "/crm/v3/objects/calls" {
+            next += 1; let id = "\(next)"
+            calls[id] = props(body)
+            assoc[id] = ((body?["associations"] as? [[String: Any]]) ?? []).map { a in
+                "\((a["to"] as! [String: Any])["id"]!)#\(((a["types"] as! [[String: Any]])[0])["associationTypeId"]!)" }
+            if createThenFail { return (502, ["message": "Bad gateway"], [:]) }
+            return (200, ["id": id], [:])
+        }
+        let id = String(path.split(separator: "?")[0].split(separator: "/")[4])
+        if path.hasPrefix("/crm/v4/objects/calls/") && method == "PUT" {
+            if failPut || failPutAfter == 0 { return (500, ["message": "association failed"], [:]) }
+            if failPutAfter > 0 { failPutAfter -= 1 }
+            assoc[id, default: []].append(String(path.split(separator: "/").suffix(2).joined(separator: "/"))); return (200, [:], [:])
+        }
+        guard calls[id] != nil else { return (404, ["message": "not found"], [:]) }
+        switch method {
+        case "GET": return (200, ["id": id, "properties": calls[id]!], [:])
+        case "PATCH": for (k, v) in props(body) { calls[id]![k] = v }; return (200, ["id": id], [:])
+        case "DELETE": calls[id] = nil; return (204, [:], [:])
+        default: return (400, [:], [:])
+        }
+    }
+}
+
+/// H2 (PB-58): Start call carries the HubSpot link Refresh saved with the preparation to the recorded call, where the
+/// finished call reads it (CRMLink.load(base: <call stem>)); without the call's own key and HubSpot Call id.
+func crmLinkCarry() {
+    let fm = FileManager.default
+    let root = NSTemporaryDirectory() + "lt-crm-carry-\(getpid())"
+    try? fm.removeItem(atPath: root)
+    let folder = root + "/live/2026-11-22-orbit-renewal"
+    try? fm.createDirectory(atPath: folder + "/.work", withIntermediateDirectories: true)
+    let prep = folder + "/prep-2026-11-22-1500-orbit-renewal", call = folder + "/2026-11-22-1502-orbit-renewal.app"
+    let link: [String: Any] = ["provider": "hubspot", "portalId": "4711", "companyId": "c1", "companyName": "Northwind",
+                               "dealId": "d1", "dealName": "Orbit renewal", "contactIds": ["p1", "p2"],
+                               "contactNames": ["Emily Carter", "James Miller"], "callKey": "old-key", "callId": "old-call",
+                               "occurrence": "ev-orbit@1795870800"]
+    let occ = "ev-orbit@1795870800"      // the calendar occurrence Refresh saved the link for (fix round 6)
+    func read(_ p: String) -> [String: Any] { fm.contents(atPath: p).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:] }
+    func write(_ o: [String: Any], _ p: String) { try? JSONSerialization.data(withJSONObject: o).write(to: URL(fileURLWithPath: p)) }
+    expect(!CRMLinkCarry.carry(from: prep, to: call, occurrence: occ, chosen: false), "carry: no link at the preparation, nothing written")
+    write(link, CallLayout.sidecar(prep, ".crm.json"))
+    // fix round 6: a preparation found by title and time (not chosen) whose link was saved for another occurrence, or
+    // for none, or a call without a calendar event: identity not verified, the call stays unlinked
+    expect(!CRMLinkCarry.carry(from: prep, to: call, occurrence: "ev-other@1795870800", chosen: false)
+           && !fm.fileExists(atPath: CallLayout.sidecar(call, ".crm.json")), "carry: another occurrence's link is not carried")
+    expect(!CRMLinkCarry.carry(from: prep, to: call, occurrence: "", chosen: false), "carry: a call without a calendar event and no chosen prep stays unlinked")
+    expect(!CRMLinkCarry.verified(base: prep, occurrence: "ev-orbit@1796475600", chosen: false), "verified: the next occurrence of the series is another call")
+    var noOcc = link; noOcc.removeValue(forKey: "occurrence")
+    let oldPrep = folder + "/prep-2026-11-22-1450-orbit-renewal"
+    write(noOcc, CallLayout.sidecar(oldPrep, ".crm.json"))
+    expect(!CRMLinkCarry.verified(base: oldPrep, occurrence: occ, chosen: false), "verified: a link saved without an occurrence is not this call's")
+    expect(CRMLinkCarry.verified(base: oldPrep, occurrence: "", chosen: true), "verified: a preparation chosen by hand is the PM's choice")
+    expect(CRMLinkCarry.carry(from: prep, to: call, occurrence: occ, chosen: false), "carry: the link goes to the call of its occurrence")
+    let dst = CallLayout.sidecar(call, ".crm.json")
+    expect(dst == folder + "/.work/2026-11-22-1502-orbit-renewal.app.crm.json", "carry: the call's own sidecar in .work/")
+    let got = read(dst)
+    expect(got["portalId"] as? String == "4711" && got["companyId"] as? String == "c1" && got["dealId"] as? String == "d1"
+           && got["contactIds"] as? [String] == ["p1", "p2"] && got["contactNames"] as? [String] == ["Emily Carter", "James Miller"],
+           "carry: portal, company, deal and contacts kept")
+    expect(got["callKey"] == nil && got["callId"] == nil, "carry: the call key and the HubSpot Call id are not carried")
+    // the call's own link (Relink, or an Apply that stored a Call id) is never replaced by the preparation's
+    var mine = got; mine["callId"] = "c-9"; mine["dealId"] = "none"
+    write(mine, dst)
+    expect(!CRMLinkCarry.carry(from: prep, to: call, occurrence: occ, chosen: true), "carry: an existing call link stays")
+    let kept = read(dst)
+    expect(kept["callId"] as? String == "c-9" && kept["dealId"] as? String == "none", "carry: the call link is unchanged")
+    // a flat (old layout) live folder works the same way
+    let flatPrep = root + "/live/prep-2026-11-22-1600-sync", flatCall = root + "/live/2026-11-22-1601-sync.app"
+    write(link, CallLayout.sidecar(flatPrep, ".crm.json"))
+    expect(CRMLinkCarry.carry(from: flatPrep, to: flatCall, occurrence: occ, chosen: false) && fm.fileExists(atPath: flatCall + ".crm.json"), "carry: flat layout")
+    // Refresh saves the link with the prep Start call copies: the chosen one over the planned one (PB-58 fix round 4)
+    let planned = folder + "/prep-2026-11-22-1500-orbit-renewal", picked = folder + "/prep-2026-11-22-1400-orbit-renewal"
+    expect(CRMLinkCarry.prepBase(chosen: picked + ".brief.md", planned: planned) == picked, "refresh base: the chosen brief over the planned prep")
+    expect(CRMLinkCarry.prepBase(chosen: picked + ".sheet.json", planned: planned) == picked, "refresh base: a chosen Meeting Sheet")
+    expect(CRMLinkCarry.prepBase(chosen: nil, planned: planned) == planned && CRMLinkCarry.prepBase(chosen: "", planned: planned) == planned,
+           "refresh base: no choice, the planned prep")
+    expect(CRMLinkCarry.prepBase(chosen: nil, planned: nil) == nil, "refresh base: nothing known")
+    // the link Refresh saved at the chosen prep is the one Start call carries
+    write(link, CallLayout.sidecar(picked, ".crm.json"))
+    let call2 = folder + "/2026-11-22-1405-orbit-renewal.app"
+    expect(CRMLinkCarry.carry(from: CRMLinkCarry.prepBase(chosen: picked + ".brief.md", planned: planned)!, to: call2, occurrence: "", chosen: true)
+           && read(CallLayout.sidecar(call2, ".crm.json"))["companyId"] as? String == "c1", "refresh base: Start call carries the chosen prep's link")
+    // fix round 5: two preparations linked to different customers. After the PM switches from the first to the second,
+    // Refresh keeps the link stored with the second (read at Refresh time), never the first one's company and deal
+    let acme = folder + "/prep-2026-11-22-1300-acme", globex = folder + "/prep-2026-11-22-1310-globex", fresh = folder + "/prep-2026-11-22-1320-new"
+    var acmeLink = link; acmeLink["companyId"] = "acme"; acmeLink["dealId"] = "d-acme"
+    var globexLink = link; globexLink["companyId"] = "globex"; globexLink["dealId"] = "d-globex"
+    write(acmeLink, CallLayout.sidecar(acme, ".crm.json")); write(globexLink, CallLayout.sidecar(globex, ".crm.json"))
+    func stored(_ b: String) -> [String: Any] { CRMLinkCarry.stored(base: b).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:] }
+    expect(stored(acme)["companyId"] as? String == "acme", "refresh keep: the first preparation's own link")
+    let keep = stored(CRMLinkCarry.prepBase(chosen: globex + ".brief.md", planned: acme)!)
+    expect(keep["companyId"] as? String == "globex" && keep["dealId"] as? String == "d-globex", "refresh keep: after a switch, the second preparation's link, not the first one's")
+    expect(CRMLinkCarry.stored(base: fresh) == nil, "refresh keep: a preparation without a link starts empty")
+    let call3 = folder + "/2026-11-22-1312-globex.app"
+    expect(CRMLinkCarry.carry(from: globex, to: call3, occurrence: "", chosen: true) && read(CallLayout.sidecar(call3, ".crm.json"))["companyId"] as? String == "globex",
+           "refresh keep: Start call carries the second preparation's customer")
+    // fix round 7: Start call fills the chosen preparation by title and time when the PM picked none. A first start
+    // that fails and a retry with the same window must stay automatic, so a preparation saved for another occurrence
+    // stays unlinked; only the PM's own pick vouches for the link
+    let autoFile = (prep as NSString).lastPathComponent + ".brief.md", autoPath = prep + ".brief.md"
+    let call4 = folder + "/2026-11-22-1503-orbit-renewal.app"
+    for attempt in 1...2 {
+        let byHand = CRMLinkCarry.chosenByHand(picked: nil, current: autoFile, path: autoPath)
+        expect(!byHand, "start retry \(attempt): a preparation found by title and time is not chosen by hand")
+        expect(!CRMLinkCarry.carry(from: prep, to: call4, occurrence: "ev-other@1795870800", chosen: byHand)
+               && !fm.fileExists(atPath: CallLayout.sidecar(call4, ".crm.json")), "start retry \(attempt): another occurrence's link stays off the call")
+    }
+    expect(CRMLinkCarry.chosenByHand(picked: autoFile, current: autoFile, path: autoPath), "start: the preparation the PM picked is chosen by hand")
+    expect(!CRMLinkCarry.chosenByHand(picked: "prep-2026-11-22-1400-orbit-renewal.brief.md", current: autoFile, path: autoPath),
+           "start: a pick replaced since is not this preparation")
+    expect(!CRMLinkCarry.chosenByHand(picked: autoFile, current: autoFile, path: nil), "start: a picked file that is gone is not a choice")
+    // fix round 7: Relink of a call recorded at 15:02. Two meetings within 20 minutes: Globex at 15:00 (nearer, another
+    // customer) and Orbit at 15:10 (the occurrence the link was saved for). Only the saved occurrence gives attendees.
+    let nearby: [(ids: [String], emails: [String])] = [
+        (["ev-globex@1795870800"], ["sarah.johnson@globex.example"]),
+        (["ev-orbit@1795871400", "gcal-orbit@1795871400"], ["emily.carter@northwind.example"])]
+    expect(CRMLinkCarry.relinkEmails(occurrence: "ev-orbit@1795871400", events: nearby) == ["emily.carter@northwind.example"],
+           "relink: the attendees of the saved occurrence, not the nearer meeting of another customer")
+    expect(CRMLinkCarry.relinkEmails(occurrence: "gcal-orbit@1795871400", events: nearby) == ["emily.carter@northwind.example"],
+           "relink: the saved occurrence found through a calendar copy")
+    expect(CRMLinkCarry.relinkEmails(occurrence: "", events: nearby).isEmpty, "relink: a link without an occurrence takes no attendees (company by name)")
+    expect(CRMLinkCarry.relinkEmails(occurrence: "ev-orbit@1795267800", events: nearby).isEmpty,
+           "relink: an occurrence the calendar no longer has takes no attendees")
+    try? fm.removeItem(atPath: root)
+}
+
+func crmCalls() async {
+    let start = Date(timeIntervalSince1970: 1_780_000_000)
+    let key = "11111111-1111-1111-1111-111111111111"
+    func entry(_ summary: [String]) -> CRMCallLog {
+        CRMCallLog(key: key, title: "Orbit renewal", start: start, durationMs: 1_800_000, direction: "OUTBOUND",
+                   body: CRMCallLog.body(summary: summary, nextSteps: ["Send the demo link"], participants: ["Emily Clark"], link: "https://notion.example/p1", key: key))
+    }
+    let refs = [CRMRef("deals", "D1"), CRMRef("companies", "C1"), CRMRef("contacts", "P1"), CRMRef("notes", "X")]
+    // create: properties and the three association types; the key is the external id
+    let t = FakeHubSpotCalls()
+    let hs = HubSpotConnector(transport: t, ownerId: "9", sleep: { _ in })
+    let r1 = try? await hs.upsertCall(entry(["Budget approved"]), knownId: "", associations: refs)
+    let c1 = t.calls[r1?.id ?? ""] ?? [:]
+    expect(r1?.created == true && t.calls.count == 1, "calls: created once")
+    expect(c1["hs_call_title"] == "Orbit renewal" && c1["hs_call_duration"] == "1800000" && c1["hs_call_direction"] == "OUTBOUND" && c1["hs_call_status"] == "COMPLETED"
+           && c1["hs_call_disposition"] == CRMCallLog.connected && c1["hs_call_external_id"] == "pacenote:" + key && c1["hubspot_owner_id"] == "9", "calls: fields, outcome, external id, owner")
+    expect(Set(t.assoc[r1?.id ?? ""] ?? []) == ["D1#206", "C1#182", "P1#194"], "calls: associated with the deal, the company and the contact only")
+    expect((c1["hs_call_body"] ?? "").contains("Budget approved") && (c1["hs_call_body"] ?? "").contains("https://notion.example/p1") && (c1["hs_call_body"] ?? "").contains("Emily Clark"), "calls: summary, link back, participants")
+    expect(!(c1["hs_call_body"] ?? "").contains("Transcript"), "calls: no transcript text")
+    expect(CRMCallLog.body(summary: ["a <b> & c"], nextSteps: [], participants: [], link: "", key: "k").contains("a &lt;b&gt; &amp; c"), "calls: body text is escaped")
+    // re-run with the stored id: the same Call is updated, no second POST
+    let posts = t.log.filter { $0 == "POST /crm/v3/objects/calls" }.count
+    let r2 = try? await hs.upsertCall(entry(["Budget approved", "Legal review next"]), knownId: r1?.id ?? "", associations: refs)
+    expect(r2?.id == r1?.id && r2?.created == false && t.calls.count == 1 && t.log.filter { $0 == "POST /crm/v3/objects/calls" }.count == posts, "calls: re-run updates the same Call")
+    expect((t.calls[r1?.id ?? ""]?["hs_call_body"] ?? "").contains("Legal review next") && (r2?.old["hs_call_body"] ?? "").contains("Budget approved") && !(r2?.old["hs_call_body"] ?? "").contains("Legal"), "calls: update keeps the old body for Undo")
+    expect(t.log.contains { $0.hasPrefix("PUT /crm/v4/objects/calls/") && $0.contains("/associations/default/contacts/P1") }, "calls: an update re-associates")
+    // dedupe: the stored id is lost, HubSpot is asked by the external id
+    let r3 = try? await hs.upsertCall(entry(["Same call, id lost"]), knownId: "", associations: refs)
+    expect(r3?.id == r1?.id && r3?.created == false && t.calls.count == 1, "calls: no stored id finds the Call by the Pacenote call id")
+    // a stored id that was deleted in HubSpot: found by external id (none now) so a new Call is made, never an error
+    let t2 = FakeHubSpotCalls()
+    let hs2 = HubSpotConnector(transport: t2, sleep: { _ in })
+    let r4 = try? await hs2.upsertCall(entry(["x"]), knownId: "999", associations: [])
+    expect(r4?.created == true && t2.calls.count == 1, "calls: a stale stored id makes a new Call")
+    // Undo: a new Call is deleted, an updated one gets its old values back
+    if let id = r4?.id { try? await hs2.delete(type: "calls", id: id) }
+    expect(t2.calls.isEmpty, "calls: undo of a new Call deletes it")
+    if let id = r1?.id, let old = r2?.old {
+        try? await hs.restoreCall(id: id, fields: old)
+        expect(t.calls[id]?["hs_call_body"] == old["hs_call_body"] && !(t.calls[id]?["hs_call_body"] ?? "").contains("Legal"), "calls: undo of an update restores the old values")
+    }
+    // the plan: a Call row, ticked by the setting; a plan without a Call has no row; the note carries the transcript only when asked
+    let plan = CRMUpdatePlan.build(title: "Orbit renewal", date: "31 Oct", summary: ["a"], decisions: [], nextSteps: [], notionURL: "", transcript: nil,
+                                   nextStep: "", closeDate: "", stage: nil, qualification: [:], mapping: [:], followUp: nil,
+                                   callLog: entry(["a"]), writeCall: false)
+    expect(plan.rows.first { $0.id == "call" }?.on == false && plan.callLog?.key == key, "calls: the Call row follows the setting")
+    expect(CRMUpdatePlan.build(title: "t", date: "", summary: [], decisions: [], nextSteps: [], notionURL: "", transcript: "SECRET WORDS", nextStep: "", closeDate: "",
+                               stage: nil, qualification: [:], mapping: [:], followUp: nil).rows.first { $0.id == "call" } == nil, "calls: no Call row without a log")
+    expect(!"\(t.bodies)".contains("SECRET WORDS") && !(plan.callLog?.body ?? "").contains("SECRET WORDS"), "calls: nothing sent to the Call API carries transcript text")
+    // settings: off by default; old files keep working
+    let old = try? JSONDecoder().decode(CRMSettings.self, from: Data("{\"provider\":\"hubspot\"}".utf8))
+    expect(old?.autoLogCall == false && old?.writeCall == true && old?.callDirection == "OUTBOUND" && CRMSettings().autoLogCall == false, "calls: Auto is off by default")
+    expect(CRMCallLog(key: "k", title: "t", start: start, durationMs: -5, direction: "sideways", body: "").direction == "OUTBOUND", "calls: direction and duration are clamped")
+
+    // Auto and Apply overlap on one call: without the queue the fake makes two Calls, through it one
+    final class Stored { var id = ""; var portal = "500" }
+    let race = FakeHubSpotCalls(); race.createDelay = 50_000_000
+    let hr = HubSpotConnector(transport: race, sleep: { _ in })
+    let ea = entry(["a"])
+    async let x1 = try? hr.upsertCall(ea, knownId: "", associations: [])
+    async let x2 = try? hr.upsertCall(ea, knownId: "", associations: [])
+    _ = await (x1, x2)
+    expect(race.calls.count == 2, "calls: the fake shows the double create when two writers overlap")
+    let race2 = FakeHubSpotCalls(); race2.createDelay = 50_000_000
+    let hq = HubSpotConnector(transport: race2, sleep: { _ in })
+    let st = Stored(), q = CRMCallQueue()
+    func sync() async -> CRMCallResult? {
+        try? await CRMCallSync.log(ea, connector: hq, queue: q, fallback: CRMCallTarget(portalId: "500", callKey: key),
+                                   load: { CRMCallTarget(callId: st.id, portalId: st.portal, callKey: key) }, save: { st.id = $0 })
+    }
+    async let y1 = sync()
+    async let y2 = sync()
+    let (z1, z2) = await (y1, y2)
+    expect(race2.calls.count == 1 && z1?.id == z2?.id && st.id == z1?.id && Set([z1?.created, z2?.created]) == [true, false],
+           "calls: Auto and Apply at the same time make one Call; the second updates it")
+    // the link's portal must be the key's portal; another or an unknown one writes nothing
+    let pf = FakeHubSpotCalls(); pf.portal = 777
+    let hp = HubSpotConnector(transport: pf, sleep: { _ in })
+    var perr: CRMError? = nil
+    do { _ = try await CRMCallSync.log(entry(["a"]), connector: hp, queue: q, fallback: CRMCallTarget(portalId: "500", callKey: key),
+                                      load: { CRMCallTarget(callId: "101", portalId: "500", callKey: key) }, save: { _ in }) }
+    catch { perr = error as? CRMError }
+    expect(perr?.code == CRMPortal.mismatchCode && pf.calls.isEmpty && !pf.log.contains { !$0.hasPrefix("GET /account-info") }, "calls: a link from another portal writes nothing")
+    perr = nil
+    do { _ = try await CRMCallSync.log(entry(["a"]), connector: hp, queue: q, fallback: CRMCallTarget(portalId: "", callKey: key),
+                                      load: { CRMCallTarget(portalId: "", callKey: key) }, save: { _ in }) }
+    catch { perr = error as? CRMError }
+    expect(perr?.code == CRMPortal.mismatchCode && pf.calls.isEmpty, "calls: a link with no portal needs Relink")
+    expect(CRMPortal.matches(link: "777", current: "777") && !CRMPortal.matches(link: "", current: ""), "calls: portal match")
+    // fix round 8: Auto waits for portal 500's answer while the call is relinked to portal 777. The relink here skips
+    // the queue on purpose: the id portal 500 returns is still never stored in the 777 link
+    final class Link { var id = "", portal = "500", order: [String] = [] }
+    func held() -> FakeHubSpotCalls { let f = FakeHubSpotCalls(); f.hold = true; return f }
+    func waitHolding(_ f: FakeHubSpotCalls) async {     // at most 5 s, so a write that never reaches the create fails the check, not hangs
+        for _ in 0..<5000 where !f.lock.withLock({ f.holding }) { try? await Task.sleep(nanoseconds: 1_000_000) }
+    }
+    let ha8 = held(), lk = Link()
+    let hh = HubSpotConnector(transport: ha8, sleep: { _ in })
+    let w = Task { try? await CRMCallSync.log(ea, connector: hh, queue: CRMCallQueue(), fallback: CRMCallTarget(portalId: "500", callKey: key),
+                                              load: { CRMCallTarget(callId: lk.id, portalId: lk.portal, callKey: key) }, save: { lk.id = $0 }) }
+    await waitHolding(ha8)
+    lk.portal = "777"; lk.id = ""
+    ha8.lock.withLock { ha8.hold = false }
+    let wr = await w.value
+    expect(wr?.created == true && ha8.calls.count == 1 && lk.id == "" && lk.portal == "777",
+           "calls: a write answered after a Relink to another portal never stores its Call id in the new link")
+    // the same through the app's path: Relink waits for the write in flight, then replaces the link
+    let hb8 = held(), lk2 = Link(), q8 = CRMCallQueue()
+    let hh2 = HubSpotConnector(transport: hb8, sleep: { _ in })
+    let w2 = Task { try? await CRMCallSync.log(ea, connector: hh2, queue: q8, fallback: CRMCallTarget(portalId: "500", callKey: key),
+                                               load: { CRMCallTarget(callId: lk2.id, portalId: lk2.portal, callKey: key) },
+                                               save: { lk2.id = $0; lk2.order.append("save") }) }
+    await waitHolding(hb8)
+    let rl8 = Task { try? await CRMCallSync.relink(key: key, queue: q8) { lk2.order.append("relink"); lk2.portal = "777"; lk2.id = "" } }
+    try? await Task.sleep(nanoseconds: 30_000_000)
+    expect(lk2.order.isEmpty, "calls: Relink waits while a write of the same call waits for HubSpot")
+    hb8.lock.withLock { hb8.hold = false }
+    _ = await w2.value; _ = await rl8.value
+    expect(lk2.order == ["save", "relink"] && lk2.id == "" && lk2.portal == "777", "calls: Relink runs after the write and keeps no id of the old portal")
+    // the associations are the stored link's when the turn comes, never the ones captured when Auto started
+    let as8 = FakeHubSpotCalls(); as8.portal = 777
+    let lk3 = Link(); lk3.portal = "777"
+    let r8 = try? await CRMCallSync.log(ea, connector: HubSpotConnector(transport: as8, sleep: { _ in }), queue: CRMCallQueue(),
+                                        fallback: CRMCallTarget(portalId: "777", callKey: key, associations: [CRMRef("companies", "C1")]),
+                                        load: { CRMCallTarget(callId: lk3.id, portalId: lk3.portal, callKey: key, associations: [CRMRef("companies", "C777")]) },
+                                        save: { lk3.id = $0 })
+    expect(r8 != nil && as8.assoc[r8?.id ?? ""] == ["C777#182"] && lk3.id == r8?.id, "calls: associations come from the link stored when the write runs")
+    // a link with another call key writes nothing
+    var kerr: CRMError? = nil
+    do { _ = try await CRMCallSync.log(ea, connector: HubSpotConnector(transport: FakeHubSpotCalls(), sleep: { _ in }), queue: CRMCallQueue(),
+                                       fallback: CRMCallTarget(portalId: "500", callKey: key),
+                                       load: { CRMCallTarget(portalId: "500", callKey: "other") }, save: { _ in }) } catch { kerr = error as? CRMError }
+    expect(kerr?.code == CRMPortal.mismatchCode, "calls: a link with another call key writes nothing")
+    // Auto made its entry from the portal 500 link; the link was relinked to 777 before its turn: nothing is written
+    let rp8 = FakeHubSpotCalls(); rp8.portal = 777
+    kerr = nil
+    do { _ = try await CRMCallSync.log(ea, connector: HubSpotConnector(transport: rp8, sleep: { _ in }), queue: CRMCallQueue(),
+                                       fallback: CRMCallTarget(portalId: "500", callKey: key),
+                                       load: { CRMCallTarget(portalId: "777", callKey: key) }, save: { _ in }) } catch { kerr = error as? CRMError }
+    expect(kerr?.code == CRMPortal.mismatchCode && rp8.calls.isEmpty && rp8.log.isEmpty, "calls: an entry made for one portal is never written to another")
+    // an association fails on a re-run: the Call keeps its old fields (no PATCH)
+    let af = FakeHubSpotCalls()
+    let ha = HubSpotConnector(transport: af, sleep: { _ in })
+    let made = try? await ha.upsertCall(entry(["Old summary"]), knownId: "", associations: [])
+    af.failPut = true
+    var aerr: Error? = nil
+    do { _ = try await ha.upsertCall(entry(["New summary"]), knownId: made?.id ?? "", associations: refs) } catch { aerr = error }
+    expect(aerr != nil && (af.calls[made?.id ?? ""]?["hs_call_body"] ?? "").contains("Old summary") && !af.log.contains { $0.hasPrefix("PATCH") },
+           "calls: a failed association leaves the Call's fields unchanged")
+    // the second association fails after the first one landed: the fields stay, the first association stays (outside Undo)
+    let pf2 = FakeHubSpotCalls()
+    let hpf = HubSpotConnector(transport: pf2, sleep: { _ in })
+    let made2 = try? await hpf.upsertCall(entry(["Old summary"]), knownId: "", associations: [])
+    pf2.failPutAfter = 1
+    var perr2: Error? = nil
+    do { _ = try await hpf.upsertCall(entry(["New summary"]), knownId: made2?.id ?? "", associations: refs) } catch { perr2 = error }
+    expect(perr2 != nil && (pf2.calls[made2?.id ?? ""]?["hs_call_body"] ?? "").contains("Old summary") && !pf2.log.contains { $0.hasPrefix("PATCH") }
+           && pf2.assoc[made2?.id ?? ""] == ["deals/D1"], "calls: a partly failed re-association keeps the fields and the first association")
+    // an ambiguous create (the Call is made, the answer is a 502): found by the Pacenote call id, not made again
+    let amb = FakeHubSpotCalls(); amb.createThenFail = true
+    let hb = HubSpotConnector(transport: amb, sleep: { _ in })
+    let rb = try? await hb.upsertCall(entry(["a"]), knownId: "", associations: [])
+    amb.createThenFail = false
+    let rb2 = try? await hb.upsertCall(entry(["b"]), knownId: "", associations: [])
+    expect(rb?.id != nil && rb?.id == amb.calls.keys.first && amb.calls.count == 1 && rb2?.id == rb?.id, "calls: an ambiguous create is reconciled, never a second Call")
+    // the same, while search still misses the new Call: asked again after a wait, still one Call
+    let lag = FakeHubSpotCalls(); lag.createThenFail = true; lag.searchLag = 3     // the search before the create, then two after it
+    final class Waits { var s: [Double] = [] }
+    let waits = Waits()
+    let hl = HubSpotConnector(transport: lag, sleep: { waits.s.append($0) })
+    let rl = try? await hl.upsertCall(entry(["a"]), knownId: "", associations: [])
+    expect(rl?.id != nil && rl?.id == lag.calls.keys.first && lag.calls.count == 1 && waits.s == [2, 4], "calls: an ambiguous create waits for search, never a second Call")
+    let gone = FakeHubSpotCalls(); gone.createThenFail = true; gone.searchLag = 5
+    let hg = HubSpotConnector(transport: gone, sleep: { _ in })
+    let rg = try? await hg.upsertCall(entry(["a"]), knownId: "", associations: [])
+    gone.createThenFail = false; gone.searchLag = 0
+    let rg2 = try? await hg.upsertCall(entry(["a"]), knownId: "", associations: [])
+    expect(rg == nil && gone.calls.count == 1 && rg2?.id == gone.calls.keys.first && rg2?.created == false,
+           "calls: search still behind reports a failure; the next run finds the Call")
+    // Undo checks the portal the Apply wrote to: after the key moves to another portal nothing is deleted or restored
+    let up = FakeHubSpotCalls()
+    let hu = HubSpotConnector(transport: up, sleep: { _ in })
+    let made1 = try? await hu.upsertCall(entry(["one"]), knownId: "", associations: [])
+    let upd = try? await hu.upsertCall(entry(["two"]), knownId: made1?.id ?? "", associations: [])
+    up.portal = 777
+    let sent = up.log.count
+    var uerr: CRMError? = nil
+    let items = [CRMUndoItem("calls", made1?.id ?? ""), CRMUndoItem("calls", upd?.id ?? "", upd?.old ?? [:]), CRMUndoItem("deals", "D1", ["dealstage": "a"])]
+    do { _ = try await CRMCallSync.undo(items, portal: "500", connector: hu) } catch { uerr = error as? CRMError }
+    expect(uerr?.code == CRMPortal.mismatchCode && up.calls.count == 1 && (up.calls[made1?.id ?? ""]?["hs_call_body"] ?? "").contains("two")
+           && up.log.dropFirst(sent).allSatisfy { $0.hasPrefix("GET /account-info") }, "calls: Undo after a portal switch changes nothing")
+    up.portal = 500
+    final class Deleted { var ids: [String] = [] }
+    let deleted = Deleted()
+    let uf = try? await CRMCallSync.undo([CRMUndoItem("calls", made1?.id ?? "")], portal: "500", connector: hu) { deleted.ids.append($0.id) }
+    expect(uf == 0 && up.calls.isEmpty && deleted.ids == [made1?.id ?? "-"], "calls: Undo in the same portal deletes the new Call")
+    // a 4xx create is a real failure and is not reconciled
+    let rejected = try? await HubSpotConnector(transport: FakeBadCreate(), sleep: { _ in }).upsertCall(entry(["a"]), knownId: "", associations: [])
+    expect(rejected == nil, "calls: a rejected create fails")
+    // Summary is the notes' In short and Recap, next steps are what people took on; distinct texts stay distinct
+    let sec = CRMCallLog.sections(tldr: "**Budget** approved for Q3.", recap: ["Legal reviewed the terms"], onMe: ["Send the demo link"],
+                                  theirs: ["Emily Clark: share the security review"], salesNext: "Book the pilot")
+    expect(sec.summary == ["Budget approved for Q3.", "Legal reviewed the terms"] && sec.nextSteps == ["Send the demo link", "Emily Clark: share the security review"],
+           "calls: Summary from the notes, next steps from the commitments")
+    let body = CRMCallLog.body(summary: sec.summary, nextSteps: sec.nextSteps, participants: [], link: "", key: "k")
+    expect(body.contains("<b>Summary</b></p><ul><li>Budget approved") && body.components(separatedBy: "Send the demo link").count == 2,
+           "calls: next steps are not repeated as the Summary")
+    expect(CRMCallLog.sections(tldr: "", recap: [], onMe: [], theirs: [], salesNext: "Book the pilot").nextSteps == ["Book the pilot"], "calls: the sales next step when nobody took anything on")
+}
+
+/// H2: a create HubSpot rejects (400): never reconciled by search.
+final class FakeBadCreate: CRMTransport {
+    func send(_ method: String, _ path: String, _ body: [String: Any]?) async throws -> (Int, [String: Any], [String: String]) {
+        if path == "/crm/v3/objects/calls/search" { return (200, ["results": []], [:]) }
+        return (400, ["message": "Property values were not valid"], [:])
+    }
+}
+
 final class BodyFake: CRMTransport {
     var bodies: [[String: Any]] = []
     func send(_ method: String, _ path: String, _ body: [String: Any]?) async throws -> (Int, [String: Any], [String: String]) {
@@ -767,6 +1148,8 @@ settings087()
 await part2_087()
 usage087()
 await crm087()
+await crmCalls()
+crmLinkCarry()
 learningPatterns()
 enginePathsFollowTheApp()
 engineHealsAPythonWithoutModules()

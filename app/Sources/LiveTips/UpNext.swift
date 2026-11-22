@@ -180,6 +180,7 @@ final class UpNext: ObservableObject {
         var publicCall: Bool; var hiringRole: String; var tipModel: String; var language: String
         var context: String; var folders: [String]; var useProjectFolder: Bool; var callDate: Date
         var chosenPrep: String?; var prepBase: String?; var prepFailed: Bool
+        var pickedPrep: String?           // PB-58: picked by hand; older files have none (automatic)
         var calEventID: String?; var seriesKey: String?
         var deck: DeckSetup?              // 0.8.5; older files have none
     }
@@ -189,7 +190,7 @@ final class UpNext: ObservableObject {
             Saved(id: m.id.uuidString, target: m.target, title: m.title, audience: m.audience, callType: m.callType,
                   publicCall: m.publicCall, hiringRole: m.hiringRole, tipModel: m.tipModel, language: m.language,
                   context: m.context, folders: m.folders, useProjectFolder: m.useProjectFolder, callDate: m.callDate,
-                  chosenPrep: m.chosenPrep, prepBase: m.prepBase, prepFailed: m.prepFailed,
+                  chosenPrep: m.chosenPrep, prepBase: m.prepBase, prepFailed: m.prepFailed, pickedPrep: m.pickedPrep,
                   calEventID: m.calEventID, seriesKey: m.seriesKey, deck: m.deck.phase == .none ? nil : m.deck)
         }
         let enc = JSONEncoder(); enc.dateEncodingStrategy = .iso8601; enc.outputFormatting = [.prettyPrinted]
@@ -208,7 +209,7 @@ final class UpNext: ObservableObject {
             m.target = s.target; m.title = s.title; m.audience = s.audience; m.callType = s.callType
             m.publicCall = s.publicCall; m.hiringRole = s.hiringRole; m.tipModel = s.tipModel
             m.language = s.language; m.languageTouched = true; m.context = s.context; m.folders = s.folders
-            m.useProjectFolder = s.useProjectFolder; m.callDate = s.callDate; m.chosenPrep = s.chosenPrep
+            m.useProjectFolder = s.useProjectFolder; m.callDate = s.callDate; m.chosenPrep = s.chosenPrep; m.pickedPrep = s.pickedPrep
             m.prepBase = s.prepBase; m.prepFailed = s.prepFailed; m.calEventID = s.calEventID; m.seriesKey = s.seriesKey
             if var dk = s.deck { if case .reading = dk.phase { dk.phase = dk.info == nil ? .none : .ready }; m.deck = dk }
             return m

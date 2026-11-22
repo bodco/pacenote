@@ -12,9 +12,24 @@ struct CRMLink: Codable, Equatable {
     var companyId = "", companyName = ""
     var dealId = "", dealName = ""
     var contactIds: [String] = []
+    var contactNames: [String] = []     // H2: the participants named in the Call engagement
+    var callKey = ""                    // H2: the Pacenote call id, made once and kept with the call
+    var callId = ""                     // H2: the HubSpot Call engagement of this call, so a re-run updates it
+    var portalId = ""                   // H2: the portal these ids belong to; writes need it to match the key's portal
+    var occurrence = ""                 // H2 (fix round 6): the calendar occurrence Refresh linked it for; carried only to that call
+
+    init() {}
+    init(from d: Decoder) throws {
+        let c = try d.container(keyedBy: CodingKeys.self)
+        func s(_ k: CodingKeys, _ def: String = "") -> String { (try? c.decodeIfPresent(String.self, forKey: k)) ?? nil ?? def }
+        provider = s(.provider, "hubspot"); companyId = s(.companyId); companyName = s(.companyName); dealId = s(.dealId); dealName = s(.dealName)
+        contactIds = (try? c.decodeIfPresent([String].self, forKey: .contactIds)) ?? nil ?? []
+        contactNames = (try? c.decodeIfPresent([String].self, forKey: .contactNames)) ?? nil ?? []
+        callKey = s(.callKey); callId = s(.callId); portalId = s(.portalId); occurrence = s(.occurrence)
+    }
 
     static func url(base: String) -> URL { URL(fileURLWithPath: CallLayout.sidecar(base, ".crm.json")) }
-    static func load(base: String) -> CRMLink? { (try? Data(contentsOf: url(base: base))).flatMap { try? JSONDecoder().decode(CRMLink.self, from: $0) } }
+    static func load(base: String) -> CRMLink? { CRMLinkCarry.stored(base: base).flatMap { try? JSONDecoder().decode(CRMLink.self, from: $0) } }
     func save(base: String) { if let d = try? JSONEncoder().encode(self) { try? d.write(to: Self.url(base: base), options: .atomic) } }
 }
 
@@ -32,10 +47,21 @@ extension CRMService {
 
     /// Finds the company (attendee domains, else the name), its freshest open deal and the contacts; keeps a link the
     /// PM chose. Writes <base>.crm.md and <base>.crm.json. Returns the link or an error line.
-    func refresh(base: String, emails: [String], name: String, keep: CRMLink?) async -> (CRMLink?, String) {
+    /// occurrence (Start call's Refresh): the calendar occurrence the link is saved for, "" for a call without an event;
+    /// nil (Relink on a recorded call) leaves it as it was.
+    func refresh(base: String, emails: [String], name: String, keep: CRMLink?, occurrence: String? = nil) async -> (CRMLink?, String) {
         guard let c = connector() else { return (nil, L("crm.notConnected")) }
         do {
             var link = keep ?? CRMLink()
+            let portal = try await c.portalId()
+            if link.portalId != portal {     // H2: ids from another portal (or an unknown one) are not kept; the call key
+                var fresh = CRMLink(); fresh.callKey = link.callKey    // and the PM's "No deal" are, and the calendar
+                fresh.occurrence = link.occurrence                     // occurrence (it is not a portal id)
+                if link.dealId == "none" { fresh.dealId = "none" }
+                link = fresh
+            }
+            link.portalId = portal
+            if let o = occurrence { link.occurrence = o }
             var company: CRMCompany? = nil
             if !link.companyId.isEmpty { company = CRMCompany(id: link.companyId, name: link.companyName, domain: "") }
             if company == nil, SettingsWindow.model.config.crm.matchByDomain {   // 0.8.7 (I6.2): the toggle in Matching
@@ -56,6 +82,7 @@ extension CRMService {
             link.companyId = company?.id ?? ""; link.companyName = company?.name ?? ""
             if link.dealId != "none" { link.dealId = deal?.id ?? ""; link.dealName = deal?.name ?? "" }
             link.contactIds = contacts.map(\.id)
+            link.contactNames = contacts.map { $0.name.isEmpty ? $0.email : $0.name }
             try? FileManager.default.createDirectory(atPath: (CallLayout.sidecar(base, ".crm.md") as NSString).deletingLastPathComponent, withIntermediateDirectories: true)   // 0.8.7.1; call folders: .work/
             let md = CRMSnapshot.render(provider: c.providerName, company: company, deal: deal, contacts: contacts, activity: acts, taken: Date())
             try? md.replacingOccurrences(of: "\u{2014}", with: "-").write(toFile: CallLayout.sidecar(base, ".crm.md"), atomically: true, encoding: .utf8)
@@ -64,6 +91,103 @@ extension CRMService {
         } catch {
             return (nil, (error as? CRMError)?.message ?? error.localizedDescription)
         }
+    }
+}
+
+/// H2: the Call engagement of a finished call, from the call page as edited. Nothing from the transcript.
+@MainActor
+enum CRMCallLogger {
+    static func log(file: String, link: inout CRMLink) -> CRMCallLog? {
+        let base = file.hasSuffix(".md") ? String(file.dropLast(3)) : file
+        guard let rec = CallHistory.shared.records.first(where: { $0.file == file }) else { return nil }
+        if link.callKey.isEmpty {
+            // the key is stored at once, so Auto and an open Update window use the same one
+            var disk = CRMLink.load(base: base) ?? link
+            if disk.callKey.isEmpty { disk.callKey = UUID().uuidString.lowercased(); disk.save(base: base) }
+            link.callKey = disk.callKey
+        }
+        let o = CallOutcome.read(transcript: file) ?? CallOutcome()
+        let m = CallNotes.meeting(file)      // the call page's Summary: In short and Recap
+        let sales = (try? Data(contentsOf: URL(fileURLWithPath: CallLayout.sidecar(base, ".sales.json")))).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
+        let next = (sales["next_step"] as? String) ?? ((sales["next_step"] as? [String: Any])?["what"] as? String) ?? ""
+        let s = CRMCallLog.sections(tldr: m?.tldr ?? "", recap: m?.recap ?? [], onMe: o.onMe, theirs: o.theirs.map { $0.who + ": " + $0.what }, salesNext: next)
+        let ms = Int(((rec.end ?? rec.start.addingTimeInterval((rec.minutes ?? 0) * 60)).timeIntervalSince(rec.start)) * 1000)
+        return CRMCallLog(key: link.callKey, title: CallPageView.title(file), start: rec.start, durationMs: ms,
+                          direction: SettingsWindow.model.config.crm.callDirection,
+                          body: CRMCallLog.body(summary: s.summary, nextSteps: s.nextSteps, participants: link.contactNames, link: rec.notionURL ?? "", key: link.callKey))
+    }
+
+    /// H2: writes the Call through the per-call queue; the stored id, portal and associations are read from
+    /// <base>.crm.json when the turn comes, and the new id is stored only if the link still names that portal and call
+    /// key when HubSpot answers (fix round 8: a Relink to another portal in between keeps its own ids).
+    static func write(_ entry: CRMCallLog, base: String, link: CRMLink, connector c: CRMConnector) async throws -> CRMCallResult {
+        try await CRMCallSync.log(entry, connector: c, fallback: target(link),
+                                  load: { CRMLink.load(base: base).map(target) },
+                                  save: { id in var d = CRMLink.load(base: base) ?? link; d.callId = id; d.save(base: base) })
+    }
+
+    static func target(_ l: CRMLink) -> CRMCallTarget {
+        CRMCallTarget(callId: l.callId, portalId: l.portalId, callKey: l.callKey, associations: refs(l))
+    }
+
+    static func refs(_ l: CRMLink) -> [CRMRef] {
+        var r: [CRMRef] = []
+        if !l.dealId.isEmpty && l.dealId != "none" { r.append(CRMRef("deals", l.dealId)) }
+        if !l.companyId.isEmpty { r.append(CRMRef("companies", l.companyId)) }
+        return r + l.contactIds.map { CRMRef("contacts", $0) }
+    }
+
+    /// Auto switch (Settings > Integrations > HubSpot, off by default): the call is logged after it ends, without a click.
+    /// Only the Call engagement; notes, deal fields and tasks still go through Update HubSpot.
+    @MainActor static func start() {
+        NotificationCenter.default.addObserver(forName: CallEngine.callEnded, object: nil, queue: .main) { n in
+            guard let file = n.userInfo?["file"] as? String, !file.isEmpty else { return }
+            // the call page's notes are written in the background after the call
+            DispatchQueue.main.asyncAfter(deadline: .now() + 150) { MainActor.assumeIsolated { auto(file) } }
+        }
+    }
+
+    @MainActor static func auto(_ file: String) {
+        let cfg = SettingsWindow.model.config.crm
+        let base = file.hasSuffix(".md") ? String(file.dropLast(3)) : file
+        guard cfg.autoLogCall, cfg.writeCall, var l = CRMLink.load(base: base), let c = CRMService.shared.connector(),
+              let entry = log(file: file, link: &l) else { return }
+        Task {
+            do {
+                _ = try await write(entry, base: base, link: l, connector: c)    // a link from another portal is not written
+                UsageLog.log("update_crm", ["fields": 0, "call": 1])
+            } catch {
+                AnalyticsTracker.shared.error("crm", Analytics.errorCode(message: (error as? CRMError)?.message ?? error.localizedDescription), provider: "hubspot")
+            }
+        }
+    }
+}
+
+extension StartCallModel {
+    /// The calendar occurrence this window is for (event id + start), sent as crm_event; "" without an event.
+    var crmOccurrence: String { calEventID ?? "" }
+    /// The preparation was chosen by hand in this window (sent as crm_chosen): its link is the PM's own choice. Not the
+    /// one Start call filled by title and time (fix round 7).
+    var crmChosen: Bool { CRMLinkCarry.chosenByHand(picked: pickedPrep, current: chosenPrep, path: chosenPrepPath) }
+    /// The link at crmBase goes to the call (fix round 6): chosen by hand, or Refresh saved it for this occurrence. The
+    /// planned preparation is found by title and time, which never proves it is this call's, so its link alone is not used.
+    var crmLinkVerified: Bool { crmBase.map { CRMLinkCarry.verified(base: $0, occurrence: crmOccurrence, chosen: crmChosen) } ?? false }
+
+    /// The preparation the CRM row's Refresh saves the HubSpot link with, sent with the call as crm_base: the call gets
+    /// exactly the link this window showed (fix round 5), never one found by title.
+    var crmBase: String? {
+        // the same preparation Start call copies to the call (CallEngine.adoptPrep): the one chosen by hand, else the planned one
+        if let b = CRMLinkCarry.prepBase(chosen: chosenPrepPath, planned: prepBase) { return b }
+        if let p = PrepDocWindow.path(for: self), p.hasSuffix(".brief.md") { return String(p.dropLast(".brief.md".count)) }
+        // 0.8.7.1: before Prepare, the snapshot goes where Prepare will write the brief (PrepRunner's base), so the first
+        // brief already reads it; Refresh was greyed out until a brief existed
+        guard let root = root, !root.isEmpty else { return nil }
+        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd-HHmm"
+        let day = DateFormatter(); day.dateFormat = "yyyy-MM-dd"
+        let slug = StartCallModel.slugify(effectiveTitle)
+        // the same folder PrepRunner writes the brief to (call folders)
+        return (CallLayout.folder(live: (root as NSString).appendingPathComponent("live"), date: day.string(from: callDate), slug: slug) as NSString)
+            .appendingPathComponent("prep-\(f.string(from: callDate))-\(slug)")
     }
 }
 
@@ -76,19 +200,7 @@ struct CRMCallRow: View {
     @State private var busy = false
     @State private var err = ""
 
-    var base: String? {
-        if let p = PrepDocWindow.path(for: model) { return String(p.dropLast(9)) }
-        if let b = model.prepBase { return b }
-        // 0.8.7.1: before Prepare, the snapshot goes where Prepare will write the brief (PrepRunner's base), so the first
-        // brief already reads it; Refresh was greyed out until a brief existed
-        guard let root = model.root, !root.isEmpty else { return nil }
-        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd-HHmm"
-        let day = DateFormatter(); day.dateFormat = "yyyy-MM-dd"
-        let slug = StartCallModel.slugify(model.effectiveTitle)
-        // the same folder PrepRunner writes the brief to (call folders)
-        return (CallLayout.folder(live: (root as NSString).appendingPathComponent("live"), date: day.string(from: model.callDate), slug: slug) as NSString)
-            .appendingPathComponent("prep-\(f.string(from: model.callDate))-\(slug)")
-    }
+    var base: String? { model.crmBase }
     var emails: [String] { model.calEventID.flatMap { CalendarService.shared.event($0)?.emails } ?? [] }
 
     var body: some View {
@@ -109,9 +221,17 @@ struct CRMCallRow: View {
                 Button(L("crm.refresh")) { refresh() }.buttonStyle(.pnTertiary).disabled(busy || base == nil)
                     .help(base == nil ? L("crm.refresh.needBase") : L("crm.refresh.help"))
             }
-            .onAppear { if let b = base { link = CRMLink.load(base: b) } }
+            .onAppear { link = shown }
+            // fix round 5: another preparation (round 6: or another calendar event) picked: show its own link, the
+            // previous one's deals and error go
+            .onChange(of: identity) { link = shown; deals = []; err = "" }
         }
     }
+
+    /// What decides the row's link: the preparation, the calendar occurrence and whether the prep was chosen by hand.
+    var identity: String { (base ?? "") + "|" + model.crmOccurrence + "|" + (model.crmChosen ? "1" : "0") }
+    /// fix round 6: only a link Start call will carry is shown (the same rule), so the row never shows another call's link.
+    var shown: CRMLink? { model.crmLinkVerified ? base.flatMap { CRMLink.load(base: $0) } : nil }
 
     var line: String {
         if !err.isEmpty { return err }
@@ -125,16 +245,28 @@ struct CRMCallRow: View {
         guard let b = base else { return }
         busy = true; err = ""
         let name = model.project?.crmCompanyName.isEmpty == false ? model.project!.crmCompanyName : (model.project?.name ?? "")
+        let id = identity, occ = model.crmOccurrence
+        // the link kept is the one saved with this base, not the one on screen (it may be another preparation's); one not
+        // verified for this call (fix round 6: another occurrence's, or one without an occurrence) is not kept
+        let keep = model.crmLinkVerified ? CRMLink.load(base: b) : nil
         Task {
-            let (l, e) = await crm.refresh(base: b, emails: emails, name: name, keep: link)
+            let (l, e) = await crm.refresh(base: b, emails: emails, name: name, keep: keep, occurrence: occ)
+            guard identity == id else { busy = false; return }      // the preparation or event changed while HubSpot answered
             link = l; err = e; busy = false
-            if let co = l?.companyId, !co.isEmpty, let c = crm.connector() { deals = ((try? await c.deals(companyId: co)) ?? []).filter { $0.open } }
+            // the snapshot still helps the preparation, but a link no call identity backs is not offered as the call's
+            if let l = l, !model.crmLinkVerified {
+                err = L("crm.unverified", ["company": l.companyName.isEmpty ? L("crm.noCompany") : l.companyName]); deals = []; return
+            }
+            if let co = l?.companyId, !co.isEmpty, let c = crm.connector() {
+                let open = ((try? await c.deals(companyId: co)) ?? []).filter { $0.open }
+                if identity == id { deals = open }      // not the deals of a company picked before a switch
+            }
         }
     }
 
     func setDeal(_ id: String, _ name: String) {
         guard let b = base else { return }
-        var l = link ?? CRMLink(); l.dealId = id; l.dealName = name; l.save(base: b); link = l
+        var l = CRMLink.load(base: b) ?? CRMLink(); l.dealId = id; l.dealName = name; l.save(base: b); link = l
         refresh()
     }
 }
@@ -167,9 +299,11 @@ struct CRMUpdateView: View {
     @State private var stage = ""
     @State private var busy = false
     @State private var status = ""
-    @State private var undo: [(String, String, [String: String])] = []    // (type, id, old fields)
+    @State private var undo: [CRMUndoItem] = []
+    @State private var undoPortal = ""     // H2: the portal the Apply wrote to; Undo checks it before any change
     @State private var undoUntil: Date? = nil
     @State private var applied = false     // 0.8.7.1: a second Apply wrote the note and the task twice
+    @State private var needsRelink = false // H2: the link is from another portal, or from before the portal was kept
 
     var base: String { file.hasSuffix(".md") ? String(file.dropLast(3)) : file }
 
@@ -198,7 +332,8 @@ struct CRMUpdateView: View {
                 Text(status).font(PN.Font.caption).foregroundStyle(PN.C.text3).lineLimit(2)
                 Spacer()
                 if let u = undoUntil, u > Date() { Button(L("crm.undo")) { runUndo() }.buttonStyle(.pnSecondary) }
-                Button(L("crm.apply")) { apply() }.buttonStyle(.pnPrimary).disabled(busy || applied || plan == nil || link == nil)
+                if needsRelink { Button(L("crm.relink")) { relink() }.buttonStyle(.pnSecondary).disabled(busy).help(L("crm.relink.help")) }
+                Button(L("crm.apply")) { apply() }.buttonStyle(.pnPrimary).disabled(busy || applied || plan == nil || link == nil || needsRelink)
             }
         }
         .padding(18)
@@ -219,12 +354,16 @@ struct CRMUpdateView: View {
         }
         let crmCfg = SettingsWindow.model.config.crm
         let mapping = crmCfg.qualification[(sales["method"] as? String) ?? ""] ?? [:]
+        var callLog: CRMCallLog? = nil
+        if var l = link { callLog = CRMCallLogger.log(file: file, link: &l); link = l }     // keeps the new call key in the view's link
+        if let l = link, l.portalId.isEmpty { needsRelink = true; status = L("crm.relink.needed") }
         let transcript = SettingsWindow.model.config.crm.transcriptInNote ? (try? String(contentsOfFile: file, encoding: .utf8)) : nil
         plan = CRMUpdatePlan.build(title: CallPageView.title(file), date: rec.map { CallPageView.fmt("dMMMyyyy").string(from: $0.start) } ?? "",
                                    summary: o.onMe, decisions: o.decisions, nextSteps: o.onMe + o.theirs.map { $0.who + ": " + $0.what },
                                    notionURL: rec?.notionURL ?? "", transcript: transcript, nextStep: next, closeDate: "", stage: nil,
                                    qualification: qual, mapping: mapping, followUp: next.isEmpty ? nil : (next, nil),
-                                   writeNote: crmCfg.writeNote, writeDeal: crmCfg.writeDeal, writeTask: crmCfg.writeTask)
+                                   writeNote: crmCfg.writeNote, writeDeal: crmCfg.writeDeal, writeTask: crmCfg.writeTask,
+                                   callLog: callLog, writeCall: crmCfg.writeCall)
     }
 
     func apply() {
@@ -232,48 +371,77 @@ struct CRMUpdateView: View {
         if !stage.isEmpty { p.dealFields["dealstage"] = stage }
         busy = true; status = L("crm.writing")
         Task {
-            var done: [(String, String, [String: String])] = []
+            var done: [CRMUndoItem] = []
             var fields = 0
             do {
-                var refs: [CRMRef] = []
-                if !l.dealId.isEmpty && l.dealId != "none" { refs.append(CRMRef("deals", l.dealId)) }
-                if !l.companyId.isEmpty { refs.append(CRMRef("companies", l.companyId)) }
-                refs += l.contactIds.map { CRMRef("contacts", $0) }
+                try await CRMPortal.verify(link: l.portalId, connector: c)     // H2: nothing goes to another portal's ids
+                let refs = CRMCallLogger.refs(l)
                 if p.rows.first(where: { $0.id == "note" })?.on == true {
-                    let id = try await c.createNote(text: p.note, associations: refs); done.append(("notes", id, [:]))
+                    let id = try await c.createNote(text: p.note, associations: refs); done.append(CRMUndoItem("notes", id))
+                }
+                if p.rows.first(where: { $0.id == "call" })?.on == true, let entry = p.callLog {
+                    let r = try await CRMCallLogger.write(entry, base: base, link: l, connector: c)    // in turn with Auto
+                    done.append(CRMUndoItem("calls", r.id, r.old))       // a new Call: old is empty and Undo deletes it; an update: Undo restores
+                    link?.callId = CRMLink.load(base: base)?.callId ?? r.id      // the id as stored, never one the write declined to store
                 }
                 if p.rows.first(where: { $0.id == "deal" })?.on == true, !l.dealId.isEmpty, l.dealId != "none", !p.dealFields.isEmpty {
-                    let old = try await c.updateDeal(id: l.dealId, fields: p.dealFields); done.append(("deals", l.dealId, old)); fields = p.dealFields.count
+                    let old = try await c.updateDeal(id: l.dealId, fields: p.dealFields); done.append(CRMUndoItem("deals", l.dealId, old)); fields = p.dealFields.count
                 }
                 if p.rows.first(where: { $0.id == "task" })?.on == true, let t = p.task {
-                    let id = try await c.createTask(subject: t.subject, due: t.due, associations: refs); done.append(("tasks", id, [:]))
+                    let id = try await c.createTask(subject: t.subject, due: t.due, associations: refs); done.append(CRMUndoItem("tasks", id))
                 }
                 UsageLog.log("update_crm", ["fields": fields])
-                undo = done; undoUntil = Date().addingTimeInterval(8); applied = true
+                undo = done; undoPortal = l.portalId; undoUntil = Date().addingTimeInterval(8); applied = true
                 status = L("crm.updated", ["crm": c.providerName])
                 DispatchQueue.main.asyncAfter(deadline: .now() + 8.2) { undoUntil = nil }
             } catch {
-                undo = done; undoUntil = done.isEmpty ? nil : Date().addingTimeInterval(8)
-                status = (error as? CRMError)?.message ?? error.localizedDescription
+                undo = done; undoPortal = l.portalId; undoUntil = done.isEmpty ? nil : Date().addingTimeInterval(8)
+                needsRelink = (error as? CRMError)?.code == CRMPortal.mismatchCode
+                status = needsRelink ? L("crm.relink.needed") : ((error as? CRMError)?.message ?? error.localizedDescription)
                 AnalyticsTracker.shared.error("crm", Analytics.errorCode(message: status), provider: "hubspot")   // S5: code only
             }
             busy = false
         }
     }
 
-    /// Undo: notes and tasks are deleted, deal fields get their old values back.
+    /// H2: links the call again in the portal of the key in use: the company by the attendees' domains of the calendar
+    /// occurrence the link was saved for (fix round 7: never the nearest meeting, it may be another customer's), else
+    /// by the linked company's name without contacts; the call key is kept, the old ids are not. Fix round 8: in turn
+    /// with the call's Call writes (an Auto write waiting for HubSpot finishes first), reading the link when its turn comes.
+    func relink() {
+        guard let l = link else { return }
+        let emails = CRMLinkCarry.relinkEmails(occurrence: l.occurrence,
+                                               events: CalendarService.shared.events.map { ([$0.id] + $0.copies, $0.emails) })
+        busy = true; status = ""
+        let base = base, crm = crm
+        Task {
+            let (nl, e) = (try? await CRMCallSync.relink(key: l.callKey.isEmpty ? base : l.callKey) {
+                await crm.refresh(base: base, emails: emails, name: l.companyName, keep: CRMLink.load(base: base) ?? l)
+            }) ?? (nil, L("crm.notConnected"))
+            busy = false
+            if nl != nil { needsRelink = false; load(); status = L("crm.relink.done") } else { status = e }
+        }
+    }
+
+    /// Undo: notes, tasks and new Calls are deleted, deal fields and updated Calls get their old values back; nothing
+    /// is sent when the key now belongs to another portal than the one the Apply wrote to.
     func runUndo() {
         guard let c = crm.connector() else { return }
-        let items = undo; undo = []; undoUntil = nil
+        let items = undo, portal = undoPortal
+        undo = []; undoUntil = nil
         Task {
-            var failed = 0      // 0.8.7.1: a failed undo is said, not hidden behind "Undone"
-            for (type, id, old) in items.reversed() {
-                do {
-                    if type == "deals" { _ = try await c.updateDeal(id: id, fields: old) } else { try await c.delete(type: type, id: id) }
-                } catch { failed += 1 }
+            do {
+                let failed = try await CRMCallSync.undo(items, portal: portal, connector: c) { it in
+                    guard it.type == "calls" else { return }       // the next Apply makes a new Call
+                    if var d = CRMLink.load(base: base), d.callId == it.id { d.callId = ""; d.save(base: base) }
+                    link?.callId = ""
+                }
+                status = failed == 0 ? L("crm.undone") : L("crm.undoFailed", ["n": "\(failed)", "crm": c.providerName])   // 0.8.7.1: said, not hidden
+                if failed == 0 { applied = false }
+            } catch {
+                let mismatch = (error as? CRMError)?.code == CRMPortal.mismatchCode
+                status = mismatch ? L("crm.undo.portal", ["crm": c.providerName]) : ((error as? CRMError)?.message ?? error.localizedDescription)
             }
-            status = failed == 0 ? L("crm.undone") : L("crm.undoFailed", ["n": "\(failed)", "crm": c.providerName])
-            if failed == 0 { applied = false }
         }
     }
 }

@@ -35,7 +35,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         MainActor.assumeIsolated { AIStatusModel.shared.start() }    // 0.10.0 (status fix): limits known from launch
         MainActor.assumeIsolated { AIUsageProbe.shared.start() }     // 0.10.0 (owner 12.11): account usage numbers, 60 s after launch
         // 0.9.5: recordings that were on their way to Google Drive when the app quit go on (after the accounts load)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 20) { MainActor.assumeIsolated { DriveRecordings.shared.resumeQueue(); CallSyncService.shared.start() } }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 20) { MainActor.assumeIsolated { DriveRecordings.shared.resumeQueue(); CallSyncService.shared.start(); CRMCallLogger.start() } }
         // 0.26.2 (call folders, B6): flat calls move into their call folders, a few seconds after launch (move only)
         DispatchQueue.main.asyncAfter(deadline: .now() + 8) { CallMigration.runAtLaunch() }
         SetupModel.repairEnginePaths()      // 0.8.3: the engine follows the app after a rename or a move
@@ -685,6 +685,9 @@ final class StartCallModel: ObservableObject {
     /// All preparations in the project's live folder (last 14 days), newest first, and the one chosen by hand.
     @Published var prepList: [PrepInfo] = []
     @Published var chosenPrep: String?           // file name in <root>/live; nil = automatic
+    /// H2 (PB-58, fix round 7): the file the PM picked in the picker. Start call also fills chosenPrep by title and
+    /// time, so only this says the choice was the PM's (crm_chosen).
+    var pickedPrep: String?
     /// "default" | "builtin" | "uid:<UID>" (same values as the recorder's mic_device and the window's Mic menu).
     @Published var micDevice = UserDefaults.standard.string(forKey: "micDevice") ?? "default" {
         didSet { UserDefaults.standard.set(micDevice, forKey: "micDevice") }
@@ -786,6 +789,7 @@ final class StartCallModel: ObservableObject {
             prep = PrepInfo(heading: p.heading, made: p.made, file: p.file, matches: true)
         } else {
             if chosenPrep != nil { chosenPrep = nil }
+            pickedPrep = nil
             prep = best
         }
     }
@@ -896,6 +900,8 @@ final class StartCallModel: ObservableObject {
                 "scheduled_at": ISO8601DateFormatter().string(from: callDate), "mic_device": micDevice, "standby": standby,
                 "project_config": project?.config ?? "", "people": people, "people_team": peopleTeam,
                 "voices_remember": !publicCall, "prep_file": chosenPrepPath ?? "",
+                "crm_base": crmBase ?? "",       // H2 (PB-58): the HubSpot link this window showed goes with the call
+                "crm_event": crmOccurrence, "crm_chosen": crmChosen,     // fix round 6: what proves the link is this call's
                 "recording": recording,
                 "folders": folders,
                 "sales": { () -> [String: Any] in
@@ -960,6 +966,9 @@ extension AppDelegate {
             CallEngine.shared.startReady = true
         }
         model.useDefaultTargetIfEmpty()
+        // H2 (PB-58, fix round 7): the prep picked below by title and time becomes chosenPrep too, but never pickedPrep, so
+        // crm_chosen stays false on this and every retry; a failed start gives the window back its own choice
+        let prepBefore = model.chosenPrep
         if model.chosenPrep == nil { model.adoptExistingPrep() }
         if model.chosenPrep == nil, let b = model.prepBase, let root = model.root {
             let name = (b as NSString).lastPathComponent + ".brief.md"
@@ -967,7 +976,10 @@ extension AppDelegate {
                 model.chosenPrep = name
             }
         }
-        guard let req = model.requestJSON() else { return model.note.isEmpty ? L("call.cannotStart") : model.note }
+        guard let req = model.requestJSON() else {
+            model.chosenPrep = prepBefore
+            return model.note.isEmpty ? L("call.cannotStart") : model.note
+        }
         let before = CallEngine.shared.currentCallID
         CallEngine.shared.currentCallID = model.id
         let err = CallEngine.shared.start(request: req, apiAllowed: model.project?.apiAllowed ?? true) { [weak self] st in
@@ -975,7 +987,7 @@ extension AppDelegate {
                                           status: CallEngine.shared.statusPath,
                                           control: (CallEngine.shared.appRoot as NSString).appendingPathComponent("control")))
         }
-        if err != nil { CallEngine.shared.currentCallID = before; return err }
+        if err != nil { CallEngine.shared.currentCallID = before; model.chosenPrep = prepBefore; return err }
         UpNext.shared.remove(model, keepPrep: true)
         UpNext.shared.removeMatching(model)          // 2026-10-28: no second entry of the call just started
         CallEngine.shared.liveEventID = model.calEventID

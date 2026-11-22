@@ -295,6 +295,12 @@ struct HubSpotPage: View {
                     Toggle(L("int.hubspot.writeNote"), isOn: $model.config.crm.writeNote)
                     Toggle(L("int.hubspot.writeDeal"), isOn: $model.config.crm.writeDeal)
                     Toggle(L("int.hubspot.writeTask"), isOn: $model.config.crm.writeTask)
+                    Toggle(L("int.hubspot.writeCall"), isOn: $model.config.crm.writeCall)
+                    Toggle(L("int.hubspot.autoCall"), isOn: $model.config.crm.autoLogCall).help(L("int.hubspot.autoCallHelp"))
+                        .disabled(!model.config.crm.writeCall)
+                    Picker(L("int.hubspot.callDirection"), selection: $model.config.crm.callDirection) {
+                        Text(L("int.hubspot.dir.OUTBOUND")).tag("OUTBOUND"); Text(L("int.hubspot.dir.INBOUND")).tag("INBOUND")
+                    }
                     Toggle(L("int.hubspot.transcript"), isOn: $model.config.crm.transcriptInNote).help(L("int.hubspot.transcriptHelp"))
                 } header: { Text(L("int.hubspot.canWrite")).settingsAnchor("int.hubspot.write") } footer: {
                     Text(L("int.hubspot.afterFooter")).font(PN.Font.caption).foregroundStyle(PN.C.text3).fixedSize(horizontal: false, vertical: true)

@@ -70,6 +70,28 @@ Pacenote. Earlier versions are described in the commit messages and in
   stay in the call language. A call with two languages in Start call keeps the switch, and it cycles through those
   languages.
 
+- **The call is logged in HubSpot (H2).** Update HubSpot has a new Call row: a HubSpot Call with the title, start
+  time, duration, direction, outcome, participants, the call page's Summary, the next steps, and a link back to the
+  call, associated with the matched contacts, company and open deal. Applying again, even while Auto runs, updates the
+  same Call instead of adding a second one, and Undo removes a new Call or restores the old values (it changes nothing
+  if the key was switched to another HubSpot account in between). A create that gets no answer is checked in HubSpot
+  three times over a few seconds before it is reported as failed. Transcript text is
+  never sent. A call's HubSpot link now remembers its HubSpot account: after the key changes to another account, or
+  for a call linked before this version, nothing is written and Update HubSpot offers **Relink**. Relink takes the
+  attendees only from the calendar event the link was made for, never from another meeting at about the same time
+  (it could be another customer's); without that event it finds the company by its saved name. Relink waits for a
+  Call being written for the same call, and a Call written for the old account is never stored in the new link. The company, deal
+  and contacts linked with Refresh in Start call now go to the recorded call started from that window, so Auto and
+  Update HubSpot find them (before, the call showed "not linked"). Refresh saves the link with the preparation the call
+  will use (the one you chose, else the planned one) and starts from that preparation's own link after you pick
+  another one. The link goes with the call only when Pacenote knows it is this call's: Refresh was pressed for the
+  call's calendar event, or you chose the preparation yourself. A title or a time is never enough, so two "Renewal"
+  calls of different customers never share one; a call without a calendar event and without a chosen preparation, or
+  started another way, stays unlinked. A preparation Pacenote found by itself does not count as chosen, also when
+  you press Start again after a start failed. A new
+  switch in Settings > Integrations > HubSpot, **Log the call in HubSpot automatically after it ends**, is off by
+  default and logs only the Call. The HubSpot integration design is in `docs/specs/hubspot-crm-integration.md`.
+
 ## 0.26.4 (2026-11-20)
 
 - **A new organization project includes the person who made it (2026-11-20):** in New project > start a new

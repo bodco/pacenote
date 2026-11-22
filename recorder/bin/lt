@@ -558,6 +558,9 @@ def adopt_prep(s):
         src = max(cands, key=lambda p: p.stat().st_mtime)
         shutil.copy(src, sc(s, ext))
         adopted[ext] = src.name
+    # H2 (PB-58, fix round 5): the HubSpot link (<prep>.crm.json) is never adopted here. A title is not the call's
+    # identity (two "Renewal" calls of different customers), and a link sends the call's Summary to those HubSpot
+    # records. The app carries it only from the preparation Start call used (CRMLinkCarry); otherwise the call stays unlinked.
     return adopted
 
 

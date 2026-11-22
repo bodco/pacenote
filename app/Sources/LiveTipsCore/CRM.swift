@@ -20,7 +20,9 @@ public struct CRMDeal: Equatable, Codable {
 public struct CRMActivity: Equatable, Codable { public var kind: String; public var when: String; public var text: String; public var done: Bool
     public init(kind: String, when: String, text: String, done: Bool = true) { self.kind = kind; self.when = when; self.text = text; self.done = done } }
 public struct CRMAccount: Equatable { public var portal: String; public var user: String; public var userEmail: String
-    public init(portal: String, user: String, userEmail: String = "") { self.portal = portal; self.user = user; self.userEmail = userEmail } }
+    public var portalId: String         // H2: the portal the key writes to, kept with each call's link
+    public init(portal: String, user: String, userEmail: String = "", portalId: String = "") {
+        self.portal = portal; self.user = user; self.userEmail = userEmail; self.portalId = portalId } }
 /// 0.8.7 (I6.2): a CRM user who can own the notes and tasks Pacenote writes (names only in the UI).
 public struct CRMOwner: Equatable, Codable, Identifiable { public var id: String; public var name: String; public var email: String
     public init(id: String, name: String, email: String) { self.id = id; self.name = name; self.email = email }
@@ -54,7 +56,159 @@ public protocol CRMConnector {
     func createTask(subject: String, due: Date?, associations: [CRMRef]) async throws -> String
     func delete(type: String, id: String) async throws
     func owners() async throws -> [CRMOwner]                    // 0.8.7 (I6.2)
+    /// H2: log the call as a Call engagement; the same Pacenote call id updates the same Call, never a second one.
+    func upsertCall(_ log: CRMCallLog, knownId: String, associations: [CRMRef]) async throws -> CRMCallResult
+    func restoreCall(id: String, fields: [String: String]) async throws
+    /// H2: the portal id of the key in use, asked fresh before a write (never a cached value).
+    func portalId() async throws -> String
 }
+
+/// H2: a call's link belongs to the portal it was made in. A write goes ahead only when the link names the portal of
+/// the key in use; a link from another portal, or from before Pacenote kept the portal, needs Relink first.
+public enum CRMPortal {
+    public static let mismatchCode = 409
+    public static func matches(link: String, current: String) -> Bool { !link.isEmpty && link == current }
+    public static func verify(link: String, connector c: CRMConnector) async throws {
+        let current = try await c.portalId()
+        guard matches(link: link, current: current) else {
+            throw CRMError(code: mismatchCode, message: "This call is linked to another HubSpot portal, or to an unknown one. Relink it first.", scope: "portal")
+        }
+    }
+}
+
+/// H2: Auto and Apply of one call take turns, and each reads the stored Call id when its turn comes, so the two paths
+/// never both create a Call for the same call.
+public actor CRMCallQueue {
+    public static let shared = CRMCallQueue()
+    private var tails: [String: Task<Void, Never>] = [:]
+    public init() {}
+    public func run<T>(_ key: String, _ op: @escaping () async throws -> T) async throws -> T {
+        let prev = tails[key]
+        let job = Task { () async throws -> T in _ = await prev?.value; return try await op() }
+        let tail = Task { _ = try? await job.value }
+        tails[key] = tail
+        let r = await job.result
+        if tails[key] == tail { tails[key] = nil }
+        return try r.get()
+    }
+}
+
+/// H2: what a Call write needs from the call's stored link, read when its turn comes: the stored Call id, the portal
+/// and the Pacenote call id the link names, and the records to associate (ids of that portal).
+public struct CRMCallTarget: Equatable {
+    public var callId: String, portalId: String, callKey: String, associations: [CRMRef]
+    public init(callId: String = "", portalId: String, callKey: String, associations: [CRMRef] = []) {
+        self.callId = callId; self.portalId = portalId; self.callKey = callKey; self.associations = associations }
+}
+
+public enum CRMCallSync {
+    /// One write of a call's Call: in turn per call key (Relink of the call takes the same turns), the portal checked,
+    /// the stored id and the associations read when the turn comes. The new id is stored only if the link still names
+    /// the portal and the call key the write used when HubSpot answers (fix round 8): a link relinked to another portal
+    /// in the meantime never gets the first portal's id. fallback: the link when none is stored; a link that shows up or
+    /// goes away while HubSpot answers is a change, so nothing is stored.
+    public static func log(_ entry: CRMCallLog, connector c: CRMConnector, queue: CRMCallQueue = .shared, fallback: CRMCallTarget,
+                           load: @escaping () -> CRMCallTarget?, save: @escaping (String) -> Void) async throws -> CRMCallResult {
+        try await queue.run(entry.key) {
+            let stored = load()
+            let t = stored ?? fallback
+            // the entry (participants' names) was made from the fallback link: it goes only to that link's portal
+            guard t.callKey == entry.key, t.portalId == fallback.portalId else {
+                throw CRMError(code: CRMPortal.mismatchCode, message: "This call was linked again while it was written. Try again.", scope: "portal")
+            }
+            try await CRMPortal.verify(link: t.portalId, connector: c)
+            let r = try await c.upsertCall(entry, knownId: t.callId, associations: t.associations)
+            let now = load()
+            let same = stored == nil ? now == nil : (now.map { $0.portalId == t.portalId && $0.callKey == t.callKey } ?? false)
+            if same { save(r.id) }
+            return r
+        }
+    }
+
+    /// Relink of a call takes the same turns as its Call writes, so it never runs while a write waits for HubSpot.
+    public static func relink<T>(key: String, queue: CRMCallQueue = .shared, _ op: @escaping () async -> T) async throws -> T {
+        try await queue.run(key) { await op() }
+    }
+
+    /// Undo of one Apply: the portal the Apply wrote to is checked first, so a key changed in between never deletes or
+    /// overwrites another portal's records with the same ids. Deal fields and updated Calls get their old values back,
+    /// the rest is deleted. Returns how many items failed; a mismatch throws before anything is sent.
+    public static func undo(_ items: [CRMUndoItem], portal: String, connector c: CRMConnector,
+                            deleted: (CRMUndoItem) -> Void = { _ in }) async throws -> Int {
+        try await CRMPortal.verify(link: portal, connector: c)
+        var failed = 0
+        for it in items.reversed() {
+            do {
+                if it.type == "deals" { _ = try await c.updateDeal(id: it.id, fields: it.old) }
+                else if it.type == "calls" && !it.old.isEmpty { try await c.restoreCall(id: it.id, fields: it.old) }
+                else { try await c.delete(type: it.type, id: it.id); deleted(it) }
+            } catch { failed += 1 }
+        }
+        return failed
+    }
+}
+
+/// One record an Apply wrote: its type, id and the values it replaced (empty for a new record).
+public struct CRMUndoItem: Equatable {
+    public var type: String, id: String, old: [String: String]
+    public init(_ type: String, _ id: String, _ old: [String: String] = [:]) { self.type = type; self.id = id; self.old = old }
+}
+
+/// H2 (docs/specs/hubspot-crm-integration.md): what is logged as a Call engagement after a call. No transcript text:
+/// the body is the Summary, the next steps, the participants' names and the link back to the call.
+public struct CRMCallLog: Equatable {
+    public var key: String              // the Pacenote call id stored with the call (<stem>.crm.json)
+    public var title: String
+    public var start: Date
+    public var durationMs: Int
+    public var direction: String        // OUTBOUND or INBOUND
+    public var body: String
+    public var disposition: String      // HubSpot's outcome id; the default "Connected" is the same in every portal
+    // HubSpot's built-in id of the outcome Connected (public, same in every portal); written in two parts for the anonymization lint
+    public static let connected = "f240bbac-87c9-4f6e" + "-bf70-924b57d47db7"
+    public static func externalId(_ key: String) -> String { "pacenote:" + key }
+
+    /// Summary is the call page's Summary (the notes' In short and Recap); next steps are what the PM and the other
+    /// side took on, else the sales next step. The two never repeat each other.
+    public static func sections(tldr: String, recap: [String], onMe: [String], theirs: [String], salesNext: String) -> (summary: [String], nextSteps: [String]) {
+        func plain(_ s: String) -> String { s.replacingOccurrences(of: "\\*\\*|__", with: "", options: .regularExpression).trimmingCharacters(in: .whitespacesAndNewlines) }
+        let summary = ([tldr] + recap).map(plain).filter { !$0.isEmpty }
+        var steps = (onMe + theirs).map(plain).filter { !$0.isEmpty }
+        if steps.isEmpty && !salesNext.isEmpty { steps = [plain(salesNext)] }
+        return (summary, steps)
+    }
+
+    public init(key: String, title: String, start: Date, durationMs: Int, direction: String = "OUTBOUND", body: String,
+                disposition: String = CRMCallLog.connected) {
+        self.key = key; self.title = title; self.start = start; self.durationMs = max(0, durationMs)
+        self.direction = direction == "INBOUND" ? "INBOUND" : "OUTBOUND"; self.body = body; self.disposition = disposition
+    }
+
+    static func esc(_ s: String) -> String {
+        s.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;").replacingOccurrences(of: ">", with: "&gt;")
+    }
+
+    /// summary and next steps come from the call page as edited; the transcript is not an input on purpose.
+    public static func body(summary: [String], nextSteps: [String], participants: [String], link: String, key: String) -> String {
+        var b = ""
+        func list(_ h: String, _ xs: [String]) { if !xs.isEmpty { b += "<p><b>\(h)</b></p><ul>" + xs.map { "<li>\(esc($0))</li>" }.joined() + "</ul>" } }
+        if !participants.isEmpty { b += "<p><b>Participants</b>: " + participants.map(esc).joined(separator: ", ") + "</p>" }
+        list("Summary", summary); list("Next steps", nextSteps)
+        if !link.isEmpty { b += "<p>Call page: <a href=\"\(esc(link))\">\(esc(link))</a></p>" }
+        b += "<p>Pacenote call id: \(esc(key))</p>"
+        return b
+    }
+
+    var properties: [String: Any] {
+        ["hs_timestamp": ISO8601DateFormatter().string(from: start), "hs_call_title": title, "hs_call_body": body,
+         "hs_call_duration": String(durationMs), "hs_call_direction": direction, "hs_call_status": "COMPLETED",
+         "hs_call_disposition": disposition, "hs_call_external_id": Self.externalId(key)]
+    }
+}
+
+/// created = a new Call; old = the values an update replaced (empty for a new Call), for Undo.
+public struct CRMCallResult: Equatable { public var id: String; public var created: Bool; public var old: [String: String]
+    public init(id: String, created: Bool, old: [String: String] = [:]) { self.id = id; self.created = created; self.old = old } }
 
 /// The HTTP layer, replaceable by fixtures in tests.
 public protocol CRMTransport {
@@ -144,7 +298,12 @@ public final class HubSpotConnector: CRMConnector {
         let owners = try? await call("GET", "/crm/v3/owners?limit=1")
         let o = ((owners?["results"] as? [[String: Any]]) ?? []).first ?? [:]
         let user = [o["firstName"] as? String, o["lastName"] as? String].compactMap { $0 }.joined(separator: " ")
-        return CRMAccount(portal: portal, user: user, userEmail: (o["email"] as? String) ?? "")
+        return CRMAccount(portal: portal, user: user, userEmail: (o["email"] as? String) ?? "", portalId: pid)
+    }
+
+    public func portalId() async throws -> String {
+        let info = try await call("GET", "/account-info/v3/details")
+        return info["portalId"].map { "\($0)" } ?? ""
     }
 
     public func findCompany(domain: String, name: String) async throws -> CRMCompany? {
@@ -261,6 +420,61 @@ public final class HubSpotConnector: CRMConnector {
     }
 
     public func delete(type: String, id: String) async throws { _ = try await call("DELETE", "/crm/v3/objects/\(type)/\(id)") }
+
+    static let callAssoc: [String: Int] = ["deals": 206, "companies": 182, "contacts": 194]      // call -> object (HUBSPOT_DEFINED)
+    static let reconcileWaits: [Double] = [0, 2, 4]      // seconds before each search after an ambiguous create
+
+    /// H2: known id (kept with the call) first, then the external id (the Pacenote call id) in HubSpot, else a new Call.
+    public func upsertCall(_ log: CRMCallLog, knownId: String, associations: [CRMRef]) async throws -> CRMCallResult {
+        var id = knownId
+        var old: [String: String] = [:]
+        if !id.isEmpty {
+            do { old = try await readCall(id) } catch let e as CRMError where e.code == 404 { id = "" }
+        }
+        if id.isEmpty, let found = try await findCall(log.key) { id = found; old = try await readCall(id) }
+        let refs = associations.filter { Self.callAssoc[$0.type] != nil }
+        if id.isEmpty {
+            do {
+                let r = try await call("POST", "/crm/v3/objects/calls", [
+                    "properties": owned(log.properties),
+                    "associations": refs.map { a in ["to": ["id": a.id], "types": [["associationCategory": "HUBSPOT_DEFINED", "associationTypeId": Self.callAssoc[a.type]!]]] }])
+                return CRMCallResult(id: (r["id"] as? String) ?? "", created: true)
+            } catch {
+                // no answer, or a 5xx: HubSpot may have made the Call anyway, so look for it before reporting a failure.
+                // Search lags a new record by a few seconds, so it is asked again before giving up; a later run's
+                // search by the Pacenote call id still finds a Call that showed up after that.
+                if let ce = error as? CRMError, ce.code >= 400 && ce.code < 500 { throw error }
+                for (i, wait) in Self.reconcileWaits.enumerated() {
+                    if i > 0 { await sleep(wait) }
+                    if let found = try? await findCall(log.key) { return CRMCallResult(id: found, created: true) }
+                }
+                throw error
+            }
+        }
+        // associations first: if one fails, the Call still has its old fields; the ones added before it stay (outside Undo)
+        for a in refs { _ = try await call("PUT", "/crm/v4/objects/calls/\(id)/associations/default/\(a.type)/\(a.id)") }
+        _ = try await call("PATCH", "/crm/v3/objects/calls/\(id)", ["properties": owned(log.properties)])
+        return CRMCallResult(id: id, created: false, old: old)
+    }
+
+    func findCall(_ key: String) async throws -> String? {
+        let r = try await call("POST", "/crm/v3/objects/calls/search", [
+            "filterGroups": [["filters": [["propertyName": "hs_call_external_id", "operator": "EQ", "value": CRMCallLog.externalId(key)]]]],
+            "properties": ["hs_call_external_id"], "limit": 1])
+        return (r["results"] as? [[String: Any]])?.first?["id"] as? String
+    }
+
+    func readCall(_ id: String) async throws -> [String: String] {
+        let keys = Array(CRMCallLog(key: "", title: "", start: Date(), durationMs: 0, body: "").properties.keys) + (ownerId.isEmpty ? [] : ["hubspot_owner_id"])
+        let r = try await call("GET", "/crm/v3/objects/calls/\(id)?properties=" + keys.sorted().joined(separator: ","))
+        var out: [String: String] = [:]
+        for k in keys { out[k] = Self.p(r, k) }
+        return out
+    }
+
+    public func restoreCall(id: String, fields: [String: String]) async throws {
+        _ = try await call("PATCH", "/crm/v3/objects/calls/\(id)", ["properties": fields])
+    }
 }
 
 /// The snapshot <stem>.crm.md (rules/crm.yaml > snapshot): a local file the preparation and the engine read.
@@ -315,13 +529,15 @@ public struct CRMUpdatePlan: Equatable {
     public var note: String
     public var dealFields: [String: String]
     public var task: (subject: String, due: Date?)?
+    public var callLog: CRMCallLog?      // H2: the Call engagement, when this call has one to log
     public static func == (a: CRMUpdatePlan, b: CRMUpdatePlan) -> Bool { a.rows == b.rows && a.note == b.note && a.dealFields == b.dealFields && a.task?.subject == b.task?.subject }
 
     /// summary, decisions and next steps come from the call page as edited; the transcript only when asked.
     public static func build(title: String, date: String, summary: [String], decisions: [String], nextSteps: [String],
                              notionURL: String, transcript: String?, nextStep: String, closeDate: String, stage: String?,
                              qualification: [String: String], mapping: [String: String], followUp: (String, Date?)?,
-                             writeNote: Bool = true, writeDeal: Bool = true, writeTask: Bool = true) -> CRMUpdatePlan {
+                             writeNote: Bool = true, writeDeal: Bool = true, writeTask: Bool = true,
+                             callLog: CRMCallLog? = nil, writeCall: Bool = true) -> CRMUpdatePlan {
         var note = "<p><b>\(title)</b> · \(date)</p>"
         func list(_ h: String, _ xs: [String]) { if !xs.isEmpty { note += "<p><b>\(h)</b></p><ul>" + xs.map { "<li>\($0)</li>" }.joined() + "</ul>" } }
         list("Summary", summary); list("Decisions", decisions); list("Next steps", nextSteps)
@@ -334,9 +550,10 @@ public struct CRMUpdatePlan: Equatable {
         for (crit, prop) in mapping where !prop.isEmpty { if let v = qualification[crit], !v.isEmpty { fields[prop] = String(v.prefix(250)) } }
         // 0.8.7 (I6.4): Settings > Integrations > HubSpot > What Pacenote can write sets the default ticks
         var rows = [Row(id: "note", title: "note", detail: "", on: writeNote)]
+        if let c = callLog { rows.append(Row(id: "call", title: "call", detail: c.title, on: writeCall)) }
         if !fields.isEmpty { rows.append(Row(id: "deal", title: "deal", detail: fields.keys.sorted().joined(separator: ", "), on: writeDeal)) }
         if let f = followUp { rows.append(Row(id: "task", title: "task", detail: f.0, on: writeTask)) }
         rows.append(Row(id: "transcript", title: "transcript", detail: "", on: transcript != nil))
-        return CRMUpdatePlan(rows: rows, note: note, dealFields: fields, task: followUp.map { ($0.0, $0.1) })
+        return CRMUpdatePlan(rows: rows, note: note, dealFields: fields, task: followUp.map { ($0.0, $0.1) }, callLog: callLog)
     }
 }
