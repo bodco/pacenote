@@ -149,7 +149,8 @@ enum CRMCallLogger {
                 _ = try await writeWithDeal(entry, base: base, link: l, connector: c)    // a link from another portal is not written; H4: the Call follows the deal
                 UsageLog.log("update_crm", ["fields": 0, "call": 1])
             } catch {
-                AnalyticsTracker.shared.error("crm", Analytics.errorCode(message: (error as? CRMError)?.message ?? error.localizedDescription), provider: "hubspot")
+                let e = (error as? CRMCallDeal.Partial)?.cause ?? error
+                AnalyticsTracker.shared.error("crm", Analytics.errorCode(message: (e as? CRMError)?.message ?? e.localizedDescription), provider: "hubspot")
             }
         }
     }
@@ -363,7 +364,13 @@ struct CRMUpdateView: View {
                     let id = try await c.createNote(text: p.note, associations: refs); done.append(CRMUndoItem("notes", id))
                 }
                 if p.rows.first(where: { $0.id == "call" })?.on == true, let entry = p.callLog {
-                    let w = try await CRMCallLogger.writeWithDeal(entry, base: base, link: l, connector: c)    // in turn with Auto
+                    let w: CRMCallDeal.Move
+                    do { w = try await CRMCallLogger.writeWithDeal(entry, base: base, link: l, connector: c) }    // in turn with Auto
+                    catch let e as CRMCallDeal.Partial {     // the old deal could not be taken off: what was written stays in Undo
+                        done.append(CRMUndoItem("calls", e.move.call.id, e.move.call.old))
+                        if let u = e.move.undoItem { done.append(u) }
+                        throw e.cause
+                    }
                     let r = w.call
                     done.append(CRMUndoItem("calls", r.id, r.old))       // a new Call: old is empty and Undo deletes it; an update: Undo restores
                     if let u = w.undoItem { done.append(u) }    // H4: Undo takes the new deal off and links the old deal again

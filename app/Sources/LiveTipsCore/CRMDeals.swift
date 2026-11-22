@@ -180,13 +180,41 @@ public enum CRMDealSuggester {
         }
         return out.filter { !$0.isEmpty }.map { $0.joined(separator: " ") }
     }
-    /// The signal establishes this stage's own milestone: one clause names the stage's thing and says what happened
-    /// to it ("sent", "signed", or something that implies it; any completion word when the label has none).
-    /// "We sent the proposal and reviewed the contract" establishes Proposal sent, not Contract sent.
+    static func tokenIs(_ t: String, _ words: [String]) -> Bool { words.contains { $0.allSatisfy(\.isASCII) ? t == $0 : t.hasPrefix($0) } }
+    /// A noun after one of these (and only determiners between) belongs to a phrase, not to the action:
+    /// "the proposal for the contract", "пропозицію щодо контракту".
+    static let prepositions: Set<String> = ["for", "about", "of", "on", "with", "to", "from", "in", "regarding", "under", "after", "before",
+                                            "щодо", "для", "до", "про", "з", "із", "зі", "на", "від", "у", "в", "під", "після", "за"]
+    static let determiners: Set<String> = ["the", "a", "an", "this", "that", "our", "their", "its", "his", "her", "your", "my", "new", "final",
+                                           "цей", "цього", "цю", "наш", "нашу", "нашого", "їхній", "їхню", "їхнього"]
+    static func inPhrase(_ t: [String], _ j: Int) -> Bool {
+        var k = j - 1
+        while k >= 0, determiners.contains(t[k]) || tokenIs(t[k], doneWords) { k -= 1 }
+        return k >= 0 && prepositions.contains(t[k])
+    }
+    /// The milestone noun the completion word at `i` is about: the first one after it ("we sent the proposal for the
+    /// contract" -> proposal), else the first of the clause ("the proposal for the contract was sent", "пропозицію щодо
+    /// контракту надіслали"). A noun in a phrase ("for the contract") and the completion word itself are never the object.
+    static func object(_ t: [String], at i: Int) -> String? {
+        let nouns = t.indices.filter { j in
+            j != i && !tokenIs(t[j], doneWords) && milestoneNouns.contains { tokenIs(t[j], $0) } && !inPhrase(t, j)
+        }
+        return (nouns.first { $0 > i } ?? nouns.first).map { t[$0] }
+    }
+    /// The signal establishes this stage's own milestone: in one clause a completion word for the stage ("sent",
+    /// "signed", or something that implies it; any completion word when the label has none) has the stage's thing as
+    /// its object. "We sent the proposal and reviewed the contract" and "We sent the proposal for the contract"
+    /// establish Proposal sent, not Contract sent.
     public static func establishes(_ text: String, label: String) -> Bool {
         let need = doneWords.filter { has(label, [$0]) }
         let done = need.isEmpty ? doneWords : need.flatMap { impliedBy[$0] ?? [$0] }
-        return clauses(text).contains { c in milestoneNouns.contains { has(label, $0) && has(c, $0) } && has(c, done) }
+        let groups = milestoneNouns.filter { has(label, $0) }
+        return clauses(text).contains { c in
+            let t = c.split { !$0.isLetter && !$0.isNumber && $0 != "-" }.map(String.init)
+            return t.indices.contains { i in
+                tokenIs(t[i], done) && object(t, at: i).map { o in groups.contains { tokenIs(o, $0) } } == true
+            }
+        }
     }
 
     /// A stage only when a signal of the call reports that the stage's own milestone took place (`happened` and
@@ -334,6 +362,12 @@ public enum CRMCallDeal {
             moved ? CRMUndoItem("callDeal", call.id, ["removed": removed, "added": added, "managed": managedBefore]) : nil
         }
     }
+    /// The Call was written (and maybe a deal added), then removing the old deal failed: `move` is what was done.
+    public struct Partial: Error, LocalizedError {
+        public var move: Move
+        public var cause: Error
+        public var errorDescription: String? { (cause as? CRMError)?.message ?? cause.localizedDescription }
+    }
 
     /// The Call write of `CRMCallSync.log` plus the deal move, in the same turn of the per-call queue. `load` gives the
     /// stored Call id, portal and managed deal when the turn comes; `save` stores the Call id and the managed deal.
@@ -358,7 +392,12 @@ public enum CRMCallDeal {
             guard !r.created else { save(r.id, now); return m }     // a new Call is deleted whole by its own Undo row
             if r.id == stored.callId, let before, !before.contains(now) { m.added = now }
             if !stored.managed.isEmpty, stored.managed != now, let a {
-                try await a.removeCallAssociation(callId: r.id, type: "deals", id: stored.managed)
+                do { try await a.removeCallAssociation(callId: r.id, type: "deals", id: stored.managed) } catch {
+                    // the Call and the new deal are written: the error carries them, so Undo can still take them back;
+                    // the old deal is still on the Call and stays the managed one, so the next write removes it
+                    save(r.id, stored.managed)
+                    throw Partial(move: m, cause: error)
+                }
                 m.removed = stored.managed
             }
             // managed is the association Pacenote made, not the deal the PM picked: a deal that was already on the

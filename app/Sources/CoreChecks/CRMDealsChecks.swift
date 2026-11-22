@@ -11,6 +11,7 @@ final class FakeHubSpotDeals: CRMTransport {
     var portal = 500
     var d1Delay: UInt64 = 0                    // ns the read of D1 takes, so a later pick can answer first
     var failDeals = false, failStages = false  // the company's deals or the pipelines answer 500
+    var failRemove = false                     // removing a Call's association answers 500
     var calls: [String: [String]] = [:]        // Call id -> "type/id" associations
     var nextCall = 700
     let lock = NSLock()
@@ -56,6 +57,7 @@ final class FakeHubSpotDeals: CRMTransport {
             }
             if method == "PUT" { if !calls[id]!.contains(to) { calls[id]!.append(to) }; return (200, [:], [:]) }
             if method == "DELETE" {
+                if failRemove { return (500, ["message": "HubSpot had an internal error"], [:]) }
                 guard calls[id]!.contains(to) else { return (404, ["message": "no association"], [:]) }
                 calls[id]!.removeAll { $0 == to }; return (204, [:], [:])
             }
@@ -136,11 +138,17 @@ func crmDeals() async {
            && !CRMDealSuggester.establishes("We reviewed the contract", label: "Decision maker bought-in"),
            "deals: a label without a completion word needs its own thing in the signal")
     // review round 3: the completed action must refer to the stage's own thing, in the same clause
-    for text in ["We sent the proposal and reviewed the contract", "Ми надіслали пропозицію і переглянули контракт"] {
+    for text in ["We sent the proposal and reviewed the contract", "Ми надіслали пропозицію і переглянули контракт",
+                 "We sent the proposal for the contract", "The proposal for the contract was sent", "Ми надіслали пропозицію щодо контракту",
+                 "Пропозицію щодо контракту надіслали", "Пропозицію надіслали щодо контракту"] {
         expect(stage(["signals": [["what": text]]], deal)?.value == "s3" && !CRMDealSuggester.establishes(text, label: "Contract sent")
                && CRMDealSuggester.establishes(text, label: "Proposal sent"), "deals: \"\(text)\" supports Proposal sent only")
     }
     expect(stage(["signals": [["what": "We reviewed the proposal, the contract was sent"]]], deal)?.value == "s4", "deals: a sent contract in its own clause is still Contract sent")
+    // fix round 3: the stage's thing must be what was sent, not a word next to it
+    expect(stage(["signals": [["what": "We sent them the signed contract"]]], deal)?.value == "s4" && stage(["signals": [["what": "We signed the NDA"]]], deal) == nil
+           && stage(["signals": [["what": "The contract was sent with the proposal"]]], deal)?.value == "s4",
+           "deals: the object of the completed action decides the stage")
     var other = deal; other.pipeline = "p2"; other.stage = "r1"
     expect(stage(["signals": [["what": "The contract was sent"]]], other) == nil, "deals: another pipeline's stage names are not used (the stage must be later in the same pipeline)")
     var lost = deal; lost.pipeline = ""
@@ -312,6 +320,20 @@ func crmDealsRound1(sales: [String: Any], mapping: [String: String], today: Date
     t.portal = 500
     _ = await undo(m12b)
     disk.managed = "D1"
+    // review round 3: the old deal cannot be taken off after the new one was added; the error carries the move for Undo
+    t.failRemove = true
+    var partial: CRMCallDeal.Partial? = nil
+    do {
+        _ = try await CRMCallDeal.write(entry, connector: c, associations: [CRMRef("deals", "D2"), CRMRef("companies", "C1"), CRMRef("contacts", "P1")],
+                                        dealId: "D2", queue: q, load: { (disk.callId, disk.portal, disk.managed) }, save: { disk.callId = $0; disk.managed = $1 })
+    } catch { partial = error as? CRMCallDeal.Partial }
+    t.failRemove = false
+    expect(partial?.move.added == "D2" && partial?.move.removed == "" && partial?.move.undoItem != nil && disk.managed == "D1"
+           && Set(t.calls[id] ?? []) == ["deals/D1", "deals/D2", "deals/D9", "companies/C1", "contacts/P1"],
+           "deals: a failed removal still reports the added deal; the old deal stays the managed one")
+    let up = await undo(partial?.move)
+    expect(up == 0 && Set(t.calls[id] ?? []) == ["deals/D1", "deals/D9", "companies/C1", "contacts/P1"] && disk.managed == "D1",
+           "deals: Undo after a failed removal takes the added deal off and leaves the Call as before")
     // an association that is already gone is not an error
     var gone: Error? = nil
     do { try await c.removeCallAssociation(callId: id, type: "deals", id: "D7") } catch { gone = error }
