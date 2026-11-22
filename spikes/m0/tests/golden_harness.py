@@ -18,8 +18,10 @@ GOLD = HERE.parent / "golden"
 
 import threading                                        # noqa: E402
 import types                                            # noqa: E402
+from unittest.mock import patch                         # noqa: E402
 
 import livetips_m0.engine as engine_mod                 # noqa: E402
+import livetips_m0.providers as providers_mod           # noqa: E402
 from livetips_m0.providers import FakeProvider          # noqa: E402
 from livetips_m0.replay import build_engine              # noqa: E402
 from livetips_m0.transcript import load_call             # noqa: E402
@@ -142,20 +144,22 @@ def run_variant(name: str, tmp: Path) -> dict:
     pool = DeferredPool()
     eng.pool.shutdown(wait=False)
     eng.pool = pool
-    real_threading = engine_mod.threading
-    engine_mod.threading = _deferred_threading(pool)
-    for i, ln in enumerate(lines):
-        clock["t"] = ln.written
-        eng.on_line(ln)
-        pool.run_all()
-        if i in REQUESTS:
-            eng.on_request(*REQUESTS[i])
+    # The scripted provider has zero latency. Keep its timestamps on the replay clock.
+    provider_time = types.SimpleNamespace(monotonic=eng.clock, sleep=lambda _: None)
+    with patch.object(providers_mod, "time", provider_time), patch.object(
+        engine_mod, "threading", _deferred_threading(pool)
+    ):
+        for i, ln in enumerate(lines):
+            clock["t"] = ln.written
+            eng.on_line(ln)
             pool.run_all()
-    clock["t"] += 400
-    if hasattr(eng, "final_wrapup"):
-        eng.final_wrapup()
-        pool.run_all()
-    engine_mod.threading = real_threading
+            if i in REQUESTS:
+                eng.on_request(*REQUESTS[i])
+                pool.run_all()
+        clock["t"] += 400
+        if hasattr(eng, "final_wrapup"):
+            eng.final_wrapup()
+            pool.run_all()
     res = {"requests": [{"model": c["model"], "user_sha": hashlib.sha1(c["user"].encode()).hexdigest()[:12]} for c in prov.calls]}
     for kind in ("tips", "timing", "llm"):
         p = out / (stem + ".app." + kind + ".jsonl")
