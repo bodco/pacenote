@@ -48,13 +48,15 @@ tick: >-
   the reason (the item too). A tick made offline waits in the queue and is sent when HubSpot answers. Undo writes to
   the portal of the tick; when the key opens another portal, Undo changes nothing and says so. A tick on a register
   item linked to a task (On you, Tracker, call page, call window) goes to the saved crm_task and crm_portal, also
-  when the task is not in the lists (closed, another owner's or another queue). A queued tick HubSpot refuses at a
-  sync gives the row its status before and the item back, unless the item changed since (another tick queued for the
-  task, or dropped); Retry ticks it again.
+  when the task is not in the lists (closed, another owner's or another queue). A tick made while an earlier one of
+  the task waits in the queue goes into the queue after it, so HubSpot gets them in order. Queued ticks HubSpot
+  refuses at a sync give the row and the item what HubSpot last took (the state before the first refused one; a done
+  item keeps its done date and source), unless the item changed since (dropped); Retry ticks them again.
 open: Double click opens the task in HubSpot (app-eu1.hubspot.com for the EU data region).
 remove: >-
   Remove takes the task out of the lists at once and deletes it in HubSpot (its recycling bin) after the 8 s Undo, so
-  Undo writes nothing to HubSpot. A linked item gets drop (Undo: reopen). A task Pacenote did not make asks once in On
+  Undo writes nothing to HubSpot. A linked item gets drop; Undo and a refused delete give it back as it was (open,
+  or done with its done date and source). A task Pacenote did not make asks once in On
   you and the Tracker: Delete "<title>" in HubSpot? (the call window does not ask, as for Notion tasks). When HubSpot
   refuses, the task and the item come back and the toast says the task stayed in HubSpot, with Open. Made offline,
   the delete waits in the queue (the task stays out of the lists). Hide here hides it only in Pacenote. Queue: a 4xx
@@ -74,7 +76,8 @@ both_ways: >-
   A tick here completes the task there. A linked item whose task is closed in HubSpot gets done with source hubspot at
   the next sync; reopened there, reopen (only when HubSpot closed it). A task deleted in HubSpot (404): the item keeps
   its status (open or done) without the link (op crm_unlink) with one line "HubSpot task was deleted". Decided from a
-  read of each task, never from the search alone; open items are read first (80 per sync). Titles and dates are not synced after creation: HubSpot is the source.
+  read of each task, never from the search alone. Only links the list does not answer are read, open items first, 80
+  per sync; the next sync goes on from where the last stopped, so every link is read in turn. Titles and dates are not synced after creation: HubSpot is the source.
 after_call: >-
   When auto_add is on (and the destination is HubSpot when Notion tasks are set up too), at the end of the call every
   open item owned by me of that call becomes a task, once. An open task with at least 60% of the words (the duplicates

@@ -286,6 +286,86 @@ func crmTaskFlowChecks() async {
     expect(item(s2)?.status == "dropped" && flow.pending.isEmpty, "hflow: a refused queued tick leaves a newer change of the item alone")
     hs.fail = [:]
 
+    // fix round 4
+    // 14. a tick and a reopen both queued and both refused at replay: the item and the row stay as HubSpot has them
+    let w = CommitmentRegister.add(folder: folder, text: "Send the renewal terms", project: "orbit", title: "Orbit", call: call) ?? ""
+    let wt = await flow.add(item(w)!, properties: props("Send the renewal terms"), refs: [CRMRef("deals", "D1")])
+    let wid = wt?.id ?? ""
+    hs.fail["PATCH /crm/v3/objects/tasks/" + wid] = 503
+    await flow.tickLinked(item(w)!, done: true)?.value
+    await flow.tickLinked(item(w)!, done: false)?.value
+    expect(flow.pending.filter { $0["task"] == wid }.count == 2, "hflow: a reopen after a queued tick waits behind it")
+    hs.fail["PATCH /crm/v3/objects/tasks/" + wid] = 403
+    await flow.sync()
+    expect(flow.pending.isEmpty && item(w)?.status == "open" && hs.tasks[wid]?["hs_task_status"] == "NOT_STARTED"
+           && flow.tasks.first { $0.id == wid }?.status == "NOT_STARTED", "hflow: two refused queued writes leave the item as HubSpot has it")
+    // a done item reopened while HubSpot is busy, refused at replay: done again, with its date and source
+    hs.fail = [:]
+    await flow.tickLinked(item(w)!, done: true)?.value
+    let wDone = item(w)!
+    hs.fail["PATCH /crm/v3/objects/tasks/" + wid] = 503
+    await flow.tickLinked(item(w)!, done: false)?.value
+    await flow.tickLinked(item(w)!, done: true)?.value
+    await flow.tickLinked(item(w)!, done: false)?.value
+    hs.fail["PATCH /crm/v3/objects/tasks/" + wid] = 403
+    await flow.sync()
+    expect(flow.pending.isEmpty && item(w)?.status == "done" && item(w)?.doneAt == wDone.doneAt && item(w)?.doneSource == wDone.doneSource
+           && hs.tasks[wid]?["hs_task_status"] == "COMPLETED", "hflow: refused queued writes give a done item back with its date")
+    // a reopen queued behind a tick, HubSpot back: both sent in order, HubSpot ends open
+    hs.fail["PATCH /crm/v3/objects/tasks/" + wid] = 503
+    await flow.tickLinked(item(w)!, done: false)?.value
+    await flow.tickLinked(item(w)!, done: true)?.value
+    hs.fail = [:]
+    await flow.sync()
+    expect(flow.pending.isEmpty && item(w)?.status == "done" && hs.tasks[wid]?["hs_task_status"] == "COMPLETED",
+           "hflow: queued writes of one task reach HubSpot in order")
+
+    // 15. Delete of a completed item (call page): Undo and a refusal give it back completed, with its date
+    let v = CommitmentRegister.add(folder: folder, text: "Send the launch checklist", project: "orbit", title: "Orbit", call: call) ?? ""
+    let vt = await flow.add(item(v)!, properties: props("Send the launch checklist"), refs: [CRMRef("deals", "D1")])
+    let vid = vt?.id ?? ""
+    await flow.tickLinked(item(v)!, done: true)?.value
+    let vDone = item(v)!
+    box.slow = true
+    let vjob = flow.removeLinked(item(v)!)
+    expect(item(v)?.status == "dropped", "hflow: Delete of a completed linked item drops it")
+    if case .removed(let undo)? = box.notes.last { undo() }
+    await vjob?.value
+    box.slow = false
+    expect(item(v)?.status == "done" && item(v)?.doneAt == vDone.doneAt && item(v)?.doneSource == vDone.doneSource
+           && hs.tasks[vid]?["hs_task_status"] == "COMPLETED", "hflow: Undo of Delete gives a completed item back completed")
+    hs.fail["DELETE /crm/v3/objects/tasks/" + vid] = 403
+    await flow.removeLinked(item(v)!)?.value
+    expect(item(v)?.status == "done" && item(v)?.doneAt == vDone.doneAt && hs.tasks[vid] != nil,
+           "hflow: a refused Delete gives a completed item back completed")
+    hs.fail["DELETE /crm/v3/objects/tasks/" + vid] = 503
+    await flow.removeLinked(item(v)!)?.value
+    hs.fail["DELETE /crm/v3/objects/tasks/" + vid] = 403
+    await flow.sync()
+    expect(item(v)?.status == "done" && item(v)?.doneAt == vDone.doneAt, "hflow: a Delete refused at replay gives it back completed")
+    hs.fail = [:]
+
+    // 16. more links than one sync reads: the next sync goes on, so a deleted task of a completed item is found
+    for n in 0..<89 {       // one call each, so the register does not fold them into one item as duplicates
+        let id = CommitmentRegister.add(folder: folder, text: "Follow up with account \(n)", project: "orbit", title: "Orbit",
+                                        call: "2026-10-01-\(1000 + n)-orbit.md") ?? ""
+        hs.tasks["x\(n)"] = ["hs_task_subject": "Follow up with account \(n)", "hs_task_status": "NOT_STARTED", "hubspot_owner_id": "5"]
+        CommitmentRegister.mark(folder: folder, id: id, op: "crm_link", crmTask: "x\(n)", crmPortal: "111")
+    }
+    expect(CommitmentRegister.load(folder: folder).filter { $0.crmTask.hasPrefix("x") }.count == 89, "hflow: 89 more linked items")
+    let z = CommitmentRegister.add(folder: folder, text: "Send the final invoice", project: "orbit", title: "Orbit", call: call) ?? ""
+    let zt = await flow.add(item(z)!, properties: props("Send the final invoice"), refs: [CRMRef("deals", "D1")])
+    await flow.tickLinked(item(z)!, done: true)?.value
+    hs.tasks[zt?.id ?? ""] = nil
+    var reads: [Int] = []
+    for _ in 0..<2 {
+        let m = hs.log.count
+        await flow.sync()
+        reads.append(hs.log[m...].filter { $0.hasPrefix("GET /crm/v3/objects/tasks/") }.count)
+    }
+    expect(reads.allSatisfy { $0 <= CRMTaskFlow.linkReads } && item(z)?.crmTask == "" && item(z)?.status == "done",
+           "hflow: links past the first 80 are read at the next sync (\(reads))")
+
     // the cache keeps the portal; a queued write without one is never sent
     let again = makeFlow()
     expect(again.portal == flow.portal && again.tasks.count == flow.tasks.count, "hflow: the cache keeps the portal")

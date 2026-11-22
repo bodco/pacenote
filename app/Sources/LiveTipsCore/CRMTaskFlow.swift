@@ -35,6 +35,8 @@ public final class CRMTaskFlow {
     private var removing: [String: Task<Void, Never>] = [:]
     private var adding: Set<String> = []            // folder|id of commitments being added now
     private var sending: Set<String> = []           // keys of queued writes being sent now
+    private var linkCursor = 0                      // where the next sync goes on reading linked tasks
+    public static let linkReads = 80
 
     let cachePath: String
     let connected: () -> Bool
@@ -75,8 +77,13 @@ public final class CRMTaskFlow {
         let p = try await hs.portal()
         guard !p.id.isEmpty else { throw CRMError(code: 0, message: "HubSpot did not say which account the key opens") }
         if !portal.isEmpty && portal != p.id {
-            let dropped = pending
+            var dropped = pending
             pending = []; tasks = []; ownerNames = [:]; hidden = []
+            for i in dropped.indices {               // ticks of one task: only the last is settled, from the first's state
+                guard dropped[i]["op"] == "status", let j = dropped.indices.first(where: { $0 > i && dropped[$0]["op"] == "status"
+                        && dropped[$0]["task"] == dropped[i]["task"] }) else { continue }
+                Self.carry(dropped[i], into: &dropped[j]); dropped[i]["op"] = "carried"
+            }
             for e in dropped { settle(e, ok: false) }
             if !dropped.isEmpty { notify(.accountChanged) }
         }
@@ -126,15 +133,20 @@ public final class CRMTaskFlow {
         (attemptedAt ?? syncedAt).map { now.timeIntervalSince($0) > seconds } ?? true
     }
 
-    /// rules/hubspot-tasks.yaml > both_ways, for the items linked to a task of this portal only.
+    /// rules/hubspot-tasks.yaml > both_ways, for the items linked to a task of this portal only. Only the links the
+    /// list does not answer are read, 80 per sync, the next 80 at the next sync, so every link is read in turn.
     private func syncLinks(_ hs: HubSpotConnector) async {
         let openIds = Set(tasks.map(\.id))
-        let all = items().filter { !$0.crmTask.isEmpty && $0.status != "dropped" && $0.crmPortal == portal }
-        let linked = all.filter { $0.status == "open" } + all.filter { $0.status != "open" }   // open items first under the cap
-        for c in linked.prefix(80) {
-            if c.status == "open" && openIds.contains(c.crmTask) { continue }
-            if c.status == "done" && c.doneSource != "hubspot" && openIds.contains(c.crmTask) { continue }   // closed here, HubSpot not yet
-            if isPendingDelete(c.crmTask) { continue }
+        let all = items().filter { c in
+            guard !c.crmTask.isEmpty, c.status != "dropped", c.crmPortal == portal, !isPendingDelete(c.crmTask) else { return false }
+            if c.status == "open" && openIds.contains(c.crmTask) { return false }
+            if c.status == "done" && c.doneSource != "hubspot" && openIds.contains(c.crmTask) { return false }   // closed here, HubSpot not yet
+            return true
+        }
+        let need = all.filter { $0.status == "open" } + all.filter { $0.status != "open" }
+        let batch = need.count <= Self.linkReads ? need : (0..<Self.linkReads).map { need[(linkCursor + $0) % need.count] }
+        linkCursor = need.count <= Self.linkReads ? 0 : (linkCursor + Self.linkReads) % need.count
+        for c in batch {
             let t: CRMTask?
             do { t = try await hs.task(id: c.crmTask) } catch { continue }   // nil: deleted in HubSpot; an error: next time
             switch CRMTasks.syncOp(commitmentStatus: c.status, doneSource: c.doneSource, task: t) {
@@ -153,8 +165,9 @@ public final class CRMTaskFlow {
         let batch = pending.filter { !sending.contains($0["key"] ?? "") }
         guard !batch.isEmpty else { return out }
         if !bound { do { try await bind(hs) } catch { return out } }     // unreachable: everything waits
-        for e in batch {
-            guard let key = e["key"], pending.contains(where: { $0["key"] == key }) else { continue }  // dropped by bind
+        for b in batch {
+            // as the queue has it now: dropped by bind, or carrying the state of a refused write before it
+            guard let key = b["key"], let e = pending.first(where: { $0["key"] == key }) else { continue }
             guard let id = e["task"], e["portal"] == portal else { finish(key); settle(e, ok: false); out[key] = .changed; continue }
             sending.insert(key)
             do {
@@ -212,6 +225,7 @@ public final class CRMTaskFlow {
     /// A queued write is over: a delete that went through takes the task out (and unlinks an undone add); a refused
     /// Remove gives the item back, a refused undo leaves the item linked to the task that stayed.
     private func settle(_ e: [String: String], ok: Bool) {
+        if e["op"] == "carried" { return }
         if e["op"] == "status" { if !ok { settleStatus(e) }; return }
         guard e["op"] == "delete", let id = e["task"] else { return }
         hidden.remove(id)
@@ -221,8 +235,9 @@ public final class CRMTaskFlow {
             if e["kind"] == "undo", !folder.isEmpty {
                 CommitmentRegister.mark(folder: folder, id: item, op: "crm_unlink", source: "undo"); onChange(folder)
             }
-        } else if e["kind"] == "remove", !folder.isEmpty {
-            CommitmentRegister.mark(folder: folder, id: item, op: "reopen"); onChange(folder)
+        } else if e["kind"] == "remove", !folder.isEmpty,
+                  CommitmentRegister.load(folder: folder).first(where: { $0.id == item })?.status == "dropped" {
+            restore(folder: folder, id: item, e)                                 // as it was: open, or done with its date
         } else {
             onChange(nil)
         }
@@ -297,7 +312,7 @@ public final class CRMTaskFlow {
         guard !at.isEmpty, at == portal else { notify(.accountChanged); return nil }
         let before = t.open ? t.status : "NOT_STARTED"
         let value = done ? "COMPLETED" : before
-        let c = commitment ?? linkedCommitment(t)
+        let c = (commitment ?? linkedCommitment(t)).map { current($0) ?? $0 }   // as the register has it now, to give back
         setStatus(t.id, value)
         if let c { mark(c, done ? "done" : "reopen") }
         return Task {
@@ -306,10 +321,10 @@ public final class CRMTaskFlow {
                 if done { self.notify(.completed(t.title, undo: { [weak self] in self?.untick(t, to: before, at: at, commitment: c) })) }
             case .queued: break
             case .refused(let why):
-                self.setStatus(t.id, t.status); if let c { self.mark(c, done ? "reopen" : "done") }
+                self.setStatus(t.id, t.status); if let c { self.restore(c) }
                 self.notify(.refused(why))
             case .changed:
-                if let c { self.mark(c, done ? "reopen" : "done") }
+                if let c { self.restore(c) }
                 self.notify(.accountChanged)
             }
         }
@@ -321,7 +336,7 @@ public final class CRMTaskFlow {
     public func untick(_ t: CRMTask, to status: String, at: String, commitment: Commitment? = nil) -> Task<Void, Never>? {
         guard let hs = connector() else { return nil }
         guard !at.isEmpty, at == portal else { notify(.accountChanged); return nil }
-        let c = commitment ?? linkedCommitment(t)
+        let c = (commitment ?? linkedCommitment(t)).map { current($0) ?? $0 }   // done, with its date and source
         if tasks.contains(where: { $0.id == t.id }) { setStatus(t.id, status) }
         else if commitment == nil { var u = t; u.status = status; tasks.append(u) }   // a linked task outside the lists stays out
         if let c { mark(c, "reopen") }
@@ -329,10 +344,10 @@ public final class CRMTaskFlow {
             switch await self.write(hs, id: t.id, status: status, at: at, item: c, done: false, prior: "COMPLETED") {
             case .sent, .queued: break
             case .refused(let why):
-                self.setStatus(t.id, "COMPLETED"); if let c { self.mark(c, "done") }
+                self.setStatus(t.id, "COMPLETED"); if let c { self.restore(c) }
                 self.notify(.refused(why))
             case .changed:
-                if let c { self.mark(c, "done") }
+                if let c { self.restore(c) }
                 self.notify(.accountChanged)
             }
         }
@@ -346,6 +361,21 @@ public final class CRMTaskFlow {
     /// moved (`done`: ticked or reopened) and the task's status before, so a refusal at the next sync gives both back.
     func write(_ hs: HubSpotConnector, id: String, status: String, at: String, item c: Commitment? = nil, done: Bool = true,
                prior: String = "") async -> Outcome {
+        let queue = { () -> String in
+            self.enqueue(["op": "status", "task": id, "status": status, "portal": at, "folder": c?.folder ?? "", "item": c?.id ?? "",
+                          "done": done ? "1" : "0", "prior": prior].merging(Self.before(c)) { a, _ in a })
+        }
+        // an earlier write of the task still waits: this one goes after it, so HubSpot ends with the last. The queue is
+        // sent now; a refusal there already gave the row and the item back, so it is only said here.
+        if pending.contains(where: { $0["op"] == "status" && $0["task"] == id }) {
+            let key = queue()
+            switch await flushPending(hs)[key] {
+            case .sent?: return .sent
+            case .refused(let why)?: notify(.refused(why)); return .queued
+            case .changed?: notify(.accountChanged); return .queued
+            default: return .queued
+            }
+        }
         do {
             guard try await sameAccount(hs, at) else { return .changed }
             try await hs.setTaskStatus(id: id, status)
@@ -353,21 +383,55 @@ public final class CRMTaskFlow {
         } catch let e where Self.refusal(e) != nil {
             return .refused(line(e))
         } catch {
-            _ = enqueue(["op": "status", "task": id, "status": status, "portal": at, "folder": c?.folder ?? "", "item": c?.id ?? "",
-                         "done": done ? "1" : "0", "prior": prior])
+            _ = queue()
             return .queued
         }
     }
 
-    /// A queued status write HubSpot refused (or another account): the row gets its status before, and the item
-    /// goes back unless the PM changed it since (another tick queued for the task, or a status other than the tick's).
+    /// A queued status write HubSpot refused (or another account): the row and the item go back to what HubSpot last
+    /// took, the state before the first write of the task that did not go through. A later write of the task still
+    /// queued takes that state over; the last one gives it back, unless the PM changed the item since.
     private func settleStatus(_ e: [String: String]) {
         guard let id = e["task"] else { return }
-        guard !pending.contains(where: { $0["op"] == "status" && $0["task"] == id }) else { onChange(nil); return }
+        if let j = pending.firstIndex(where: { $0["op"] == "status" && $0["task"] == id }) {
+            Self.carry(e, into: &pending[j]); saveCache(); onChange(nil); return
+        }
         if let p = e["prior"], !p.isEmpty { setStatus(id, p) }
         let done = e["done"] == "1"
-        if let c = queuedItem(e), c.status == (done ? "done" : "open") { mark(c, done ? "reopen" : "done") } else { onChange(nil) }
+        if let c = queuedItem(e), c.status == (done ? "done" : "open") {
+            restore(folder: c.folder, id: c.id, e, fallback: done ? "open" : "done")
+        } else { onChange(nil) }
     }
+
+    /// The state a write found, taken over by the next write of the same task when this one did not go through.
+    static func carry(_ e: [String: String], into next: inout [String: String]) {
+        for k in ["prior", "was", "done_at", "done_source"] { next[k] = e[k] ?? "" }
+        if e["was"] == nil { next["was"] = e["done"] == "1" ? "open" : "done" }
+    }
+
+    /// The item as it was before a write that did not go through or was undone: open, or done with its date and
+    /// source (a reopen would lose them), from `was`, `done_at` and `done_source` of the write.
+    private func restore(folder: String, id: String, _ e: [String: String], fallback: String = "open") {
+        let was = (e["was"] ?? "").isEmpty ? fallback : e["was"]!
+        if was == "done" {
+            let at = e["done_at"] ?? "", source = e["done_source"] ?? ""
+            CommitmentRegister.append(folder: folder, [["op": "done", "id": id, "at": at.isEmpty ? CommitmentRegister.nowISO() : at,
+                                                        "source": source.isEmpty ? "manual" : source]])
+        } else if was == "dropped" {
+            CommitmentRegister.mark(folder: folder, id: id, op: "drop")
+        } else {
+            CommitmentRegister.mark(folder: folder, id: id, op: "reopen")
+        }
+        onChange(folder)
+    }
+
+    /// `c` as it is now, for a write that may have to give it back.
+    static func before(_ c: Commitment?) -> [String: String] {
+        guard let c else { return [:] }
+        return ["was": c.status, "done_at": c.status == "done" ? c.doneAt : "", "done_source": c.status == "done" ? c.doneSource : ""]
+    }
+
+    private func restore(_ c: Commitment) { restore(folder: c.folder, id: c.id, Self.before(c)) }
 
     /// The item a queued write moved, as the register says now, while still linked to the write's task and portal.
     private func queuedItem(_ e: [String: String]) -> Commitment? {
@@ -381,10 +445,11 @@ public final class CRMTaskFlow {
     /// HubSpot refuses (or another account) gives the task and the item back; offline it waits in the queue.
     /// Returns the job (CoreChecks awaits it).
     @discardableResult
-    public func remove(_ t: CRMTask, commitment c: Commitment?, at: String? = nil) -> Task<Void, Never>? {
+    public func remove(_ t: CRMTask, commitment: Commitment?, at: String? = nil) -> Task<Void, Never>? {
         guard let hs = connector() else { return nil }
         let at = at ?? portal
         guard !at.isEmpty, at == portal else { notify(.accountChanged); return nil }
+        let c = commitment.map { current($0) ?? $0 }        // a completed item comes back completed (Undo, refusal)
         if let c { mark(c, "drop") }
         hidden.insert(t.id); onChange(nil)
         let job = Task { [weak self] in
@@ -393,7 +458,7 @@ public final class CRMTaskFlow {
             guard !Task.isCancelled, self.removing[t.id] != nil else { return }
             self.removing[t.id] = nil
             let key = self.enqueue(["op": "delete", "kind": "remove", "task": t.id, "portal": at,
-                                    "folder": c?.folder ?? "", "item": c?.id ?? ""])
+                                    "folder": c?.folder ?? "", "item": c?.id ?? ""].merging(Self.before(c)) { a, _ in a })
             switch await self.flushPending(hs)[key] {
             case .refused(let why)?: self.notify(.removeRefused(why, url: self.url(t)))
             case .changed?: self.notify(.accountChanged)
@@ -404,7 +469,7 @@ public final class CRMTaskFlow {
         notify(.removed(undo: { [weak self] in
             guard let self, let j = self.removing[t.id] else { return }         // the delete started: too late
             j.cancel(); self.removing[t.id] = nil; self.hidden.remove(t.id)
-            if let c { self.mark(c, "reopen") } else { self.onChange(nil) }
+            if let c { self.restore(c) } else { self.onChange(nil) }
         }))
         return job
     }
