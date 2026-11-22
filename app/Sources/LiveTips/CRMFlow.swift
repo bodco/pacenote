@@ -16,6 +16,7 @@ struct CRMLink: Codable, Equatable {
     var callKey = ""                    // H2: the Pacenote call id, made once and kept with the call
     var callId = ""                     // H2: the HubSpot Call engagement of this call, so a re-run updates it
     var portalId = ""                   // H2: the portal these ids belong to; writes need it to match the key's portal
+    var occurrence = ""                 // H2 (fix round 6): the calendar occurrence Refresh linked it for; carried only to that call
 
     init() {}
     init(from d: Decoder) throws {
@@ -24,7 +25,7 @@ struct CRMLink: Codable, Equatable {
         provider = s(.provider, "hubspot"); companyId = s(.companyId); companyName = s(.companyName); dealId = s(.dealId); dealName = s(.dealName)
         contactIds = (try? c.decodeIfPresent([String].self, forKey: .contactIds)) ?? nil ?? []
         contactNames = (try? c.decodeIfPresent([String].self, forKey: .contactNames)) ?? nil ?? []
-        callKey = s(.callKey); callId = s(.callId); portalId = s(.portalId)
+        callKey = s(.callKey); callId = s(.callId); portalId = s(.portalId); occurrence = s(.occurrence)
     }
 
     static func url(base: String) -> URL { URL(fileURLWithPath: CallLayout.sidecar(base, ".crm.json")) }
@@ -46,7 +47,9 @@ extension CRMService {
 
     /// Finds the company (attendee domains, else the name), its freshest open deal and the contacts; keeps a link the
     /// PM chose. Writes <base>.crm.md and <base>.crm.json. Returns the link or an error line.
-    func refresh(base: String, emails: [String], name: String, keep: CRMLink?) async -> (CRMLink?, String) {
+    /// occurrence (Start call's Refresh): the calendar occurrence the link is saved for, "" for a call without an event;
+    /// nil (Relink on a recorded call) leaves it as it was.
+    func refresh(base: String, emails: [String], name: String, keep: CRMLink?, occurrence: String? = nil) async -> (CRMLink?, String) {
         guard let c = connector() else { return (nil, L("crm.notConnected")) }
         do {
             var link = keep ?? CRMLink()
@@ -57,6 +60,7 @@ extension CRMService {
                 link = fresh
             }
             link.portalId = portal
+            if let o = occurrence { link.occurrence = o }
             var company: CRMCompany? = nil
             if !link.companyId.isEmpty { company = CRMCompany(id: link.companyId, name: link.companyName, domain: "") }
             if company == nil, SettingsWindow.model.config.crm.matchByDomain {   // 0.8.7 (I6.2): the toggle in Matching
@@ -154,6 +158,14 @@ enum CRMCallLogger {
 }
 
 extension StartCallModel {
+    /// The calendar occurrence this window is for (event id + start), sent as crm_event; "" without an event.
+    var crmOccurrence: String { calEventID ?? "" }
+    /// The preparation was chosen by hand in this window (sent as crm_chosen): its link is the PM's own choice.
+    var crmChosen: Bool { CRMLinkCarry.prepBase(chosen: chosenPrepPath, planned: nil) != nil }
+    /// The link at crmBase goes to the call (fix round 6): chosen by hand, or Refresh saved it for this occurrence. The
+    /// planned preparation is found by title and time, which never proves it is this call's, so its link alone is not used.
+    var crmLinkVerified: Bool { crmBase.map { CRMLinkCarry.verified(base: $0, occurrence: crmOccurrence, chosen: crmChosen) } ?? false }
+
     /// The preparation the CRM row's Refresh saves the HubSpot link with, sent with the call as crm_base: the call gets
     /// exactly the link this window showed (fix round 5), never one found by title.
     var crmBase: String? {
@@ -202,11 +214,17 @@ struct CRMCallRow: View {
                 Button(L("crm.refresh")) { refresh() }.buttonStyle(.pnTertiary).disabled(busy || base == nil)
                     .help(base == nil ? L("crm.refresh.needBase") : L("crm.refresh.help"))
             }
-            .onAppear { if let b = base { link = CRMLink.load(base: b) } }
-            // fix round 5: another preparation picked: show its own link, the previous one's deals and error go
-            .onChange(of: base) { link = base.flatMap { CRMLink.load(base: $0) }; deals = []; err = "" }
+            .onAppear { link = shown }
+            // fix round 5: another preparation (round 6: or another calendar event) picked: show its own link, the
+            // previous one's deals and error go
+            .onChange(of: identity) { link = shown; deals = []; err = "" }
         }
     }
+
+    /// What decides the row's link: the preparation, the calendar occurrence and whether the prep was chosen by hand.
+    var identity: String { (base ?? "") + "|" + model.crmOccurrence + "|" + (model.crmChosen ? "1" : "0") }
+    /// fix round 6: only a link Start call will carry is shown (the same rule), so the row never shows another call's link.
+    var shown: CRMLink? { model.crmLinkVerified ? base.flatMap { CRMLink.load(base: $0) } : nil }
 
     var line: String {
         if !err.isEmpty { return err }
@@ -220,12 +238,22 @@ struct CRMCallRow: View {
         guard let b = base else { return }
         busy = true; err = ""
         let name = model.project?.crmCompanyName.isEmpty == false ? model.project!.crmCompanyName : (model.project?.name ?? "")
+        let id = identity, occ = model.crmOccurrence
+        // the link kept is the one saved with this base, not the one on screen (it may be another preparation's); one not
+        // verified for this call (fix round 6: another occurrence's, or one without an occurrence) is not kept
+        let keep = model.crmLinkVerified ? CRMLink.load(base: b) : nil
         Task {
-            // the link kept is the one saved with this base, not the one on screen (it may be another preparation's)
-            let (l, e) = await crm.refresh(base: b, emails: emails, name: name, keep: CRMLink.load(base: b))
-            guard base == b else { busy = false; return }      // the preparation changed while HubSpot answered
+            let (l, e) = await crm.refresh(base: b, emails: emails, name: name, keep: keep, occurrence: occ)
+            guard identity == id else { busy = false; return }      // the preparation or event changed while HubSpot answered
             link = l; err = e; busy = false
-            if let co = l?.companyId, !co.isEmpty, let c = crm.connector() { deals = ((try? await c.deals(companyId: co)) ?? []).filter { $0.open } }
+            // the snapshot still helps the preparation, but a link no call identity backs is not offered as the call's
+            if let l = l, !model.crmLinkVerified {
+                err = L("crm.unverified", ["company": l.companyName.isEmpty ? L("crm.noCompany") : l.companyName]); deals = []; return
+            }
+            if let co = l?.companyId, !co.isEmpty, let c = crm.connector() {
+                let open = ((try? await c.deals(companyId: co)) ?? []).filter { $0.open }
+                if identity == id { deals = open }      // not the deals of a company picked before a switch
+            }
         }
     }
 

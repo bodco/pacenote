@@ -167,11 +167,13 @@ is shown on the card. Behavior to keep and to define:
    the same preparation Start call copies (the one chosen by hand, else the planned one, else where Prepare will write)
    and reads the link stored there at the moment it runs, so picking another preparation never moves the first one's
    company and deal into it. The call request names that preparation (`crm_base`); when the recording starts the
-   link is copied from it to the call's own `<stem>.crm.json`, without `callKey` and `callId`. The preparation Prepare
-   is writing for this call when it starts (late prep) carries its link the same way. Known limit: the planned
-   preparation is found by title and occurrence time (within 3 hours of the call), so two same-title calls of
-   different customers that close together show the other one's company in the Start call row; the PM sees it there
-   before starting. A link the call already
+   link is copied from it to the call's own `<stem>.crm.json`, without `callKey` and `callId`, only when its identity
+   is verified: the PM chose the preparation by hand (`crm_chosen`), or the link's `occurrence` (the calendar event id
+   and start Refresh saved it for) equals the call's (`crm_event`). The planned preparation is found by title and
+   occurrence time, which never proves whose call it is, so its link alone is not carried; Refresh does not keep an
+   unverified link's company and deal, and the Start call row shows only a link that will be carried. A call without a
+   calendar event and without a chosen preparation stays unlinked. The preparation Prepare is writing for this call when
+   it starts (late prep) carries its link only on the same occurrence match. A link the call already
    has is kept. A title is not a call's identity, so the recorder's automatic pick by title (`lt prep-check
    --adopt-prep`) never carries a link: a call started without `crm_base` (another start path) stays unlinked, and
    its Summary never goes to another customer's records.

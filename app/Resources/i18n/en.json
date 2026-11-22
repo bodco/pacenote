@@ -1620,6 +1620,7 @@
  "crm.refresh.help": "Reads the company, deal, contacts and recent activity into a local snapshot next to the brief",
  "crm.refresh.needBase": "Prepare the call first: the snapshot is saved next to the brief",
  "crm.notLinked": "CRM: not linked yet",
+ "crm.unverified": "CRM: {company} · not sent with the call: start it from its calendar event or choose the preparation",
  "crm.line": "CRM: {company} · Deal: {deal}",
  "crm.update.title": "Update {crm}",
  "crm.update.connect": "Update CRM: connect HubSpot in Settings > Integrations",

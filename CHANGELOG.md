@@ -26,8 +26,10 @@ Pacenote. Earlier versions are described in the commit messages and in
   and contacts linked with Refresh in Start call now go to the recorded call started from that window, so Auto and
   Update HubSpot find them (before, the call showed "not linked"). Refresh saves the link with the preparation the call
   will use (the one you chose, else the planned one) and starts from that preparation's own link after you pick
-  another one. A preparation the recorder picks by title after the call starts never brings a link, so two "Renewal"
-  calls of different customers never share one; a call started another way stays unlinked. A new
+  another one. The link goes with the call only when Pacenote knows it is this call's: Refresh was pressed for the
+  call's calendar event, or you chose the preparation yourself. A title or a time is never enough, so two "Renewal"
+  calls of different customers never share one; a call without a calendar event and without a chosen preparation, or
+  started another way, stays unlinked. A new
   switch in Settings > Integrations > HubSpot, **Log the call in HubSpot automatically after it ends**, is off by
   default and logs only the Call. The HubSpot integration design is in `docs/specs/hubspot-crm-integration.md`.
 

@@ -897,6 +897,7 @@ final class StartCallModel: ObservableObject {
                 "project_config": project?.config ?? "", "people": people, "people_team": peopleTeam,
                 "voices_remember": !publicCall, "prep_file": chosenPrepPath ?? "",
                 "crm_base": crmBase ?? "",       // H2 (PB-58): the HubSpot link this window showed goes with the call
+                "crm_event": crmOccurrence, "crm_chosen": crmChosen,     // fix round 6: what proves the link is this call's
                 "recording": recording,
                 "folders": folders,
                 "sales": { () -> [String: Any] in
@@ -961,6 +962,9 @@ extension AppDelegate {
             CallEngine.shared.startReady = true
         }
         model.useDefaultTargetIfEmpty()
+        // H2 (PB-58, fix round 6): the prep picked below by title and time becomes chosenPrep too; only the PM's own choice
+        // vouches for a HubSpot link (crm_chosen)
+        let crmByHand = model.crmChosen
         if model.chosenPrep == nil { model.adoptExistingPrep() }
         if model.chosenPrep == nil, let b = model.prepBase, let root = model.root {
             let name = (b as NSString).lastPathComponent + ".brief.md"
@@ -968,7 +972,8 @@ extension AppDelegate {
                 model.chosenPrep = name
             }
         }
-        guard let req = model.requestJSON() else { return model.note.isEmpty ? L("call.cannotStart") : model.note }
+        guard var req = model.requestJSON() else { return model.note.isEmpty ? L("call.cannotStart") : model.note }
+        req["crm_chosen"] = crmByHand
         let before = CallEngine.shared.currentCallID
         CallEngine.shared.currentCallID = model.id
         let err = CallEngine.shared.start(request: req, apiAllowed: model.project?.apiAllowed ?? true) { [weak self] st in
