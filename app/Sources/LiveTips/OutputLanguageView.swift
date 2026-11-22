@@ -54,9 +54,14 @@ final class OutputLanguageModel: ObservableObject {
         }.joined(separator: ", ")
     }
 
-    /// Not while the call records or a notes run is going (one request at a time, no clash with the local model).
+    /// Not while any call records or a notes run is going (one request at a time, no clash with the local model of a live call).
     var canRegenerate: Bool {
-        !running && !NotesRewrite.of(file).running && !(CallEngine.shared.isRunning && CallEngine.shared.lastFile == file)
+        !running && !NotesRewrite.of(file).running && !Self.recordingLive
+    }
+
+    /// Any call recording or starting, this one or another (the same test as AutoStart and the home window).
+    private static var recordingLive: Bool {
+        CallEngine.shared.isRunning || ["recording", "standby", "loading_model"].contains(EngineStatus.load(path: CallEngine.shared.statusPath).state)
     }
 
     /// The call is long enough to ask first.
@@ -66,7 +71,7 @@ final class OutputLanguageModel: ObservableObject {
         guard canRegenerate else { return }
         running = true; failed = nil
         let job = NotesRewrite.of(file)
-        job.start()          // full notes, Summary and Recap in the output language; the Notion sections follow (CallEngine)
+        job.start(syncNotion: false)     // full notes, Summary and Recap in the output language; the Notion page is written below by the one ownership-aware writer (wrapup_notion --page), never by the heading-based section sync
         Task { @MainActor in
             while job.running { try? await Task.sleep(nanoseconds: 500_000_000) }
             if let err = job.failed { self.failed = err; self.running = false; self.refresh(); return }

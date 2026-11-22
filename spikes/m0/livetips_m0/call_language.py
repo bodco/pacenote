@@ -114,7 +114,7 @@ def load_meta(transcript) -> Optional[dict]:
 def spoken(transcript_text: str = "", meta: Optional[dict] = None) -> Spoken:
     """The adapter (the only function that knows the recorder's shape; PB-30 may change it, nothing else does).
     1. `meta` of the call, when PB-30 writes it: `dominant_language` ("uk" or empty) and `languages` ({"uk": 0.71, ...}
-       or ["uk", "en"]).
+       shares, {"uk": 1260.5, ...} seconds of speech as the recorder's LangShare counts them, or ["uk", "en"]).
     2. Otherwise the transcript: the majority of the line tags "[13:01:04] Name (uk): ..." (the same value as
        callnotes.call_lang) and the share of each tag; no tags: the header's first language, no shares."""
     meta = meta or {}
@@ -129,6 +129,9 @@ def spoken(transcript_text: str = "", meta: Optional[dict] = None) -> Spoken:
     elif isinstance(langs, (list, tuple)):
         c_list = _codes(langs)
         shares = {c: 1.0 / len(c_list) for c in c_list}
+    total = sum(shares.values())
+    if total > 1.0 + 1e-9:                          # seconds of speech per language (the recorder's LangShare.secs): to shares of the call
+        shares = {c: v / total for c, v in shares.items()}
     if shares and not dom:
         dom = max(shares, key=shares.get)           # no dominant field: the largest share (ties: the first code in alphabetical order; a list: first listed)
     if not shares or not dom:

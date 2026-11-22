@@ -30,10 +30,11 @@ final class NotesRewrite: ObservableObject {
         return CallSpeakers.notesStale(editedAt: CallSpeakers.editedAt(snapshot: snap), notesWritten: notes)
     }
 
-    func start() {
+    /// `syncNotion: false` leaves the call's Notion page to the caller (Regenerate rewrites it itself).
+    func start(syncNotion: Bool = true) {
         guard !running else { return }
         running = true; failed = nil; failedSteps = []
-        CallEngine.shared.rewriteCallNotes(file: file) { [weak self] err, steps in
+        CallEngine.shared.rewriteCallNotes(file: file, syncNotion: syncNotion) { [weak self] err, steps in
             guard let self else { return }
             self.running = false
             self.failed = err

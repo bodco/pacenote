@@ -803,19 +803,15 @@ def regenerate_page(page: dict, sc, ids, a, w, blocks, lang) -> dict:
         _plain(start) not in {T["summary"] for T in TXT.values()} else TXT[lang]["summary"]
     notion("PATCH", f"/blocks/{start['id']}", {"heading_2": {"rich_text": rt(label)}})
     chunks = [new[k:k + 90] for k in range(0, len(new), 90)]
-    written, exact = [], True               # ids Notion returned for our own writes: a block the PM adds meanwhile is not among them
+    written = []                            # ids Notion returned for our own writes: a block the PM adds meanwhile is not among them
+    keep = set(owned or ())                 # the old ids stay recorded until the cleanup below is complete
     for chunk in reversed(chunks):          # each chunk goes right after the heading, so the last one inserted ends up first
         r = notion("PATCH", f"/blocks/{pid}/children", {"children": chunk, "after": start["id"]}) or {}
-        got = [b.get("id") for b in r.get("results") or []]
-        if len(got) != len(chunk) or not all(got):
-            exact = False
-        written += got
+        written += [b.get("id") for b in r.get("results") or [] if b.get("id")]
+        set_owned(a.md, pid, keep | {start["id"]} | set(written))     # recorded as each batch succeeds: a failure later cannot leave an untracked copy
     for b in old:
-        notion("DELETE", f"/blocks/{b['id']}")
-    if exact:
-        set_owned(a.md, pid, [start["id"]] + written)
-    else:                                   # a response without the new ids: only the heading is surely ours, the rest is never archived
-        set_owned(a.md, pid, [start["id"]])
+        notion("DELETE", f"/blocks/{b['id']}")      # a failure here keeps old and new ids recorded; the next run archives both and writes once
+    set_owned(a.md, pid, [start["id"]] + written)   # cleanup done: only the current section is ours
     if end < len(children):     # the transcript heading follows the page language too
         tb = children[end]
         if tb.get("type") in ("heading_2", "heading_3") and _plain(tb) in {T["transcript"] for T in TXT.values()} | {T["tr_app"] for T in TXT.values()}:

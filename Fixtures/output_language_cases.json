@@ -239,6 +239,35 @@
    ]
   },
   {
+   "name": "meta in seconds of speech as the recorder's LangShare keeps them, wrong line tags",
+   "transcript": "[13:00:00] Я (en): a\n[13:01:00] Mike (en): b\n[13:02:00] Я (en): c\n",
+   "meta": {
+    "languages": {
+     "en": 310.2,
+     "uk": 1260.5
+    }
+   },
+   "dominant": "uk",
+   "languages": [
+    "uk",
+    "en"
+   ]
+  },
+  {
+   "name": "meta in seconds: a language under 10 percent of the speech is not spoken",
+   "transcript": "",
+   "meta": {
+    "languages": {
+     "en": 40,
+     "uk": 960
+    }
+   },
+   "dominant": "uk",
+   "languages": [
+    "uk"
+   ]
+  },
+  {
    "name": "meta share under 10 percent is not spoken",
    "transcript": "",
    "meta": {

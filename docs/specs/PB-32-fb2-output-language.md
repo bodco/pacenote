@@ -175,6 +175,13 @@ The resolver reads exactly one adapter function, so PB-30's final shape only cha
 4. Whether the PM can already override it in PB-30 (if so, the toggle here must write the same field, not a second one).
 5. A stable value for old calls (none): the resolver falls back to the tag majority (acceptance criterion 3).
 
+Agreed persisted format (round 4): the recorder's `LangShare` already counts seconds of speech per language in memory
+(`LangShare.secs`) and PB-30 does not store it. PB-30 must write, into the call's `<project>/video/<stem>.recording.json`,
+`"languages": {"uk": 1260.5, "en": 310.2}` (that map, seconds of speech) and `"dominant_language": "uk"` (or leave it
+out, then the largest value wins), at the end of the call and after a transcript correction. Both readers
+(`call_language.py`, `CallLanguage.swift`) accept seconds or shares: a map whose values add up to more than 1 is divided
+by its total. The shared fixture table holds a seconds case. Until PB-30 writes the fields, calls fall back to the line tags.
+
 ## Plan
 
 ### Modules and files

@@ -22,7 +22,11 @@ Pacenote. Earlier versions are described in the commit messages and in
   Regenerate archives only the Notion blocks Pacenote itself wrote (it remembers the ids Notion returned for its own writes,
   from the first wrap-up on); a paragraph you typed inside the section stays and does not keep the page "out of date". On a
   page written before this change the old blocks are kept, the new text goes in above them, a message says so and asks you to
-  delete the old ones and press Regenerate again. A follow-up revision still running is waited for before the draft is rewritten. The brief and its
+  delete the old ones and press Regenerate again. Regenerate writes the Notion page with that one writer only (the
+  Decisions, Open questions, Risks and Action items sync does not run after it, so a paragraph you typed under a heading
+  stays), and a Notion error halfway leaves the old and the new text both on the page and a retry writes it once. Regenerate
+  does not start while any call is recording, not only this one. The languages the recorder spent speech time on can be
+  given as seconds or as shares. A follow-up revision still running is waited for before the draft is rewritten. The brief and its
   refresh name the call's output language in the model request, and a project config saying "brief in Ukrainian" no
   longer overrides it.
 - Follow-up email drafts use the call's output language. If the project's client language differs, the Follow-up

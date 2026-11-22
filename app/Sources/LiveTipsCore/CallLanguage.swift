@@ -77,7 +77,7 @@ public enum CallLanguage {
 
     /// The adapter (the only function that knows the recorder's shape; PB-30 may change it, nothing else does).
     /// 1. `meta` of the call when PB-30 writes it: `dominant_language` ("uk" or empty) and `languages` ({"uk": 0.71, ...}
-    ///    or ["uk", "en"]).
+    ///    shares, {"uk": 1260.5, ...} seconds of speech as the recorder's LangShare counts them, or ["uk", "en"]).
     /// 2. Otherwise the transcript: the majority of the line tags "[13:01:04] Name (uk): ..." (the value
     ///    callnotes.call_lang gives) and the share of each tag; no tags: the header's first language, no shares.
     public static func spoken(transcript: String = "", meta: [String: Any]? = nil) -> Spoken {
@@ -92,6 +92,8 @@ public enum CallLanguage {
             let list = codes(l.compactMap { $0 as? String })
             shares = list.map { ($0, 1.0 / Double(list.count)) }
         }
+        let total = shares.reduce(0) { $0 + $1.share }
+        if total > 1.0 + 1e-9 { shares = shares.map { ($0.code, $0.share / total) } }   // seconds of speech per language (the recorder's LangShare.secs): to shares of the call
         if dom == nil, let top = shares.max(by: { $0.share < $1.share }) {   // no dominant field: the largest share (ties: the first code in alphabetical order; a list: first listed)
             dom = shares.first { $0.share == top.share }?.code
         }

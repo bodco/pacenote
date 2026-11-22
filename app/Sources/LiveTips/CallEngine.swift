@@ -569,7 +569,7 @@ final class CallEngine {
     /// items to the new names). The PM's edits on the call page live in the tips file and still win (CallLists). Then the
     /// call's Notion page gets its Decisions, Action items, Open questions and Risks again (CallPageSync), and the server
     /// copy the changed notes. `done` gets the error (nil when the notes are written) and the steps that failed (a meeting-notes failure keeps the notes). On the "After the call" way; the cost goes to SpendDays and the call's history.
-    @MainActor func rewriteCallNotes(file: String, done: @escaping @MainActor (String?, [String]) -> Void) {
+    @MainActor func rewriteCallNotes(file: String, syncNotion: Bool = true, done: @escaping @MainActor (String?, [String]) -> Void) {
         let c = config
         guard AIRoute.canRun(job: "after", config: c), !c.engine.sidecarPython.isEmpty, !c.engine.sidecarDir.isEmpty else {
             done(L("page.mn.noRoute"), []); return
@@ -612,8 +612,10 @@ final class CallEngine {
                         return
                     }
                     AppLog.app("notes: rewritten call=\(AppLog.stem(file))")
-                    let sync = CallPageSync.of(file)
-                    for s in ["decisions", "open", "risks", "actions"] { sync.changed(s) }   // no Notion page: nothing happens
+                    if syncNotion {      // Regenerate writes the page itself: this heading-based sync would archive the PM's own blocks under Decisions
+                        let sync = CallPageSync.of(file)
+                        for s in ["decisions", "open", "risks", "actions"] { sync.changed(s) }   // no Notion page: nothing happens
+                    }
                     CallSyncService.shared.sync(file)
                     done(nil, d["failed_steps"] as? [String] ?? [])
                 }
