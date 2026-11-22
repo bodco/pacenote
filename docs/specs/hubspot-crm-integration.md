@@ -213,7 +213,7 @@ Read the settings only through these calls on `CRMSettings` (`SettingsWindow.mod
 | `mapped(_ o:, _ props:) -> [String: Any]` | a property dictionary renamed by the mapping, Don't write dropped. `HubSpotConnector.sync` applies it to the Call, the task and the deal fields; a new writer calls `mapped` on its properties before sending |
 | `ownerId(forPacenoteUser email:, ownEmails:, owners:) -> String` | the HubSpot owner for a Pacenote user: the mapping in Sync; for the user of this Mac (one of `ownEmails`, or an empty email) the owner from Matching (`ownerId`); else the HubSpot owner with the same email; else `""` (leave `hubspot_owner_id` out, section 7) |
 | `CRMSyncLog.append(_ entries:, stem:)` | adds lines to the call's sync log; `CRMSyncLog.recordUndo(...)` for an Undo |
-| `CRMScopeCheck.blocking(_ o:, missing:)` | the scopes an Auto switch needs that the last check found missing |
+| `CRMScopeCheck.blocking(_ o:, missing:)` | the scopes an Auto switch needs (`CRMObject.scopes`: the reads its write path makes, then the write scopes) that the last check found missing |
 
 Rules for a branch that adds an automatic write: check `autoWrites(o)` at the moment of writing (not at start), write
 only the objects of its own switch, map properties with `mapped`, set the owner with `ownerId(forPacenoteUser:)`, and

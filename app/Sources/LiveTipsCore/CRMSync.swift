@@ -8,14 +8,16 @@ import Foundation
 public enum CRMObject: String, CaseIterable, Codable {
     case calls, tasks, contacts, deals, meetings      // contacts = contacts and companies
 
-    /// The scopes a write of this object needs (section 4). Calls, tasks and meetings are engagements that HubSpot
-    /// creates with the contacts scopes; meetings may also need the meetings read scope on some portals.
+    /// The scopes a write of this object needs (section 4): the reads its write path makes (matching, the deal read
+    /// before an update, the owner), which the live check can prove, then the write scopes, which only a write proves.
+    /// Calls, tasks and meetings are engagements that HubSpot creates with the contacts scopes; meetings may also need
+    /// the meetings read scope on some portals.
     public var scopes: [String] {
         switch self {
-        case .calls, .tasks: return ["crm.objects.contacts.write"]
-        case .contacts: return ["crm.objects.contacts.write", "crm.objects.companies.write"]
-        case .deals: return ["crm.objects.deals.write"]
-        case .meetings: return ["crm.objects.contacts.write", "crm.objects.meetings.read"]
+        case .calls, .tasks: return ["crm.objects.contacts.read", "crm.objects.owners.read", "crm.objects.contacts.write"]
+        case .contacts: return ["crm.objects.contacts.read", "crm.objects.companies.read", "crm.objects.contacts.write", "crm.objects.companies.write"]
+        case .deals: return ["crm.objects.deals.read", "crm.objects.deals.write"]
+        case .meetings: return ["crm.objects.contacts.read", "crm.objects.owners.read", "crm.objects.contacts.write", "crm.objects.meetings.read"]
         }
     }
 

@@ -882,8 +882,12 @@ func crmSync() async {
     sf.status = ["/crm/v3/owners": 403, "/crm/v3/properties/deals": 403, "/crm/v3/objects/companies": 500]
     let missing = await CRMScopeCheck.missing(HubSpotConnector(transport: sf, sleep: { _ in }))
     expect(missing == ["crm.objects.owners.read", "crm.schemas.deals.read"], "scopes: 403 probes are missing, 500 is not: \(missing)")
-    expect(CRMScopeCheck.blocking(.deals, missing: ["crm.objects.deals.write"]) == ["crm.objects.deals.write"] && CRMScopeCheck.blocking(.calls, missing: missing).isEmpty,
+    expect(CRMScopeCheck.blocking(.deals, missing: ["crm.objects.deals.write"]) == ["crm.objects.deals.write"] && CRMScopeCheck.blocking(.deals, missing: missing).isEmpty,
            "scopes: a switch shows the scope it needs")
+    // what the live check finds must be able to reach a switch: every probed scope blocks some object, and a refused owners read blocks Calls
+    expect(CRMScopeCheck.probes.filter { !$0.scope.contains(".schemas.") }.allSatisfy { p in CRMObject.allCases.contains { $0.scopes.contains(p.scope) } }
+           && CRMScopeCheck.blocking(.calls, missing: missing) == ["crm.objects.owners.read"],
+           "scopes: a scope the live check finds missing shows on the switch that needs it")
 }
 
 decisions088()

@@ -41,10 +41,11 @@ write:
     writes without the PM's click, except an object whose own Auto switch is on (Settings > Integrations > HubSpot >
     Sync, all off by default; today only the Call has a writer); notes never write automatically
   auto: >-
-    One switch, off by default (Settings > Integrations > HubSpot): the Call engagement (title, start, duration,
+    One switch per object, all off by default (Settings > Integrations > HubSpot > Sync: Calls, Tasks, Contacts and
+    companies, Deals, Meetings). Today only the Call has a writer: the Call engagement (title, start, duration,
     direction, outcome, participants, Summary and next steps, link back; never transcript text) is logged after the
     call ends, keyed by the Pacenote call id stored in <stem>.crm.json, so a re-run updates the same Call.
-    Notes, deal fields and tasks never write without a click.
+    Notes never write without a click; deal fields and tasks only once their branch reads its switch.
   call: >-
     Call row in the review, ticked by default; associations contact 194, company 182, deal 206; dedupe by
     hs_call_external_id = pacenote:<call id>. Full design: docs/specs/hubspot-crm-integration.md.
