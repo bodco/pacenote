@@ -33,12 +33,14 @@ Pacenote. Earlier versions are described in the commit messages and in
   suggested only when the call reports that its own milestone happened ("we sent the contract" for Contract sent),
   never from a negated, planned, agreed or requested one ("the contract was never sent", "we will send it", "we agreed
   to send it", "they asked for it") or a nearby one ("we reviewed the contract", "we presented the demo" for Proposal
-  sent). Quotes are shown
+  sent). The action must refer to the stage's own thing: "we sent the proposal and reviewed the contract" suggests
+  Proposal sent, not Contract sent. Quotes are shown
   only to you and are never sent to HubSpot. Apply updates the deal once and Undo restores the old values. Picking
   another deal clears the old suggestions at once, and Apply waits until the new deal is read. When you move the call
   to another deal or to No deal, Apply also moves the HubSpot Call off the deal Pacenote linked it to; deals a person
   added in HubSpot stay, and Undo takes the new deal off the Call and links the old deal again (a deal that was
-  already on the Call stays). Applying the same call again keeps the close date it
+  already on the Call stays). Picking a deal that someone already added to the Call in HubSpot never makes it
+  Pacenote's, so a later No deal or another pick leaves that association. Applying the same call again keeps the close date it
   suggested. A failed read of the company's deals or the stages says so with **Try again** instead of an empty list.
   The deal preview, Apply and Undo first check that the call is linked in the HubSpot account of the current key.
 

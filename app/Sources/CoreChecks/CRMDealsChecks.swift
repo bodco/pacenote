@@ -135,6 +135,12 @@ func crmDeals() async {
     expect(CRMDealSuggester.establishes("The decision maker approved it", label: "Decision maker bought-in")
            && !CRMDealSuggester.establishes("We reviewed the contract", label: "Decision maker bought-in"),
            "deals: a label without a completion word needs its own thing in the signal")
+    // review round 3: the completed action must refer to the stage's own thing, in the same clause
+    for text in ["We sent the proposal and reviewed the contract", "Ми надіслали пропозицію і переглянули контракт"] {
+        expect(stage(["signals": [["what": text]]], deal)?.value == "s3" && !CRMDealSuggester.establishes(text, label: "Contract sent")
+               && CRMDealSuggester.establishes(text, label: "Proposal sent"), "deals: \"\(text)\" supports Proposal sent only")
+    }
+    expect(stage(["signals": [["what": "We reviewed the proposal, the contract was sent"]]], deal)?.value == "s4", "deals: a sent contract in its own clause is still Contract sent")
     var other = deal; other.pipeline = "p2"; other.stage = "r1"
     expect(stage(["signals": [["what": "The contract was sent"]]], other) == nil, "deals: another pipeline's stage names are not used (the stage must be later in the same pipeline)")
     var lost = deal; lost.pipeline = ""
@@ -285,6 +291,17 @@ func crmDealsRound1(sales: [String: Any], mapping: [String: String], today: Date
     let u19 = await undo(m19)
     expect(m19?.added == "" && m19?.removed == "D1" && u19 == 0 && Set(t.calls[id] ?? []) == ["deals/D1", "deals/D9", "companies/C1", "contacts/P1"],
            "deals: Undo never removes a deal that was on the Call before")
+    expect(disk.managed == "D1", "deals: Undo of the pick puts the managed deal back")
+    // review round 3: picking a deal already on the Call, then No deal, keeps that association
+    let p19 = await write("D9")
+    expect(p19?.added == "" && p19?.removed == "D1" && disk.managed == "", "deals: a picked deal that was already on the Call is not stored as Pacenote's")
+    let p9n = await write("none")
+    expect(p9n?.removed == "" && p9n?.undoItem == nil && Set(t.calls[id] ?? []) == ["deals/D9", "companies/C1", "contacts/P1"],
+           "deals: No deal after picking a deal added in HubSpot removes nothing")
+    let p9d = await write("D9")
+    expect(p9d?.added == "" && p9d?.removed == "" && disk.managed == "", "deals: re-picking that deal still does not make it Pacenote's")
+    _ = await undo(p19)
+    expect(Set(t.calls[id] ?? []) == ["deals/D1", "deals/D9", "companies/C1", "contacts/P1"] && disk.managed == "D1", "deals: Undo of that pick links D1 again")
     // Undo after the key moved to another portal sends nothing
     let m12b = await write("D2")
     t.portal = 777

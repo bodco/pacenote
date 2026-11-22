@@ -368,7 +368,7 @@ struct CRMUpdateView: View {
                     done.append(CRMUndoItem("calls", r.id, r.old))       // a new Call: old is empty and Undo deletes it; an update: Undo restores
                     if let u = w.undoItem { done.append(u) }    // H4: Undo takes the new deal off and links the old deal again
                     link?.callId = r.id
-                    link?.callDealId = CRMCallDeal.target(l.dealId)
+                    link?.callDealId = CRMLink.load(base: base)?.callDealId ?? ""     // what the write stored: only a deal Pacenote added
                 }
                 if p.rows.first(where: { $0.id == "deal" })?.on == true, !l.dealId.isEmpty, l.dealId != "none", !dealFields.isEmpty {
                     let old = try await c.updateDeal(id: l.dealId, fields: dealFields); done.append(CRMUndoItem("deals", l.dealId, old)); fields = dealFields.count

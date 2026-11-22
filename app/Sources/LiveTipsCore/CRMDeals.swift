@@ -167,12 +167,26 @@ public enum CRMDealSuggester {
         for w in signed { m[w] = signed }
         return m
     }()
-    /// The signal establishes this stage's own milestone: it names the stage's thing, and when the label says what
-    /// happened to it ("sent", "signed"), the signal says that or something that implies it.
+    /// Words that start a new clause; with , ; : . they split a signal into separate actions.
+    static let clauseWords: Set<String> = ["and", "but", "then", "while", "also", "і", "й", "та", "а", "але", "потім"]
+    /// "We sent the proposal and reviewed the contract" -> ["we sent the proposal", "reviewed the contract"].
+    static func clauses(_ text: String) -> [String] {
+        var out: [[String]] = [[]]
+        for part in text.lowercased().components(separatedBy: CharacterSet(charactersIn: ",;:.!\n")) {
+            for w in part.split(whereSeparator: \.isWhitespace).map(String.init) {
+                if clauseWords.contains(w.trimmingCharacters(in: .punctuationCharacters)) { out.append([]) } else { out[out.count - 1].append(w) }
+            }
+            out.append([])
+        }
+        return out.filter { !$0.isEmpty }.map { $0.joined(separator: " ") }
+    }
+    /// The signal establishes this stage's own milestone: one clause names the stage's thing and says what happened
+    /// to it ("sent", "signed", or something that implies it; any completion word when the label has none).
+    /// "We sent the proposal and reviewed the contract" establishes Proposal sent, not Contract sent.
     public static func establishes(_ text: String, label: String) -> Bool {
-        guard milestoneNouns.contains(where: { has(label, $0) && has(text, $0) }) else { return false }
         let need = doneWords.filter { has(label, [$0]) }
-        return need.isEmpty || has(text, need.flatMap { impliedBy[$0] ?? [$0] })
+        let done = need.isEmpty ? doneWords : need.flatMap { impliedBy[$0] ?? [$0] }
+        return clauses(text).contains { c in milestoneNouns.contains { has(label, $0) && has(c, $0) } && has(c, done) }
     }
 
     /// A stage only when a signal of the call reports that the stage's own milestone took place (`happened` and
@@ -347,7 +361,9 @@ public enum CRMCallDeal {
                 try await a.removeCallAssociation(callId: r.id, type: "deals", id: stored.managed)
                 m.removed = stored.managed
             }
-            save(r.id, now)
+            // managed is the association Pacenote made, not the deal the PM picked: a deal that was already on the
+            // Call (a person added it in HubSpot) is never stored, so a later No deal or switch does not remove it
+            save(r.id, now == stored.managed ? stored.managed : m.added)
             return m
         }
     }

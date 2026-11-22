@@ -1677,14 +1677,16 @@ current and the new value and the evidence from the call page: the next step (th
 close date (only when a closing step such as a signature has a real date), a later stage of the deal's own pipeline
 (only when the call reports that this stage's own milestone happened, for example "we sent the contract" for
 Contract sent; not when it was negated, planned, only agreed or asked for, and not from a nearby step such as "we
-reviewed the contract" or "we presented the demo" for Proposal sent; never Closed won or Closed lost) and the qualification
+reviewed the contract" or "we presented the demo" for Proposal sent; the action must refer to the stage's own thing,
+so "we sent the proposal and reviewed the contract" suggests Proposal sent, not Contract sent; never Closed won or Closed lost) and the qualification
 fields you mapped in Settings (only for a criterion with a quote). A field with no evidence is not suggested. The Stage
 menu lists the portal's own stages of that pipeline, and Pacenote writes only an id from it. The quote is shown to you
 and never sent. Apply writes the ticked fields in one update and Undo puts the old values back. When you pick another
 deal, the old suggestions disappear at once and Apply waits until the new deal is read. Moving the call to another
 deal or to No deal also moves the HubSpot Call off the deal Pacenote linked it to when you Apply; deals someone added
 in HubSpot stay, and Undo takes the new deal off the Call and links the old deal again (a deal that was already on
-the Call stays). If the company's deals or the stages cannot be read, the window
+the Call stays). If you pick a deal that someone already added to the Call in HubSpot, Pacenote does not count it
+as its own, so a later No deal or another pick leaves that association. If the company's deals or the stages cannot be read, the window
 says so with **Try again**. The deal is read, and Apply and Undo write, only when the call is linked in the HubSpot
 account of the current key.
 

@@ -57,7 +57,7 @@ HubSpot association type ids below are HUBSPOT_DEFINED, from the object on the l
 |---|---|
 | Note `hs_note_body` | Summary, Decisions, Next steps, the Notion link; the transcript only when "Add the transcript to the CRM note" is on |
 | Task `hs_task_subject`, `hs_timestamp` | the next step, due date when one was said (else tomorrow) |
-| Deal `hs_next_step`, `closedate`, `dealstage` (H4, `LiveTipsCore/CRMDeals.swift`) | next step: the agreed step on the call page. Close date: a mutual-plan step with a closing word (close, sign, signature) and a real `YYYY-MM-DD` date not in the past, written as UTC midnight; the first such step is chosen and only then compared with the deal, so a re-run never alternates between two steps. Stage: only when a signal of the call reports that the milestone happened (a completion word such as sent, signed, presented, надіслали; no negation, plan, wish, request or question; "agreed to", "decided to" and the UK infinitive after погодились and the like are plans) and names a later open stage of the deal's own pipeline (generic stage words from `rules/sales.yaml > stages`, matched to the portal's stage labels). The signal must establish that stage's own milestone (`CRMDealSuggester.establishes`): it names the same thing as the label (contract, proposal or quote, demo or presentation, decision, negotiation, signature, closing), and when the label says what happened to it ("Contract sent") the signal says that or something that implies it (signed, received, shared, delivered or submitted imply sent; reviewed, discussed or agreed to send do not); plan steps and the next step are still to do and never move the stage; never a closed stage; or a stage the PM picks from that pipeline's list |
+| Deal `hs_next_step`, `closedate`, `dealstage` (H4, `LiveTipsCore/CRMDeals.swift`) | next step: the agreed step on the call page. Close date: a mutual-plan step with a closing word (close, sign, signature) and a real `YYYY-MM-DD` date not in the past, written as UTC midnight; the first such step is chosen and only then compared with the deal, so a re-run never alternates between two steps. Stage: only when a signal of the call reports that the milestone happened (a completion word such as sent, signed, presented, надіслали; no negation, plan, wish, request or question; "agreed to", "decided to" and the UK infinitive after погодились and the like are plans) and names a later open stage of the deal's own pipeline (generic stage words from `rules/sales.yaml > stages`, matched to the portal's stage labels). The signal must establish that stage's own milestone (`CRMDealSuggester.establishes`): it names the same thing as the label (contract, proposal or quote, demo or presentation, decision, negotiation, signature, closing), and when the label says what happened to it ("Contract sent") the signal says that or something that implies it (signed, received, shared, delivered or submitted imply sent; reviewed, discussed or agreed to send do not), both in the same clause of the signal ("we sent the proposal and reviewed the contract" establishes Proposal sent, not Contract sent); plan steps and the next step are still to do and never move the stage; never a closed stage; or a stage the PM picks from that pipeline's list |
 | Deal qualification properties | per method criterion to a deal property chosen in Settings (or "Don't write"), only for a known or partial criterion that has a quote |
 
 H4 rules: every suggestion carries its evidence (the quote, or the agreed step itself for the next step and the close
@@ -72,14 +72,16 @@ deals or the stages is shown with Try again, not as an empty list.
 Deal association of the Call (H4): `<stem>.crm.json` keeps `callDealId`, the deal Pacenote associated the Call with.
 When the call moves to another deal or to No deal, the next Call write (Apply or Auto, in the same turn of the per-call
 queue) removes only that association (`DELETE /crm/v4/objects/calls/{id}/associations/deals/{dealId}`, a 404 counts
-as removed) and stores the new deal. Associations Pacenote did not make (a deal a person added, the company, the
+as removed) and stores the new deal only when Pacenote added it: a picked deal that was already on the Call (a person
+added it in HubSpot) is not stored, so a later No deal or another pick leaves it. Associations Pacenote did not make (a deal a person added, the company, the
 contacts) stay. Before an existing Call moves, its deal associations are read (`GET
 /crm/v4/objects/calls/{id}/associations/deals`), so the new deal counts as added only when it was not on the Call
 already. The Apply's Undo row (`callDeal`) keeps the removed deal, the added deal and the managed deal before the
 move; Undo takes the added deal off, associates the removed one again and stores the old managed deal, so a switch
 from D1 to D2 ends with D1 only and a deal a person had already added stays. A Call logged before `callDealId` existed
 has no managed deal, so nothing is removed for it. Known gap: when `<stem>.crm.json` lost the Call id and the Call is
-found by search, the associations are not read first, so Undo leaves the new deal on the Call. If the Call write
+found by search, the associations are not read first, so Undo leaves the new deal on the Call and it is not stored
+as managed, so a later No deal leaves it too. If the Call write
 succeeds and removing the old deal then fails, the Apply reports the error and the new deal stays on the Call
 outside Undo; the next Apply removes the old deal again.
 
