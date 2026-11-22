@@ -22,6 +22,14 @@ Pacenote. Earlier versions are described in the commit messages and in
   switch in Settings > Integrations > HubSpot, **Log the call in HubSpot automatically after it ends**, is off by
   default and logs only the Call. The HubSpot integration design is in `docs/specs/hubspot-crm-integration.md`.
 
+- **HubSpot tasks in Tracker and On you (PB-17).** Settings > Integrations > HubSpot > Tasks shows your open HubSpot
+  tasks in On you, the Tracker and the call window's On me tab (the tasks on the call's deal, company or contacts), with
+  whose tasks, the queue, and the type, priority and default due date of new tasks, and a live "N tasks match now"
+  check. **Add to HubSpot tasks** on an item on you makes a task linked to the call's contacts, company and deal, or
+  links an open task with the same words on that deal. A tick sets Completed with Undo, Remove deletes the task after
+  the 8 second Undo, and tasks closed, reopened or deleted in HubSpot follow in Pacenote. The automatic add after a
+  call is off by default; with Notion tasks set up too, you choose where new tasks go. Transcript text is never sent.
+
 ## 0.26.4 (2026-11-20)
 
 - **A new organization project includes the person who made it (2026-11-20):** in New project > start a new

@@ -33,7 +33,7 @@ final class FakeHubSpotTasks: CRMTransport {
             let type = String(path.split(separator: "/")[4])
             let ids = ((body?["inputs"] as? [[String: Any]]) ?? []).compactMap { $0["id"] as? String }
             let rows: [[String: Any]] = ids.compactMap { id in
-                let to = (assoc[id] ?? []).filter { $0.hasPrefix(type + ":") }.map { ["toObjectId": Int($0.split(separator: ":")[1])!] }
+                let to = (assoc[id] ?? []).filter { $0.hasPrefix(type + ":") }.map { ["toObjectId": String($0.split(separator: ":")[1])] }
                 return to.isEmpty ? nil : ["from": ["id": id], "to": to]
             }
             return (207, ["results": rows], [:])
@@ -97,7 +97,8 @@ func crmTasksChecks() async {
     expect(Set(anyone.map(\.id)) == ["1", "3", "4"], "htasks: anyone's tasks")
     let sb = CRMTasks.searchBody(owner: "9", queue: "5")
     expect("\(sb)".contains("hubspot_owner_id") && "\(sb)".contains("hs_queue_membership_ids") && "\(sb)".contains("COMPLETED"), "htasks: the search body")
-    expect(!"\(CRMTasks.searchBody(owner: "", queue: ""))".contains("hubspot_owner_id"), "htasks: no owner filter for anyone")
+    let anyFilters = (((CRMTasks.searchBody(owner: "", queue: "")["filterGroups"] as? [[String: Any]])?.first?["filters"]) as? [[String: Any]]) ?? []
+    expect(anyFilters.count == 1 && !anyFilters.contains { ($0["propertyName"] as? String) == "hubspot_owner_id" }, "htasks: no owner filter for anyone")
 
     // which tasks a call shows: its deal, company or contacts; a call without a link none
     expect(CRMTasks.forCall(mine, refs: [CRMRef("deals", "D1")]).map(\.id) == ["1"]
@@ -131,7 +132,8 @@ func crmTasksChecks() async {
 
     // tick and Undo: COMPLETED, then the status before
     try? await hs.setTaskStatus(id: "4", "COMPLETED")
-    expect(t.tasks["4"]?["hs_task_status"] == "COMPLETED" && ((try? await hs.openTasks(owner: "9", queue: "")) ?? []).allSatisfy { $0.id != "4" }, "htasks: a tick completes the task")
+    let afterTick = (try? await hs.openTasks(owner: "9", queue: "")) ?? []
+    expect(t.tasks["4"]?["hs_task_status"] == "COMPLETED" && afterTick.allSatisfy { $0.id != "4" }, "htasks: a tick completes the task")
     try? await hs.setTaskStatus(id: "4", "WAITING")
     expect(t.tasks["4"]?["hs_task_status"] == "WAITING", "htasks: Undo writes the status before")
 

@@ -1,0 +1,70 @@
+# The PM's HubSpot tasks in Tracker, On you and the call window (PB-17, INT7). The same task management as the Notion
+# tasks (rules/notion-tasks.yaml), on the HubSpot client of Update HubSpot (docs/specs/hubspot-crm-integration.md).
+# Off by default; nothing is written to HubSpot without the PM's action (a tick, Remove, Add to HubSpot tasks, or the
+# after-call switch the PM turned on). Transcript text is never sent.
+schema_version: 1
+settings:
+  where: Settings > Integrations > HubSpot > Tasks (a tab of its own, between Reads and writes and Qualification)
+  enabled: false by default; shown once HubSpot is connected
+  whose: >-
+    "Mine" (the owner chosen in Matching, the default), "Anyone's" (no owner filter), or one HubSpot owner. New tasks
+    get this owner; with "Anyone's" they get the Matching owner.
+  queue: >-
+    "Any queue" (the default) or one queue (the options of hs_queue_membership_ids). With a queue only its tasks are
+    shown and new tasks go into it.
+  type: hs_task_type of new tasks; the portal's own options, else HubSpot's defaults TODO, CALL, EMAIL (default TODO)
+  priority: hs_task_priority of new tasks; the portal's own options, else NONE, LOW, MEDIUM, HIGH (default NONE)
+  due_days: the due date of a new task when none was said, 0 today, 1 tomorrow (default), 3, or 7 days, at 09:00 local
+  auto_add: '"Add my commitments to HubSpot tasks automatically after each call". Off by default (spec rule 1).'
+  destination: >-
+    Shown only when Notion tasks are set up too: "New tasks go to" Notion tasks (default) or HubSpot tasks. It decides
+    which automatic add runs after a call; the menus offer both until an item is linked to one.
+  status_line: '"N tasks match now, synced X ago" with Refresh, from a live search; it follows every change of the settings.'
+sync:
+  search: >-
+    POST /crm/v3/objects/tasks/search: hs_task_status NOT_IN [COMPLETED, DEFERRED], hubspot_owner_id EQ the owner (when
+    set), hs_queue_membership_ids CONTAINS_TOKEN the queue (when set), soonest hs_timestamp first, all pages up to 500.
+    Then POST /crm/v4/associations/tasks/{deals,companies,contacts}/batch/read, 100 ids at a time.
+  when: on opening Home or the Tracker, every 5 minutes while Home or a call is open, and when the call window asks
+  cache: state/hubspot-tasks.json (tasks, the offline queue of ticks, the portal id and region, owner names)
+  errors: one line in the settings section and under On you, never a modal; 401 and 403 lines come from the client
+on_you: >-
+  One list with the register and the Notion tasks, in the commitments order. Badge HS; the second line: project (of a
+  linked item), status, "from a call", due (red only when late). A project filter keeps the tasks made from that
+  project's calls. A register item linked to a shown task is shown once, as the task.
+tracker: >-
+  Every shown task is a Tracker row (kind task, note "In HubSpot tasks"). A tick completes it; the menu has Open in
+  HubSpot, Open the call (linked items), Copy, Remove. A register item linked to a shown task is not listed twice.
+tick: >-
+  PATCH hs_task_status COMPLETED at once; a toast "<title> set to Completed in HubSpot" with Undo for 8 s, which writes
+  the status before the tick. A linked item gets done (Undo: reopen). When HubSpot refuses, the row comes back with
+  the reason. A tick made offline waits in the queue and is sent when HubSpot answers.
+open: Double click opens the task in HubSpot (app-eu1.hubspot.com for the EU data region).
+remove: >-
+  Remove takes the task out of the lists at once and deletes it in HubSpot (its recycling bin) after the 8 s Undo, so
+  Undo writes nothing to HubSpot. A linked item gets drop (Undo: reopen). A task Pacenote did not make asks once in On
+  you and the Tracker: Delete "<title>" in HubSpot? (the call window does not ask, as for Notion tasks). When HubSpot
+  refuses, the toast says the task stayed in HubSpot, with Open. Hide here hides it only in Pacenote.
+call_window: >-
+  The On me tab gets a group "HubSpot <deal or company>": the open tasks associated with the call's deal, company or
+  contacts (from <call>.crm.json). A call without a CRM link shows none. The tab counter counts them.
+link: >-
+  "Add to HubSpot tasks" on an item owned by me that is not linked to Notion or HubSpot (On you and call page menus)
+  creates a task: hs_task_subject = the text (250 characters), NOT_STARTED, hs_timestamp = the item's due or the
+  default, type, priority and queue from the settings, the owner, hs_task_body = "From the call <title>, <date>" and
+  the link to the call page. Associations: contact 204, company 192, deal 216 from the call's CRM link. The register
+  gets op crm_link with crm_task. An item is linked to Notion or HubSpot, never both.
+both_ways: >-
+  A tick here completes the task there. A linked item whose task is closed in HubSpot gets done with source hubspot at
+  the next sync; reopened there, reopen (only when HubSpot closed it). A task deleted in HubSpot (404): the item stays
+  open without the link (op crm_unlink) with one line "HubSpot task was deleted". Decided from a read of each task,
+  never from the search alone. Titles and dates are not synced after creation: HubSpot is the source.
+after_call: >-
+  When auto_add is on (and the destination is HubSpot when Notion tasks are set up too), at the end of the call every
+  open item owned by me of that call becomes a task, once. An open task with at least 60% of the words (the duplicates
+  rule of rules/commitments.yaml) on the same deal or company is linked instead of created. Home shows once "N
+  commitments added to HubSpot tasks" with Undo (the new tasks are deleted and their items unlinked; linked twins stay linked). Items owned by
+  someone else never go to HubSpot.
+scopes: >-
+  No new scope: tasks are read and written with the ten scopes the HubSpot page lists (as for notes and calls, spec
+  section 4). To be confirmed on a real portal; a 403 names the missing scope.

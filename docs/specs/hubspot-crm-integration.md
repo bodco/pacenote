@@ -57,6 +57,15 @@ HubSpot association type ids below are HUBSPOT_DEFINED, from the object on the l
 | Deal `hs_next_step`, `closedate`, `dealstage` | the call page's next step; close date when said; stage only when the PM types one |
 | Deal qualification properties | per method criterion to a deal property chosen in Settings (or "Don't write") |
 
+### The PM's tasks in Tracker (PB-17)
+
+The PM's open HubSpot tasks in On you, the Tracker and the call window, with Add to HubSpot tasks, ticks, Remove and
+the after-call add (off by default). Fields, sync, dedupe and the choice between Notion and HubSpot for new tasks are in
+`rules/hubspot-tasks.yaml`. A new task: `hs_task_subject` the item's text, `hs_task_status` NOT_STARTED,
+`hs_timestamp` its due date (else the default from the settings), `hs_task_type`, `hs_task_priority` and
+`hs_queue_membership_ids` from the settings, `hs_task_body` the call's title, date and link (never transcript text),
+`hubspot_owner_id` per section 7.
+
 ## 4. Required scopes
 
 ### Service key (private app key), today

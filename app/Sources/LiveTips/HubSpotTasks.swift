@@ -164,7 +164,6 @@ final class HubSpotTasks: ObservableObject {
     /// A tick on a HubSpot task (or on a linked commitment): COMPLETED at once, Undo for 8 s writes the status before.
     func tick(_ t: CRMTask, done: Bool = true) {
         guard let hs = connector() else { return }
-        UsageLog.log("hubspot_task_ticked")
         let before = t.open ? t.status : "NOT_STARTED"
         let value = done ? "COMPLETED" : before
         if let i = tasks.firstIndex(where: { $0.id == t.id }) { tasks[i].status = value }
@@ -217,6 +216,15 @@ final class HubSpotTasks: ObservableObject {
         version += 1
     }
 
+    /// rules/hubspot-tasks.yaml > remove: a task Pacenote did not make (no linked item) asks once; one from a call does not.
+    func confirmRemove(_ t: CRMTask, commitment: Commitment?) {
+        guard commitment == nil else { remove(t, commitment: commitment); return }
+        AskCenter.shared.ask(kind: "trash", origin: .window, title: L("htask.deleteQ", ["title": t.title]), info: L("htask.deleteInfo"),
+                             choices: [Ask.Choice(id: "trash", title: L("htask.delete"), role: .danger), .cancel()]) { [weak self] _ in
+            self?.remove(t, commitment: nil)
+        }
+    }
+
     /// "Add to HubSpot tasks" on a commitment (owner me): a task associated with the call's deal, company and
     /// contacts, then op crm_link. An open task with the same words on the same deal or company is linked instead.
     @discardableResult
@@ -238,7 +246,6 @@ final class HubSpotTasks: ObservableObject {
             guard !t.id.isEmpty else { return nil }
             link(c, t.id)
             tasks.append(t); saveCache()
-            UsageLog.log("hubspot_task_added", ["n": 1])
             if !silent { NotionTasks.shared.toast = .init(text: L("htask.added", ["n": "1"])) }
             version += 1
             return t.id
@@ -354,7 +361,7 @@ struct CRMTaskRow: View {
                     .font(PN.Font.caption)
             }
             Spacer(minLength: 0)
-            RemoveButton { store.remove(t, commitment: commitment) }
+            RemoveButton { store.confirmRemove(t, commitment: commitment) }
         }
         .padding(.vertical, 6)
         .contentShape(Rectangle())
@@ -365,7 +372,7 @@ struct CRMTaskRow: View {
             if let c = commitment, let f = Register.shared.transcript(c) { Button(L("reg.openCall")) { NSWorkspace.shared.open(URL(fileURLWithPath: f)) } }
             Divider()
             if let h = onHide { Button(L("ntask.hideHere")) { h() } }
-            Button(L("ntask.remove")) { store.remove(t, commitment: commitment) }
+            Button(L("ntask.remove")) { store.confirmRemove(t, commitment: commitment) }
         }
     }
 }

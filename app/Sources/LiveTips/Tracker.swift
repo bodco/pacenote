@@ -453,7 +453,7 @@ struct TrackerScreen: View {
             if !r.callFile.isEmpty { Button(L("reg.openCall")) { CallPageWindow.show(file: r.callFile) } }
             Button(L("reg.copy")) { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(r.title, forType: .string) }
             if let t = htasks.tasks.first(where: { !r.crmTask.isEmpty && $0.id == r.crmTask }) {      // PB-17
-                Button(L("ntask.remove")) { htasks.remove(t, commitment: htasks.linkedCommitment(t)) }
+                Button(L("ntask.remove")) { htasks.confirmRemove(t, commitment: htasks.linkedCommitment(t)) }
             }
         }
     }

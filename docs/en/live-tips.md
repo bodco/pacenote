@@ -1578,7 +1578,7 @@ tips, search in the folder, sync to your account); Back or Command-[ returns. In
 with their state and Connect for the ones not set up; a click opens the page. On the Notion page, as soon as the
 token is in, Pacenote looks for the database for meeting notes and asks you to pick it (Notion connected without
 it is a problem in the list and on the ready card); the other databases, My tasks and the local copy are under
-Advanced. HubSpot has Connection, Matching, Reads and writes, Qualification. Without a token or key only Connection
+Advanced. HubSpot has Connection, Matching, Reads and writes, Tasks, Qualification. Without a token or key only Connection
 shows. One Meetings, one Tasks and one Risks database serve all projects. The project is a property of each page:
 write its name next to the database (Project if empty) and set each project's value on the project's page, In
 Notion. Fill from project configs takes the databases most of your Control Tower configs name.
@@ -1667,6 +1667,20 @@ call's own id with the call, so applying again, or the Auto switch, updates the 
 second one; Undo deletes a new Call or puts the old values back. **Log the call in HubSpot automatically after it
 ends** is off by default; when on, it logs only the Call, about two and a half minutes after the call, without a
 review. Notes, deal fields and tasks stay behind Apply. The design is in `docs/specs/hubspot-crm-integration.md`.
+
+**HubSpot tasks in Tracker and On you.** Settings > Integrations > HubSpot > Tasks, **Show my HubSpot tasks in Tracker
+and On you** (off by default), works like the Notion tasks: your open HubSpot tasks appear in On you with the badge HS,
+in the Tracker, and in the call window's On me tab as a group HubSpot <deal or company> (the tasks on the call's deal,
+company or contacts). The settings choose whose tasks (yours, the owner in Matching, anyone's or one person's), the
+queue, and the type, priority and due date (when none was said) of new tasks; a line under them says how many tasks
+match now and when they were synced, with Refresh. **Add to HubSpot tasks** on an item on you (On you and the call
+page menus) makes a task linked to the call's contacts, company and deal; an open task with the same words on the same
+deal or company is linked instead of made again. A tick sets the task to Completed, Undo for 8 seconds puts the
+status back; a task closed in HubSpot closes the item, reopened there reopens it, deleted there leaves the item open
+with "HubSpot task was deleted". Remove deletes the task in HubSpot after the 8 second Undo; a task Pacenote did not make asks once first. **Add my commitments to
+HubSpot tasks automatically after each call** is off by default. When Notion tasks are set up too, **New tasks go to**
+chooses Notion or HubSpot for the automatic add; the menus offer both until an item is linked to one. The task says
+which call it came from and links back to it; transcript text is never sent.
 
 **What Pacenote can do.** Help > What Pacenote can do lists every feature with Try it and how often you used it
 (from the local usage log, Settings > General > Data). For the first 14 days it is also a card on Home.
