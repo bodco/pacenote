@@ -219,7 +219,7 @@ const jsErrors = (b, s) => s.posts.filter((m) => m.action === 'jserror').map((m)
       assert.ok((await posted()).includes('tips_lang=en'), 'tips follow after the echo');
       await b.evaluate(`document.getElementById('langBtn').click(); true`); await sleep(150);
       const rows = await b.evaluate(`Array.from(document.querySelectorAll('#langMenu [role=menuitemradio]')).map((x) => x.dataset.v)`);
-      assert.ok(rows.includes('en') && rows.includes('uk+en'), rows.join());
+      assert.ok(rows.includes('en') && rows.includes('en+uk'), rows.join());   // the mixed row keeps the current main first
     });
     await test('a failed single-language pick never changes the tips language', async () => {
       await openQ(1100, '?call_lang=uk+en');
