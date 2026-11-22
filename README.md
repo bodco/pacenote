@@ -17,7 +17,7 @@ permissions carry over. What "live tips" means inside the code: [DEVELOPMENT.md]
 | | The app | The skill |
 |---|---|---|
 | What | A native macOS menu bar app | A Claude Cowork skill |
-| You need | Apple Silicon Mac, macOS 14.4+; for preparation any AI way: a Claude plan or API key, a ChatGPT account through Codex CLI, an OpenAI or Gemini API key, a Gemini account or a local model | Claude Cowork with a computer linked, the recorder from this repo |
+| You need | Apple Silicon Mac, macOS 14.4+; for preparation any AI way: a Claude plan or API key, a ChatGPT account through Codex CLI, an OpenAI or Gemini API key or a local model | Claude Cowork with a computer linked, the recorder from this repo |
 | Tips come from | Claude, OpenAI or Gemini API, called on events | Claude in your Cowork chat |
 | Download | [Pacenote.dmg](https://github.com/bodco/live-tips/releases/latest/download/Pacenote.dmg) | [live-tips.skill](https://github.com/bodco/live-tips/releases/latest/download/live-tips.skill) |
 
@@ -67,22 +67,15 @@ API requests; API spending caps do not measure your account-plan usage. Plan-lim
 shown without switching providers. Prepared cards and local project search remain available, while Claude
 Code's deep folder lookup is disabled for OpenAI/Codex live tips. Failed or incomplete answers are errors.
 
-**Gemini (0.9.3).** Two ways, both in Settings > AI > Gemini:
+**Gemini (0.9.3).** Add a key in Settings > AI > Gemini:
 
 - **Gemini API:** a key from aistudio.google.com/apikey of a project with billing turned on, because Google may use
   free-tier content to improve its products and does not use paid-tier content. Three models, one per job:
   Gemini 3.5 Flash-Lite (tips), Gemini 3.8 Flash (preparation and after the call) and Gemini 4 Argon. The classic
   streaming API is used: no stored interactions, no tools, no files.
-- **Gemini account (Antigravity CLI, `agy`):** the preparation and the work after the call only, never tips during a
-  call (a request takes 20-30 seconds). Your Google plan pays, no API key. Each request runs in an empty folder with
-  no file, shell or write access, and Pacenote removes agy's own copy of the conversation afterwards. Choosing it
-  shows a red warning: Google's Antigravity terms forbid use through third-party software (the account may be
-  suspended) and let Google use and review the conversations, and turning the CLI's telemetry off does not stop
-  that storage.
 
-**Plan B.** Settings > AI > Automatic switching > "Use Gemini when Claude or ChatGPT is out" (off by default) sends a
-job to Gemini when the chosen way has no credit, hits its plan limit or has a bad key. The text of the call then
-reaches Google.
+**Automatic switching.** A connected Gemini API key can take over when another provider is unavailable.
+Set the order or turn off automatic switching in Settings > AI > If an AI is out.
 
 **Cost.** Settings > Usage shows the spend by stage and by model for every provider with an API key. On the OpenAI API
 the blocks reused during a call carry explicit cache breakpoints. Measured prices and model quality (about $13 a

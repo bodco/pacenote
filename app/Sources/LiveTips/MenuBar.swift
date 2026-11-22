@@ -45,13 +45,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         MainActor.assumeIsolated {
             AIRoute.autoAssign()
             aiRouteWatch = PrepRunner.shared.$loggedIn.removeDuplicates()
-                .combineLatest(CodexAccount.shared.$signedIn.removeDuplicates(), AgyAccount.shared.$signedIn.removeDuplicates())
+                .combineLatest(CodexAccount.shared.$signedIn.removeDuplicates())
                 .dropFirst()
                 .debounce(for: .seconds(1), scheduler: RunLoop.main)
                 .sink { _ in MainActor.assumeIsolated { AIRoute.autoAssign() } }
             PrepRunner.shared.refreshAuth()
             CodexAccount.shared.refresh()
-            AgyAccount.shared.refresh()
         }
         installMainMenu()
         NSApp.setActivationPolicy(config.showInDock ? .regular : .accessory)
@@ -74,6 +73,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NoticeCenter.changed = { [weak self] in
                 self?.tips?.pushNotice()
                 DispatchQueue.main.async { self?.refresh() }       // not inside the refresh that posted it
+            }
+            let settings = SettingsModel.live
+            var migrated = settings?.config ?? config
+            if migrated.ai.geminiAccountNoticePending {
+                NoticeCenter.shared.post(L("notice.geminiAccountRemoved"), level: .warning, action: .geminiKey)
+                migrated.ai.geminiAccountNoticePending = false
+                if let settings {
+                    settings.config = migrated
+                } else {
+                    do { try migrated.save(to: AppPaths.config) }
+                    catch { AppLog.app("Gemini account migration: could not save settings") }
+                }
             }
             // 0.26.0 (block 2): questions inline where the PM clicked; the panel opens when that place is not on screen
             AskCenter.tipsVisible = { [weak self] in self?.tips?.window?.isVisible == true }

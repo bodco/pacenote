@@ -176,22 +176,18 @@ struct OnboardingView: View {
         .onReceive(Timer.publish(every: 2, on: .main, in: .common).autoconnect()) { _ in
             if m.step == .permissions { m.refreshPermissions() }
         }
-        .onAppear { if m.step.rawValue >= OnboardingModel.Step.permissions.rawValue { installInBackground() } }   // 0.24.1 (F2): resumed
+        .onAppear { if m.step.rawValue >= OnboardingModel.Step.permissions.rawValue { checkComponents() } }
         .onChange(of: m.step) {
-            if m.step == .permissions { m.refreshPermissions(); installInBackground() }
+            if m.step == .permissions { m.refreshPermissions(); checkComponents() }
             if m.step == .folder { m.defaultWorkFolder() }
         }
     }
         .trackScreen("onboarding", sub: "\(m.step)")
     }
 
-    /// Speech recognition and the local search model install while the PM goes through the steps (spec 7).
-    func installInBackground() {
+    func checkComponents() {
         guard !setup.busy else { return }
-        Task {
-            await setup.checkAll()
-            if !setup.allRequiredOK { await setup.installMissing() }   // 0.24.1: the whole base set, bge-m3 and voices too
-        }
+        Task { await setup.checkAll() }
     }
 
     /// One line of progress at the bottom; the parts themselves are on step 5 and in Settings > Components.
@@ -199,7 +195,9 @@ struct OnboardingView: View {
         let total = setup.steps.filter { !$0.optional }.count
         let done = setup.steps.filter { !$0.optional && $0.state == .ok }.count
         let failed = setup.steps.contains { $0.state == .failed }
-        if m.step == .welcome {
+        if m.step == .install {
+            EmptyView()
+        } else if m.step == .welcome {
             Text(L("onb.changeLater")).font(PN.Font.caption).foregroundStyle(PN.C.text3)
         } else if setup.pythonMissing && !setup.busy {
             // 0.8.7 (L3.5): without Python nothing else installs; say how to get it
@@ -208,7 +206,7 @@ struct OnboardingView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(L("setup.python.missing")).font(PN.Font.caption.weight(.semibold)).foregroundStyle(PN.C.text)
                     PythonInstallHint()
-                    Button(L("about.components.check")) { installInBackground() }.buttonStyle(.pnTertiary)
+                    Button(L("about.components.check")) { checkComponents() }.buttonStyle(.pnTertiary)
                 }
             }
             .frame(maxWidth: 520, alignment: .leading)

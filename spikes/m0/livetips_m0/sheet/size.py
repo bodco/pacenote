@@ -17,6 +17,7 @@ from ..rules import DEFAULT_RULES
 CYR = re.compile(r"[Ѐ-ӿ]")
 LAT = re.compile(r"[A-Za-z]")
 DIG = re.compile(r"\d")
+RETIRED_GEMINI_ROUTES = ("agy", "gemini_account")
 SPACE = re.compile(r"\s")
 FALLBACK = {"window": 128000, "reserve": 12000, "chars_per_token": {"latin": 4.0, "cyrillic": 2.6}}
 PROMPT_TOKENS = 2500       # the sheet contract, the blocks and the meeting header
@@ -33,8 +34,10 @@ def load_windows(rules_root: Path = DEFAULT_RULES) -> dict:
 
 def route_key(route: str) -> str:
     r = (route or "").lower()
+    if r in RETIRED_GEMINI_ROUTES:
+        return "gemini"
     return {"plan": "code", "claude_account": "code", "claude": "code", "claude_api": "api", "chatgpt": "codex",
-            "chatgpt_account": "codex", "ollama": "local", "gemini_account": "agy"}.get(r, r)
+            "chatgpt_account": "codex", "ollama": "local"}.get(r, r)
 
 
 def route_info(route: str, windows: dict, model: Optional[str] = None) -> dict:

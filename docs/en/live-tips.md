@@ -1019,11 +1019,9 @@ layers are tuned there too: `speakers_enabled`, `speaker_join` (0.45), `speaker_
 The full texts: [privacy policy](https://pacenote.bodco.pm/privacy/) and [terms of use](https://pacenote.bodco.pm/terms/)
 (also [PRIVACY.md](../../PRIVACY.md) and [TERMS.md](../../TERMS.md)). The only thing sent to the author is Help improve Pacenote (Settings > General > Data; on by default since 0.10.1, the switch turns it off): the usage log's event names and numbers of whole days go once a week, with a random id of this Mac. No words of a call, tip texts, your edits or comments, names or files.
 
-- Text goes only to the AI you chose for each job in Settings > AI (Claude, OpenAI or Gemini, with your key or
-  account). A Gemini account runs through Google's Antigravity CLI, never for tips; its terms forbid use through
-  third-party software and let Google use and review the conversations, so a red warning appears when you choose
-  it. Since 0.10.0 a job whose chosen AI is out goes to the next connected AI of one list you order (14.1y), so the
-  text of a call may reach another provider then.
+- Text goes only to the AI you chose for each job in Settings > AI (Claude, OpenAI or Gemini).
+  Gemini requires an API key. With automatic switching enabled, jobs can move to the next connected AI in the
+  order you set (14.1y). This may send call text to another provider.
 - Audio is not stored for the transcript: recognised phrases are appended to the `.md` immediately, audio
   buffers live only in memory. A call recording (14.1s, off by default) is the one exception: a file in
   `<project>/video/` that you chose to make; it never goes to an AI, and to Google Drive only when you upload it.
@@ -1486,11 +1484,18 @@ another device and back makes the browser reconnect its audio; the "Can't hear t
 
 **Setup (0.16.0).** Seven steps: Welcome (before, during and after a call), Permissions, Folder, AI (Claude or
 ChatGPT, and "If your AI is out": the other provider, the model on this Mac, then the rules only), What to install
-(the required parts ticked and locked, already installing in the background; the optional ones unticked: the local
+(the required parts ticked and locked, ready to install after confirmation; the optional ones unticked: the local
 AI model, 16 GB, in the free Ollama app; the call agent, offered only with Claude; the link downloader), Your calls
 (Quick or Expert, tips when useful or only when you ask, call recording off, sound, or sound and screen, the consent
 line) and Ready (the menu bar, the keys, Help improve Pacenote, Try a practice call or Open Home). Every step only sets
 what Settings already has. Help > Welcome tour runs it again.
+
+Before installing, review the estimated download size and available disk space. Whisper needs Apple silicon.
+Whisper and bge-m3 handle speech recognition and search on your Mac. The optional Ollama model keeps AI processing
+on your Mac, with lower output quality than cloud AI. While a download is running, choose **Cancel** to stop it and
+remove its partial files. You can retry from **Setup** or **Settings > Components**.
+If an Ollama download fails, choose **Retry** to resume using the files already downloaded.
+Cancelling a retry also removes partial files saved by earlier attempts for that download.
 
 **Settings > Components (0.16.0).** How much Pacenote takes on this Mac (measured) and what is free. Optional parts
 show their size and Remove... or Install; Remove... says what changes and frees the space it measured. Removing the
@@ -1915,22 +1920,11 @@ snapshots are left out. The list is read when you open a picker (at most every 6
 Refresh the list; the last answer is kept on this Mac and the built-in list shows until the provider has been reached.
 A model you chose stays in the list even when the provider no longer lists it. A model Pacenote has no price for is
 marked "price unknown": it works, but Spending counts nothing for it, and Settings > AI > Usage shows "no price" for it
-instead of $0. Prices are added to the app's table (cost.py and ModelCatalog) with a release. The Gemini account (`agy`)
-list was already read from the CLI.
+instead of $0. Prices are added to the app's table (cost.py and ModelCatalog) with a release.
 
 **Plan B (replaced in 0.10.0 by one AI chain, 14.1y).** Automatic switching had "Use Gemini when Claude or ChatGPT is out", off by default. With it on, a job whose
 chosen way has no credit, has hit its plan limit or has a bad key goes to Gemini and goes back as soon as the chosen
 way answers again. The text of the call then reaches Google, which is why you turn it on yourself.
-
-**Gemini account.** The preparation and the work after the call can also run on your Google account through
-Google's Antigravity CLI (`agy`, installed with `curl -fsSL https://antigravity.google/cli/install.sh | bash`, then
-one sign-in with `agy` in Terminal): your plan pays, no API key. Settings > AI > Gemini shows whether you are signed in
-and the account's models (default Gemini 3.8 Flash, medium). Each request runs in an empty folder with no file, shell
-or write access; Pacenote removes agy's own copy of the conversation afterwards. It is not offered for tips during a
-call: a request takes 20-30 seconds. With plan B on and no Gemini key, the account takes over those two jobs. When you
-choose it, a red warning says what Google's Antigravity terms say: use through third-party software such as Pacenote
-is forbidden and may get the account suspended, and Google uses and may review the conversations (Telemetry off does
-not stop storage).
 
 **Usage.** Settings > Usage has "AI through API keys": every provider with a key (Claude, OpenAI, Gemini), spend
 by stage (call preparation, live tips, after the call, total) and by model with requests and tokens, for today, the
@@ -2405,7 +2399,7 @@ Details: [DEVELOPMENT.md](../../DEVELOPMENT.md#meeting-sheet-0100).
 **One chain for every job (Settings > AI > If an AI is out).** The AI you chose for a job goes first. When it is
 out, the job goes to the next connected AI in one list you order yourself: arrows to move an AI up or down, a
 checkbox to leave it out. The default order: Claude account, ChatGPT account, Claude API, OpenAI API, Gemini API,
-Gemini account, model on this Mac. Every connected AI is in the list by default, so the text of a call may go to
+model on this Mac. Every connected AI is in the list by default, so the text of a call may go to
 another provider when the chosen one is out. **Switch to the next AI automatically** turns the chain off: then a job
 on an AI that is out stops with the reason, as before.
 
@@ -2415,8 +2409,7 @@ account later (Claude or ChatGPT), it becomes the AI for the preparation and the
 an API key while you have one. A choice you make in Settings > AI stays as long as its AI is connected. An account
 counts once Pacenote has checked that you are signed in.
 
-- Tips during a call never go to the model on this Mac (19-59 seconds an answer) or to the Gemini account (20-30
-  seconds); when every cloud AI is out, the instant cards and facts keep working.
+- Tips during a call never go to the model on this Mac (19-59 seconds an answer). When every cloud AI is out, the instant cards and facts keep working.
 - For the preparation (the Meeting Sheet build), the work after the call and typed questions, the model on this Mac
   is always the last step, wherever it is in the list.
 
@@ -2452,7 +2445,7 @@ session logs of the last 6 hours gives a first reading (only its limit numbers).
 every 3 minutes. An API shows "$X left of your $Y monthly limit" from Settings > AI > Spending limits and the spend
 Pacenote counted: a provider does not show your balance through a key, so this is your own limit, not the provider's
 balance. The model on this Mac has no limit. An AI that is out says "limit reached, resets at HH:MM" or "out (reason),
-next check at HH:MM". The Gemini account does not report its usage.
+next check at HH:MM".
 
 **Usage probe (2026-11-12).** So the numbers are there before the next real job, Pacenote asks each account for its
 usage with one tiny run: the Claude account through Claude Code on the smallest model ("Reply with OK", one turn, no
@@ -2838,11 +2831,10 @@ Settings > Components is checked again: what is missing installs by itself, as w
 launch, after Repair and after a "No module named" error that its Python has the engine's modules, and switches to the
 one it installed when that one works.
 
-**Accounts.** Claude Code and Codex are not components. Connect a Claude account (Settings > AI or the onboarding) and
+**Accounts.** Connect a Claude account (Settings > AI or the onboarding) and
 Pacenote installs Claude Code with Anthropic's installer, then runs its sign-in from the app: your browser opens, and
 if the program asks for a code, paste it in the field Pacenote shows. A ChatGPT account installs OpenAI's Codex
-release for this Mac (pinned version and hash) the same way. The Gemini account (Antigravity) is not installed by
-Pacenote yet. With an API key nothing is installed: the preparation and the Meeting Sheet talk to the API directly.
+release for this Mac (pinned version and hash) the same way. With an API key, the preparation and the Meeting Sheet talk to the API directly.
 
 **Readiness of a call.** One check decides for every start (Home, the call page, the menu bar, the hot key, Up next):
 

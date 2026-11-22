@@ -4,7 +4,7 @@
 5 hours, secondary = the week, used_percent, resets_at, rate_limit_reached_type) into the session log of the run,
 ~/.codex/sessions/YYYY/MM/DD/rollout-<time>-<thread id>.jsonl. So the run is not --ephemeral: Pacenote takes the
 thread id from `thread.started`, reads only the last rate_limits object of that run's log after the run (also after a
-failed one), then removes that one file, by its id, like the agy cleanup (agy_provider.forget). Nothing else in
+failed one), then removes that one file, by its id. Nothing else in
 ~/.codex is touched. LT_CODEX_EPHEMERAL=1 brings back --ephemeral (no log, no usage numbers)."""
 import glob
 import json

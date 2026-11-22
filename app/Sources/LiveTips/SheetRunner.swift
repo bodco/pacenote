@@ -112,7 +112,6 @@ final class SheetRunner: ObservableObject {
         case AIRoute.codex: ok = CodexAccount.cliPath != nil
         case AIRoute.openai: ok = p.hasOpenAIKey
         case AIRoute.gemini: ok = p.hasGeminiKey
-        case AIRoute.agy: ok = AgyAccount.cliPath != nil && AgyAccount.shared.signedIn != false
         case AIRoute.api: ok = p.hasAPIKey
         case AIRoute.local: ok = true
         default: ok = PrepRunner.claudePath != nil && p.loggedIn != false
@@ -123,7 +122,7 @@ final class SheetRunner: ObservableObject {
     /// The first other route that can run, in the order the app already falls back (the other Claude way, the
     /// ChatGPT account, Gemini, the model on this Mac).
     static func alternative(to r: String, config c: AppConfig) -> String? {
-        let order = [AIRoute.other(r), AIRoute.code, AIRoute.codex, AIRoute.gemini, AIRoute.agy, AIRoute.local]
+        let order = [AIRoute.other(r), AIRoute.code, AIRoute.codex, AIRoute.gemini, AIRoute.local]
         return order.first { $0 != r && usable($0, config: c) }
     }
 
@@ -145,7 +144,6 @@ final class SheetRunner: ObservableObject {
         case AIRoute.codex: return L("ai.codex.missing")
         case AIRoute.openai: return L("prep.err.noOpenAIKey")
         case AIRoute.gemini: return L("prep.err.noGeminiKey")
-        case AIRoute.agy: return L("ai.agy.missing")
         case AIRoute.api: return L("prep.err.noKey")
         default: return L("prep.err.notSigned")
         }
@@ -274,7 +272,6 @@ final class SheetRunner: ObservableObject {
         switch j.route {
         case AIRoute.openai: model = c.ai.openaiPrep
         case AIRoute.gemini: model = c.ai.geminiPrep
-        case AIRoute.agy: model = c.ai.agyPrep
         case AIRoute.local: model = LocalLLM.model
         case AIRoute.codex: model = ""
         default: model = PrepRunner.shared.model
@@ -419,7 +416,7 @@ final class SheetRunner: ObservableObject {
         // models, so the engine moves a failed pass to the next AI without stopping the build
         let chain = c.ai.autoSwitch ? AIRoute.order(job: "prep", config: c).filter { $0 != j.route && !j.tried.contains($0) } : []
         req["chain"] = [j.route] + chain
-        req["models"] = ["openai": c.ai.openaiPrep, "gemini": c.ai.geminiPrep, "agy": c.ai.agyPrep, "local": LocalLLM.model,
+        req["models"] = ["openai": c.ai.openaiPrep, "gemini": c.ai.geminiPrep, "local": LocalLLM.model,
                          "code": PrepRunner.shared.model, "api": PrepRunner.shared.model]
         req["control_wait_s"] = j.interactive ? 30 : 0
         guard let d = try? JSONSerialization.data(withJSONObject: req, options: [.prettyPrinted]) else { return L("sheet.err.request") }
@@ -443,7 +440,6 @@ final class SheetRunner: ObservableObject {
             }
         case AIRoute.openai: if let k = store.get(.openaiAPIKey), !k.isEmpty { env["OPENAI_API_KEY"] = k }
         case AIRoute.gemini: if let k = store.get(.geminiAPIKey), !k.isEmpty { env["GEMINI_API_KEY"] = k }
-        case AIRoute.agy: env = AgyCLI.environment(env); env["LT_AGY_CLI"] = AgyAccount.cliPath
         case AIRoute.codex: env = CodexCLI.environment(env); env["LT_CODEX_CLI"] = CodexAccount.cliPath
         default: break
         }
@@ -454,7 +450,6 @@ final class SheetRunner: ObservableObject {
             case AIRoute.api: if let k = store.get(.claudeAPIKey), !k.isEmpty { env["CLAUDE_API"] = k }
             case AIRoute.openai: if let k = store.get(.openaiAPIKey), !k.isEmpty { env["OPENAI_API_KEY"] = k }
             case AIRoute.gemini: if let k = store.get(.geminiAPIKey), !k.isEmpty { env["GEMINI_API_KEY"] = k }
-            case AIRoute.agy: env["LT_AGY_CLI"] = AgyAccount.cliPath
             case AIRoute.codex: env["LT_CODEX_CLI"] = CodexAccount.cliPath
             default: break
             }

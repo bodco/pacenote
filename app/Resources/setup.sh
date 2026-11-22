@@ -17,6 +17,14 @@ VENV="$APPROOT/.venv"; VPY="$VENV/bin/python"
 WHISPER_MODEL="mlx-community/whisper-large-v3-turbo"
 export PIP_DISABLE_PIP_VERSION_CHECK=1 PYTHONDONTWRITEBYTECODE=1
 mkdir -p "$APPROOT/logs" "$APPROOT/models"
+HUB="${PACENOTE_WHISPER_HUB:-${HF_HUB_CACHE:-${HUGGINGFACE_HUB_CACHE:-${HF_HOME:-${XDG_CACHE_HOME:-$HOME/.cache}/huggingface}/hub}}}"
+if [ "$MODE" = install ]; then
+  STAGE="${PACENOTE_INSTALL_STAGE:-}"
+  if [ -z "$STAGE" ]; then
+    STAGE="$(mktemp -d "$APPROOT/.install-XXXXXXXX")" || exit 1
+    trap 'rm -rf "$STAGE" "${WHISPER_STAGE:-}"' EXIT
+  fi
+fi
 
 # 0.24.1 (F1): Pacenote's own Python. Updating it = a new tag, URL, SHA-256 and size here (app/buildtools/lock.sh).
 PY_VERSION="3.13.18"; PY_TAG="20261110"
@@ -106,10 +114,10 @@ case "$MODE:$STEP" in
   install:python)
     # Pacenote's own Python: no browser, no Terminal, no admin rights (0.24.1, Bohdan 18.11).
     echo "Downloading Python $PY_VERSION (about $((PY_SIZE / 1000000)) MB)..."
-    t="$APPROOT/.python.tar.gz"; rm -f "$t"
+    t="$STAGE/python.tar.gz"; rm -f "$t"
     if dl "$PY_URL" "$t" "$PY_SIZE" && [ -s "$t" ] && sha_ok "$t" "$PY_SHA"; then
-      rm -rf "$APPROOT/.python.new" && mkdir -p "$APPROOT/.python.new" && tar -xzf "$t" -C "$APPROOT/.python.new" || { echo "ERROR could not unpack Python"; exit 1; }
-      rm -rf "$APPROOT/python" && mv "$APPROOT/.python.new/python" "$APPROOT/python" && rm -rf "$APPROOT/.python.new" "$t"
+      rm -rf "$STAGE/python.new" && mkdir -p "$STAGE/python.new" && tar -xzf "$t" -C "$STAGE/python.new" || { echo "ERROR could not unpack Python"; exit 1; }
+      rm -rf "$APPROOT/python" && mv "$STAGE/python.new/python" "$APPROOT/python" && rm -rf "$STAGE/python.new" "$t"
       xattr -dr com.apple.quarantine "$APPROOT/python" 2>/dev/null
       rm -f "$APPROOT/python.fallback"
       py_supported "$OWNPY" || { echo "ERROR the downloaded Python does not start"; exit 1; }
@@ -172,17 +180,35 @@ case "$MODE:$STEP" in
   install:tips) pip_lock tips ;;
 
   check:whisper)
-    d="$HOME/.cache/huggingface/hub/models--${WHISPER_MODEL//\//--}"
+    d="$HUB/models--${WHISPER_MODEL//\//--}"
     if [ -d "$d" ] && [ -n "$(find "$d" -name '*.safetensors' -o -name '*.npz' 2>/dev/null | head -1)" ]; then echo "OK $WHISPER_MODEL"; else echo "MISSING about 1.6 GB"; fi ;;
   install:whisper)
     echo "Downloading $WHISPER_MODEL (about 1.6 GB) and loading it once..."
-    d="$HOME/.cache/huggingface/hub/models--${WHISPER_MODEL//\//--}"
-    ( while sleep 2; do echo "PROGRESS $(( $(du -sk "$d" 2>/dev/null | cut -f1 || echo 0) * 1024 )) 1620000000 B"; done ) & tick=$!
-    "$VPY" - "$WHISPER_MODEL" <<'PY'
-import sys, numpy as np, mlx_whisper
-mlx_whisper.transcribe(np.zeros(16000 * 3, dtype=np.float32), path_or_hf_repo=sys.argv[1], language="en", verbose=None)
+    mkdir -p "$HUB" || exit 1
+    WHISPER_STAGE="${PACENOTE_WHISPER_STAGE:-}"
+    [ -n "$WHISPER_STAGE" ] || WHISPER_STAGE="$(mktemp -d "$HUB/.install-XXXXXXXX")" || exit 1
+    ( while sleep 2; do echo "PROGRESS $(( $(du -sk "$WHISPER_STAGE" 2>/dev/null | cut -f1 || echo 0) * 1024 )) 1620000000 B"; done ) & tick=$!
+    HF_XET_CACHE="$WHISPER_STAGE/xet" "$VPY" - "$WHISPER_MODEL" "$WHISPER_STAGE" "$HUB" <<'PYCODE'
+import os, sys
+from pathlib import Path
+import mlx_whisper
+import numpy as np
+from huggingface_hub import snapshot_download
+
+repo, staging, hub = sys.argv[1:]
+snapshot = Path(snapshot_download(repo, cache_dir=staging))
+mlx_whisper.transcribe(np.zeros(16000 * 3, dtype=np.float32), path_or_hf_repo=str(snapshot), language="en", verbose=None)
+# Keep the standard Hugging Face layout and publish verified files with same-volume renames.
+source = snapshot.parent.parent
+target = Path(hub) / source.name
+for group in ("blobs", "snapshots", "refs"):
+    for path in (source / group).rglob("*"):
+        if path.is_symlink() or path.is_file():
+            dest = target / path.relative_to(source)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(path, dest)
 print("Whisper is ready")
-PY
+PYCODE
     rc=$?; kill "$tick" 2>/dev/null; exit $rc ;;
 
   check:localai)
@@ -196,10 +222,12 @@ PY
       f="${fh%%:*}"; h="${fh##*:}"
       out="$m/$(basename "$f")"; [ -s "$out" ] && sha_ok "$out" "$h" && { echo "have $(basename "$f")"; continue; }
       echo "Downloading $(basename "$f")..."
-      dl "$base/$f" "$out.part"
-      [ -s "$out.part" ] || { echo "download failed: $f"; exit 1; }
-      sha_ok "$out.part" "$h" || { rm -f "$out.part"; echo "checksum mismatch for $f: refused (the file on the server changed)"; exit 1; }
-      mv "$out.part" "$out"
+      part="$STAGE/$(basename "$f")"
+      dl "$base/$f" "$part" && [ -s "$part" ] || { echo "download failed: $f"; exit 1; }
+      sha_ok "$part" "$h" || { echo "checksum mismatch for $f: refused (the file on the server changed)"; exit 1; }
+    done
+    for part in "$STAGE"/{tokenizer.json,config.json,model_quantized.onnx}; do
+      [ ! -f "$part" ] || mv "$part" "$m/" || exit 1
     done
     echo "Local AI model ready" ;;
 
@@ -208,17 +236,17 @@ PY
     if [ -z "$d" ] && vimport "import sherpa_onnx" && [ -s "$APPROOT/models/wespeaker_en_voxceleb_resnet34_LM.onnx" ]; then echo "OK"; else echo "MISSING ${d:-not installed}"; fi ;;
   install:voices)
     pip_lock voices || exit 1
-    n=wespeaker_en_voxceleb_resnet34_LM.onnx; out="$APPROOT/models/$n"; h=ce2c5db3fb2c438f1d58de35577c951bc27ea0d41ef74968de4a480a1a59e39b
+    n=wespeaker_en_voxceleb_resnet34_LM.onnx; out="$APPROOT/models/$n"; part="$STAGE/$n"; h=ce2c5db3fb2c438f1d58de35577c951bc27ea0d41ef74968de4a480a1a59e39b
     # 0.24.1: sherpa-onnx re-uploaded this file without its feature_normalize_type metadata (other embeddings, saved
     # voices stop matching), so Pacenote's own copy of the pinned file comes first; the original is the fallback.
     if ! { [ -s "$out" ] && sha_ok "$out" "$h"; }; then
       for u in "https://github.com/bodco/live-tips/releases/download/models-wespeaker-1/$n" \
                "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/$n"; do
-        rm -f "$out.part"
-        dl "$u" "$out.part" 26530589 && sha_ok "$out.part" "$h" && { mv "$out.part" "$out"; break; }
+        rm -f "$part"
+        dl "$u" "$part" 26530589 && sha_ok "$part" "$h" && { mv "$part" "$out"; break; }
         echo "$n from $u: download failed or checksum mismatch, refused"
       done
-      rm -f "$out.part"
+      rm -f "$part"
       [ -s "$out" ] && sha_ok "$out" "$h" || { echo "ERROR checksum mismatch for $n: refused"; exit 1; }
     fi
     echo "Speaker identification ready" ;;
@@ -247,13 +275,13 @@ PY
   install:codex)
     CX_VER="0.170.0"; CX_SHA="7c9f21d5cbae4860d14b379fdcf709ff399ce874fd714b58783e1b4199c2b9a9"; CX_SIZE=114545562
     echo "Downloading Codex $CX_VER (about $((CX_SIZE / 1000000)) MB)..."
-    t="$APPROOT/.codex.tar.gz"; rm -f "$t"; mkdir -p "$HOME/.local/bin"
+    t="$STAGE/codex.tar.gz"; rm -f "$t"; mkdir -p "$HOME/.local/bin"
     dl "https://github.com/openai/codex/releases/download/rust-v$CX_VER/codex-aarch64-apple-darwin.tar.gz" "$t" "$CX_SIZE" || { rm -f "$t"; echo "ERROR could not download Codex"; exit 1; }
     sha_ok "$t" "$CX_SHA" || { rm -f "$t"; echo "ERROR checksum mismatch for Codex: refused"; exit 1; }
-    rm -rf "$APPROOT/.codex.new" && mkdir -p "$APPROOT/.codex.new" && tar -xzf "$t" -C "$APPROOT/.codex.new" && rm -f "$t"
-    b="$(find "$APPROOT/.codex.new" -type f -name 'codex*' | head -1)"; [ -n "$b" ] || { echo "ERROR the Codex archive has no program"; exit 1; }
-    xattr -d com.apple.quarantine "$b" 2>/dev/null; chmod +x "$b"; mv -f "$b" "$HOME/.local/bin/.codex.new" && mv -f "$HOME/.local/bin/.codex.new" "$HOME/.local/bin/codex"
-    rm -rf "$APPROOT/.codex.new"; echo "Codex ready" ;;
+    rm -rf "$STAGE/codex.new" && mkdir -p "$STAGE/codex.new" && tar -xzf "$t" -C "$STAGE/codex.new" && rm -f "$t"
+    b="$(find "$STAGE/codex.new" -type f -name 'codex*' | head -1)"; [ -n "$b" ] || { echo "ERROR the Codex archive has no program"; exit 1; }
+    xattr -d com.apple.quarantine "$b" 2>/dev/null; chmod +x "$b" && mv -f "$b" "$HOME/.local/bin/codex" || exit 1
+    rm -rf "$STAGE/codex.new"; echo "Codex ready" ;;
 
   # 0.8.6 (rules/components.yaml): the optional Link downloader for Transcribe a recording (Google Drive, YouTube, Vimeo).
   check:linkdl)
@@ -276,7 +304,7 @@ PY
   size:venv) sz "$VENV" ;;
   size:python) sz "$APPROOT/python" ;;
   size:recorder|size:tips) echo "SIZE 0" ;;
-  size:whisper) sz "$HOME/.cache/huggingface/hub/models--${WHISPER_MODEL//\//--}" ;;
+  size:whisper) sz "$HUB/models--${WHISPER_MODEL//\//--}" ;;
   size:localai) sz "$APPROOT/models/bge-m3-int8" ;;
   size:voices) sz "$APPROOT/models/wespeaker_en_voxceleb_resnet34_LM.onnx" ;;
   size:linkdl) sz "$SITE/yt_dlp" "$SITE"/yt_dlp-*.dist-info ;;

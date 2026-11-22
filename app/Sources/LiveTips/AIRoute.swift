@@ -5,11 +5,11 @@ import LiveTipsCore
 /// The tips engine and the one-off jobs (livetips_m0.routing) read and write the same file, state/ai-routes.json:
 /// {"api": {"down": true, "reason": "credit", "since": <unix time>, "checked": <unix time>}, "code": {...}}.
 enum AIRoute {
-    static let api = "api", code = "code", openai = "openai", codex = "codex", gemini = "gemini", agy = "agy"   // 0.9.3: gemini (API key), agy (account)
+    static let api = "api", code = "code", openai = "openai", codex = "codex", gemini = "gemini"
     /// 0.8.5 (owner): a preparation on this Mac (Ollama), chosen by hand; never an automatic switch target yet.
     static let local = "local"
 
-    static func other(_ r: String) -> String { [openai, codex, gemini, agy].contains(r) ? r : r == api ? code : api }
+    static func other(_ r: String) -> String { [openai, codex, gemini].contains(r) ? r : r == api ? code : api }
 
     static var statePath: String {
         let c = AppConfig.load(from: AppPaths.config)
@@ -55,7 +55,6 @@ enum AIRoute {
         if p.hasAPIKey { out.insert(api) }
         if p.hasOpenAIKey { out.insert(openai) }
         if p.hasGeminiKey { out.insert(gemini) }
-        if AgyAccount.cliPath != nil && AgyAccount.shared.signedIn != false { out.insert(agy) }
         if !LocalLLM.downloaded().isEmpty { out.insert(local) }       // a model on this Mac is downloaded
         return out
     }
@@ -70,7 +69,6 @@ enum AIRoute {
         if p.hasAPIKey { out.insert(api) }
         if p.hasOpenAIKey { out.insert(openai) }
         if p.hasGeminiKey { out.insert(gemini) }
-        if AgyAccount.cliPath != nil && AgyAccount.shared.signedIn == true { out.insert(agy) }
         if !LocalLLM.downloaded().isEmpty { out.insert(local) }
         return out
     }
@@ -172,9 +170,6 @@ enum AIRoute {
             if e.contains("http 401") || e.contains("http 403") { return "auth" }
             return e.contains("http 402") || e.contains("quota_exceeded") || e.contains("failed_precondition") ? "credit" : nil
         }
-        if r == agy {         // 0.9.3: livetips_m0.agy_provider names the kind only
-            return e.contains("not signed in") ? "auth" : e.contains("usage limit") ? "limit" : e.contains("not installed") ? "missing" : nil
-        }
         if r == openai {      // 0.9.3: same as livetips_m0.routing: 401 and 403 a bad key, insufficient_quota no credit
             if e.contains("http 401") || e.contains("http 403") { return "auth" }
             return e.contains("insufficient_quota") ? "credit" : nil
@@ -194,16 +189,14 @@ enum AIRoute {
         if r == codex { return CodexAccount.cliPath != nil }
         if r == openai { return SecretStore(service: Bundle.main.bundleIdentifier ?? "io.github.example.livetips").has(.openaiAPIKey) }
         if r == gemini { return SecretStore(service: Bundle.main.bundleIdentifier ?? "io.github.example.livetips").has(.geminiAPIKey) }
-        if r == agy { return AgyAccount.cliPath != nil }
         return r == api ? hasKey : r == local ? true : PrepRunner.claudePath != nil
     }
 
     /// A job on this way can run: the way itself, or with auto-switch the other one.
     static func canRun(job: String, config c: AppConfig) -> Bool {
         let r = c.ai.route(job)
-        if r == agy && job == "tips" { return false }      // 0.9.3: never during a call (20-30 s a request)
         // 0.10.0 (AI chain, owner 12.11): the chosen AI, or any AI of the chain this job may use
-        let avail = Set(([api, code, codex, openai, gemini, agy] as [String]).filter { available($0) } + [local])
+        let avail = Set(([api, code, codex, openai, gemini] as [String]).filter { available($0) } + [local])
         return available(r) || AIChain.order(job: job, chosen: r, chain: c.ai.chain, connected: avail, auto: c.ai.autoSwitch).count > 1
     }
 
@@ -215,7 +208,7 @@ enum AIRoute {
         // 0.24.1 (F3): a job never starts on an AI that is not there: the chosen one when it can run, else the first
         // that can (AIDefaults.pick over the AIs with a key or a tool), the same rule Settings saves.
         var c = c0
-        let avail = Set(([api, code, codex, openai, gemini, agy] as [String]).filter { available($0) }
+        let avail = Set(([api, code, codex, openai, gemini] as [String]).filter { available($0) }
                         + (LocalLLM.downloaded().isEmpty ? [] : [local]))
         c.ai.prep = AIDefaults.pick(job: "prep", chosen: c.ai.prep, connected: avail)
         c.ai.after = AIDefaults.pick(job: "after", chosen: c.ai.after, connected: avail)
@@ -237,8 +230,6 @@ enum AIRoute {
         env["LT_OPENAI_MODEL"] = c.ai.openaiModel(job)       // 0.9.0: the job's OpenAI model (Settings > AI)
         env["LT_GEMINI_MODEL"] = c.ai.geminiModel(job)       // 0.9.3: the job's Gemini model (Settings > AI)
         env["LT_GEMINI_FALLBACK"] = c.ai.geminiFallback ? "1" : "0"   // 0.9.3: plan B, opt-in (rules/ai.yaml > gemini)
-        env["LT_AGY_MODEL"] = c.ai.agyModel(job)              // 0.9.3: the Gemini account model (prep, after)
-        if let cli = AgyAccount.cliPath { env["LT_AGY_CLI"] = cli }
         env["LT_LOCAL_MODEL"] = UserDefaults.standard.string(forKey: "prepLocalModel") ?? "gemma4:26b"   // rules/ai.yaml > local
         env["LT_LOCAL_FALLBACK"] = (job != "tips" && c.ai.localFallback) ? "1" : "0"                      // rules/ai.yaml > fallback
         env["LT_AI_AUTO"] = c.ai.autoSwitch ? "1" : "0"
@@ -266,12 +257,11 @@ enum AIRoute {
          "chain": chainForEngine(c),        // 0.10.0 (AI chain)
          "openai_models": ["prep": c.ai.openaiPrep, "tips": c.ai.openaiTips, "after": c.ai.openaiAfter],
          "gemini_models": ["prep": c.ai.geminiPrep, "tips": c.ai.geminiTips, "after": c.ai.geminiAfter], "gemini_fallback": c.ai.geminiFallback,
-         "agy_models": ["prep": c.ai.agyPrep, "after": c.ai.agyAfter],
          "claude_cli": PrepRunner.claudePath ?? ""]
     }
 
     static func name(_ r: String) -> String {
-        r == codex ? L("ai.codex.account") : r == openai ? L("ai.route.openai") : r == gemini ? L("ai.route.gemini") : r == agy ? L("ai.agy.account") : r == local ? L("ai.route.local.model", ["model": UserDefaults.standard.string(forKey: "prepLocalModel") ?? "gemma4:26b"])
+        r == codex ? L("ai.codex.account") : r == openai ? L("ai.route.openai") : r == gemini ? L("ai.route.gemini") : r == local ? L("ai.route.local.model", ["model": UserDefaults.standard.string(forKey: "prepLocalModel") ?? "gemma4:26b"])
             : L(r == api ? "ai.route.api" : "ai.route.code")
     }
 
@@ -279,7 +269,7 @@ enum AIRoute {
     static func statusLines() -> [String] {
         let o = read()
         let t = DateFormatter(); t.dateFormat = "HH:mm"
-        return [code, api, openai, codex, gemini, agy, local].compactMap { r in
+        return [code, api, openai, codex, gemini, local].compactMap { r in
             guard let s = o[r] as? [String: Any], (s["down"] as? Bool) == true else { return nil }
             let since = (s["since"] as? Double).map { t.string(from: Date(timeIntervalSince1970: $0)) } ?? ""
             let reason = L("ai.reason." + ((s["reason"] as? String) ?? "error"))
@@ -293,7 +283,7 @@ enum AIRoute {
     /// Checks the ways that are out now (a one-word request each, through the engine) and calls back.
     @MainActor static func checkNow(done: @escaping () -> Void) {
         let c = AppConfig.load(from: AppPaths.config)
-        let down = [code, api, openai, codex, gemini, agy].filter { isDown($0) }
+        let down = [code, api, openai, codex, gemini].filter { isDown($0) }
         guard !down.isEmpty, !c.engine.sidecarPython.isEmpty, !c.engine.sidecarDir.isEmpty else { done(); return }
         DispatchQueue.global().async {
             for r in down {

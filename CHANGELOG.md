@@ -3,6 +3,18 @@
 Pacenote. Earlier versions are described in the commit messages and in
 [docs/en/live-tips.md](docs/en/live-tips.md), section 14.
 
+## Unreleased
+
+- **Gemini now requires an API key.** Pacenote removed Google account sign-in through Antigravity CLI because
+  Google's terms prohibit access through third-party apps and Google can suspend accounts. If you selected
+  that route, Pacenote switches the saved choice to Gemini API and shows a one-time notice with a link to
+  the Gemini key in Settings > AI. The fallback chain keeps the other providers in their existing order.
+
+- **Cancel setup and model downloads.** Pacenote shows the estimated download size and free disk space before
+  installing. Use Cancel during setup, add-on installation, or an Ollama model pull to stop the transfer and
+  clean up partial downloads. If an Ollama pull fails, Retry resumes from the partial files Ollama saved.
+  Cancelling a retry also removes partial files saved by earlier attempts for that pull.
+
 ## 0.26.4 (2026-11-20)
 
 - **A new organization project includes the person who made it (2026-11-20):** in New project > start a new

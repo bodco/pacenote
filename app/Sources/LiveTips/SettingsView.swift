@@ -599,17 +599,19 @@ struct LocalStatus: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
-                if !local.installed {
-                    EmptyView()                              // 0.8.6 (E): the Ollama component row offers Install
+                if let p = local.pulling {
+                    ProgressView(value: local.progress).frame(maxWidth: 160)
+                    Text(p + " · " + local.note).font(PN.Font.caption).foregroundStyle(PN.C.text3)
+                    Button(L(local.stopping ? "download.stopping" : "common.cancel")) { local.cancelPull() }
+                        .buttonStyle(.pnTertiary).disabled(local.stopping)
+                } else if !local.installed {
+                    EmptyView()
                 } else if !local.running {
                     Text(L("local.notRunning")).font(PN.Font.caption).foregroundStyle(PN.C.text3)
                     Spacer()
                     Button(L("local.start")) { local.start() }.buttonStyle(.pnTertiary)
-                } else if let p = local.pulling {
-                    ProgressView(value: local.progress).frame(maxWidth: 160)
-                    Text(p + " · " + local.note).font(PN.Font.caption).foregroundStyle(PN.C.text3)
                 } else if !local.hasSuggested {
-                    Text(local.models.isEmpty ? L("local.noModels") : L("local.ready")).font(PN.Font.caption).foregroundStyle(PN.C.text3)
+                    Text(local.note.isEmpty ? L(local.models.isEmpty ? "local.noModels" : "local.ready") : local.note).font(PN.Font.caption).foregroundStyle(PN.C.text3)
                 } else {
                     Text(local.note.isEmpty ? L("local.ready") : local.note).font(PN.Font.caption).foregroundStyle(PN.C.text3)
                 }
@@ -707,13 +709,11 @@ struct RoutePicker: View {
     var discouraged: String? = nil
     var withOpenAI = false
     var withGemini = true          // 0.9.3
-    var withAgy = false            // 0.9.3: the Gemini account, for the preparation and after the call only
     /// 0.9.3: built step by step (one long expression was too much for the type checker)
     private var routes: [String] {
         var r: [String] = [AIRoute.code, AIRoute.api, AIRoute.codex]
         if withOpenAI { r.append(AIRoute.openai) }
         if withGemini { r.append(AIRoute.gemini) }
-        if withAgy { r.append(AIRoute.agy) }
         if withLocal { r.append(AIRoute.local) }
         return r
     }
@@ -929,7 +929,7 @@ struct SettingsView: View {
                 // 0.15.0 (D2): a search result scrolls its row into view; the mark fades after a moment
                 ScrollViewReader { proxy in
                     pane.scrollContentBackground(.hidden).clipped().padding(.top, 4)
-                        .onChange(of: model.highlight) { _, id in
+                        .onChange(of: model.highlight, initial: true) { _, id in
                             guard let id else { return }
                             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { withAnimation { proxy.scrollTo(id, anchor: .center) } }
                             DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) { if model.highlight == id { model.highlight = nil } }
@@ -1004,7 +1004,7 @@ struct SettingsView: View {
             if aiAdv == "1" {
             Group {
             Section {
-                RoutePicker(selection: $model.config.ai.prep, job: "prep", recommended: AIRoute.code, withOpenAI: true, withAgy: true, withLocal: true)
+                RoutePicker(selection: $model.config.ai.prep, job: "prep", recommended: AIRoute.code, withOpenAI: true, withLocal: true)
                 if run("prep") == AIRoute.codex {
                     Text(L("ai.codex.model")).font(PN.Font.caption).foregroundStyle(PN.C.text3)
                 } else if run("prep") == AIRoute.local {
@@ -1013,9 +1013,6 @@ struct SettingsView: View {
                     OpenAIModelPicker(selection: $model.config.ai.openaiPrep, job: "prep")
                 } else if run("prep") == AIRoute.gemini {
                     GeminiModelPicker(selection: $model.config.ai.geminiPrep, job: "prep")
-                } else if run("prep") == AIRoute.agy {
-                    AgyTermsWarning()
-                    AgyModelPicker(selection: $model.config.ai.agyPrep)
                 } else if !run("prep").isEmpty {      // nothing connected for the job: no models to pick
                     Picker(L("set.model"), selection: $runner.model) {
                         ForEach(PrepRunner.models, id: \.id) { m in Text(m.label).tag(m.id) }
@@ -1055,16 +1052,13 @@ struct SettingsView: View {
                 }
             }
             Section {
-                RoutePicker(selection: $model.config.ai.after, job: "after", recommended: AIRoute.code, withOpenAI: true, withAgy: true, withLocal: true)
+                RoutePicker(selection: $model.config.ai.after, job: "after", recommended: AIRoute.code, withOpenAI: true, withLocal: true)
                 if run("after") == AIRoute.codex {
                     Text(L("ai.codex.model")).font(PN.Font.caption).foregroundStyle(PN.C.text3)
                 } else if run("after") == AIRoute.openai {
                     OpenAIModelPicker(selection: $model.config.ai.openaiAfter, job: "after")
                 } else if run("after") == AIRoute.gemini {
                     GeminiModelPicker(selection: $model.config.ai.geminiAfter, job: "after")
-                } else if run("after") == AIRoute.agy {
-                    AgyTermsWarning()
-                    AgyModelPicker(selection: $model.config.ai.agyAfter)
                 } else if run("after") == AIRoute.local {
                     LocalModelRow()
                 } else if !run("after").isEmpty {      // nothing connected for the job: no models to pick
@@ -2044,7 +2038,7 @@ struct PersonNamesSheet: View {
 
 /// 0.10.0 (AI chain, owner 12.11): Settings > AI > If an AI is out. One fallback chain for every job: the AI chosen for
 /// the job first, then the connected AIs in this order (arrows to reorder, a checkbox each). Tips never use the model
-/// on this Mac or the Gemini account; the model on this Mac is always the last step. The status of every AI below.
+/// on this Mac. For other jobs, the model on this Mac is always the last step. The status of every AI is below.
 struct AIChainSection: View {
     @ObservedObject var model: SettingsModel
     @Binding var checking: Bool
@@ -2095,7 +2089,6 @@ struct AIChainSection: View {
     private func note(_ r: String, connected: Bool) -> String {
         var parts: [String] = [L(connected ? "ai.chain.connected" : "ai.chain.notConnected")]
         if r == AIRoute.local { parts.append(L("ai.chain.localNote")) }
-        if r == AIRoute.agy { parts.append(L("ai.chain.agyNote")) }
         return parts.joined(separator: " · ")
     }
 }

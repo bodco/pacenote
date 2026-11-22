@@ -67,35 +67,95 @@ final class SetupModel: ObservableObject {
         else if let i = tools.firstIndex(where: { $0.id == id }) { f(&tools[i]) }
     }
 
+    private var processes: [String: Process] = [:]
+    @Published private(set) var stopping = false
+    @Published private(set) var cancelled = false
+
+    func installAddOn(_ step: String, onLine: @escaping (String) -> Void) async -> Int32 {
+        guard !busy, processes.isEmpty else { return -1 }
+        pinRoot()
+        defer { unpinRoot() }
+        return await run("install", step, onLine: onLine)
+    }
+
+    func cancelInstall() {
+        guard let running, !stopping else { return }
+        stopping = true
+        cancelProcess(running)
+    }
+
+    func cancelProcess(_ step: String) {
+        guard let process = processes[step], process.isRunning else { return }
+        let pid = process.processIdentifier
+        // Foundation launches Process in its own group. Check before signaling descendants.
+        kill(getpgid(pid) == pid ? -pid : pid, SIGKILL)
+    }
+
+    static var whisperHub: URL {
+        let env = ProcessInfo.processInfo.environment
+        let home = env["HF_HOME"] ?? ((env["XDG_CACHE_HOME"] ?? NSHomeDirectory() + "/.cache") + "/huggingface")
+        return URL(fileURLWithPath: env["HF_HUB_CACHE"] ?? env["HUGGINGFACE_HUB_CACHE"] ?? (home + "/hub"))
+    }
+
     func run(_ mode: String, _ step: String, onLine: @escaping (String) -> Void) async -> Int32 {
-        let script = self.script, root = appRoot, res = Bundle.main.resourcePath ?? ""
-        return await withCheckedContinuation { cont in
-            DispatchQueue.global().async {
-                let p = Process()
-                p.executableURL = URL(fileURLWithPath: "/bin/bash")
-                p.arguments = [script, mode, step]
-                var env = ProcessInfo.processInfo.environment
-                env["APPROOT"] = root
-                env["BUNDLE"] = res
-                env["PATH"] = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-                p.environment = env
-                let pipe = Pipe()
-                p.standardOutput = pipe
-                p.standardError = pipe
-                pipe.fileHandleForReading.readabilityHandler = { h in
-                    let d = h.availableData
-                    guard !d.isEmpty, let s = String(data: d, encoding: .utf8) else { return }
-                    for line in s.split(whereSeparator: \.isNewline) where !line.isEmpty {
-                        let l = String(line)
-                        DispatchQueue.main.async { onLine(l) }
+        let installing = mode == "install"
+        guard !installing || processes[step] == nil else { return -1 }
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/bash")
+        p.arguments = [script, mode, step]
+        var env = ProcessInfo.processInfo.environment
+        env["APPROOT"] = appRoot
+        env["BUNDLE"] = Bundle.main.resourcePath ?? ""
+        env["PATH"] = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+        env["PACENOTE_WHISPER_HUB"] = Self.whisperHub.path
+        let destination = step == "codex" ? NSHomeDirectory() + "/.local/bin" : appRoot
+        let scratch = URL(fileURLWithPath: destination).appendingPathComponent(".install-" + UUID().uuidString)
+        let whisperScratch = Self.whisperHub.appendingPathComponent(scratch.lastPathComponent)
+        if installing {
+            do { try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true) }
+            catch { onLine(error.localizedDescription); return -1 }
+            env["PACENOTE_INSTALL_STAGE"] = scratch.path
+            env["TMPDIR"] = scratch.path
+            env["PACENOTE_WHISPER_STAGE"] = whisperScratch.path
+        }
+        p.environment = env
+        let pipe = Pipe()
+        p.standardOutput = pipe
+        p.standardError = pipe
+        do { try p.run() }
+        catch {
+            if installing { try? FileManager.default.removeItem(at: scratch) }
+            onLine(error.localizedDescription)
+            return -1
+        }
+        if installing { processes[step] = p }
+        let rc: Int32 = await withCheckedContinuation { cont in
+            DispatchQueue.global(qos: .utility).async {
+                var pending = Data()
+                while true {
+                    let data = pipe.fileHandleForReading.availableData
+                    if data.isEmpty { break }
+                    pending.append(data)
+                    while let newline = pending.firstIndex(of: 10) {
+                        let line = String(decoding: pending[..<newline], as: UTF8.self)
+                        pending.removeSubrange(...newline)
+                        if !line.isEmpty { DispatchQueue.main.async { onLine(line) } }
                     }
                 }
-                do { try p.run() } catch { cont.resume(returning: -1); return }
+                if !pending.isEmpty {
+                    let line = String(decoding: pending, as: UTF8.self)
+                    DispatchQueue.main.async { onLine(line) }
+                }
                 p.waitUntilExit()
-                pipe.fileHandleForReading.readabilityHandler = nil
-                cont.resume(returning: p.terminationStatus)
+                if installing {
+                    try? FileManager.default.removeItem(at: scratch)
+                    if step == "whisper" { try? FileManager.default.removeItem(at: whisperScratch) }
+                }
+                DispatchQueue.main.async { cont.resume(returning: p.terminationStatus) }
             }
         }
+        if installing { processes[step] = nil }
+        return rc
     }
 
     private func setState(_ id: String, from out: String) {
@@ -129,7 +189,7 @@ final class SetupModel: ObservableObject {
         let t0 = Date()
         var lines: [String] = []
         let rc = await run("install", id) { [weak self] l in
-            guard let self else { return }
+            guard let self, !self.stopping else { return }
             if let p = SetupPlan.parse(l) {
                 self.stepFraction = p.fraction
                 if let b = p.bytes, let t = p.total { self.stepBytes = (b, t) }
@@ -143,6 +203,11 @@ final class SetupModel: ObservableObject {
         _ = await run("check", id) { out = $0 }
         setState(id, from: out)
         let ok = out.hasPrefix("OK")
+        if stopping {
+            cancelled = true
+            runDone.insert(id); running = nil; stepFraction = 0; stepBytes = nil
+            return false
+        }
         if !ok { update(id) { $0.state = .failed } }
         let secs = Int(Date().timeIntervalSince(t0).rounded())
         let code = ok ? "" : SetupPlan.errorCode(step: id, log: lines)
@@ -157,10 +222,12 @@ final class SetupModel: ObservableObject {
 
     /// One component or account tool on request (the CLI of an account when it is connected).
     func installOne(_ id: String) async {
-        guard step(id) != nil, !busy else { return }
+        guard step(id) != nil, !busy, processes.isEmpty else { return }
         busy = true
         pinRoot()
-        defer { unpinRoot(); busy = false; running = nil }
+        defer { unpinRoot(); busy = false; running = nil; stopping = false }
+        guard await confirmDownload([id]) else { return }
+        cancelled = false
         runSteps = [id]; runDone = []; runStarted = Date()
         AppLog.header("setup.log", "install \(id)", extra: AppLog.runtimeExtra)
         await install(id)
@@ -172,11 +239,13 @@ final class SetupModel: ObservableObject {
     /// the failed one are marked with why, the others still install (the first outside user's install stopped at the
     /// tips engine and never reached Whisper).
     func installMissing(includeOptional: Bool = true) async {
-        guard !busy else { return }
+        guard !busy, processes.isEmpty else { return }
         busy = true
         pinRoot()
-        defer { unpinRoot(); busy = false; running = nil }
+        defer { unpinRoot(); busy = false; running = nil; stopping = false }
         let todo = steps.filter { $0.state != .ok }.map(\.id)
+        guard !todo.isEmpty, await confirmDownload(todo) else { return }
+        cancelled = false
         runSteps = todo; runDone = []; runStarted = Date()
         AppLog.header("setup.log", "install \(todo.joined(separator: ","))", extra: AppLog.runtimeExtra)
         var failed = Set<String>()
@@ -189,7 +258,9 @@ final class SetupModel: ObservableObject {
                 AnalyticsTracker.shared.track("install_component", ["step": id, "ok": false, "seconds": 0, "code": "blocked"])
                 continue
             }
-            if !(await install(id)) { failed.insert(id) }
+            let ok = await install(id)
+            if stopping { break }
+            if !ok { failed.insert(id) }
         }
         if allRequiredOK {
             applyEngineSettings()
@@ -200,6 +271,17 @@ final class SetupModel: ObservableObject {
             log.append(L("setup.log.someFailed", ["n": "\(failed.count)"]))
         }
         AnalyticsTracker.shared.snapshotIfDue(force: true)
+    }
+
+    private func confirmDownload(_ steps: [String]) async -> Bool {
+        let downloading = steps.filter { $0 != "core" && $0 != "venv" }
+        guard !downloading.isEmpty else { return true }
+        let bytes = downloading.reduce(Int64(0)) { $0 + Int64(SetupPlan.weight($1)) }
+        let destination = steps.contains("codex") || steps.contains("claude") ? NSHomeDirectory() : appRoot
+        let homeFree = DiskSpace.free(at: URL(fileURLWithPath: destination))
+        let free = steps.contains("whisper") ? min(homeFree, DiskSpace.free(at: Self.whisperHub)) : homeFree
+        let purpose = steps.contains("whisper") || steps.contains("localai") ? L("download.localSetup") : ""
+        return await DownloadPreflight.confirm(steps: steps, bytes: bytes, free: free, purpose: purpose)
     }
 
     /// Points the app at what setup installed, unless the PM set other engines on purpose.
@@ -354,15 +436,20 @@ struct SetupLoader: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            if model.busy {
+            if model.busy, model.running != nil {
                 ProgressView(value: model.overall).tint(PN.C.brand)
                     .accessibilityLabel(L("setup.loader.a11y", ["pct": "\(Int(model.overall * 100))"]))
                 HStack(spacing: 6) {
                     Text(nowLine).font(PN.Font.caption).foregroundStyle(PN.C.text2).lineLimit(1)
                     Spacer()
                     Text(rightLine).font(PN.Font.caption.monospacedDigit()).foregroundStyle(PN.C.text3).lineLimit(1)
+                    Button(L(model.stopping ? "download.stopping" : "common.cancel")) { model.cancelInstall() }
+                        .buttonStyle(.pnTertiary).disabled(model.stopping)
                 }
-            } else if !failed.isEmpty {
+            } else if model.cancelled && !model.busy && showButton && !model.allRequiredOK {
+                Text(L("download.cancelled")).font(PN.Font.caption).foregroundStyle(PN.C.text2)
+                Button(L("setup.retry")) { Task { await model.installMissing() } }.buttonStyle(.pnSecondary)
+            } else if !model.busy && !failed.isEmpty {
                 ForEach(failed) { s in
                     HStack(alignment: .top, spacing: 6) {
                         Image(systemName: "xmark.circle.fill").foregroundStyle(PN.C.danger).accessibilityHidden(true)
@@ -371,7 +458,7 @@ struct SetupLoader: View {
                     }
                 }
                 Button(L("setup.retry")) { Task { await model.installMissing() } }.buttonStyle(.pnSecondary)
-            } else if showButton && model.checked && !model.allRequiredOK {
+            } else if showButton && !model.busy && model.checked && !model.allRequiredOK {
                 Button(L("setup.installAll")) { Task { await model.installMissing() } }.buttonStyle(.pnPrimary)
             }
         }

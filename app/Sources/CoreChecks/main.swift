@@ -955,7 +955,7 @@ expect(!Economy.isOn(stateDir: ecoDir), "economy: off")
 // 0.9.6 Б1: economy mode v1, the plan from the next job
 let both = EconomyPlan.Accounts(claude: true, chatgpt: true), none = EconomyPlan.Accounts(claude: false, chatgpt: false)
 expect(EconomyPlan.jobRoute("api", accounts: both) == "code" && EconomyPlan.jobRoute("openai", accounts: both) == "codex", "economy: key ways move to the accounts")
-expect(EconomyPlan.jobRoute("gemini", accounts: both) == "gemini" && EconomyPlan.jobRoute("api", accounts: none) == "api", "economy: Gemini never to agy; no account, no move")
+expect(EconomyPlan.jobRoute("gemini", accounts: both) == "gemini" && EconomyPlan.jobRoute("api", accounts: none) == "api", "economy: Gemini stays on the API; no account, no move")
 expect(EconomyPlan.tipsModel(route: "openai") == "gpt-6-luna" && EconomyPlan.tipsModel(route: "gemini") == "gemini-3.5-flash-lite" && EconomyPlan.tipsModel(route: "local") == nil, "economy: cheapest tips model per way")
 var ecoCfg = AppConfig(); ecoCfg.ai.prep = "api"; ecoCfg.ai.after = "openai"; ecoCfg.ai.tips = "api"; ecoCfg.models.tip = "claude-sonnet-5-5"; ecoCfg.ai.openaiTips = "gpt-6.1-sol"
 expect(EconomyPlan.apply(ecoCfg, on: false, accounts: both) == ecoCfg, "economy: off changes nothing")
@@ -977,12 +977,22 @@ let caURL = URL(fileURLWithPath: NSTemporaryDirectory() + "pn-agent-config.json"
 try? caCfg.save(to: caURL)
 expect(AppConfig.load(from: caURL) == caCfg, "agent and limits: config round trip")
 try? FileManager.default.removeItem(at: caURL)
-// 0.9.3: the Gemini account through Antigravity CLI
-let agyList = AgyCLI.models(output: "gemini-4-argon-medium\tGemini 4 Argon (Medium)\nclaude-opus-5-5-low\tClaude Opus 5.5 (Low)\ngemini-3.8-flash-medium\tGemini 3.8 Flash (Medium)\nFetching available models...\n")
-expect(agyList.map(\.id) == ["gemini-4-argon-medium", "gemini-3.8-flash-medium"], "agy: only the Gemini models of the list")
-expect(AgyCLI.environment(["GEMINI_API_KEY": "k", "GOOGLE_API_KEY": "k", "CLAUDE_API": "k", "PATH": "/bin"]) == ["PATH": "/bin"], "agy: no API key reaches the account")
-expect(AgyCLI.candidates(home: "/tmp/h", path: "/x/bin").contains("/tmp/h/.local/bin/agy"), "agy: the installer's place")
-expect(AgyCLI.loginCommand(cli: "/tmp/O'R/agy").contains("O'\\''R") && AgyCLI.loginCommand(cli: "/a/agy").contains("mktemp -d"), "agy: login quoted, in an empty folder")
+// PB-31: old account selections and fallback chains still decode.
+do {
+    let legacy = #"{"prep":"agy","tips":"openai","after":"agy","agyPrep":"legacy","chain":[{"route":"agy","on":true},{"route":"gemini","on":false}],"seen":["agy","openai"]}"#
+    let routes = try JSONDecoder().decode(AppConfig.AIRoutes.self, from: Data(legacy.utf8))
+    expect(routes.prep == "gemini" && routes.after == "gemini" && routes.tips == "openai", "Gemini account migration: job routes")
+    expect(routes.geminiAccountNoticePending && routes.seen == ["openai"], "Gemini account migration: notice and connected routes")
+    expect(routes.chain.first == AIChain.Entry("gemini", on: false) && !routes.chain.contains { $0.route == "agy" },
+           "Gemini account migration: preserve fallback settings and remove the old route")
+    let pending = try JSONDecoder().decode(AppConfig.AIRoutes.self, from: JSONEncoder().encode(routes))
+    expect(pending.geminiAccountNoticePending, "Gemini account migration: notice survives saves before launch")
+    var acknowledged = pending
+    acknowledged.geminiAccountNoticePending = false
+    let saved = try JSONDecoder().decode(AppConfig.AIRoutes.self, from: JSONEncoder().encode(acknowledged))
+    expect(!saved.geminiAccountNoticePending && saved.prep == "gemini", "Gemini account migration: notice stays cleared on next launch")
+} catch { expect(false, "Gemini account migration: decode legacy routes") }
+
 // 0.9.4: one person, many spellings (VoiceBook) and speakers named from Google Meet (MeetSpeakers)
 var vb: [String: Any] = ["people": ["M. T.": ["calls": 2, "embeddings": [[0.1]], "side": "team"], "Mike T.": ["calls": 3, "embeddings": [[0.2]]],
                                     "Emily Clark": ["calls": 1]], "aliases": ["mt": "M. T."]]
@@ -1726,30 +1736,30 @@ func googlePicker0100() {
 
 // 0.10.0 (AI chain, owner 12.11): one fallback chain, out-state with reset times, account usage, the status icon
 func aiChain0100() {
-    let all: Set<String> = ["code", "codex", "api", "openai", "gemini", "agy", "local"]
+    let all: Set<String> = ["code", "codex", "api", "openai", "gemini", "local"]
     let d = AIChain.defaults()
-    expect(d.map { $0.route } == ["code", "codex", "api", "openai", "gemini", "agy", "local"] && d.allSatisfy { $0.on }, "chain: default order, all on")
+    expect(d.map { $0.route } == ["code", "codex", "api", "openai", "gemini", "local"] && d.allSatisfy { $0.on }, "chain: default order, all on")
     expect(AIChain.defaults(localOn: false).last == AIChain.Entry("local", on: false), "chain: an old localFallback off keeps local off")
-    expect(AIChain.order(job: "prep", chosen: "api", chain: d, connected: all) == ["api", "code", "codex", "openai", "gemini", "agy", "local"], "chain: prep, chosen first")
-    expect(AIChain.order(job: "tips", chosen: "api", chain: d, connected: all) == ["api", "code", "codex", "openai", "gemini"], "chain: tips never local or agy")
+    expect(AIChain.order(job: "prep", chosen: "api", chain: d, connected: all) == ["api", "code", "codex", "openai", "gemini", "local"], "chain: prep, chosen first")
+    expect(AIChain.order(job: "tips", chosen: "api", chain: d, connected: all) == ["api", "code", "codex", "openai", "gemini"], "chain: tips never local")
     expect(AIChain.order(job: "tips", chosen: "openai", chain: d, connected: ["openai", "api"]) == ["openai", "api"], "chain: only connected")
     expect(AIChain.order(job: "after", chosen: "code", chain: d, connected: all, auto: false) == ["code"], "chain: switching off = the chosen AI only")
     let moved = AIChain.move(d, route: "local", by: 1)
     expect(moved == d, "chain: a move past the end changes nothing")
     var c = AIChain.move(d, route: "local", by: -1)
-    expect(c.map { $0.route }.suffix(2) == ["local", "agy"], "chain: local moved up")
+    expect(c.map { $0.route }.suffix(2) == ["local", "gemini"], "chain: local moved up")
     expect(AIChain.order(job: "after", chosen: "code", chain: c, connected: all).last == "local", "chain: local is always the last step")
     c = AIChain.setOn(d, route: "gemini", on: false)
     expect(!AIChain.order(job: "after", chosen: "code", chain: c, connected: all).contains("gemini"), "chain: an AI switched off is skipped")
     expect(AIChain.order(job: "after", chosen: "gemini", chain: c, connected: all).first == "gemini", "chain: a chosen AI goes first even when off in the list")
-    expect(AIChain.enabled(c) == ["code", "codex", "api", "openai", "agy", "local"], "chain: enabled order for the engine")
+    expect(AIChain.enabled(c) == ["code", "codex", "api", "openai", "local"], "chain: enabled order for the engine")
     expect(AIChain.normalized([AIChain.Entry("x"), AIChain.Entry("api", on: false), AIChain.Entry("api")]).first == AIChain.Entry("api", on: false)
-           && AIChain.normalized([]).count == 7, "chain: normalized")
+           && AIChain.normalized([]).count == 6, "chain: normalized")
     expect(AIChain.next(["api", "code", "codex"], tried: ["api"], usable: { $0 != "code" }) == "codex", "chain: next untried usable")
     // Settings: an old config without a chain
     let old = #"{"prep":"code","tips":"api","after":"code","autoSwitch":true,"localFallback":false}"#
     let r = try? JSONDecoder().decode(AppConfig.AIRoutes.self, from: Data(old.utf8))
-    expect(r?.chain.last == AIChain.Entry("local", on: false) && r?.chain.count == 7, "chain: decoded from an old config")
+    expect(r?.chain.last == AIChain.Entry("local", on: false) && r?.chain.count == 6, "chain: decoded from an old config")
     expect(r?.order("tips", connected: all) == ["api", "code", "codex", "openai", "gemini"], "chain: AIRoutes.order")
     if let r = r, let data = try? JSONEncoder().encode(r), let back = try? JSONDecoder().decode(AppConfig.AIRoutes.self, from: data) {
         expect(back.chain == r.chain, "chain: round trip")
@@ -2511,8 +2521,6 @@ func componentsD3() {
     expect(r.chain.first { $0.route == "local" }?.on == false, "d3: the local step is off after removal")
     let none = ComponentCatalog.afterRemovingLocal(prep: "local", tips: "api", after: "code", chain: chain, connected: [])
     expect(none.prep == "code" && none.after == "code", "d3: nothing connected: the default route")
-    let agyOnly = ComponentCatalog.afterRemovingLocal(prep: "local", tips: "local", after: "local", chain: chain, connected: ["agy"])
-    expect(agyOnly.prep == "agy" && agyOnly.tips == "api", "d3: tips never move to the Gemini account")
     // search leads to Components
     let base = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
     func load(_ l: String) -> [String: String] {
@@ -3771,10 +3779,10 @@ func analyticsS4Part2(root: URL) {
     expect(A.callType(nil) == "general" && A.callType("auto") == "general" && A.callType("presentation") == "presentation"
            && A.callType("coach") == "other" && A.callType("Interview") == "interview", "analytics: call types")
     for t in ["auto", "presentation", "interview", "coach", "transcript", "x"] { expect((cat.enums["call_type"] ?? []).contains(A.callType(t)), "analytics: call type \(t)") }
-    for r in ["code", "plan", "api", "codex", "openai", "gemini", "agy", "local", "", "other"] {
+    for r in ["code", "plan", "api", "codex", "openai", "gemini", "local", "", "other"] {
         expect((cat.enums["provider"] ?? []).contains(A.provider(route: r)), "analytics: provider of \(r)")
     }
-    expect(A.provider(route: "plan") == "claude" && A.provider(route: "api") == "claude_api" && A.provider(route: "agy") == "gemini", "analytics: providers")
+    expect(A.provider(route: "plan") == "claude" && A.provider(route: "api") == "claude_api" && A.provider(route: "gemini") == "gemini", "analytics: providers")
     var cal = Calendar(identifier: .gregorian); cal.timeZone = TimeZone(identifier: "Europe/Kyiv")!
     let d0 = Date(timeIntervalSince1970: 1_795_000_000)
     expect(A.snapshotDue(last: nil, now: d0, calendar: cal) && !A.snapshotDue(last: d0, now: d0.addingTimeInterval(3600), calendar: cal)
@@ -4132,9 +4140,9 @@ func aiDefaultsF3() {
     // the ChatGPT account arrives later: it is adopted too (the newest account)
     n = AIDefaults.apply(n, connected: ["api", "code", "codex"])
     expect(n.prep == "codex" && n.after == "codex", "f3: a newly connected ChatGPT account becomes the default")
-    // the key is removed: tips go to what is left (an account), never to the model on this Mac or agy
-    n = AIDefaults.apply(n, connected: ["code", "codex", "local", "agy"])
-    expect(n.tips == "code", "f3: tips go to a connected account, never local or agy")
+    // the key is removed: tips go to what is left (an account), never to the model on this Mac
+    n = AIDefaults.apply(n, connected: ["code", "codex", "local"])
+    expect(n.tips == "code", "f3: tips go to a connected account, never local")
     // an update with accounts already connected and a working choice: nothing is taken over
     r = AppConfig.AIRoutes(); r.prep = "api"; r.after = "api"
     n = AIDefaults.apply(r, connected: ["api", "code"])
@@ -4145,13 +4153,10 @@ func aiDefaultsF3() {
     // only ChatGPT through the API key: every job on it
     n = AIDefaults.apply(AppConfig.AIRoutes(), connected: ["openai"])
     expect(n.prep == "openai" && n.after == "openai" && n.tips == "openai", "f3: only an OpenAI key does every job")
-    // only the Gemini account: prep and after on it, tips cannot (too slow), the choice stays and the engine says why
-    n = AIDefaults.apply(AppConfig.AIRoutes(), connected: ["agy"])
-    expect(n.prep == "agy" && n.after == "agy" && n.tips == "api", "f3: the Gemini account never runs tips")
     expect(AIDefaults.pick(job: "prep", chosen: "gemini", connected: ["gemini", "code"]) == "gemini", "f3: pick keeps a connected choice")
     // the config keeps `seen` across a save, an older config without it reads as nil
     if let d = try? JSONEncoder().encode(n), let back = try? JSONDecoder().decode(AppConfig.AIRoutes.self, from: d) {
-        expect(back.seen == ["agy"], "f3: seen is saved")
+        expect(back.seen == ["openai"], "f3: seen is saved")
     } else { expect(false, "f3: routes encode") }
     if let old = try? JSONDecoder().decode(AppConfig.AIRoutes.self, from: Data("{\"prep\":\"api\"}".utf8)) {
         expect(old.seen == nil && old.prep == "api", "f3: an older config has no seen")
@@ -4756,5 +4761,49 @@ func callSpeakersB3() {
     expect(!CallSpeakers.notesStale(editedAt: 1500, notesWritten: Date(timeIntervalSince1970: 1600)), "rewrite: notes written again are fresh")
 }
 callSpeakersB3()
+func downloadCancellation() {
+    let first = String(repeating: "a", count: 64)
+    let second = String(repeating: "b", count: 64)
+    let live = "sha256-\(first)"
+    let shared = "sha256-\(second)"
+    let files = [live, live + "-partial", live + "-partial-0", live + "-partial-backup",
+                 shared, shared + "-partial", "sha256-other-partial"]
+    let cleanup = DownloadPlan.ollamaCleanup(files: files, existing: [live + "-partial-0"],
+        digests: ["sha256:\(first)", "sha256:\(second)", "../outside"], referenced: [shared])
+    expect(cleanup == [live, live + "-partial", live + "-partial-0"],
+           "cancel cleans new blobs and partials from earlier attempts for the active pull")
+    expect(DownloadPlan.ollamaCleanup(files: files, existing: [live, live + "-partial", live + "-partial-0"],
+        digests: ["sha256:\(first)"], referenced: []) == [live + "-partial", live + "-partial-0"],
+        "cancel preserves complete blobs present at the start and removes matching partials")
+    expect(DownloadPlan.ollamaCleanup(files: files, existing: [], digests: [], referenced: []).isEmpty,
+           "cancel before the first progress event leaves unrelated blobs alone")
+    expect(DownloadPlan.requiresAppleSilicon(["whisper"]), "MLX Whisper requires Apple silicon")
+    expect(!DownloadPlan.requiresAppleSilicon(["localai", "local_model"]), "ONNX and Ollama can run on Intel")
+}
+downloadCancellation()
+func ollamaCleanupRechecksLatePartials() async throws {
+    let fm = FileManager.default
+    let directory = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try fm.createDirectory(at: directory, withIntermediateDirectories: false)
+    defer { try? fm.removeItem(at: directory) }
+
+    let hash = String(repeating: "a", count: 64)
+    let partial = directory.appendingPathComponent("sha256-\(hash)-partial")
+    var scans = 0
+    let cleaned = await DownloadPlan.recheckOllamaCleanup {
+        scans += 1
+        do {
+            let files = try fm.contentsOfDirectory(atPath: directory.path)
+            let matches = DownloadPlan.ollamaCleanup(files: files, existing: [], digests: ["sha256:\(hash)"], referenced: [])
+            for match in matches { try fm.removeItem(at: directory.appendingPathComponent(match)) }
+            // Ollama can create a partial after the first directory listing.
+            if scans == 1 { try Data().write(to: partial) }
+            return matches.count
+        } catch { return nil }
+    }
+    expect(cleaned, "cancel cleanup reaches a quiet directory")
+    expect(!fm.fileExists(atPath: partial.path), "cancel removes a partial created after the first scan")
+}
+try await ollamaCleanupRechecksLatePartials()
 print("core checks: \(passed) passed, \(failures) failed")
 exit(failures == 0 ? 0 : 1)

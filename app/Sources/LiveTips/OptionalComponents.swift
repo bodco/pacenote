@@ -18,7 +18,8 @@ final class OptionalComponents: ObservableObject {
     @Published var sizes: [String: Int64] = [:]
     /// After a removal: what went and how much it freed (Settings > Components shows it with Install again).
     @Published var removed: (id: String, bytes: Int64)?
-    private var linkTask: Task<Void, Never>?
+    private var pending = Set<String>()
+    @Published private(set) var stopping = Set<String>()
 
     var all: [Comp] {
         [Comp(id: "local_model", title: L("comp.name.model"), tech: L("comp.tech.model", ["model": LocalLLM.suggestedLabel]), purpose: L("comp.for.model2")),
@@ -28,6 +29,13 @@ final class OptionalComponents: ObservableObject {
     }
 
     func title(_ id: String) -> String { id == "ollama" ? L("comp.human.ollama") : all.first { $0.id == id }?.title ?? id }
+
+    var installingAddOn: Bool {
+        for id in ["agent", "link_downloader"] {
+            if case .installing = states[id] { return true }
+        }
+        return false
+    }
 
     var duringCall: Bool {
         let st = EngineStatus.load(path: CallEngine.shared.statusPath)
@@ -41,8 +49,10 @@ final class OptionalComponents: ObservableObject {
         case "ollama": return llm.installed ? .installed(llm.running ? L("comp.running") : "") : .missing
         case "local_model":
             if llm.pulling != nil { return .installing(llm.progress) }
-            if llm.models.contains(LocalLLM.model) { return .installed(LocalLLM.model) }
-            return LocalLLM.onDisk(LocalLLM.model) ? .installed(llm.running ? LocalLLM.model : L("comp.startToUse")) : .missing
+            let model = LocalLLM.model
+            if llm.models.contains(model) { return .installed(model) }
+            if LocalLLM.onDisk(model) { return .installed(llm.running ? model : L("comp.startToUse")) }
+            return llm.failedPull == model ? .failed(llm.note) : .missing
         default: return states[id] ?? .unknown
         }
     }
@@ -54,35 +64,54 @@ final class OptionalComponents: ObservableObject {
         Task {
             var out = ""
             let rc = await SetupWindow.model.run("check", "linkdl") { out += $0 }
-            states["link_downloader"] = rc == 0 && out.hasPrefix("OK") ? .installed(String(out.dropFirst(3)).trimmingCharacters(in: .whitespaces)) : .missing
+            if !pending.contains("link_downloader") { states["link_downloader"] = rc == 0 && out.hasPrefix("OK") ? .installed(String(out.dropFirst(3)).trimmingCharacters(in: .whitespaces)) : .missing }
             var ag = ""
             let rc2 = await SetupWindow.model.run("check", "agent") { ag += $0 }
-            states["agent"] = rc2 == 0 && ag.hasPrefix("OK") ? .installed(String(ag.dropFirst(3)).trimmingCharacters(in: .whitespaces)) : .missing
+            if !pending.contains("agent") { states["agent"] = rc2 == 0 && ag.hasPrefix("OK") ? .installed(String(ag.dropFirst(3)).trimmingCharacters(in: .whitespaces)) : .missing }
         }
     }
 
     func install(_ id: String) {
-        guard !duringCall else { return }
+        Task { await installAndWait(id) }
+    }
+
+    func installAndWait(_ id: String) async {
+        let setup = SetupWindow.model
+        guard !duringCall, !pending.contains(id), !isInstalled(id) else { return }
         if removed?.id == id { removed = nil }
         switch id {
-        case "ollama": LocalLLM.shared.start()                         // opens ollama.com/download when it is not on this Mac
+        case "ollama": LocalLLM.shared.start()
         case "local_model":
-            // v2 (D3): one row. Without Ollama on this Mac Install opens its download page first; then the model downloads.
-            if LocalLLM.shared.installed { LocalLLM.shared.install(LocalLLM.model) } else { LocalLLM.shared.start() }
-        default:
-            states[id] = .installing(nil)
-            linkTask = Task {
-                var last = ""
-                let rc = await SetupWindow.model.run("install", id == "agent" ? "agent" : "linkdl") { last = $0 }
-                states[id] = rc == 0 ? .installed("") : .failed(last.isEmpty ? L("comp.failed") : last)
-                if rc == 0 { refresh(); await measure(id) }
+            if LocalLLM.shared.installed {
+                await LocalLLM.shared.install(LocalLLM.model)
+            } else {
+                LocalLLM.shared.start()
             }
+        default:
+            guard let step = ComponentCatalog.setupStep(id), !setup.busy, !installingAddOn else { return }
+            pending.insert(id)
+            defer { pending.remove(id); stopping.remove(id) }
+            let free = DiskSpace.free(at: URL(fileURLWithPath: setup.appRoot))
+            guard await DownloadPreflight.confirm(steps: [step], bytes: ComponentCatalog.estimate(id), free: free),
+                  !setup.busy, !installingAddOn, !duringCall else { return }
+            states[id] = .installing(nil)
+            var last = ""
+            let rc = await setup.installAddOn(step) { last = $0 }
+            if stopping.contains(id) { states[id] = .missing }
+            else if rc == 0 { states[id] = .installed(""); await measure(id) }
+            else { states[id] = .failed(last.isEmpty ? L("comp.failed") : last) }
         }
     }
 
     func cancel(_ id: String) {
-        linkTask?.cancel(); linkTask = nil
-        states[id] = .missing
+        if id == "local_model" { LocalLLM.shared.cancelPull(); return }
+        guard let step = ComponentCatalog.setupStep(id), case .installing = states[id] else { return }
+        stopping.insert(id)
+        SetupWindow.model.cancelProcess(step)
+    }
+
+    func isStopping(_ id: String) -> Bool {
+        id == "local_model" ? LocalLLM.shared.stopping : stopping.contains(id)
     }
 
     // MARK: 0.16.0 (D3): sizes and removal
@@ -181,9 +210,12 @@ struct ComponentStateLine: View {
         switch oc.state(id) {
         case .installed(let v): Text(v.isEmpty ? L("comp.installed") : L("comp.installedV", ["v": v])).font(PN.Font.caption).foregroundStyle(PN.C.turn)
         case .missing, .unknown:
-            Text(id == "local_model" && !llm.installed ? L("comp.needsOllama") : L("comp.notInstalled")).font(PN.Font.caption).foregroundStyle(PN.C.text3)
+            let note = id == "local_model" && !llm.note.isEmpty ? llm.note
+                : L(id == "local_model" && !llm.installed ? "comp.needsOllama" : "comp.notInstalled")
+            Text(note).font(PN.Font.caption).foregroundStyle(PN.C.text3)
         case .installing(let p):
             if let p = p { ProgressView(value: p).frame(maxWidth: 220) } else { PNSpinner(size: 16) }
+            if id == "local_model" { Text(llm.note).font(PN.Font.caption).foregroundStyle(PN.C.text3) }
         case .removing: Text(L("comp.removing")).font(PN.Font.caption).foregroundStyle(PN.C.text3)
         case .failed(let e): Text(e).font(PN.Font.caption).foregroundStyle(PN.C.danger).lineLimit(1)
         }
@@ -198,7 +230,9 @@ struct ComponentAction: View {
     var body: some View {
         switch oc.state(id) {
         case .installed, .removing: EmptyView()
-        case .installing: if ["link_downloader", "agent"].contains(id) { Button(L("common.cancel")) { oc.cancel(id) }.buttonStyle(.pnTertiary) }
+        case .installing:
+            Button(L(oc.isStopping(id) ? "download.stopping" : "common.cancel")) { oc.cancel(id) }
+                .buttonStyle(.pnTertiary).disabled(oc.isStopping(id))
         case .failed: Button(L("comp.retry")) { oc.install(id) }.buttonStyle(.pnSecondary).disabled(oc.duringCall)
         default:
             Button(oc.duringCall ? L("comp.afterCall") : (id == "local_model" && !llm.installed ? L("comp.getOllama") : L("comp.install"))) { oc.install(id) }
@@ -211,11 +245,12 @@ struct ComponentAction: View {
 struct NeedsComponent: View {
     let id: String
     @ObservedObject var oc = OptionalComponents.shared
+    @ObservedObject var llm = LocalLLM.shared
     var body: some View {
         if !oc.isInstalled(id) {
             HStack(spacing: 4) {
                 Text(L("comp.needs", ["name": oc.title(id)])).font(PN.Font.caption).foregroundStyle(PN.C.text3)
-                Button(oc.duringCall ? L("comp.afterCall") : L("comp.install")) { oc.install(id) }.buttonStyle(.pnTertiary).disabled(oc.duringCall)
+                ComponentAction(id: id)
             }
         }
     }

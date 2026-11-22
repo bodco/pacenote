@@ -249,7 +249,7 @@ Commands: `validate`, `readiness`, `presets`, `new`, `sources`, `candidates`, `s
  "participants": {"ours": [{"name": "Mike Carter"}], "theirs": [{"name": "Emily Parker", "company": "Lumenfield"}]},
  "preset": "sales_intro", "blocks": ["header", "company", "qualification", "questions"], "method": "bant",
  "mode": "expert", "language": "en", "context": "free text; links in it come back as suggestions",
- "route": "code|api|codex|openai|gemini|agy|local", "plan": "one|passes|compress",
+ "route": "code|api|codex|openai|gemini|local", "plan": "one|passes|compress",
  "sources": [{"path": "~/deck.pptx", "deck": {"owners": {"2": "Jake T."}, "minutes": 20, "qa_minutes": 5}},
              {"uri": "https://docs.google.com/document/d/<id>/edit"}, {"type": "linkedin_manual", "text": "..."}],
  "google": {"connected": true, "copies": {"<id>": "<live/google/...md>"}}, "notion": {"connected": false},

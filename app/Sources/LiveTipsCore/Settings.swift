@@ -127,9 +127,6 @@ public struct AppConfig: Codable, Equatable {
         /// 0.9.3 (owner): plan B, off by default. When the chosen way is out (no credit, the plan limit, a bad key) the
         /// job goes to Gemini. The text of the call then reaches Google; that is why the PM turns it on.
         public var geminiFallback = false
-        /// 0.9.3 (owner): the Gemini account (Antigravity CLI) model for the preparation and after the call.
-        public var agyPrep = "gemini-3.8-flash-medium"
-        public var agyAfter = "gemini-3.8-flash-medium"
         /// 0.10.0 (AI chain, owner 12.11): one fallback chain for every job (LiveTipsCore/AIChain.swift): the job's
         /// AI first, then the connected AIs in this order, each with its own checkbox. Connected AIs are in it by
         /// default (sending call text to another provider is fine, PM 12.11); `autoSwitch` turns the chain off.
@@ -138,6 +135,7 @@ public struct AppConfig: Codable, Equatable {
         /// 0.24.1 (F3, owner 18.11): the AIs that were connected the last time the routes followed them (AIDefaults);
         /// nil until the first look, so an update never takes over a choice.
         public var seen: [String]? = nil
+        public var geminiAccountNoticePending = false
         public func order(_ job: String, connected: Set<String>) -> [String] {
             AIChain.order(job: job, chosen: route(job), chain: chain, connected: connected, auto: autoSwitch)
         }
@@ -157,15 +155,19 @@ public struct AppConfig: Codable, Equatable {
             geminiTips = (try? c.decodeIfPresent(String.self, forKey: .geminiTips)) ?? d.geminiTips
             geminiAfter = (try? c.decodeIfPresent(String.self, forKey: .geminiAfter)) ?? d.geminiAfter
             geminiFallback = (try? c.decodeIfPresent(Bool.self, forKey: .geminiFallback)) ?? d.geminiFallback
-            agyPrep = (try? c.decodeIfPresent(String.self, forKey: .agyPrep)) ?? d.agyPrep
-            agyAfter = (try? c.decodeIfPresent(String.self, forKey: .agyAfter)) ?? d.agyAfter
             // 0.10.0 (AI chain): an older config has no chain: the default order, the local step as it was
             chain = AIChain.normalized((try? c.decodeIfPresent([AIChain.Entry].self, forKey: .chain)) ?? AIChain.defaults(localOn: localFallback))
-            seen = try? c.decodeIfPresent([String].self, forKey: .seen)
+            seen = (try? c.decodeIfPresent([String].self, forKey: .seen))?.filter { $0 != "agy" }
+            let usesGeminiAccount = [prep, tips, after].contains("agy")
+            geminiAccountNoticePending = usesGeminiAccount ||
+                ((try? c.decodeIfPresent(Bool.self, forKey: .geminiAccountNoticePending)) ?? false)
+            prep = Self.migratedRoute(prep)
+            tips = Self.migratedRoute(tips)
+            after = Self.migratedRoute(after)
         }
+        public static func migratedRoute(_ route: String) -> String { route == "agy" ? "gemini" : route }
         public func openaiModel(_ job: String) -> String { job == "prep" ? openaiPrep : job == "tips" ? openaiTips : openaiAfter }
         public func geminiModel(_ job: String) -> String { job == "prep" ? geminiPrep : job == "tips" ? geminiTips : geminiAfter }
-        public func agyModel(_ job: String) -> String { job == "prep" ? agyPrep : agyAfter }
         public func route(_ job: String) -> String { job == "prep" ? prep : job == "tips" ? tips : after }
     }
     /// Engine processes (M1-M2: Python core). Not shown in the UI; set by the installer.

@@ -342,7 +342,7 @@ public enum Analytics {
         case "api", "claude_api": return "claude_api"
         case "codex", "chatgpt": return "codex"
         case "openai", "openai_api": return "openai_api"
-        case "gemini", "agy", "antigravity": return "gemini"
+        case "gemini": return "gemini"
         case "local", "ollama": return "local"
         default: return "none"
         }
