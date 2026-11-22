@@ -473,7 +473,7 @@ class _SiteRedirect(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
-def http_get(url: str, timeout: float = 15.0, total_s: float = 30.0, allow=None, stop=None):
+def http_get(url: str, timeout: float = 15.0, total_s: float = 30.0, allow=None, stop=None, max_bytes: int = 0):
     """(status, final url, content type, text). Raises FetchError for transport errors (and a page slower than
     total_s in all). `allow(url)`: robots.txt check for each redirect destination. `stop()`: true = Cancelled before the request and before each redirect. The text is a Body: .cut > 0 when the page was longer than MAX_BYTES."""
     target = urllib.parse.urlsplit(url)
@@ -488,7 +488,7 @@ def http_get(url: str, timeout: float = 15.0, total_s: float = 30.0, allow=None,
                                              _SiteRedirect(allow, stop))
         with opener.open(req, timeout=timeout) as r:
             ctype = r.headers.get("Content-Type", "")
-            raw, cut = read_capped(r, MAX_BYTES, total_s, stop)
+            raw, cut = read_capped(r, max_bytes or MAX_BYTES, total_s, stop)
             cs = r.headers.get_content_charset() or "utf-8"
             body = Body(raw.decode(cs, errors="replace"))
             body.cut = len(raw) if cut else 0

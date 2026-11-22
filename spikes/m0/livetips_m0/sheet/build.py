@@ -271,44 +271,35 @@ PAGE_MAX_BYTES = 3_000_000
 
 
 def robots_allowed(url: str, timeout: float = 10.0) -> bool:
-    """0.10.0 (Meeting Sheet, hardening): robots.txt with a timeout (RobotFileParser.read() has none: a silent host
-    hung the build). Unreachable or slow: allowed (the page itself decides); 401/403: not allowed."""
-    import urllib.error
-    import urllib.robotparser as RP
-    u = urlparse(url)
-    rp = RP.RobotFileParser(f"{u.scheme}://{u.netloc}/robots.txt")
+    """0.10.0 (Meeting Sheet, hardening): robots.txt with a timeout. PB-37: the lookup goes through the crawler's
+    public-address connection (web.http_get), so a private or loopback host is never contacted.
+    Unreachable or slow: allowed (the page itself decides); 401/403: not allowed."""
+    from . import web
     try:
-        rq = urllib.request.Request(rp.url, headers={"User-Agent": "Pacenote (meeting sheet; one page the user linked)"})
-        with urllib.request.urlopen(rq, timeout=timeout) as r:
-            from .web import read_capped
-            raw, _cut = read_capped(r, 500_000, timeout)
-        rp.parse(raw.decode("utf-8", "replace").splitlines())
-    except urllib.error.HTTPError as e:
-        return e.code not in (401, 403)
+        return web.Robots(getter=lambda u: web.http_get(u, timeout=timeout, total_s=timeout)).allowed(url)
     except Exception:  # noqa: BLE001
         return True
-    return rp.can_fetch("Pacenote", url)
 
 
 def fetch_page(url: str, timeout: float = 20.0) -> Tuple[str, Optional[str], int]:
     """One page, the user's own link, read once. robots.txt is honoured (with a timeout) until the browser module
     (phase 6) takes this over through sources.web_allowed. 0.10.0 (hardening): the whole read has `timeout` s, and
-    the third value is the bytes read when the page was cut at PAGE_MAX_BYTES (0 = whole page)."""
+    the third value is the bytes read when the page was cut at PAGE_MAX_BYTES (0 = whole page). PB-37: the request
+    uses the crawler's public-address connection and redirect checks (web.http_get)."""
+    from . import web
     allowed = SRC.web_allowed(url)
     if allowed is None:
         allowed = robots_allowed(url)
     if not allowed:
         return "", "the site's robots.txt does not allow automatic reading", 0
     try:
-        from .web import read_capped
-        rq = urllib.request.Request(url, headers={"User-Agent": "Pacenote (meeting sheet; one page the user linked)"})
-        with urllib.request.urlopen(rq, timeout=timeout) as r:
-            ctype = r.headers.get("Content-Type", "")
-            raw, cut = read_capped(r, PAGE_MAX_BYTES, timeout * 2)
+        status, _final, ctype, body = web.http_get(url, timeout=timeout, total_s=timeout * 2, max_bytes=PAGE_MAX_BYTES)
+        if status >= 400:
+            return "", f"cannot open the page: HTTP {status}", 0
         if "html" not in ctype and "text" not in ctype:
             return "", f"not a web page ({ctype.split(';')[0] or 'unknown type'})", 0
-        text = readers.html_text(raw.decode("utf-8", "replace"))
-        return text, None if text.strip() else "the page has no text", (len(raw) if cut else 0)
+        text = readers.html_text(str(body))
+        return text, None if text.strip() else "the page has no text", int(getattr(body, "cut", 0) or 0)
     except Exception as e:  # noqa: BLE001
         return "", f"cannot open the page: {type(e).__name__}", 0
 

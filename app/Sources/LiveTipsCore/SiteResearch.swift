@@ -146,6 +146,11 @@ public struct SiteChild: Equatable {
     public var parentURI: String
     public var used: String
     public var reason: String?
+    /// An empty or placeholder page: kept in the report, never given to the model.
+    public var empty = false
+    /// A page cut at the byte limit: kept so the build reports it as truncated.
+    public var cutRead: Int?
+    public var cutLimit: Int?
 }
 
 /// The report of `webfetch`: what was read, every page's state, the other sites offered.
@@ -165,7 +170,8 @@ public struct SiteReadReport: Equatable {
             guard let u = o["uri"] as? String, let p = o["path"] as? String else { return nil }
             return SiteChild(id: o["id"] as? String ?? u, uri: u, path: p, title: o["title"] as? String ?? u, tokens: o["size_tokens"] as? Int ?? 0,
                              why: o["why"] as? [String] ?? [], parentURI: o["parent_uri"] as? String ?? start,
-                             used: o["used"] as? String ?? "full", reason: o["reason"] as? String)
+                             used: o["used"] as? String ?? "full", reason: o["reason"] as? String, empty: o["empty"] as? Bool ?? false,
+                             cutRead: (o["cut"] as? [String: Any])?["read_bytes"] as? Int, cutLimit: (o["cut"] as? [String: Any])?["limit_bytes"] as? Int)
         }
         suggested = (json["suggested"] as? [[String: Any]] ?? []).compactMap { o in
             guard let u = o["uri"] as? String ?? o["url"] as? String else { return nil }

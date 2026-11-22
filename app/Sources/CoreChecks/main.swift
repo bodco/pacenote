@@ -4830,6 +4830,12 @@ func siteResearchPB37C() {
     expect(report.children[1].parentURI == "https://example-company.com/" && report.children[1].why == ["page of example-company.com (team)"], "site report: the parent defaults to the site, why kept")
     expect(report.suggested.first?.url == "https://other.example.org/x" && report.suggested.first?.domain == "other.example.org", "site report: other sites are suggested, not read")
     expect(SiteReadReport(json: ["error": "boom"]) == nil, "site report: an error answer is no report")
+    let flags = SiteReadReport(json: ["url": "https://example-company.com/", "sources": [
+        ["id": "w1", "uri": "https://example-company.com/a", "path": "/tmp/w/a.txt", "title": "A", "used": "truncated",
+         "cut": ["read_bytes": 2_000_000, "limit_bytes": 2_000_000]],
+        ["id": "w2", "uri": "https://example-company.com/b", "path": "/tmp/w/b.txt", "title": "B", "used": "not_used", "empty": true]]])
+    expect(flags?.children[0].cutRead == 2_000_000 && flags?.children[0].cutLimit == 2_000_000 && flags?.children[0].empty == false
+           && flags?.children[1].empty == true && flags?.children[1].cutRead == nil, "site report: empty and cut states are kept for the build")
 
     // PB-37C fix: the start page child has the site's URL; it must stay a build source, the site row must not
     let site = "https://example-company.com/"

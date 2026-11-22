@@ -2296,7 +2296,7 @@ this website** button on its row, in Expert Sources and in Quick. Without it a p
 reads the site. First it opens the home page and shows a plan, before anything else is read: each page with its path,
 a tick, and the reason when it is left out (sign-in, cart, policy, feed, contact, a file, robots.txt, over the limit,
 same text as another page). Only pages of that site are planned; other sites are shown as suggested sources and are
-never read. The pages are put in order by the goal of the call, its type and the audience (a page whose link text
+never read. The pages are put in order by the goal of the call and its type (a page whose link text
 or path matches the goal comes first; with no goal, the usual order: about, team, product, pricing, customers, news).
 The budget is 15 pages with the home page counted, and the square - and + buttons next to the counter change it (1 to 30); when the budget is reached, a line says to untick a page or raise the number. The plan shows the
 estimated size and a **cost line** for the AI route you chose: tokens and money where the route has a price, and for

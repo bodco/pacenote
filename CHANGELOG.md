@@ -6,7 +6,7 @@ Pacenote. Earlier versions are described in the commit messages and in
 ## Unreleased
 
 - **Research this website (2026-11-22, G6):** a link to a company's site now has a Research this website button in
-  Sources, in Expert and in Quick. It shows a plan first (pages ordered by the call goal, type and audience, 15 pages
+  Sources, in Expert and in Quick. It shows a plan first (pages ordered by the call goal and type, 15 pages
   by default and up to 30, a cost line for your AI route, and the reason for every page left out), then reads the
   ticked pages one by one with progress and Cancel. Every AI route reads the same stored copy of a page. Copies are
   kept in the hidden `.work/web/<host>` folder inside the call folder, which Google Drive may sync. The page budget uses
@@ -19,7 +19,11 @@ Pacenote. Earlier versions are described in the commit messages and in
   one site no longer stop each other, nothing is read while a call is being recorded (a call that starts stops a read in
   progress), and if the reader ends early the pages already read are kept with a message and Read again. Planning
   follows the same redirect rule as reading, and a call that starts also stops a plan in progress; Cancel and a
-  starting call make no further request, even inside a redirect or a robots.txt lookup. The reason a page is ranked
+  starting call make no further request, even inside a redirect or a robots.txt lookup. Removing a website while it is
+  being planned or read stops the work first. Empty and cut pages are carried from the research into the built report
+  (an empty page is listed and never sent to the model, a cut page is reported as truncated), and a website read
+  automatically at build time follows the same private-address and redirect rules as the crawler. In Quick, the
+  pages read are counted per site. The reason a page is ranked
   is worded in your language, a private address is reported as such (not as robots.txt), and exact quotes from
   researched pages are never sent to Pacenote by call sync.
 - **Quick prep takes a link (2026-11-22, FB7):** the Sources line of Quick has a Link to add field, so a link no

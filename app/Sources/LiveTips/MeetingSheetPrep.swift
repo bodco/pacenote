@@ -169,7 +169,9 @@ struct SheetQuickView: View {
         let bad = checked.filter { ["denied", "unsupported"].contains($0.access) }
         let pages = checked.filter { $0.parentURI != nil }
         let titles = checked.isEmpty ? L("sheet.ui.quick.noSources") : PeopleSides.summary(checked.filter { $0.parentURI == nil }.map(\.title), first: 3)
-        let line = titles + (pages.first?.parentURI.map { " · " + L("sheet.ui.web.pagesOfSite", ["n": "\(pages.count)", "domain": SiteResearch.host($0)]) } ?? "")
+        // pages counted per site, each with its own domain
+        let perSite = Dictionary(grouping: pages.compactMap(\.parentURI), by: { SiteResearch.host($0) })
+        let line = titles + perSite.keys.sorted().map { " · " + L("sheet.ui.web.pagesOfSite", ["n": "\(perSite[$0]?.count ?? 0)", "domain": $0]) }.joined()
         let problem: String? = checked.isEmpty ? L("sheet.ui.quick.noSourcesSub")
             : bad.isEmpty ? nil : bad.map { $0.title + ": " + ($0.reason ?? SheetLabels.access(source: $0)) }.joined(separator: "; ")
         return summaryRow("sources", L("sheet.ui.row.sources"), line, ok: problem == nil, problem: problem,

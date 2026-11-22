@@ -47,6 +47,11 @@ struct DraftSource: Identifiable, Equatable {
     var folder: SheetFolderInfo?
     // PB-37 (G6, Research this website): a page read from a site points to the site's link; the site row counts its pages
     var parentURI: String?
+    // PB-37: the read state of a researched page travels to the build: an empty page is reported, never sent to the model;
+    // a cut page is reported as truncated
+    var empty = false
+    var cutRead: Int?
+    var cutLimit: Int?
 }
 
 @MainActor
@@ -281,7 +286,8 @@ final class SheetDraft: ObservableObject {
         let at = (sources.firstIndex(where: { $0.id == parent }) ?? sources.count - 1) + 1
         let kids = rep.children.map { c in
             DraftSource(id: "u" + c.id + String(UUID().uuidString.prefix(4)).lowercased(), type: "web_page", path: c.path, uri: c.uri, title: c.title, auto: false,
-                        why: c.why, checked: c.used != "not_used", access: c.used == "not_used" ? "denied" : "ok", reason: c.reason, tokens: c.tokens, parentURI: parentURI)
+                        why: c.why, checked: c.used != "not_used", access: c.used == "not_used" ? "denied" : "ok", reason: c.reason, tokens: c.tokens, parentURI: parentURI,
+                        empty: c.empty, cutRead: c.cutRead, cutLimit: c.cutLimit)
         }
         sources.insert(contentsOf: kids, at: min(at, sources.count))
         for e in rep.suggested where !candidates.contains(where: { $0.uri == e.url }) && !sources.contains(where: { $0.uri == e.url }) {
@@ -295,6 +301,7 @@ final class SheetDraft: ObservableObject {
     func removeSource(id: String) {
         guard let s = sources.first(where: { $0.id == id }) else { return }
         let isSite = s.parentURI == nil
+        research[id]?.cancel()                 // a running plan or read stops before its session goes
         sources.removeAll { $0.id == id || (isSite && $0.parentURI != nil && $0.parentURI == s.uri) }
         research[id] = nil
     }
@@ -313,12 +320,15 @@ final class SheetDraft: ObservableObject {
             return d
         }
         // PB-37 (G6): a site whose pages were read is not fetched again at build time: its pages are the sources
-        let src: [[String: Any]] = sources.filter { s in s.checked && !pagesRead(of: s) }.map { s -> [String: Any] in
+        // an empty researched page is listed (the report shows it) though unticked: the build keeps it out of the model input
+        let src: [[String: Any]] = sources.filter { s in (s.checked || (s.empty && s.parentURI != nil)) && !pagesRead(of: s) }.map { s -> [String: Any] in
             var d: [String: Any] = ["id": s.id, "type": s.type, "title": s.title, "auto": s.auto]
             if let p = s.path { d["path"] = p }
             if let u = s.uri { d["uri"] = u }
             if let t = s.text { d["text"] = t }
             if let parent = s.parentURI { d["parent_uri"] = parent }
+            if s.empty { d["empty"] = true }
+            if let r = s.cutRead, let l = s.cutLimit { d["cut"] = ["read_bytes": r, "limit_bytes": l] }
             if !s.why.isEmpty { d["why"] = s.why }
             if s.type == SourceType.folder.rawValue, let days = s.days { d["days"] = days }     // 0.10.0 (Meeting Sheet, folders)
             if s.deck {
