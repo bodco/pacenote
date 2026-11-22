@@ -298,6 +298,11 @@ struct HubSpotPage: View {
                     Toggle(L("int.hubspot.writeCall"), isOn: $model.config.crm.writeCall)
                     Toggle(L("int.hubspot.autoCall"), isOn: $model.config.crm.autoLogCall).help(L("int.hubspot.autoCallHelp"))
                         .disabled(!model.config.crm.writeCall)
+                    Toggle(L("int.hubspot.autoContacts"), isOn: $model.config.crm.autoCreateContacts).help(L("int.hubspot.autoPeopleHelp"))
+                    Toggle(L("int.hubspot.autoCompanies"), isOn: $model.config.crm.autoCreateCompanies).help(L("int.hubspot.autoPeopleHelp"))
+                    Toggle(L("int.hubspot.proposeLeads"), isOn: $model.config.crm.proposeLeads).help(L("int.hubspot.leadsHelp", ["scopes": HubSpotConnector.leadScopes.joined(separator: ", ")]))
+                    Toggle(L("int.hubspot.autoLeads"), isOn: $model.config.crm.autoCreateLeads).help(L("int.hubspot.autoPeopleHelp"))
+                        .disabled(!model.config.crm.proposeLeads)
                     Picker(L("int.hubspot.callDirection"), selection: $model.config.crm.callDirection) {
                         Text(L("int.hubspot.dir.OUTBOUND")).tag("OUTBOUND"); Text(L("int.hubspot.dir.INBOUND")).tag("INBOUND")
                     }

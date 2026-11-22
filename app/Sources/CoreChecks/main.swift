@@ -759,6 +759,163 @@ func crmCalls() async {
     expect(CRMCallLog(key: "k", title: "t", start: start, durationMs: -5, direction: "sideways", body: "").direction == "OUTBOUND", "calls: direction and duration are clamped")
 }
 
+/// H3: a small in-memory HubSpot with contacts, companies and leads. Never the network.
+final class FakeHubSpotPeople: CRMTransport {
+    var contacts: [String: [String: String]] = [:]
+    var companies: [String: [String: String]] = [:]
+    var leads: [String: [String: String]] = [:]
+    var leadsOf: [String: [String]] = [:]             // contact id -> lead ids
+    var companyContacts: [String: [String]] = [:]      // company id -> contact ids
+    var assoc: [String: [String]] = [:]                // "type/id" -> "to#typeId"
+    var log: [String] = []
+    var bodies: [[String: Any]] = []
+    var next = 500
+    var raceEmail = ""                                 // a contact with this email appears between the search and the create (409)
+    func send(_ method: String, _ path: String, _ body: [String: Any]?) async throws -> (Int, [String: Any], [String: String]) {
+        let clean = String(path.split(separator: "?")[0])
+        log.append(method + " " + clean)
+        if let b = body { bodies.append(b) }
+        let props = ((body?["properties"] as? [String: Any]) ?? [:]).mapValues { "\($0)" }
+        let filters = ((body?["filterGroups"] as? [[String: Any]]) ?? []).compactMap { ($0["filters"] as? [[String: Any]])?.first?["value"] as? String }
+        func assocs() -> [String] { ((body?["associations"] as? [[String: Any]]) ?? []).map { a in "\((a["to"] as! [String: Any])["id"]!)#\(((a["types"] as! [[String: Any]])[0])["associationTypeId"]!)" } }
+        switch (method, clean) {
+        case ("POST", "/crm/v3/objects/contacts/search"):
+            let hits = contacts.filter { filters.contains($0.value["email"] ?? "?") }
+            return (200, ["results": hits.map { ["id": $0.key, "properties": $0.value] }], [:])
+        case ("POST", "/crm/v3/objects/companies/search"):
+            let prop = (((body?["filterGroups"] as? [[String: Any]])?.first?["filters"] as? [[String: Any]])?.first?["propertyName"] as? String) ?? ""
+            let hits = companies.filter { $0.value[prop] == filters.first }
+            return (200, ["results": hits.map { ["id": $0.key, "properties": $0.value] }], [:])
+        case ("POST", "/crm/v3/objects/contacts"):
+            let e = props["email"] ?? ""
+            if e == raceEmail { return (409, ["message": "Contact already exists. Existing ID: 777"], [:]) }
+            if contacts.values.contains(where: { $0["email"] == e }) { return (409, ["message": "Contact already exists. Existing ID: 1"], [:]) }
+            next += 1; let id = "\(next)"; contacts[id] = props; assoc["contacts/" + id] = assocs()
+            return (201, ["id": id], [:])
+        case ("POST", "/crm/v3/objects/companies"):
+            next += 1; let id = "\(next)"; companies[id] = props; return (201, ["id": id], [:])
+        case ("POST", "/crm/v3/objects/leads"):
+            next += 1; let id = "\(next)"; leads[id] = props; assoc["leads/" + id] = assocs()
+            for a in assocs() where a.hasSuffix("#578") { leadsOf[String(a.split(separator: "#")[0]), default: []].append(id) }
+            return (201, ["id": id], [:])
+        case ("POST", "/crm/v3/objects/contacts/batch/read"):
+            let ids = ((body?["inputs"] as? [[String: Any]]) ?? []).compactMap { $0["id"] as? String }
+            return (200, ["results": ids.compactMap { id in contacts[id].map { ["id": id, "properties": $0] } }], [:])
+        default: break
+        }
+        let parts = clean.split(separator: "/").map(String.init)
+        if method == "GET", clean.hasPrefix("/crm/v4/objects/companies/"), parts.last == "contacts" {
+            return (200, ["results": (companyContacts[parts[4]] ?? []).map { ["toObjectId": Int($0)!] }], [:])
+        }
+        if method == "GET", clean.hasPrefix("/crm/v4/objects/contacts/"), parts.last == "leads" {
+            return (200, ["results": (leadsOf[parts[4]] ?? []).map { ["toObjectId": Int($0)!] }], [:])
+        }
+        if method == "PUT", clean.hasPrefix("/crm/v4/objects/calls/") { assoc["calls/" + parts[4]] = (assoc["calls/" + parts[4]] ?? []) + [parts[7] + "/" + parts[8]]; return (200, [:], [:]) }
+        if method == "DELETE", parts.count == 5 {
+            switch parts[3] { case "contacts": contacts[parts[4]] = nil; case "companies": companies[parts[4]] = nil; default: leads[parts[4]] = nil }
+            return (204, [:], [:])
+        }
+        return (404, ["message": "unexpected \(method) \(clean)"], [:])
+    }
+}
+
+func crmPeople() async {
+    let own: Set<String> = ["mycompany.example"]
+    let emily = CRMParticipant(name: "Emily Clark", email: "Emily.Clark@Orbit.example"), noah = CRMParticipant(name: "Noah Reed", email: "noah@orbit.example", role: "VP Sales")
+    let me = CRMParticipant(name: "Mike Doe", email: "mike@mycompany.example"), gm = CRMParticipant(name: "Liv Hart", email: "olivia.hart@gmail.com")
+    let anon = CRMParticipant(name: "Jaxon Moss", email: "jaxon.moss@gmail.com")      // free-mail and the name is only the email's own
+    // participants: paired by position when the lists match, else the name comes from the email
+    let ps = CRMPeople.participants(names: ["Emily Clark", "Noah Reed"], emails: ["Emily.Clark@Orbit.example", "noah@orbit.example", "noah@orbit.example"], titles: ["noah reed": "VP Sales"])
+    expect(ps.count == 3 && ps[0].email == "emily.clark@orbit.example" && ps[0].name == "Emily Clark" && ps[1].name == "Noah" && ps[2].email.isEmpty, "people: deduped by email, lowercased, names derived when the lists do not line up")
+    let pp = CRMPeople.participants(names: ["Emily Clark", "Noah Reed"], emails: ["emily.clark@orbit.example", "noah@orbit.example"], titles: ["noah reed": "VP Sales"])
+    expect(pp.map(\.name) == ["Emily Clark", "Noah Reed"] && pp[1].role == "VP Sales" && pp[0].role.isEmpty, "people: lists of the same length are paired and take the job title from the call page")
+    expect(CRMPeople.splitName("Mary Ann Smith") == ("Mary Ann", "Smith") && CRMPeople.splitName("Noah").last == "" && CRMPeople.nameKey("  Zoë  Clark ") == CRMPeople.nameKey("zoe clark"), "people: names split and compare without accents")
+
+    // 1. nothing exists: a company, two contacts (email lowercased, role kept), no one for the PM or the nameless free-mail address, no lead without the switch
+    let t = FakeHubSpotPeople()
+    let hs = HubSpotConnector(transport: t, ownerId: "9", sleep: { _ in })
+    let m1 = try? await CRMPeople.match(participants: [emily, noah, me, gm, anon], existing: nil, ownDomains: own, companyName: "", hasDeal: false, leads: false, connector: hs)
+    let kinds = m1?.proposals.map(\.id) ?? []
+    expect(kinds == ["company", "contact.0", "contact.1", "contact.2"], "people: company, Emily, Noah and the named free-mail contact are proposed; the PM and the nameless free-mail one are not")
+    expect(m1?.proposals.first?.name == "Orbit" && m1?.proposals.first?.domain == "orbit.example", "people: company name from the domain when the PM gave none")
+    let pe = m1?.proposals.first { $0.kind == .contact && $0.name == "Emily Clark" }
+    expect(pe?.email == "emily.clark@orbit.example" && pe?.company == "Orbit" && m1?.proposals.first { $0.name == "Noah Reed" }?.role == "VP Sales", "people: rows are prefilled with email, company and role")
+    expect(t.log.allSatisfy { $0.hasPrefix("POST") && $0.hasSuffix("search") || $0.hasPrefix("GET") }, "people: matching only reads")
+    // Leads: only with the switch and only without a deal
+    let m1l = try? await CRMPeople.match(participants: [emily], existing: nil, ownDomains: own, companyName: "Orbit Inc", hasDeal: false, leads: true, connector: hs)
+    expect(m1l?.proposals.map(\.id) == ["company", "contact.0", "lead.0"] && m1l?.proposals.first?.name == "Orbit Inc", "people: a lead is proposed with its contact; the PM's company name wins")
+    let m1d = try? await CRMPeople.match(participants: [emily], existing: nil, ownDomains: own, companyName: "", hasDeal: true, leads: true, connector: hs)
+    expect(m1d?.proposals.contains { $0.kind == .lead } == false, "people: no lead when the call has an open deal")
+
+    // 2. Apply the company and Emily: associated, no owner on a company or contact, one POST each
+    let chosen = (m1?.proposals ?? []).filter { $0.id == "company" || $0.name == "Emily Clark" }
+    let r1 = await CRMPeople.apply(chosen, company: nil, connector: hs)
+    expect(r1.failure == nil && r1.created.map(\.type) == ["companies", "contacts"] && t.companies.count == 1 && t.contacts.count == 1, "people: created once")
+    let cid = r1.company?.id ?? "", kid = r1.contacts.first?.id ?? ""
+    expect(t.companies[cid]?["domain"] == "orbit.example" && t.companies[cid]?["name"] == "Orbit" && t.companies[cid]?["hubspot_owner_id"] == nil, "people: company fields, no owner")
+    expect(t.contacts[kid]?["email"] == "emily.clark@orbit.example" && t.contacts[kid]?["firstname"] == "Emily" && t.contacts[kid]?["lastname"] == "Clark" && t.contacts[kid]?["hubspot_owner_id"] == nil, "people: contact fields, no owner")
+    expect(t.assoc["contacts/" + kid] == [cid + "#1"], "people: the contact is associated with the new company")
+
+    // 3. a second run finds everything: nothing is proposed, nothing is created
+    let m2 = try? await CRMPeople.match(participants: [emily], existing: nil, ownDomains: own, companyName: "", hasDeal: false, leads: true, connector: hs)
+    expect(m2?.proposals.isEmpty == true && m2?.contacts.first?.id == kid && m2?.company?.id == cid, "people: an existing email and domain are reused, nothing proposed")
+    let r2 = await CRMPeople.apply(chosen, company: nil, connector: hs)      // a stale review applied again (double click, second Mac)
+    expect(r2.failure == nil && r2.created.isEmpty && r2.reused == 2 && t.companies.count == 1 && t.contacts.count == 1, "people: applying again never duplicates")
+
+    // 4. email in another case; a person under another email is found by name inside the company
+    let m3 = try? await CRMPeople.match(participants: [CRMParticipant(name: "Emily Clark", email: "EMILY.CLARK@orbit.example")], existing: nil, ownDomains: own, companyName: "", hasDeal: false, leads: false, connector: hs)
+    expect(m3?.proposals.isEmpty == true, "people: the email match ignores case")
+    t.companyContacts[cid] = [kid]
+    let m4 = try? await CRMPeople.match(participants: [CRMParticipant(name: "emily clark", email: "emily@orbit-mail.example")], existing: CRMCompany(id: cid, name: "Orbit", domain: "orbit.example"), ownDomains: own, companyName: "", hasDeal: false, leads: false, connector: hs)
+    expect(m4?.proposals.contains { $0.kind == .contact } == false && m4?.contacts.first?.id == kid, "people: same name inside the company is the same person")
+    let m5 = try? await CRMPeople.match(participants: [CRMParticipant(name: "Emily", email: "emily@orbit-mail.example")], existing: CRMCompany(id: cid, name: "Orbit", domain: "orbit.example"), ownDomains: own, companyName: "", hasDeal: false, leads: false, connector: hs)
+    expect(m5?.proposals.contains { $0.kind == .contact } == true, "people: a first name alone is not a name match")
+    // more than five invitees: every email is searched (the connector looks at five at a time)
+    let many = (1...7).map { CRMParticipant(name: "Guest \($0)", email: "g\($0)@orbit.example") }
+    t.contacts["900"] = ["email": "g7@orbit.example"]
+    let m6 = try? await CRMPeople.match(participants: many, existing: CRMCompany(id: cid, name: "Orbit", domain: "orbit.example"), ownDomains: own, companyName: "", hasDeal: false, leads: false, connector: hs)
+    expect(m6?.contacts.contains { $0.id == "900" } == true && m6?.proposals.filter { $0.kind == .contact }.count == 6, "people: the seventh invitee is matched too")
+
+    // 5. a contact made by someone else between the search and the create: HubSpot's 409 names it and it is reused
+    t.raceEmail = "late@orbit.example"
+    let r3 = await CRMPeople.apply([CRMProposal(id: "contact.0", kind: .contact, name: "Late Comer", email: "late@orbit.example")], company: nil, connector: hs)
+    expect(r3.failure == nil && r3.contacts.first?.id == "777" && r3.created.isEmpty && r3.reused == 1, "people: a 409 reuses the existing contact")
+
+    // 6. leads: one per contact, reused when the contact has one, associated with the contact and the company; undo deletes
+    let lp = [CRMProposal(id: "contact.0", kind: .contact, name: "Ava Stone", email: "ava@orbit.example", company: "Orbit", domain: "orbit.example"),
+              CRMProposal(id: "lead.0", kind: .lead, name: "Ava Stone (Orbit)", email: "ava@orbit.example", company: "Orbit")]
+    let r4 = await CRMPeople.apply(lp, company: CRMCompany(id: cid, name: "Orbit", domain: "orbit.example"), connector: hs)
+    let lid = r4.created.first { $0.type == "leads" }?.id ?? ""
+    expect(r4.created.map(\.type) == ["contacts", "leads"] && Set(t.assoc["leads/" + lid] ?? []) == ["\(r4.contacts[0].id)#578", "\(cid)#610"], "people: the lead is associated with its contact and company")
+    let r5 = await CRMPeople.apply(lp, company: CRMCompany(id: cid, name: "Orbit", domain: "orbit.example"), connector: hs)
+    expect(r5.created.isEmpty && t.leads.count == 1, "people: a contact never gets a second lead")
+    for (type, id) in r4.created.reversed() { try? await hs.delete(type: type, id: id) }
+    expect(t.leads.isEmpty && t.contacts["\(r4.contacts[0].id)"] == nil && t.companies.count == 1, "people: undo deletes what was created")
+
+    // 7. the Call of H2 gets the new people, as default associations, also for a Call logged before they existed
+    try? await hs.associateCall(callId: "C9", refs: [CRMRef("contacts", kid), CRMRef("companies", cid), CRMRef("deals", "D1"), CRMRef("notes", "X")])
+    expect(Set(t.assoc["calls/C9"] ?? []) == ["contacts/" + kid, "companies/" + cid, "deals/D1"], "people: the Call is associated with the new contact and company")
+    expect(CRMPeople.participants(names: [], emails: []).isEmpty, "people: no invitees, no people")
+
+    // 8. an error stops the run and says what was already made
+    final class Failing403: CRMTransport {
+        func send(_ m: String, _ p: String, _ b: [String: Any]?) async throws -> (Int, [String: Any], [String: String]) {
+            if m == "POST" && p == "/crm/v3/objects/leads" { return (403, ["message": "Missing crm.objects.leads.write"], [:]) }
+            if m == "GET" { return (200, ["results": []], [:]) }
+            if p.hasSuffix("/search") { return (200, ["results": []], [:]) }
+            return (201, ["id": "42"], [:])
+        }
+    }
+    let r6 = await CRMPeople.apply(lp, company: nil, connector: HubSpotConnector(transport: Failing403(), sleep: { _ in }))
+    expect(r6.failure?.scope == "crm.objects.leads.write" && r6.created.map(\.type) == ["contacts"], "people: a missing leads scope is named and the contact stays listed for Undo")
+
+    // 9. settings: everything off by default, old files keep working
+    let old = try? JSONDecoder().decode(CRMSettings.self, from: Data("{\"provider\":\"hubspot\"}".utf8))
+    expect(old?.autoCreateContacts == false && old?.autoCreateCompanies == false && old?.autoCreateLeads == false && old?.proposeLeads == false, "people: Auto and Leads are off by default")
+    // contacts and companies never carry an owner (spec section 7)
+    expect(t.contacts.values.allSatisfy { $0["hubspot_owner_id"] == nil } && t.companies.values.allSatisfy { $0["hubspot_owner_id"] == nil }, "people: no owner on contacts or companies")
+}
+
 final class BodyFake: CRMTransport {
     var bodies: [[String: Any]] = []
     func send(_ method: String, _ path: String, _ body: [String: Any]?) async throws -> (Int, [String: Any], [String: String]) {
@@ -860,6 +1017,7 @@ await part2_087()
 usage087()
 await crm087()
 await crmCalls()
+await crmPeople()
 learningPatterns()
 enginePathsFollowTheApp()
 engineHealsAPythonWithoutModules()

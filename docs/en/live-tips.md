@@ -1668,6 +1668,18 @@ second one; Undo deletes a new Call or puts the old values back. **Log the call 
 ends** is off by default; when on, it logs only the Call, about two and a half minutes after the call, without a
 review. Notes, deal fields and tasks stay behind Apply. The design is in `docs/specs/hubspot-crm-integration.md`.
 
+**The people of the call in HubSpot.** Update HubSpot looks for the invitees: a contact by email first, then by name
+among the company's contacts (the email in HubSpot may differ), and the company by the invitees' domain (not yours
+and not a free-mail domain such as gmail.com). What it finds is reused and associated with the Call. What is missing
+shows as unticked rows, "Create the contact", "Create the company" and, when turned on, "Create a Lead" (with the
+name, email, job title when known, and company): nothing is created without your click. Apply creates the company and
+the contacts first and then the Call, so the Call is already associated with them; Undo deletes what was created. An
+existing email or domain is never duplicated, even when Apply runs twice. Each kind has its own switch in Settings >
+Integrations > HubSpot, all off by default: create contacts automatically, create the company automatically, propose
+a Lead (needs the scopes `crm.objects.leads.read` and `crm.objects.leads.write` and a HubSpot plan with Leads) and
+create Leads automatically. Automatic creation runs after the call ends and only for a call linked to HubSpot. The
+owner of contacts and companies is never set.
+
 **What Pacenote can do.** Help > What Pacenote can do lists every feature with Try it and how often you used it
 (from the local usage log, Settings > General > Data). For the first 14 days it is also a card on Home.
 

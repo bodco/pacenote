@@ -119,10 +119,12 @@ enum CRMCallLogger {
     @MainActor static func auto(_ file: String) {
         let cfg = SettingsWindow.model.config.crm
         let base = file.hasSuffix(".md") ? String(file.dropLast(3)) : file
-        guard cfg.autoLogCall, cfg.writeCall, var l = CRMLink.load(base: base), let c = CRMService.shared.connector(),
-              let entry = log(file: file, link: &l) else { return }
+        let people = cfg.autoCreateContacts || cfg.autoCreateCompanies || (cfg.autoCreateLeads && cfg.proposeLeads)      // H3: per-object switches
+        guard (cfg.autoLogCall && cfg.writeCall) || people, var l = CRMLink.load(base: base), let c = CRMService.shared.connector() else { return }
         Task {
             do {
+                if people { l = await CRMPeopleFlow.auto(file: file, link: l, connector: c, name: "") }     // before the Call, so it gets them
+                guard cfg.autoLogCall, cfg.writeCall, let entry = log(file: file, link: &l) else { return }
                 let r = try await c.upsertCall(entry, knownId: l.callId, associations: refs(l))
                 l.callId = r.id; l.save(base: base)
                 UsageLog.log("update_crm", ["fields": 0, "call": 1])
@@ -236,6 +238,7 @@ struct CRMUpdateView: View {
     @State private var undo: [(String, String, [String: String])] = []    // (type, id, old fields)
     @State private var undoUntil: Date? = nil
     @State private var applied = false     // 0.8.7.1: a second Apply wrote the note and the task twice
+    @StateObject private var people = CRMPeopleModel()     // H3: the call's contacts, company and leads
 
     var base: String { file.hasSuffix(".md") ? String(file.dropLast(3)) : file }
 
@@ -255,6 +258,7 @@ struct CRMUpdateView: View {
                     .toggleStyle(.pnCheckbox)
                     .disabled(p.rows[i].id == "deal" && (l.dealId.isEmpty || l.dealId == "none"))
                 }
+                CRMPeopleSection(model: people)
                 TextField(L("crm.stage"), text: $stage, prompt: Text(L("crm.stage.prompt"))).help(L("crm.stage.help"))
             } else {
                 Text(L("crm.update.noLink")).foregroundStyle(PN.C.text3)
@@ -294,16 +298,29 @@ struct CRMUpdateView: View {
                                    qualification: qual, mapping: mapping, followUp: next.isEmpty ? nil : (next, nil),
                                    writeNote: crmCfg.writeNote, writeDeal: crmCfg.writeDeal, writeTask: crmCfg.writeTask,
                                    callLog: callLog, writeCall: crmCfg.writeCall)
+        if let l = link { Task { link = await people.load(file: file, link: l, name: "") } }      // H3: reads HubSpot, writes nothing
     }
 
     func apply() {
-        guard var p = plan, let l = link, let c = crm.connector() else { return }
+        guard var p = plan, var l = link, let c = crm.connector() else { return }
         if !stage.isEmpty { p.dealFields["dealstage"] = stage }
         busy = true; status = L("crm.writing")
         Task {
             var done: [(String, String, [String: String])] = []
             var fields = 0
             do {
+                // H3: the ticked people first, so the Call (and the note and task) are associated with them
+                let (nl, made, problem) = await people.apply(link: l, connector: c, base: base)
+                done += made
+                if nl != l {
+                    l = nl; link = nl
+                    var again = nl
+                    if p.callLog != nil, let entry = CRMCallLogger.log(file: file, link: &again) { p.callLog = entry }     // the participants line
+                    if !l.callId.isEmpty, p.rows.first(where: { $0.id == "call" })?.on != true, let hs = c as? CRMPeopleConnector {
+                        try? await hs.associateCall(callId: l.callId, refs: CRMCallLogger.refs(l).filter { $0.type != "deals" })   // a Call logged earlier
+                    }
+                }
+                if !problem.isEmpty { throw CRMError(code: 0, message: problem) }
                 let refs = CRMCallLogger.refs(l)
                 if p.rows.first(where: { $0.id == "note" })?.on == true {
                     let id = try await c.createNote(text: p.note, associations: refs); done.append(("notes", id, [:]))
@@ -345,6 +362,7 @@ struct CRMUpdateView: View {
                     else {
                         try await c.delete(type: type, id: id)
                         if type == "calls", var l = link { l.callId = ""; l.save(base: base); link = l }   // the next Apply makes a new Call
+                        if ["contacts", "companies", "leads"].contains(type), let l = link { let n = CRMPeopleFlow.forget(type: type, id: id, in: l); n.save(base: base); link = n }   // H3
                     }
                 } catch { failed += 1 }
             }

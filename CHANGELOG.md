@@ -22,6 +22,14 @@ Pacenote. Earlier versions are described in the commit messages and in
   switch in Settings > Integrations > HubSpot, **Log the call in HubSpot automatically after it ends**, is off by
   default and logs only the Call. The HubSpot integration design is in `docs/specs/hubspot-crm-integration.md`.
 
+- **Contacts, companies and leads of the call in HubSpot (H3).** Update HubSpot matches the call's invitees by email,
+  then by name inside the company, and the company by domain, and reuses what exists. Missing contacts, the company
+  and, if you turn Leads on, a Lead are shown as unticked rows with the name, email, job title and company filled in;
+  Apply creates them before the Call, so the Call is associated with them, and Undo removes them. An existing email or
+  domain is never duplicated. Four new switches in Settings > Integrations > HubSpot, all off by default, create
+  contacts, the company or Leads automatically after the call. Leads need the scopes `crm.objects.leads.read` and
+  `crm.objects.leads.write`.
+
 ## 0.26.4 (2026-11-20)
 
 - **A new organization project includes the person who made it (2026-11-20):** in New project > start a new
