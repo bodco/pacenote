@@ -46,7 +46,7 @@ public enum SettingsSearch {
     public static func advancedKey(_ scope: String) -> String { advancedPrefix + scope }
 
     /// The tabs of the HubSpot page, in order. The app draws its segments from these.
-    public static let hubspotGroups = ["conn", "match", "data", "qual"]
+    public static let hubspotGroups = ["conn", "match", "data", "tasks", "qual"]
 
     private static func adv(_ scope: String) -> [String: String] { [advancedKey(scope): "1"] }
     private static func h(_ group: String) -> [String: String] { [hubspotGroupKey: group] }
@@ -122,6 +122,7 @@ public enum SettingsSearch {
         .init("int.hubspot.key", "integrations", h("conn"), integration: "hubspot", title: "search.hubspotKey", words: "hubspot crm key connect ключ"),
         .init("int.hubspot.match", "integrations", h("match"), integration: "hubspot", title: "int.hubspot.matching", words: "hubspot owner company domain власник"),
         .init("int.hubspot.write", "integrations", h("data"), integration: "hubspot", title: "int.hubspot.canWrite", words: "hubspot write note deal task call auto log запис дзвінок"),
+        .init("int.hubspot.tasks", "integrations", h("tasks"), integration: "hubspot", title: "htask.title", words: "hubspot tasks queue priority due tracker задачі черга пріоритет"),
         .init("int.hubspot.qual", "integrations", h("qual"), integration: "hubspot", title: "int.hubspot.qualification", words: "hubspot bant qualification кваліфікація"),
         // Projects
         .init("pr.scan", "projects", adv("projects"), title: "set.scanWorkFolder", words: "scan add project folder workspace сканувати додати проєкт"),

@@ -103,6 +103,15 @@ nothing is stored and no deal is moved on that Call. Undo of a `callDeal` row go
 the batch (H3): the portal is checked first and, on another portal, nothing is sent and the batch is kept. A link
 carried from a preparation to a recorded call leaves out `callDealId` together with `callKey` and `callId`.
 
+### The PM's tasks in Tracker (PB-17)
+
+The PM's open HubSpot tasks in On you, the Tracker and the call window, with Add to HubSpot tasks, ticks, Remove and
+the after-call add (off by default). Fields, sync, dedupe and the choice between Notion and HubSpot for new tasks are in
+`rules/hubspot-tasks.yaml`. A new task: `hs_task_subject` the item's text, `hs_task_status` NOT_STARTED,
+`hs_timestamp` its due date (else the default from the settings), `hs_task_type`, `hs_task_priority` and
+`hs_queue_membership_ids` from the settings, `hs_task_body` the call's title, date and link (never transcript text),
+`hubspot_owner_id` per section 7.
+
 ## 4. Required scopes
 
 ### Service key (private app key), today

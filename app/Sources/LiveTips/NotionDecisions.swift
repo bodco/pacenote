@@ -45,6 +45,7 @@ enum NotionAutoAdd {
     static func afterCall(file: String) {
         if CallHistory.shared.records.first(where: { $0.file == file })?.hidden == true { return }
         NotionTasks.shared.afterCall(file: file)                // Tasks: the 0.8.6 switch, same value
+        HubSpotTasks.shared.afterCall(file: file)               // PB-17: its own switch; one destination when both are set up
         let c = AppConfig.load(from: AppPaths.config)
         guard hasToken, let p = PyTool.project(of: file).project else { return }
         let call = CallPageView.title(file)

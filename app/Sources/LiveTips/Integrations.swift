@@ -311,6 +311,7 @@ struct HubSpotPage: View {
                     Text(L("int.hubspot.afterFooter")).font(PN.Font.caption).foregroundStyle(PN.C.text3).fixedSize(horizontal: false, vertical: true)
                 }
             }
+            if g == "tasks" { HubSpotTasksSection(model: model) }      // PB-17
             if g == "qual" { qualification }
         }
         .formStyle(.grouped).toggleStyle(.pnSwitch)

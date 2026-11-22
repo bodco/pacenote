@@ -26,6 +26,7 @@ struct TrackerItem: Identifiable, Hashable {
     var commitment: Commitment? = nil
     var orgItem: OrgRegister.Item? = nil  // 0.17.0 (block 4): a colleague's item from an organization project's registers
     var orgProject = ""                   // its organization project
+    var crmTask = ""                      // PB-17: a HubSpot task (HubSpotTasks)
 
     static func == (a: TrackerItem, b: TrackerItem) -> Bool { a.id == b.id && a.status == b.status && a.orgItem == b.orgItem }
     func hash(into h: inout Hasher) { h.combine(id) }
@@ -148,6 +149,7 @@ struct TrackerScreen: View {
     @ObservedObject var model = TrackerModel.shared
     @ObservedObject var register = Register.shared
     @ObservedObject var org = OrgRegisterStore.shared      // 0.17.0 (block 4): my colleagues' items in organization projects
+    @ObservedObject var htasks = HubSpotTasks.shared        // PB-17: the PM's HubSpot tasks
     @State private var orgSheet: OrgItemSheet.Mode?
     @AppStorage("trackerTab") private var tab = "tasks"
     @AppStorage("trackerWS") private var ws = ""
@@ -181,7 +183,11 @@ struct TrackerScreen: View {
         }
     }
 
-    private var allItems: [TrackerItem] { model.items + org.trackerItems() }
+    private var allItems: [TrackerItem] {
+        let hs = htasks.trackerItems()
+        let shownIds = Set(hs.map(\.crmTask))
+        return model.items.filter { $0.commitment.map { !shownIds.contains($0.crmTask) } ?? true } + org.trackerItems() + hs
+    }
 
     @Environment(\.pnTheme) private var t
 
@@ -241,7 +247,7 @@ struct TrackerScreen: View {
             }
         }
         .background(PN.C.bg)
-        .onAppear { model.reload(); Task { await org.reload() } }
+        .onAppear { model.reload(); Task { await org.reload() }; htasks.keepFresh() }
         .onChange(of: register.version) { model.reload() }
         .sheet(item: $orgSheet) { m in OrgItemSheet(mode: m) { orgSheet = nil } }
     }
@@ -408,6 +414,7 @@ struct TrackerScreen: View {
         let fourthColor: Color = (danger && r.kind == .task) ? PN.C.recText : proposed ? PN.C.notreadyText : r.done ? PN.C.text3 : PN.C.text2
         let note: String = {
             if let i = r.orgItem { return r.callTitle + (org.editedBy(i, r.orgProject).map { " · " + L("orgreg.changedBy", ["who": $0]) } ?? "") }
+            if !r.crmTask.isEmpty { return L("htask.inHubSpot") }        // PB-17
             return r.local ? L("tracker.kept") : ""
         }()
         return HStack(alignment: .center, spacing: 12) {
@@ -415,7 +422,8 @@ struct TrackerScreen: View {
                 if r.kind == .task {
                     Toggle("", isOn: Binding(get: { r.done }, set: { on in
                         if let i = r.orgItem { Task { await org.change(i, orgProject: r.orgProject, .init(status: on ? "done" : "open")) } }
-                        else if let c = r.commitment { register.mark(c) } else if let u = URL(string: r.url) { NSWorkspace.shared.open(u) } }))
+                        else if let t = htasks.tasks.first(where: { !r.crmTask.isEmpty && $0.id == r.crmTask }) { htasks.tick(t, done: on) }
+                        else if let c = r.commitment { if !htasks.mark(c, on ? "done" : "reopen") { register.mark(c) } } else if let u = URL(string: r.url) { NSWorkspace.shared.open(u) } }))
                         .toggleStyle(.pnCheckbox).labelsHidden().accessibilityLabel(L("reg.markDoneA11y", ["text": r.title]))
                         .disabled(r.orgItem.map { !$0.canEdit } ?? false)
                 } else { tile(r) }
@@ -441,9 +449,12 @@ struct TrackerScreen: View {
         .onTapGesture(count: 2) { if let u = URL(string: r.url), !r.url.isEmpty { NSWorkspace.shared.open(u) } }
         .contextMenu {
             OrgItemMenu(row: r, sheet: $orgSheet)
-            if let u = URL(string: r.url), !r.url.isEmpty { Button(L("ntask.openNotion")) { NSWorkspace.shared.open(u) } }
+            if let u = URL(string: r.url), !r.url.isEmpty { Button(L(r.crmTask.isEmpty ? "ntask.openNotion" : "htask.open")) { NSWorkspace.shared.open(u) } }
             if !r.callFile.isEmpty { Button(L("reg.openCall")) { CallPageWindow.show(file: r.callFile) } }
             Button(L("reg.copy")) { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(r.title, forType: .string) }
+            if let t = htasks.tasks.first(where: { !r.crmTask.isEmpty && $0.id == r.crmTask }) {      // PB-17
+                Button(L("ntask.remove")) { htasks.confirmRemove(t, commitment: htasks.linkedCommitment(t)) }
+            }
         }
     }
 

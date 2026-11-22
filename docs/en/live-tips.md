@@ -1595,7 +1595,7 @@ tips, search in the folder, sync to your account); Back or Command-[ returns. In
 with their state and Connect for the ones not set up; a click opens the page. On the Notion page, as soon as the
 token is in, Pacenote looks for the database for meeting notes and asks you to pick it (Notion connected without
 it is a problem in the list and on the ready card); the other databases, My tasks and the local copy are under
-Advanced. HubSpot has Connection, Matching, Reads and writes, Qualification. Without a token or key only Connection
+Advanced. HubSpot has Connection, Matching, Reads and writes, Tasks, Qualification. Without a token or key only Connection
 shows. One Meetings, one Tasks and one Risks database serve all projects. The project is a property of each page:
 write its name next to the database (Project if empty) and set each project's value on the project's page, In
 Notion. Fill from project configs takes the databases most of your Control Tower configs name.
@@ -1746,6 +1746,31 @@ as its own, so a later No deal or another pick leaves that association. If a ste
 Undo still reverses what was done, and applying again finishes the move. If the company's deals or the stages cannot be read, the window
 says so with **Try again**. The deal is read, and Apply and Undo write, only when the call is linked in the HubSpot
 account of the current key.
+
+**HubSpot tasks in Tracker and On you.** Settings > Integrations > HubSpot > Tasks, **Show my HubSpot tasks in Tracker
+and On you** (off by default), works like the Notion tasks: your open HubSpot tasks appear in On you with the badge HS,
+in the Tracker, and in the call window's On me tab as a group HubSpot <deal or company> (the tasks on the call's deal,
+company or contacts). The settings choose whose tasks (yours, the owner in Matching, anyone's or one person's), the
+queue, and the type, priority and due date (when none was said) of new tasks; a line under them says how many tasks
+match now and when they were synced, with Refresh. **Add to HubSpot tasks** on an item on you (On you and the call
+page menus) makes a task linked to the call's contacts, company and deal (on a call with people from several
+companies, every company, as the Call); an open task with the same words on the same
+deal or company (the same contact when the call has neither) is linked instead of made again, and a call without a
+CRM link always makes a new task. A tick sets the task to Completed, Undo for 8 seconds puts the
+status back; a task closed in HubSpot closes the item, reopened there reopens it, deleted there unlinks the item (open or done)
+with "HubSpot task was deleted". Remove (and Delete on the call page) deletes the task in HubSpot after the 8 second Undo; a task Pacenote did not make asks once first.
+When HubSpot refuses a tick or a Remove, the task and the item come back with the reason; made offline (or while
+HubSpot is busy), they wait and are sent when HubSpot answers, and a waiting change HubSpot then refuses says so with
+**Retry** (even when the task list cannot be read) and gives the item back as HubSpot last had it; several waiting
+changes of one task are sent in order, so an older tick never lands over a newer reopen. A call whose HubSpot link was
+made in another account (or before Pacenote kept the account) gets no task until you press **Relink** in Update HubSpot
+on the call page. Undo or a refused delete gives a completed item back completed, with its date. A tick or Remove on an item linked to a HubSpot task goes to that task from every list (On you, the
+Tracker, the call page, the call window), also when the task is not in your lists (closed, or another owner's). Every change goes only to the HubSpot account the task came from: when the key opens
+another account, nothing is written and the list is read again. **Add my commitments to
+HubSpot tasks automatically after each call** is off by default. When Notion tasks are set up too, **New tasks go to**
+chooses Notion or HubSpot for the automatic add; the menus offer both until an item is linked to one. The task says
+which call it came from and links back to it; transcript text is never sent. Undo of the automatic add deletes the new
+tasks and unlinks their items; a task HubSpot does not let you delete stays linked, and the toast says so.
 
 **What Pacenote can do.** Help > What Pacenote can do lists every feature with Try it and how often you used it
 (from the local usage log, Settings > General > Data). For the first 14 days it is also a card on Home.

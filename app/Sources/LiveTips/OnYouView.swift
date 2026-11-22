@@ -7,20 +7,23 @@ import LiveTipsCore
 struct OnYouView: View {
     @ObservedObject var register = Register.shared
     @ObservedObject var ntasks = NotionTasks.shared
+    @ObservedObject var htasks = HubSpotTasks.shared       // PB-17
     @AppStorage("onYouFilter") private var onYouFilter = ""
     @AppStorage("onYouHidden") private var onYouHidden = ""
     @State private var onYouAll = false
 
-    var body: some View { onYouSection.onAppear { register.importOnce(); ntasks.keepFresh() } }
+    var body: some View { onYouSection.onAppear { register.importOnce(); ntasks.keepFresh(); htasks.keepFresh() } }
 
     /// REDESIGN-SPEC 4.4 + idea 01: the PM's open commitments from every call, overdue first. The tick closes the item
     /// in the register; the context menu copies it, opens the call or drops what is not a commitment.
     /// 0.8.6 (D3, rules/notion-tasks.yaml > on_you): one list with the PM's Notion tasks, a source badge, a project filter.
     private enum OnYouRow: Identifiable {
-        case commit(Commitment), task(NotionTask, Commitment?)
-        var id: String { switch self { case .commit(let c): return c.id; case .task(let t, _): return t.id } }
-        var due: String { switch self { case .commit(let c): return c.due; case .task(let t, let c): return t.due.isEmpty ? (c?.due ?? "") : t.due } }
-        var created: Date? { switch self { case .commit(let c): return c.createdDate; case .task(let t, let c): return c?.createdDate ?? CommitmentRegister.iso(t.created) } }
+        case commit(Commitment), task(NotionTask, Commitment?), crm(CRMTask, Commitment?)
+        var id: String { switch self { case .commit(let c): return c.id; case .task(let t, _): return t.id; case .crm(let t, _): return "hs-" + t.id } }
+        var due: String { switch self { case .commit(let c): return c.due; case .task(let t, let c): return t.due.isEmpty ? (c?.due ?? "") : t.due
+            case .crm(let t, let c): return t.due.isEmpty ? (c?.due ?? "") : t.due } }
+        var created: Date? { switch self { case .commit(let c): return c.createdDate; case .task(let t, let c): return c?.createdDate ?? CommitmentRegister.iso(t.created)
+            case .crm(let t, let c): return c?.createdDate ?? CommitmentRegister.iso(t.created) } }
     }
 
     private func onYouRows() -> [OnYouRow] {
@@ -37,8 +40,14 @@ struct OnYouView: View {
             }
             return c.project == t
         }
-        var rows: [OnYouRow] = register.open(mine: true).filter { inScope($0) && !($0.notionPage.isEmpty == false && taskIds.contains($0.notionPage)) }.map { .commit($0) }
+        var rows: [OnYouRow] = register.open(mine: true).filter { inScope($0) && !($0.notionPage.isEmpty == false && taskIds.contains($0.notionPage))
+            && !htasks.has($0.crmTask) }.map { .commit($0) }
         rows += tasks.map { t in .task(t, ntasks.linkedCommitment(t)) }
+        // PB-17: HubSpot tasks have no Pacenote project; a project filter keeps the ones made from its calls
+        rows += htasks.shown.compactMap { t in
+            let c = htasks.linkedCommitment(t)
+            return target == nil || c.map(inScope) == true ? .crm(t, c) : nil
+        }
         rows = rows.filter { !hidden.contains($0.id) }
         let now = Date()
         func due(_ r: OnYouRow) -> Date? { CommitmentRegister.dueDate(r.due, from: r.created ?? now) }
@@ -95,7 +104,7 @@ struct OnYouView: View {
                 HStack(spacing: 8) {
                     Text(t.text).font(PN.Font.caption).foregroundStyle(t.isError ? PN.C.danger : PN.C.text2)
                     Spacer()
-                    if let u = t.undo { Button(L("ntask.undo")) { u(); ntasks.toast = nil }.buttonStyle(.pnTertiary) }
+                    if let u = t.undo { Button(t.actionTitle.isEmpty ? L("ntask.undo") : t.actionTitle) { u(); ntasks.toast = nil }.buttonStyle(.pnTertiary) }
                     if !t.openURL.isEmpty, let url = URL(string: t.openURL) { Button(L("ntask.open")) { NSWorkspace.shared.open(url) }.buttonStyle(.pnTertiary) }
                 }
                 .task(id: t.id) { try? await Task.sleep(nanoseconds: 8_000_000_000); if ntasks.toast?.id == t.id { ntasks.toast = nil } }
@@ -111,9 +120,10 @@ struct OnYouView: View {
                             .buttonStyle(.pnTertiary).padding(.top, 4)
                     }
                 }
-                .id("\(register.version)-\(ntasks.version)")
+                .id("\(register.version)-\(ntasks.version)-\(htasks.version)")
             }
             if !ntasks.error.isEmpty { Text(ntasks.error).font(PN.Font.caption).foregroundStyle(PN.C.text3).lineLimit(1) }
+            if !htasks.error.isEmpty { Text(htasks.error).font(PN.Font.caption).foregroundStyle(PN.C.text3).lineLimit(1) }
         }
         .padding(16).frame(maxWidth: .infinity, alignment: .leading)
         .background(PN.C.surface, in: RoundedRectangle(cornerRadius: PN.Radius.m))
@@ -121,17 +131,19 @@ struct OnYouView: View {
 
     @ViewBuilder private func onYouRow(_ r: OnYouRow, _ df: DateFormatter) -> some View {
         switch r {
+        case .crm(let t, let c):
+            CRMTaskRow(task: t, commitment: c, onHide: { hideHere(r.id) })
         case .commit(let c):
             let overdue = CommitmentRegister.isOverdue(c)
             let when = c.createdDate.map { df.string(from: $0) } ?? ""
             // 0.8.7 (J4): the project once (not when the text names it), only the due date red
             let pn = register.projectName(c)
             let sub = [c.text.lowercased().contains(pn.lowercased()) ? "" : pn, when.isEmpty ? "" : L("reg.promised", ["date": when]),
-                       c.notionNote == "removed" ? L("ntask.pageRemoved") : ""]
+                       c.notionNote == "removed" ? L("ntask.pageRemoved") : "", c.notionNote == "crmRemoved" ? L("htask.taskRemoved") : ""]
                 .filter { !$0.isEmpty }.joined(separator: " · ")
             let dueS = c.due.isEmpty ? "" : (overdue ? L("reg.overdue", ["due": Register.dueText(c.due)]) : L("reg.due", ["due": Register.dueText(c.due)]))
             HStack(alignment: .top, spacing: 8) {
-                Toggle("", isOn: Binding(get: { false }, set: { _ in register.mark(c) }))
+                Toggle("", isOn: Binding(get: { false }, set: { _ in if !htasks.mark(c, "done") { register.mark(c) } }))   // PB-17: a linked item ticks its HubSpot task
                     .toggleStyle(.pnCheckbox).labelsHidden()
                     .accessibilityLabel(L("reg.markDoneA11y", ["text": c.text]))
                 VStack(alignment: .leading, spacing: 2) {
@@ -143,7 +155,7 @@ struct OnYouView: View {
                         .font(PN.Font.caption)
                 }
                 Spacer(minLength: 0)
-                RemoveButton { register.mark(c, "drop") }
+                RemoveButton { if !htasks.mark(c, "drop") { register.mark(c, "drop") } }
             }
             .padding(.vertical, 6)
             .contentShape(Rectangle())
@@ -152,10 +164,11 @@ struct OnYouView: View {
             .contextMenu {
                 Button(L("reg.copy")) { register.copyText(c) }
                 if let f = register.transcript(c) { Button(L("reg.openCall")) { NSWorkspace.shared.open(URL(fileURLWithPath: f)) } }
-                if ntasks.settings.ready && c.notionPage.isEmpty { Button(L("ntask.addToNotion")) { Task { await ntasks.add(c) } } }
+                if ntasks.settings.ready && c.notionPage.isEmpty && c.crmTask.isEmpty { Button(L("ntask.addToNotion")) { Task { await ntasks.add(c) } } }
+                if htasks.ready && c.notionPage.isEmpty && c.crmTask.isEmpty { Button(L("htask.add")) { Task { await htasks.add(c) } } }
                 Divider()
                 Button(L("ntask.hideHere")) { hideHere(c.id) }
-                Button(L("ntask.remove")) { register.mark(c, "drop") }
+                Button(L("ntask.remove")) { if !htasks.mark(c, "drop") { register.mark(c, "drop") } }
             }
         case .task(let t, let c):
             let dueD = CommitmentRegister.dueDate(t.due, from: Date())

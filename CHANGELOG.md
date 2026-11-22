@@ -133,6 +133,26 @@ Pacenote. Earlier versions are described in the commit messages and in
   suggested. A failed read of the company's deals or the stages says so with **Try again** instead of an empty list.
   The deal preview, Apply and Undo first check that the call is linked in the HubSpot account of the current key.
 
+- **HubSpot tasks in Tracker and On you (PB-17).** Settings > Integrations > HubSpot > Tasks shows your open HubSpot
+  tasks in On you, the Tracker and the call window's On me tab (the tasks on the call's deal, company or contacts), with
+  whose tasks, the queue, and the type, priority and default due date of new tasks, and a live "N tasks match now"
+  check. **Add to HubSpot tasks** on an item on you makes a task linked to the call's contacts, company and deal, or
+  links an open task with the same words on that deal. On a call with people from several companies, the task goes
+  on every company, as the Call does. A tick sets Completed with Undo, Remove deletes the task after
+  the 8 second Undo, and tasks closed, reopened or deleted in HubSpot follow in Pacenote. The automatic add after a
+  call is off by default; with Notion tasks set up too, you choose where new tasks go. Transcript text is never sent.
+  Two adds of the same item never make two tasks, a call with only a contact links a task of that contact only, and a
+  call without a CRM link always makes a new task. Changes go only to the HubSpot account the task came from (queued
+  offline changes are dropped when the key opens another account, and Undo of a tick never writes to another
+  account), and a refused Remove or Undo gives the task and the item back with the reason. A busy HubSpot (5xx) keeps
+  the change queued; a queued change HubSpot refuses later says so with Retry, also when the task list cannot be read,
+  and refused queued ticks give the item back as HubSpot last had it; several queued changes of one task are sent in
+  order, so an older tick HubSpot was busy for never lands over a newer reopen. A call linked to HubSpot records in
+  another account (or before Pacenote kept the account) gets no task and asks you to press Relink in Update
+  HubSpot on the call page first. Ticking, removing or deleting (call page) an item linked to a HubSpot task updates the task from every list,
+  also when the task is not in your lists; Undo or a refused delete gives a completed item back completed, with its
+  date. A task deleted in HubSpot unlinks its item even after you completed it, also with more than 80 linked items.
+
 ## 0.26.4 (2026-11-20)
 
 - **A new organization project includes the person who made it (2026-11-20):** in New project > start a new
