@@ -1128,15 +1128,16 @@
       if (S.ui.tipsPending && S.ui.tipsPending.l === S.tipsLang.current) S.ui.tipsPending = null;
     });
   }
-  /** The tips language the app last asked for: an unanswered pick counts, so a quick second switch compares against it. */
+  /** The tips language the sidecar acknowledged. */
   const tipsConfirmed = () => (S.tipsLang && S.tipsLang.current) || '';
+  /** The tips language the app last asked for: an unanswered pick counts, so a quick second switch compares against it. */
   const tipsWanted = () => (S.ui.tipsPending && S.ui.tipsPending.l) || (S.tipsLang && S.tipsLang.current) || '';
   function langShown() {
     consumeAck();
     const cl = callLangNow(), p = S.ui.langPending;
     if (p && !p.demo && sameLangs(p.langs, cl.langs) && p.main === cl.main) {
       S.ui.langPending = null;
-      if (p.tips && tipsConfirmed() !== p.tips) {   // tips follow only once the recorder confirmed; the toast waits for the matching tips ack
+      if (p.tips && (tipsWanted() !== p.tips || tipsConfirmed() !== p.tips)) {   // tips follow only once the recorder confirmed; the toast waits for the matching tips ack
         S.ui.comboWait = { names: langNames(p.langs), tips: p.tips, at: Date.now() };
         if (!(S.ui.tipsPending && S.ui.tipsPending.l === p.tips)) tipsLangSet(p.tips);
       }
@@ -1144,7 +1145,8 @@
     }
     else if (p && Date.now() - p.at > 4000) { S.ui.langPending = null; showToast({ text: T().cl.fail, kind: 'warn', at: Date.now() }); }
     const w = S.ui.comboWait;
-    if (w && S.tipsLang && S.tipsLang.current === w.tips) { S.ui.comboWait = null; showToast({ text: T().cl.ok(w.names, langNames([w.tips])), kind: 'ok', at: Date.now() }); }
+    // the combined toast waits until no tips request is in flight: an older ack could still overtake it
+    if (w && S.tipsLang && S.tipsLang.current === w.tips && !S.ui.tipsPending) { S.ui.comboWait = null; showToast({ text: T().cl.ok(w.names, langNames([w.tips])), kind: 'ok', at: Date.now() }); }
     else if (w && Date.now() - w.at > 4000) { S.ui.comboWait = null; showToast({ text: T().cl.tipsFail, kind: 'warn', at: Date.now() }); }
     const tp = S.ui.tipsPending;
     if (tp && Date.now() - tp.at > 4000) { S.ui.tipsPending = null; if (!w) showToast({ text: T().cl.tipsFail, kind: 'warn', at: Date.now() }); }   // no ack: drop the pick and say so
@@ -1218,7 +1220,7 @@
       S.ui.comboWait = null;   // a superseded switch must not toast when its late tips ack arrives
       post('setting', { key: 'call_lang', value: v });
       // tips follow the main language of a one-language call; a mixed call keeps its tips language
-      if (langs.length === 1 && (main === 'uk' || main === 'en') && tipsConfirmed() !== main) S.ui.langPending.tips = main;
+      if (langs.length === 1 && (main === 'uk' || main === 'en') && (tipsWanted() !== main || tipsConfirmed() !== main)) S.ui.langPending.tips = main;
       setTimeout(render, 4100);
     }
     render(); const b = $('langBtn'); if (b && !b.hidden) b.focus();

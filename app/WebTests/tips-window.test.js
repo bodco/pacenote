@@ -229,9 +229,10 @@ const jsErrors = (b, s) => s.posts.filter((m) => m.action === 'jserror').map((m)
     await openQ(520, '?call_lang=uk+en');
     await test('520 px: Tab goes through the narrow header in the order it is drawn (row 1, then row 2)', async () => {
       const ids = ['endBtn', 'homeBtn', 'moreBtn', 'trBtn', 'onmeBtn', 'micBtn', 'langBtn'];
-      const pos = await b.evaluate(`(${JSON.stringify(ids)}).map((id) => { const e = document.getElementById(id), r = e.getBoundingClientRect(); return { id, top: Math.round(r.top), left: Math.round(r.left), hidden: e.hidden || !r.width }; })`);
+      const pos = await b.evaluate(`(${JSON.stringify(ids)}).map((id) => { const e = document.getElementById(id), r = e.getBoundingClientRect(); return { id, mid: r.top + r.height / 2, left: Math.round(r.left), hidden: e.hidden || !r.width }; })`);
       const dom = await b.evaluate(`Array.from(document.querySelectorAll('header.bar button')).map((e) => e.id)`);
-      const vis = pos.filter((x) => !x.hidden).sort((a, c) => a.top - c.top || a.left - c.left).map((x) => x.id);
+      // buttons on one row differ in height, so compare vertical centres: within 10 px is the same row
+      const vis = pos.filter((x) => !x.hidden).sort((a, c) => (Math.abs(a.mid - c.mid) > 10 ? a.mid - c.mid : a.left - c.left)).map((x) => x.id);
       assert.deepStrictEqual(dom.filter((id) => vis.includes(id)), vis, 'DOM order ' + dom.join() + ' vs drawn ' + vis.join());
     });
     await openQ(1100, '?call_lang=en');
