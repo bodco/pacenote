@@ -296,7 +296,11 @@ key. Shown at the bottom of the call's Update HubSpot window.
 
 - **Retry** on a failed line until a later write of the same object succeeds. A Call is written again at once (it never
   makes a second Call, section 6). A note, deal fields or a task reopen Update HubSpot with only that row ticked, so
-  the PM still reviews and presses Apply.
+  the PM still reviews and presses Apply. Every line keeps the portal its write was meant for (a failed one too), and
+  both Retry paths write only there: when the write goes out, the call's link must still name that portal and the
+  key must belong to it (`CRMSyncLog.retryPortal`, then `CRMPortal.verify`). After a reconnect or Relink to another
+  portal, or for a line without a portal, Retry sends nothing and says so; the PM writes again with Update HubSpot.
+- If Auto's line cannot be saved to the log, a notice says so (Auto has no window to show it in).
 - **Undo** on the latest good write of an object, within 24 hours (`CRMSyncLog.logUndoSeconds`; Apply's own Undo stays
   8 seconds, `applyUndoSeconds`). The click reads the log from disk again and rechecks the window and that no later
   write of the object exists (the button may be stale). Then Pacenote reads the object's `updatedAt` and goes on only

@@ -45,7 +45,9 @@ Pacenote. Earlier versions are described in the commit messages and in
   nothing once their time has passed, after an edit in HubSpot, or when the key now belongs to another HubSpot
   account. When an Apply fails, the log names the record whose request failed, so Retry reopens that row (a deal
   whose fields are all set to Don't write is skipped, not blamed). If the sync log itself cannot be saved, Update
-  HubSpot says so next to the HubSpot result. When HubSpot does not answer a scope probe, the live check says the
+  HubSpot says so next to the HubSpot result, and for Auto a notice says so. Retry writes only to the HubSpot account
+  the failed write was meant for: after you connect another account or Relink the call, it sends nothing and says
+  so. When HubSpot does not answer a scope probe, the live check says the
   check is not complete instead of showing everything as fine.
 
 ## 0.26.4 (2026-11-20)

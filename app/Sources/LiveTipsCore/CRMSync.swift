@@ -248,6 +248,11 @@ public enum CRMSyncLog {
         return !log.contains { $0.object == e.object && $0.ok && $0.action != "undo" && $0.at > e.at }
     }
 
+    /// Retry writes only to the portal the failed write was meant for (the line's portal), and only while the call's
+    /// link still names it. Anything else gives "" (an unknown portal), so CRMPortal.verify stops the write before a
+    /// request is sent: a key or link changed since the failure never sends the call to another portal.
+    public static func retryPortal(bound: String, link: String) -> String { !bound.isEmpty && bound == link ? link : "" }
+
     /// Undo may change the object only when HubSpot's updatedAt now is the one its answer to our write had: any later
     /// change (by a person, a workflow or another write) moves it. Missing or unreadable on either side: not verified, no Undo.
     public static func unchanged(revision: String, current: String) -> Bool {

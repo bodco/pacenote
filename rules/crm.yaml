@@ -53,7 +53,7 @@ write:
     Full design: docs/specs/hubspot-crm-integration.md.
   log: >-
     H6: <stem>.crm-log.json, one line per written object (time, object, action, source, HubSpot id, portal, property
-    names, old values of an update, result); Retry for a failed line, Undo of the latest write within 24 hours unless
+    names, old values of an update, result); Retry for a failed line, only to its portal while the link names it; Undo of the latest write within 24 hours unless
     the record was changed in HubSpot since or the key now belongs to another portal. Never transcript text, never the key.
 mapping:
   fields: H6, per object, each spec property to another writable property or "Don't write"; ids, owner and statuses fixed

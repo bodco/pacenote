@@ -1121,6 +1121,25 @@ func crmSync() async {
     expect(applied1?.created == true && ct.calls.count == 1 && autoErr?.code == CRMCallSync.notAllowedCode
            && ct.log.filter { $0 == "GET /account-info/v3/details" }.count == 1 && !ct.log.contains { $0.hasPrefix("PATCH") },
            "auto: turned off while waiting for its turn, Auto sends nothing: \(ct.log)")
+    // PB-62 review round 2: a Call write failed in portal 500, then the key and the call's link moved to portal 600.
+    // Retry is bound to the failed line's portal, so it sends nothing to 600 (only the account-info check goes out)
+    let moved = FakeHubSpotCalls(); moved.portal = 600
+    let hm = HubSpotConnector(transport: moved, sleep: { _ in })
+    var retryErr: CRMError? = nil
+    do { _ = try await CRMCallSync.log(entry, connector: hm, associations: [CRMRef("companies", "C7")], queue: CRMCallQueue(),
+                                       load: { ("", CRMSyncLog.retryPortal(bound: "500", link: "600")) }, save: { _ in }) } catch { retryErr = error as? CRMError }
+    expect(retryErr?.code == CRMPortal.mismatchCode && moved.calls.isEmpty && moved.log == ["GET /account-info/v3/details"],
+           "retry: a failure in another portal is never sent to the portal the key and link moved to: \(moved.log)")
+    // a key changed back while the link still names the new portal: still refused, and an old line without a portal too
+    expect(CRMSyncLog.retryPortal(bound: "500", link: "600") == "" && CRMSyncLog.retryPortal(bound: "", link: "600") == ""
+           && CRMSyncLog.retryPortal(bound: "600", link: "600") == "600", "retry: only the failed line's portal, and only while the link names it")
+    let same = FakeHubSpotCalls(); same.portal = 600
+    let r600 = try? await CRMCallSync.log(entry, connector: HubSpotConnector(transport: same, sleep: { _ in }), associations: [], queue: CRMCallQueue(),
+                                          load: { ("", CRMSyncLog.retryPortal(bound: "600", link: "600")) }, save: { _ in })
+    expect(r600?.created == true && same.calls.count == 1, "retry: the failed line's own portal is written")
+    let failedLine = CRMSyncEntry(object: "calls", action: "create", source: "auto", ok: false, error: "HTTP 500", portal: "500")
+    let failedJSON = (try? JSONEncoder().encode([failedLine])).flatMap { try? JSONDecoder().decode([CRMSyncEntry].self, from: $0) }
+    expect(failedJSON?.first?.portal == "500", "retry: a failed line keeps the portal it was meant for")
     // owners: the mapping, then the user of this Mac gets the Matching owner, then the same email, else HubSpot's default
     var o = CRMSettings(); o.ownerId = "7"
     let hsOwners = [CRMOwner(id: "11", name: "Emily Clark", email: "emily.clark@example.com"), CRMOwner(id: "12", name: "James Miller", email: "james.miller@example.com")]

@@ -113,11 +113,13 @@ enum CRMCallLogger {
     }
 
     /// H2: writes the Call through the per-call queue; the stored id and portal are read from <base>.crm.json when the
-    /// turn comes and the new id is stored before the next turn. H6: `allowed` is asked when the turn comes.
+    /// turn comes and the new id is stored before the next turn. H6: `allowed` is asked when the turn comes; a Retry's
+    /// `bound` portal (the failed line's) must still be the link's, else nothing is sent (CRMSyncLog.retryPortal).
     static func write(_ entry: CRMCallLog, base: String, link: CRMLink, connector c: CRMConnector,
-                      allowed: @escaping () async -> Bool = { true }) async throws -> CRMCallResult {
+                      allowed: @escaping () async -> Bool = { true }, bound: String? = nil) async throws -> CRMCallResult {
         try await CRMCallSync.log(entry, connector: c, associations: refs(link), allowed: allowed,
-                                  load: { let d = CRMLink.load(base: base) ?? link; return (d.callId, d.portalId) },
+                                  load: { let d = CRMLink.load(base: base) ?? link
+                                          return (d.callId, bound.map { CRMSyncLog.retryPortal(bound: $0, link: d.portalId) } ?? d.portalId) },
                                   save: { id in var d = CRMLink.load(base: base) ?? link; d.callId = id; d.save(base: base) })
     }
 
@@ -144,28 +146,42 @@ enum CRMCallLogger {
     }
 
     /// Logs the Call now (Auto, or Retry in the sync log) and records the result in the call's sync log (H6).
-    /// Both go through the per-call queue with Apply; Auto asks its switch again when its turn comes.
-    /// Returns the error line, "" when written (or when Auto was turned off meanwhile and nothing was sent); a written
-    /// Call whose log line could not be saved returns the result with that note.
-    @MainActor static func run(_ file: String, source: String) async -> String {
+    /// Both go through the per-call queue with Apply; Auto asks its switch again when its turn comes. Retry passes the
+    /// failed line's `portal`: the Call goes out only while that is still the link's and the key's portal.
+    /// Returns the error line ("" when written, or when Auto was turned off meanwhile and nothing was sent) and whether
+    /// the sync log line was saved.
+    @MainActor static func run(_ file: String, source: String, portal bound: String? = nil) async -> (line: String, saved: Bool) {
+        let r = await send(file, source: source, bound: bound)
+        // Auto's result and its Retry live in the sync log, and Auto has no window: an unsaved line gets a notice
+        if source == "auto" && !r.saved {
+            let result = r.line.isEmpty ? L("crm.updated", ["crm": "HubSpot"]) : r.line
+            NoticeCenter.shared.post(L("crm.log.autoNotice", ["call": CallPageView.title(file), "result": CRMSyncRecorder.status(result, saved: false)]), level: .warning)
+        }
+        return r
+    }
+
+    @MainActor private static func send(_ file: String, source: String, bound: String?) async -> (line: String, saved: Bool) {
         let base = file.hasSuffix(".md") ? String(file.dropLast(3)) : file
         guard var l = CRMLink.load(base: base), let c = CRMService.shared.connector(),
-              let entry = log(file: file, link: &l) else { return L("crm.update.noLink") }    // log() stores a new call key at once
+              let entry = log(file: file, link: &l) else { return (L("crm.update.noLink"), true) }    // log() stores a new call key at once
         let allowed: () async -> Bool = source == "auto" ? { await MainActor.run { SettingsWindow.model.config.crm.autoWrites(.calls) } } : { true }
         do {
-            let r = try await write(entry, base: base, link: l, connector: c, allowed: allowed)    // a link from another portal is not written
+            let r = try await write(entry, base: base, link: l, connector: c, allowed: allowed, bound: bound)    // a link from another portal is not written
             UsageLog.log("update_crm", ["fields": 0, "call": 1])
             // the portal the write was checked against: the stored link's when its turn came
             let saved = CRMSyncRecorder.call(r, log: entry, stem: base, source: source, revision: (c as? HubSpotConnector)?.revision(type: "calls", id: r.id) ?? "",
                                              portal: (CRMLink.load(base: base) ?? l).portalId)
-            return saved ? "" : CRMSyncRecorder.status(L("crm.updated", ["crm": c.providerName]), saved: false)
+            return ("", saved)
         } catch let e as CRMError where e.code == CRMCallSync.notAllowedCode && e.scope == "auto" {
-            return ""       // the switch was turned off while the write waited: nothing sent, nothing logged
+            return ("", true)       // the switch was turned off while the write waited: nothing sent, nothing logged
+        } catch let e as CRMError where bound != nil && e.code == CRMPortal.mismatchCode {
+            return (L("crm.log.otherPortal"), true)     // Retry for another portal: nothing sent, the line stays as it is
         } catch {
             let msg = (error as? CRMError)?.message ?? error.localizedDescription
-            CRMSyncRecorder.failed("calls", stem: base, source: source, error: msg)
+            // the portal this write was meant for, so its Retry goes nowhere else
+            let saved = CRMSyncRecorder.failed("calls", stem: base, source: source, error: msg, portal: (CRMLink.load(base: base) ?? l).portalId)
             AnalyticsTracker.shared.error("crm", Analytics.errorCode(message: msg), provider: "hubspot")
-            return msg
+            return (msg, saved)
         }
     }
 }
@@ -258,9 +274,9 @@ struct CRMCallRow: View {
 @MainActor
 enum CRMUpdateWindow {
     static var window: NSWindow?
-    static func show(file: String, only: Set<String>? = nil) {
+    static func show(file: String, only: Set<String>? = nil, portal: String? = nil) {
         let w = window ?? NSWindow(contentViewController: NSHostingController(rootView: AnyView(EmptyView())))
-        let hc = NSHostingController(rootView: Localized { CRMUpdateView(file: file, only: only) })
+        let hc = NSHostingController(rootView: Localized { CRMUpdateView(file: file, only: only, retryPortal: portal) })
         hc.sizingOptions = []      // 0.8.7.1: the window grew to 1572 pt and Apply was below the screen
         w.contentViewController = hc
         w.tabbingMode = .disallowed
@@ -276,6 +292,7 @@ enum CRMUpdateWindow {
 struct CRMUpdateView: View {
     let file: String
     var only: Set<String>? = nil         // H6: Retry in the sync log ticks only the rows that failed
+    var retryPortal: String? = nil       // H6: and writes only to the portal of the failed line (CRMSyncLog.retryPortal)
     @ObservedObject var crm = CRMService.shared
     @State private var plan: CRMUpdatePlan? = nil
     @State private var link: CRMLink? = nil
@@ -365,9 +382,10 @@ struct CRMUpdateView: View {
             }
             let source = only == nil ? "click" : "retry"
             do {
-                try await CRMPortal.verify(link: l.portalId, connector: c)     // H2: nothing goes to another portal's ids
+                // H2: nothing goes to another portal's ids; H6: a Retry only to the failed line's portal, still the link's
+                try await CRMPortal.verify(link: retryPortal.map { CRMSyncLog.retryPortal(bound: $0, link: l.portalId) } ?? l.portalId, connector: c)
                 let o = await CRMApply.run(plan: p, dealId: l.dealId, refs: CRMCallLogger.refs(l), connector: c, sync: SettingsWindow.model.config.crm.sync) { entry in
-                    let r = try await CRMCallLogger.write(entry, base: base, link: l, connector: c)    // in turn with Auto and Retry
+                    let r = try await CRMCallLogger.write(entry, base: base, link: l, connector: c, bound: retryPortal)    // in turn with Auto and Retry
                     link?.callId = r.id
                     return r
                 }
@@ -384,9 +402,10 @@ struct CRMUpdateView: View {
                 let revs = revisions()
                 undo = done; undoPortal = l.portalId; undoRevisions = revs
                 undoUntil = done.isEmpty ? nil : Date().addingTimeInterval(CRMSyncLog.applyUndoSeconds)
-                needsRelink = (error as? CRMError)?.code == CRMPortal.mismatchCode
-                status = needsRelink ? L("crm.relink.needed") : ((error as? CRMError)?.message ?? error.localizedDescription)
-                if !needsRelink {     // a portal mismatch wrote nothing; Relink, not Retry, is the way on
+                let mismatch = (error as? CRMError)?.code == CRMPortal.mismatchCode
+                needsRelink = mismatch && retryPortal == nil
+                status = mismatch ? (retryPortal == nil ? L("crm.relink.needed") : L("crm.log.otherPortal")) :((error as? CRMError)?.message ?? error.localizedDescription)
+                if !mismatch {     // a portal mismatch wrote nothing; Relink, not Retry, is the way on
                     let saved = CRMSyncRecorder.applied(plan: p, portal: l.portalId, done: done, error: status, failed: failed, stem: base, source: source, revisions: revs)
                     status = CRMSyncRecorder.status(status, saved: saved)
                 }

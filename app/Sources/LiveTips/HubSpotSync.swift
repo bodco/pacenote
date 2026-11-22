@@ -25,9 +25,9 @@ enum CRMSyncRecorder {
     }
 
     @discardableResult
-    static func failed(_ object: String, stem: String, source: String, error: String) -> Bool {
+    static func failed(_ object: String, stem: String, source: String, error: String, portal: String) -> Bool {
         defer { CRMSyncLogStore.shared.version += 1 }
-        return CRMSyncLog.append([CRMSyncEntry(object: object, action: "create", source: source, ok: false, error: error)], stem: stem)
+        return CRMSyncLog.append([CRMSyncEntry(object: object, action: "create", source: source, ok: false, error: error, portal: portal)], stem: stem)
     }
 
     @discardableResult
@@ -105,14 +105,18 @@ struct CRMSyncLogView: View {
     }
 
     /// The Call is written again at once (it never makes a second Call); a note, deal fields or a task reopen Update
-    /// HubSpot with only that row ticked, so the PM still reviews and presses Apply.
+    /// HubSpot with only that row ticked, so the PM still reviews and presses Apply. Both write only to the portal of
+    /// the failed line (CRMSyncLog.retryPortal), checked when the write goes out.
     func retry(_ e: CRMSyncEntry) {
         if e.object == "calls" {
             busy = true; line = L("crm.writing")
-            Task { let err = await CRMCallLogger.run(file, source: "retry"); line = err.isEmpty ? L("crm.updated", ["crm": "HubSpot"]) : err; busy = false }
+            Task {
+                let r = await CRMCallLogger.run(file, source: "retry", portal: e.portal)
+                line = CRMSyncRecorder.status(r.line.isEmpty ? L("crm.updated", ["crm": "HubSpot"]) : r.line, saved: r.saved); busy = false
+            }
         } else {
             let row = ["notes": "note", "deals": "deal", "tasks": "task"][e.object] ?? e.object
-            CRMUpdateWindow.show(file: file, only: [row])
+            CRMUpdateWindow.show(file: file, only: [row], portal: e.portal)
         }
     }
 
