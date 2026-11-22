@@ -459,15 +459,19 @@ struct CRMUpdateView: View {
         Task {
             // 0.8.7.1: a failed undo is said, not hidden behind "Undone". H5: the records are undone only in the portal
             // they were written in (CRMUndo), never in the portal the link or the key names now
-            let failed: Int
+            let failed: Int, kept: Int
             do {
-                let r = try await CRMUndo.run(items, portal: portal, connector: c)
-                failed = r.failed
-                // the stored ids go in turn with the call's writes and Relink, never between their read and save
-                let base = base, deleted = r.deleted
-                _ = try? await CRMCallSync.relink(key: CRMTimelineLogger.turnKey(base: base, link: link)) {
-                    for (type, id) in deleted { CRMTimelineLogger.forget(type: type, id: id, portal: portal, base: base) }
-                }
+                // in turn with the call's writes and Relink: Undo reads a Meeting's notes before it writes them back
+                // (round 7), and the stored ids go never between another write's read and save
+                let base = base
+                let r = try await CRMCallSync.relink(key: CRMTimelineLogger.turnKey(base: base, link: link)) { () async -> Result<(failed: Int, kept: Int, deleted: [(String, String)]), Error> in
+                    do {
+                        let r = try await CRMUndo.run(items, portal: portal, connector: c)
+                        for (type, id) in r.deleted { CRMTimelineLogger.forget(type: type, id: id, portal: portal, base: base) }
+                        return .success(r)
+                    } catch { return .failure(error) }
+                }.get()
+                failed = r.failed; kept = r.kept
                 for (type, _) in r.deleted {
                     if type == "calls" { link?.callId = "" }     // the next Apply makes a new Call
                     if type == "meetings" || type == "emails" {      // H5: a deleted one is made again by the next Apply
@@ -479,7 +483,9 @@ struct CRMUpdateView: View {
                 status = needsRelink ? L("crm.relink.needed") : ((error as? CRMError)?.message ?? error.localizedDescription)
                 return
             }
-            status = failed == 0 ? L("crm.undone") : L("crm.undoFailed", ["n": "\(failed)", "crm": c.providerName])
+            // H5: Meeting notes edited in HubSpot after Apply are kept, and that is said, not hidden behind "Undone"
+            status = failed > 0 ? L("crm.undoFailed", ["n": "\(failed)", "crm": c.providerName])
+                : kept > 0 ? L("crm.undoKept", ["n": "\(kept)", "crm": c.providerName]) : L("crm.undone")
             if failed == 0 { applied = false }
         }
     }

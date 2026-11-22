@@ -122,7 +122,8 @@ func crmTimeline() async {
     let m2 = try? await hs.upsertMeeting(meeting(["Budget approved", "Legal next"]), knownId: m1?.id ?? "", associations: refs)
     let n2 = t.objects["meetings"]?[m1?.id ?? ""]?[notesKey] ?? ""
     expect(m2?.id == m1?.id && m2?.created == false && t.objects["meetings"]?.count == 1 && t.log.filter { $0 == "POST /crm/v3/objects/meetings" }.count == posts, "meetings: re-run updates the same meeting")
-    expect(n2.contains("Legal next") && n2.components(separatedBy: CRMMeetingLog.startMark(key)).count == 2 && (m2?.old[notesKey] ?? "").contains("Budget approved"), "meetings: notes appear once; the old value is kept for Undo")
+    expect(n2.contains("Legal next") && n2.components(separatedBy: CRMMeetingLog.startMark(key)).count == 2 && (m2?.old[CRMTimeline.notesBeforeKey] ?? "").contains("Budget approved")
+           && m2?.old[notesKey] == nil && m2?.old[CRMTimeline.notesCallKey] == key, "meetings: notes appear once; only the old block is kept for Undo, never the whole field")
     expect(!t.log.contains { $0.hasPrefix("PUT ") } && m2?.old[CRMTimeline.addedKey] == nil, "meetings: associations it already has are not added again")
     // stored id lost: the time window finds our own meeting, never a second one
     let m3 = try? await hs.upsertMeeting(meeting(["Id lost"], at: start.addingTimeInterval(120)), knownId: "", associations: refs)
@@ -447,4 +448,46 @@ func crmTimeline() async {
     let seq6 = d6.get { $0.seq }, final6 = d6.get { $0.ids }
     expect(or6.error == nil && seq6 == ["save", "relink"], "relink in turn: Relink saves only after the write stored its ids (\(seq6))")
     expect(final6.portalId == "600" && final6.meetingId.isEmpty && final6.emailId.isEmpty, "relink in turn: portal B's link is never overwritten with portal A's")
+
+    // review round 7: Undo re-reads the notes and takes back only Pacenote's block. Text someone added after Apply
+    // stays; a block edited since Apply is kept as it is and reported, never overwritten with the old snapshot
+    do {
+    func synced(_ t: FakeHubSpotTimeline, _ id: String, _ notes: String) {
+        t.objects["meetings"]![id] = ["hs_meeting_title": "Orbit renewal", notesKey: notes, "hs_timestamp": hubspotTime(start)]
+        t.assoc["meetings/" + id] = ["P1#200"]
+    }
+    func apply(_ hs: HubSpotConnector, _ id: String, _ summary: [String]) async -> [(String, String, [String: String])] {
+        var m = meeting(summary); m.target = id; m.targetPortal = "500"
+        return await CRMTimelineSync.log(key: key, writer: hs, connector: hs, meeting: m, email: nil, associations: refs, queue: CRMCallQueue(),
+                                         load: { CRMTimelineIds(portalId: "500") }, save: { _ in }).undo
+    }
+    let tu = FakeHubSpotTimeline(); let hsu = HubSpotConnector(transport: tu, sleep: { _ in })
+    synced(tu, "95", "<p>My own prep</p>")
+    let u1 = await apply(hsu, "95", ["Ours"])
+    tu.objects["meetings"]!["95"]![notesKey]! += "<p>Added in HubSpot by Dana after Apply</p>"
+    let r1 = try? await CRMUndo.run(u1, portal: "500", connector: hsu)
+    expect(r1?.failed == 0 && r1?.kept == 0 && tu.objects["meetings"]?["95"]?[notesKey] == "<p>My own prep</p><p>Added in HubSpot by Dana after Apply</p>"
+           && tu.linked("meetings/95") == ["contacts/P1"], "undo: a note added in HubSpot after Apply stays, only Pacenote's block goes")
+    let tv = FakeHubSpotTimeline(); let hsv = HubSpotConnector(transport: tv, sleep: { _ in })
+    synced(tv, "96", "<p>My own prep</p>")
+    let u2 = await apply(hsv, "96", ["Ours"])
+    let edited = tv.objects["meetings"]!["96"]![notesKey]!.replacingOccurrences(of: "Ours", with: "Ours, and Dana's correction")
+    tv.objects["meetings"]!["96"]![notesKey] = edited
+    let r2 = try? await CRMUndo.run(u2, portal: "500", connector: hsv)
+    expect(r2?.failed == 0 && r2?.kept == 1 && tv.objects["meetings"]?["96"]?[notesKey] == edited && tv.linked("meetings/96") == ["contacts/P1"],
+           "undo: Pacenote's block edited after Apply is kept and reported; the associations Pacenote added still go")
+    tv.objects["meetings"]!["96"]![notesKey] = "<p>My own prep</p><p>Dana removed the Pacenote notes</p>"
+    let r3 = try? await CRMUndo.run(u2, portal: "500", connector: hsv)
+    expect(r3?.kept == 1 && tv.objects["meetings"]?["96"]?[notesKey] == "<p>My own prep</p><p>Dana removed the Pacenote notes</p>", "undo: a block removed after Apply is not brought back")
+    // a re-run's Undo puts back the previous Pacenote block, with the text around it, even after HubSpot rewrote the markup
+    let tw = FakeHubSpotTimeline(); let hsw = HubSpotConnector(transport: tw, sleep: { _ in })
+    let firstBlock = meeting(["First"]).notes
+    synced(tw, "97", "<p>A</p>" + firstBlock + "<p>Z</p>")
+    let u3 = await apply(hsw, "97", ["Second"])
+    let strong = (tw.objects["meetings"]!["97"]![notesKey] ?? "").replacingOccurrences(of: "<b>", with: "<strong>").replacingOccurrences(of: "</b>", with: "</strong>")
+    tw.objects["meetings"]!["97"]![notesKey] = strong + "<p>Later</p>"
+    let r4 = try? await CRMUndo.run(u3, portal: "500", connector: hsw)
+    expect(r4?.failed == 0 && r4?.kept == 0 && tw.objects["meetings"]?["97"]?[notesKey] == "<p>A</p>" + firstBlock + "<p>Z</p><p>Later</p>",
+           "undo: a re-run's Undo restores the previous block in place and keeps the text added later")
+    }
 }

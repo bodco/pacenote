@@ -1789,6 +1789,7 @@
  "callEdit.err.noAccess": "сторінку Notion не знайдено або її не відкрито для вашої інтеграції (у Notion: ⋯ > Connections)",
  "callEdit.err.token": "Notion не прийняв токен (Налаштування > Інтеграції > Notion)",
  "crm.undoFailed": "Скасування не завершилось: змін у {crm} лишилось {n}, приберіть їх там",
+ "crm.undoKept": "Скасовано, крім нотаток Pacenote у зустрічах {crm} ({n}): їх змінили після Apply, тож їх лишено як є",
  "set.scanNote": "Workspace: {ws}, нових проєктів: {new}",
  "set.foldersInside": "Папок усередині: {n}",
  "ntset.workspaceProp": "Властивість воркспейсу:",

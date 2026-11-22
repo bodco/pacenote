@@ -63,17 +63,39 @@ public struct CRMMeetingLog: Equatable {
     /// Replaces only this call's block (start line to end line, with the tags that open and close them) and keeps the
     /// text before and after it. Without this call's block the new one is added at the end.
     public static func merge(existing: String, notes: String, key: String) -> String {
-        // HubSpot may rewrite the markup of a rich-text field (<strong> for <b>), so the lines are found by their words
-        if let er = existing.range(of: endMark(key), options: .backwards),
-           let sr = existing.range(of: startMark(key), options: .backwards, range: existing.startIndex..<er.lowerBound) {
-            var lo = sr.lowerBound        // the opening tags right before the start line (never a closing tag of the text above)
-            while lo > existing.startIndex, existing[existing.index(before: lo)] == ">",
-                  let lt = existing[..<lo].lastIndex(of: "<"), !existing[lt...].hasPrefix("</") { lo = lt }
-            var hi = er.upperBound        // the closing tags right after the end line
-            while hi < existing.endIndex, existing[hi...].hasPrefix("</"), let gt = existing[hi...].firstIndex(of: ">") { hi = existing.index(after: gt) }
-            return String(existing[..<lo]) + notes + String(existing[hi...])
-        }
+        if let r = block(in: existing, key: key) { return String(existing[..<r.lowerBound]) + notes + String(existing[r.upperBound...]) }
         return existing.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? notes : existing + notes
+    }
+
+    /// This call's block in the notes field, with the tags that open and close its start and end lines.
+    public static func block(in existing: String, key: String) -> Range<String.Index>? {
+        // HubSpot may rewrite the markup of a rich-text field (<strong> for <b>), so the lines are found by their words
+        guard let er = existing.range(of: endMark(key), options: .backwards),
+              let sr = existing.range(of: startMark(key), options: .backwards, range: existing.startIndex..<er.lowerBound) else { return nil }
+        var lo = sr.lowerBound        // the opening tags right before the start line (never a closing tag of the text above)
+        while lo > existing.startIndex, existing[existing.index(before: lo)] == ">",
+              let lt = existing[..<lo].lastIndex(of: "<"), !existing[lt...].hasPrefix("</") { lo = lt }
+        var hi = er.upperBound        // the closing tags right after the end line
+        while hi < existing.endIndex, existing[hi...].hasPrefix("</"), let gt = existing[hi...].firstIndex(of: ">") { hi = existing.index(after: gt) }
+        return lo..<hi
+    }
+
+    /// Undo of one Apply: this call's block goes back to what it was before (`previous`, "" when there was none), only
+    /// while the block is still the one Pacenote wrote (`wrote`). Text around it, added before or after Apply, stays.
+    /// nil: the block was edited or removed since Apply, so nothing may be undone without losing someone's notes.
+    public static func unmerge(current: String, wrote: String, previous: String, key: String) -> String? {
+        guard let r = block(in: current, key: key), sameBlock(String(current[r]), wrote) else { return nil }
+        return String(current[..<r.lowerBound]) + previous + String(current[r.upperBound...])
+    }
+
+    /// The words of a block, so HubSpot's rewrite of the markup (<strong> for <b>, entities, line breaks) is not an edit.
+    static func sameBlock(_ a: String, _ b: String) -> Bool {
+        func words(_ s: String) -> String {
+            var t = s.replacingOccurrences(of: "<[^>]*>", with: " ", options: .regularExpression)
+            for (e, c) in [("&nbsp;", " "), ("&lt;", "<"), ("&gt;", ">"), ("&quot;", "\""), ("&#39;", "'"), ("&#x27;", "'"), ("&amp;", "&")] { t = t.replacingOccurrences(of: e, with: c) }
+            return t.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+        }
+        return words(a) == words(b)
     }
 
     var properties: [String: Any] {
@@ -144,6 +166,10 @@ public struct CRMMeetingCandidate: Equatable { public var id: String; public var
 /// still on the object, so Undo can take them off later. `error` is the first failure.
 public struct CRMTimelineLeftover: Error { public var type: String; public var id: String; public var fields: [String: String]; public var error: Error }
 
+/// Undo found Pacenote's block in a Meeting's notes edited or removed since Apply: the notes were kept as they are now
+/// (the associations Pacenote added were still taken off).
+public struct CRMUndoConflict: Error { public var type: String; public var id: String }
+
 public protocol CRMTimelineWriter {
     func upsertMeeting(_ log: CRMMeetingLog, knownId: String, associations: [CRMRef]) async throws -> CRMTimelineResult
     /// ours: Pacenote created knownId. An email that is not ours only gets the missing associations, never new content.
@@ -155,6 +181,9 @@ public protocol CRMTimelineWriter {
 public enum CRMTimeline {
     /// In an Undo record: the associations a write added, "type/id" joined by commas. Not a HubSpot property.
     public static let addedKey = "pacenote.associations"
+    /// In an Undo record of a Meeting's notes: the call id, the block Pacenote wrote and the block it replaced ("" when
+    /// there was none). Never the whole field: Undo puts back only Pacenote's block (`CRMMeetingLog.unmerge`).
+    public static let notesCallKey = "pacenote.notes.call", notesWroteKey = "pacenote.notes.wrote", notesBeforeKey = "pacenote.notes.before"
     static func encode(_ refs: [CRMRef]) -> String { refs.map { $0.type + "/" + $0.id }.joined(separator: ",") }
     public static func decode(_ s: String) -> [CRMRef] {
         s.split(separator: ",").compactMap { p in let x = p.split(separator: "/", maxSplits: 1); return x.count == 2 ? CRMRef(String(x[0]), String(x[1])) : nil }
@@ -225,19 +254,20 @@ public enum CRMTimelineSync {
 public enum CRMUndo {
     /// Notes and tasks are deleted, deal fields and an updated Call, Meeting or Email get their old values back.
     /// Throws the portal mismatch before any write; otherwise returns how many records failed and the (type, id) of
-    /// the ones deleted (their stored ids must go too, so the next Apply makes them again).
-    public static func run(_ items: [(String, String, [String: String])], portal: String, connector c: CRMConnector) async throws -> (failed: Int, deleted: [(String, String)]) {
+    /// the ones deleted (their stored ids must go too, so the next Apply makes them again). kept: Meetings whose
+    /// Pacenote notes were edited in HubSpot after Apply, so their notes were left as they are (`CRMUndoConflict`).
+    public static func run(_ items: [(String, String, [String: String])], portal: String, connector c: CRMConnector) async throws -> (failed: Int, kept: Int, deleted: [(String, String)]) {
         try await CRMPortal.verify(link: portal, connector: c)
-        var failed = 0, deleted: [(String, String)] = []
+        var failed = 0, kept = 0, deleted: [(String, String)] = []
         for (type, id, old) in items.reversed() {
             do {
                 if type == "deals" { _ = try await c.updateDeal(id: id, fields: old) }
                 else if type == "calls" && !old.isEmpty { try await c.restoreCall(id: id, fields: old) }
                 else if (type == "meetings" || type == "emails") && !old.isEmpty { try await (c as? CRMTimelineWriter)?.restore(type: type, id: id, fields: old) }
                 else { try await c.delete(type: type, id: id); deleted.append((type, id)) }
-            } catch { failed += 1 }
+            } catch is CRMUndoConflict { kept += 1 } catch { failed += 1 }
         }
-        return (failed, deleted)
+        return (failed, kept, deleted)
     }
 }
 
@@ -365,7 +395,12 @@ extension HubSpotConnector: CRMTimelineWriter {
             do { _ = try await call("PATCH", "/crm/v3/objects/meetings/\(id)", ["properties": [Self.meetingNotes: merged]]) }
             catch { try await rollBack("meetings", id, added, error) }
         }
-        var old: [String: String] = merged != before ? [Self.meetingNotes: before] : [:]
+        // only Pacenote's block is recorded: Undo must not put back text someone else changed after Apply
+        var old: [String: String] = [:]
+        if merged != before {
+            old = [CRMTimeline.notesCallKey: log.key, CRMTimeline.notesWroteKey: log.notes,
+                   CRMTimeline.notesBeforeKey: CRMMeetingLog.block(in: before, key: log.key).map { String(before[$0]) } ?? ""]
+        }
         if !added.isEmpty { old[CRMTimeline.addedKey] = CRMTimeline.encode(added) }
         return CRMTimelineResult(id: id, created: false, attached: attached, old: old)
     }
@@ -415,7 +450,16 @@ extension HubSpotConnector: CRMTimelineWriter {
     public func restore(type: String, id: String, fields: [String: String]) async throws {
         var f = fields
         let added = f.removeValue(forKey: CRMTimeline.addedKey).map(CRMTimeline.decode) ?? []
+        var conflict = false
+        if let key = f.removeValue(forKey: CRMTimeline.notesCallKey) {
+            // the notes as they are now: only Pacenote's block goes back, and only while nobody changed it since Apply
+            let wrote = f.removeValue(forKey: CRMTimeline.notesWroteKey) ?? "", previous = f.removeValue(forKey: CRMTimeline.notesBeforeKey) ?? ""
+            let now = try await read(type, id, [Self.meetingNotes]).0[Self.meetingNotes] ?? ""
+            if let back = CRMMeetingLog.unmerge(current: now, wrote: wrote, previous: previous, key: key) { f[Self.meetingNotes] = back }
+            else { conflict = true }
+        }
         if !f.isEmpty { _ = try await call("PATCH", "/crm/v3/objects/\(type)/\(id)", ["properties": f]) }
         for a in added { _ = try await call("DELETE", "/crm/v4/objects/\(type)/\(id)/associations/\(a.type)/\(a.id)") }
+        if conflict { throw CRMUndoConflict(type: type, id: id) }
     }
 }

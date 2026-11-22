@@ -1687,7 +1687,9 @@ it after you sent the email yourself, and HubSpot gets an email engagement with 
 (not an email sent through HubSpot), associated the same way. If HubSpot already logged that email (one of the call's
 contacts, the same subject and the same text above any quoted reply, in the last day), Pacenote never changes it and only adds the missing
 associations. Both rows need Apply; there is no automatic switch for them. Undo works for 8 seconds and also removes
-the associations Pacenote added; if a write fails halfway, what it changed is taken back, and an association HubSpot
+the associations Pacenote added. On a Meeting it reads the notes again and takes back only Pacenote's block, so notes
+someone added in HubSpot after Apply stay; if Pacenote's block itself was edited there since, it is kept as it is and
+Undo says so; if a write fails halfway, what it changed is taken back, and an association HubSpot
 would not let it take back stays in Undo. The meetings offered to pick and Undo belong to the HubSpot account that
 was searched or written: after Relink to another account they are dropped, and a pick or Undo from the old account
 never writes to the new one, even when an id there is the same. Relink and Refresh wait until a write of the same
