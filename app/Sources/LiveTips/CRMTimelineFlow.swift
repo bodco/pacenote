@@ -56,7 +56,11 @@ enum CRMTimelineLogger {
         e?.sent = Date()
         let o = await CRMTimelineSync.log(key: link.callKey, writer: w, connector: c, meeting: on("meeting") ? meeting : nil, email: e, associations: refs,
             load: { ids(CRMLink.load(base: base) ?? link) },
-            save: { i in var d = CRMLink.load(base: base) ?? link; d.meetingId = i.meetingId; d.emailId = i.emailId; d.emailOurs = i.emailOurs; d.save(base: base) })
+            save: { i in
+                // never into a link a Relink made while the write was pending: the ids are the verified portal's
+                var d = CRMLink.load(base: base) ?? link
+                guard CRMPortal.matches(link: d.portalId, current: i.portalId) else { return }
+                d.meetingId = i.meetingId; d.emailId = i.emailId; d.emailOurs = i.emailOurs; d.save(base: base) })
         var l = link; l.meetingId = o.ids.meetingId; l.emailId = o.ids.emailId; l.emailOurs = o.ids.emailOurs
         return (o.undo, l, o.pick, o.portal, o.error)
     }
@@ -65,9 +69,10 @@ enum CRMTimelineLogger {
         CRMTimelineIds(portalId: l.portalId, meetingId: l.meetingId, emailId: l.emailId, emailOurs: l.emailOurs)
     }
 
-    /// Undo deleted a Meeting or an Email Pacenote made: the stored id goes, so the next Apply makes it again.
-    static func forget(type: String, id: String, base: String) {
-        guard var d = CRMLink.load(base: base) else { return }
+    /// Undo deleted a Meeting or an Email Pacenote made in `portal`: the stored id goes, so the next Apply makes it
+    /// again. A link of another portal (relinked since) keeps its ids: the same id there is another record.
+    static func forget(type: String, id: String, portal: String, base: String) {
+        guard var d = CRMLink.load(base: base), CRMPortal.matches(link: d.portalId, current: portal) else { return }
         if type == "meetings", d.meetingId == id { d.meetingId = "" }
         else if type == "emails", d.emailId == id { d.emailId = ""; d.emailOurs = false }
         else { return }

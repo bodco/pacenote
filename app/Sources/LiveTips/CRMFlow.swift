@@ -369,8 +369,11 @@ struct CRMUpdateView: View {
                 if let w = c as? CRMTimelineWriter {
                     // H5: in turn with Auto, with the stored ids read from <base>.crm.json when the turn comes
                     let t = await CRMTimelineLogger.apply(w, connector: c, meeting: meetingLog, email: emailLog, base: base, link: link ?? l, refs: refs) { id in p.rows.first(where: { $0.id == id })?.on == true }
-                    done += t.undo; link?.meetingId = t.link.meetingId; link?.emailId = t.link.emailId; link?.emailOurs = t.link.emailOurs
-                    meetingPick = t.pick; pickPortal = t.portal        // the pick block below says what is waiting
+                    done += t.undo
+                    if link?.portalId == t.portal {     // a Relink while this was pending: its ids and pick are the old portal's
+                        link?.meetingId = t.link.meetingId; link?.emailId = t.link.emailId; link?.emailOurs = t.link.emailOurs
+                        meetingPick = t.pick; pickPortal = t.portal        // the pick block below says what is waiting
+                    }
                     if !t.pick.isEmpty { extra = " " + L("crm.meeting.waiting") }
                     if let e = t.error { throw e }
                 }
@@ -405,7 +408,8 @@ struct CRMUpdateView: View {
             // an open Undo of another portal is not joined: each record is undone only in the portal it was written in
             if (undoUntil ?? .distantPast) <= Date() || (!t.portal.isEmpty && undoPortal != t.portal) { undo = [] }
             if !t.undo.isEmpty { undoPortal = t.portal }
-            undo += t.undo; link?.meetingId = t.link.meetingId; meetingPick = t.pick; pickPortal = t.portal
+            undo += t.undo
+            if link?.portalId == t.portal { link?.meetingId = t.link.meetingId; meetingPick = t.pick; pickPortal = t.portal }   // not after a Relink meanwhile
             if let e = t.error {
                 let code = (e as? CRMError)?.code
                 needsRelink = code == CRMPortal.mismatchCode
@@ -456,8 +460,8 @@ struct CRMUpdateView: View {
                         link?.callId = ""
                     }
                     if type == "meetings" || type == "emails" {      // H5: a deleted one is made again by the next Apply
-                        CRMTimelineLogger.forget(type: type, id: id, base: base)
-                        if type == "meetings" { link?.meetingId = "" } else { link?.emailId = ""; link?.emailOurs = false }
+                        CRMTimelineLogger.forget(type: type, id: id, portal: portal, base: base)
+                        if link?.portalId == portal { if type == "meetings" { link?.meetingId = "" } else { link?.emailId = ""; link?.emailOurs = false } }
                     }
                 }
             } catch {

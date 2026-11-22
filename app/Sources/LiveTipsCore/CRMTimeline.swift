@@ -184,6 +184,12 @@ public enum CRMTimelineSync {
         final class Box { var out: Outcome; init(_ o: Outcome) { out = o } }
         let box = Box(Outcome(ids: load()))
         guard meeting != nil || email != nil else { return box.out }
+        // an id is stored only while the call is still linked to the portal it was written in: a Relink during the
+        // write points the call at another portal, where the same id may be an unrelated record
+        func store(_ ids: CRMTimelineIds) {
+            if CRMPortal.matches(link: load().portalId, current: ids.portalId) { save(ids) }
+            box.out.ids = ids
+        }
         do {
             try await queue.run(key) {
                 var ids = load()
@@ -197,13 +203,13 @@ public enum CRMTimelineSync {
                 if let m = meeting {
                     let r = try await w.upsertMeeting(m, knownId: ids.meetingId, associations: associations)
                     if r.pick.isEmpty {
-                        ids.meetingId = r.id; save(ids); box.out.ids = ids
+                        ids.meetingId = r.id; store(ids)
                         if r.created || !r.old.isEmpty { box.out.undo.append(("meetings", r.id, r.old)) }
                     } else { box.out.pick = r.pick }        // nothing written yet; the Email row still goes
                 }
                 if let e = email {
                     let r = try await w.upsertEmail(e, knownId: ids.emailId, ours: ids.emailOurs, associations: associations)
-                    ids.emailId = r.id; ids.emailOurs = !r.id.isEmpty && !r.attached; save(ids); box.out.ids = ids
+                    ids.emailId = r.id; ids.emailOurs = !r.id.isEmpty && !r.attached; store(ids)
                     if r.created || !r.old.isEmpty { box.out.undo.append(("emails", r.id, r.old)) }
                 }
             }

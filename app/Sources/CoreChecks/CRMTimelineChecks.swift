@@ -12,6 +12,7 @@ final class FakeHubSpotTimeline: CRMTransport {
     var failPut = 0          // the n-th association PUT from now fails with a 500 (0: none)
     var failPatch = false    // a PATCH of an object fails with a 500
     var failDelete: Set<String> = []   // association DELETEs ("kind/id") that fail with a 500
+    var onRequest: ((String) -> Void)? // sees "METHOD /path" before it is answered (a Relink while a write is pending)
     static let kinds = ["212": "deals", "188": "companies", "200": "contacts", "210": "deals", "186": "companies", "198": "contacts"]
     /// "kind/id" of everything the object is associated with, however it was added.
     func linked(_ key: String) -> Set<String> {
@@ -23,6 +24,7 @@ final class FakeHubSpotTimeline: CRMTransport {
     func send(_ method: String, _ path: String, _ body: [String: Any]?) async throws -> (Int, [String: Any], [String: String]) {
         let clean = String(path.split(separator: "?")[0])
         log.append(method + " " + clean)
+        onRequest?(method + " " + clean)
         if let b = body { bodies.append(b) }
         if clean == "/account-info/v3/details" { return (200, ["portalId": portal], [:]) }
         let parts = clean.split(separator: "/").map(String.init)
@@ -405,4 +407,16 @@ func crmTimeline() async {
     pa.objects["emails"]!["700"] = ["hs_email_subject": "x"]
     let ud2 = try? await CRMUndo.run([("emails", "700", [:])], portal: "500", connector: hpa)
     expect(ud2?.failed == 0 && ud2?.deleted.first?.1 == "700" && pa.objects["emails"]?["700"] == nil, "portals: a deleted engagement is named for its stored id")
+
+    // review round 5: a Relink to portal B completes while the write to portal A is pending. A's new ids are never
+    // stored in B's link, where the same id may be an unrelated record
+    let pw = FakeHubSpotTimeline(); let hpw = HubSpotConnector(transport: pw, sleep: { _ in })
+    let disk3 = Disk()
+    pw.onRequest = { r in if r == "POST /crm/v3/objects/meetings" { disk3.ids = CRMTimelineIds(portalId: "600") } }    // Relink saves B's link
+    let ow = await CRMTimelineSync.log(key: key, writer: hpw, connector: hpw, meeting: meeting(["Relinked"]), email: mail, associations: refs, queue: CRMCallQueue(),
+                                       load: { disk3.ids }, save: { disk3.ids = $0 })
+    expect(ow.error == nil && pw.objects["meetings"]?.count == 1 && ow.portal == "500" && ow.undo.first?.0 == "meetings",
+           "relink during a write: the write stays in portal A and undoable there")
+    expect(disk3.ids.portalId == "600" && disk3.ids.meetingId.isEmpty && disk3.ids.emailId.isEmpty && !disk3.ids.emailOurs
+           && disk3.ids.meetingId != ow.ids.meetingId, "relink during a write: portal A's ids are not stored in portal B's link")
 }
