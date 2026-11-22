@@ -15,7 +15,9 @@ Pacenote. Earlier versions are described in the commit messages and in
   of the site were read, and the link field placeholder is shorter. Once a read is finished or cancelled,
   the panel shows only the result: the plan controls, the page counter and the cost estimate are hidden, and a page that
   could not be read has an x instead of a tick. Failures to plan a site are worded in your language, and the route name
-  reads as a label in the cost and privacy lines.
+  reads as a label in the cost and privacy lines. A redirect is followed only to a page robots.txt allows, two reads of
+  one site no longer stop each other, nothing is read while a call is being recorded (a call that starts stops a read in
+  progress), and if the reader ends early the pages already read are kept with a message and Read again.
 - **Quick prep takes a link (2026-11-22, FB7):** the Sources line of Quick has a Link to add field, so a link no
   longer needs Expert.
 

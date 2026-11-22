@@ -2728,6 +2728,8 @@
  "sheet.ui.web.cancel": "Cancel",
  "sheet.ui.web.stopping": "Stopping after this page...",
  "sheet.ui.web.progress": "Reading page {d} of {n}: {p}",
+ "sheet.ui.web.partialFailed": "The read stopped early. The pages already read are kept; press Read again to try the rest.",
+ "sheet.ui.web.callBusy": "A call is being recorded, so no website is read now. Try again after the call.",
  "sheet.ui.web.lost": "Stopped before any page was read. Nothing was added.",
  "sheet.ui.web.keptOnCancel": "Stopped: the pages already read are kept.",
  "sheet.ui.web.done": "{n} pages read, about {t}.",

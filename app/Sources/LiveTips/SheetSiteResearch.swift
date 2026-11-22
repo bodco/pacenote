@@ -21,6 +21,8 @@ final class SiteResearchSession: ObservableObject {
     @Published var cancelling = false
     /// The read was stopped before any page was read (nothing was added).
     @Published var lostOnCancel = false
+    /// The engine ended before its report: the pages it had finished are kept, the rest can be read again.
+    @Published var partialFailed = false
     /// The page being read and, after the read, every page's state and reason as the engine reported them (stopped = not reached).
     @Published var currentPath = ""
     @Published var pageStates: [String: (state: String, note: String)] = [:]
@@ -29,12 +31,20 @@ final class SiteResearchSession: ObservableObject {
     private var cancelPath = ""
     private var runID = UUID()
 
+    /// Sessions that may have a read in flight: a call starting stops them (nothing runs during a live call).
+    private static let live = NSHashTable<SiteResearchSession>.weakObjects()
+    static func stopAll() { for s in live.allObjects { s.cancel() } }
+
     /// No read process: what the shot harness stages (also checked by source in CoreChecks).
     var idle: Bool { process == nil }
 
-    init(sourceID: String, url: String) { self.sourceID = sourceID; self.url = url }
+    init(sourceID: String, url: String) { self.sourceID = sourceID; self.url = url; Self.live.add(self) }
+
+    /// A call is being recorded: the research makes no new network request (spec: nothing runs during a live call).
+    static var callBusy: Bool { CallEngine.shared.isRunning }
 
     func loadPlan(request: [String: Any]) {
+        guard !Self.callBusy else { error = ""; phase = .failed; return }
         phase = .planning; plan = nil; error = ""; report = nil
         SheetCLI.run("webplan", request: request) { r in
             if let p = r.json.flatMap({ SitePlan(json: $0) }), r.json?["error"] == nil {
@@ -52,16 +62,18 @@ final class SiteResearchSession: ObservableObject {
     /// as the last line. `done` gets the report once.
     func read(outDir: String, done onDone: @escaping (SiteReadReport) -> Void) {
         guard let plan, phase == .ready || phase == .finished, plan.tickedCount > 0 else { return }
+        guard !Self.callBusy else { return }
         guard !SheetShots.active else { error = L("sheet.ui.err.noEngine"); phase = .failed; return }
         try? FileManager.default.createDirectory(atPath: outDir, withIntermediateDirectories: true)
-        cancelPath = (outDir as NSString).appendingPathComponent(".cancel")
+        // one cancel file per read: two reads of the same site never share (or remove) each other's marker
+        cancelPath = (SheetCLI.stateDir as NSString).appendingPathComponent("webfetch-\(UUID().uuidString.prefix(8)).cancel")
         try? FileManager.default.removeItem(atPath: cancelPath)
         let req = SiteResearch.fetchRequest(plan: plan, outDir: outDir, cancelPath: cancelPath)
         let path = (SheetCLI.stateDir as NSString).appendingPathComponent("webfetch-\(UUID().uuidString.prefix(8)).request.json")
         guard SheetCLI.writeRequest(req, to: path), let p = SheetCLI.process("webfetch", ["--request", path]) else {
             error = L("sheet.ui.err.noEngine"); phase = .failed; return
         }
-        phase = .reading; cancelling = false; lostOnCancel = false; done = 0; total = plan.tickedCount; report = nil
+        phase = .reading; cancelling = false; lostOnCancel = false; partialFailed = false; done = 0; total = plan.tickedCount; report = nil
         pageStates = [:]; currentPath = ""
         runID = UUID()
         let run = runID, pages = plan.ticked
@@ -102,7 +114,11 @@ final class SiteResearchSession: ObservableObject {
     /// process was ended before its report, from the page lines it had printed. A page without a row was not reached.
     private func take(_ r: SheetCLI.Result, pages: [SitePlanPage]) -> SiteReadReport {
         var rep = r.json.flatMap { SiteReadReport(json: $0) }
-        if rep == nil, cancelling || r.json?["error"] == nil { rep = SiteReadReport(progress: r.lines, url: plan?.url ?? url) }
+        if rep == nil, let kept = SiteReadReport(progress: r.lines, url: plan?.url ?? url) {
+            // the sidecar ended without its report: keep the finished pages; unless the person stopped it, say so
+            rep = kept
+            partialFailed = !cancelling
+        }
         guard let rep else {
             if !cancelling { for p in pages { pageStates[p.url] = ("error", SheetCLI.error(r) ?? L("sheet.ui.err.noResult")) } }
             return SiteReadReport()
@@ -155,6 +171,9 @@ struct SheetSiteResearchPanel: View {
             switch session.phase {
             case .planning:
                 HStack(spacing: 6) { PNSpinner(size: 16).accessibilityLabel(L("sheet.ui.web.planning")); Text(L("sheet.ui.web.planning")).font(th.homeText(13)).foregroundStyle(PN.C.text2) }
+            case .failed where SiteResearchSession.callBusy:
+                Text(L("sheet.ui.web.callBusy")).font(th.homeText(13)).foregroundStyle(PN.C.pending).fixedSize(horizontal: false, vertical: true)
+                Button(L("sheet.ui.web.close"), action: onClose).buttonStyle(.pnTertiary)
             case .failed:
                 Text(planFailedText(session.error)).font(th.homeText(13)).foregroundStyle(PN.C.pending).fixedSize(horizontal: false, vertical: true)
                 HStack { Button(L("sheet.ui.web.retry")) { draft.researchSite(sourceID: session.sourceID) }.buttonStyle(.pnSecondary)
@@ -299,7 +318,7 @@ struct SheetSiteResearchPanel: View {
             if session.lostOnCancel { Text(L("sheet.ui.web.lost")).font(th.homeText(13)).foregroundStyle(PN.C.text2) }
             HStack {
                 Button(plan.tickedCount == 1 ? L("sheet.ui.web.readOne") : L("sheet.ui.web.read", ["n": "\(plan.tickedCount)"])) { draft.readPages(sourceID: session.sourceID) }
-                    .buttonStyle(.pnPrimary).disabled(plan.tickedCount == 0)
+                    .buttonStyle(.pnPrimary).disabled(plan.tickedCount == 0 || SiteResearchSession.callBusy)
                 Button(L("sheet.ui.web.close"), action: onClose).buttonStyle(.pnTertiary)
             }
             Text(L("sheet.ui.web.sent", ["route": AIRoute.name(draft.route)])).font(th.homeText(12)).foregroundStyle(PN.C.text3).fixedSize(horizontal: false, vertical: true)
@@ -315,6 +334,9 @@ struct SheetSiteResearchPanel: View {
             return c > 0 ? L("sheet.ui.web.state." + k, ["n": "\(c)"]) : nil
         }
         if !left.isEmpty { Text(left.joined(separator: " · ")).font(th.homeText(12)).foregroundStyle(PN.C.text3).fixedSize(horizontal: false, vertical: true) }
+        if session.partialFailed {
+            Text(L("sheet.ui.web.partialFailed")).font(th.homeText(13)).foregroundStyle(PN.C.pending).fixedSize(horizontal: false, vertical: true)
+        }
         if n == 0 && (r.counts["empty"] ?? 0) > 0 {
             Text(L("sheet.ui.web.js")).font(th.homeText(13)).foregroundStyle(PN.C.pending).fixedSize(horizontal: false, vertical: true)
         }

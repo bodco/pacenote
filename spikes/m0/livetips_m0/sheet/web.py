@@ -437,17 +437,26 @@ class _PublicHTTPS(urllib.request.HTTPSHandler):
 
 
 class _SiteRedirect(urllib.request.HTTPRedirectHandler):
+    """Follows a redirect only inside the site, to a page the skip rules and (when `allow` is given) robots.txt accept:
+    a disallowed destination gets no request at all."""
+
+    def __init__(self, allow=None):
+        super().__init__()
+        self.allow = allow
+
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         if urllib.parse.urlsplit(newurl).scheme not in ("http", "https") or not same_site(req.full_url, newurl):
             raise FetchError(code, "redirect leaves the site")
         if skip_reason(newurl):
             raise FetchError(code, "redirect points to a skipped page")
+        if self.allow is not None and not self.allow(newurl):
+            raise FetchError(code, "redirect points to a page robots.txt does not allow")
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
-def http_get(url: str, timeout: float = 15.0, total_s: float = 30.0):
+def http_get(url: str, timeout: float = 15.0, total_s: float = 30.0, allow=None):
     """(status, final url, content type, text). Raises FetchError for transport errors (and a page slower than
-    total_s in all). The text is a Body: .cut > 0 when the page was longer than MAX_BYTES."""
+    total_s in all). `allow(url)`: robots.txt check for each redirect destination. The text is a Body: .cut > 0 when the page was longer than MAX_BYTES."""
     target = urllib.parse.urlsplit(url)
     if target.scheme not in ("http", "https") or not target.hostname or target.username is not None:
         raise FetchError(0, "expected an HTTP or HTTPS address without credentials")
@@ -455,7 +464,7 @@ def http_get(url: str, timeout: float = 15.0, total_s: float = 30.0):
                                                "Accept-Language": "en,uk;q=0.8"})
     try:
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _PublicHTTP(), _PublicHTTPS(),
-                                             _SiteRedirect())
+                                             _SiteRedirect(allow))
         with opener.open(req, timeout=timeout) as r:
             ctype = r.headers.get("Content-Type", "")
             raw, cut = read_capped(r, MAX_BYTES, total_s)
@@ -693,7 +702,7 @@ def fetch(the_plan: dict, out_dir=None, delay: float = 1.0, getter=http_get, sle
         if progress:
             progress({"stage": "start", "url": url, "path": row["path"], "n": attempted})
         try:
-            status, final, ctype, body = getter(url)
+            status, final, ctype, body = getter(url, allow=robots.allowed) if respect and getter is http_get else getter(url)
         except AddressRefused as e:
             report.append(dict(row, status="blocked", note=e.reason))
             continue
@@ -743,7 +752,11 @@ def fetch(the_plan: dict, out_dir=None, delay: float = 1.0, getter=http_get, sle
             tp, k = out_path / (base + ".txt"), 2
             while tp.exists():                      # PB-37B: a stored copy is never overwritten, not even by an earlier run
                 tp, k = out_path / (f"{base}-{k}.txt"), k + 1
-            tp.write_text(f"{title}\n{url}\n\n{text}\n", encoding="utf-8")
+            try:
+                tp.write_text(f"{title}\n{url}\n\n{text}\n", encoding="utf-8")
+            except OSError as e:                    # a failed write is this page's error; the pages read so far stay
+                report.append(dict(row, status="error", note="could not save the page: " + str(e)[:120]))
+                continue
             src["path"] = str(tp)
             rr["file"] = str(tp)
         sources.append(src)

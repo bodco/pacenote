@@ -4857,6 +4857,19 @@ func siteResearchShotStaticPB37() {
     let spin = (try? String(contentsOf: dir.appendingPathComponent("BrandComponents.swift"), encoding: .utf8)) ?? ""
     expect(spin.contains("paused: still") && spin.contains("SheetShots.active"), "research shots: the spinner is paused in shot mode (no display-link redraws)")
 }
+// PB-37 (G6) fix round 2: one cancel file per read, a call stops and blocks the research, a sidecar that ended without its report keeps the pages
+func siteResearchRobustPB37() {
+    let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let dir = repo.appendingPathComponent("app/Sources/LiveTips")
+    let ses = (try? String(contentsOf: dir.appendingPathComponent("SheetSiteResearch.swift"), encoding: .utf8)) ?? ""
+    expect(ses.contains("webfetch-\\(UUID().uuidString.prefix(8)).cancel") && !ses.contains("appendingPathComponent(\".cancel\")"), "research: each read has its own cancel file (never the shared .cancel of the site folder)")
+    expect(ses.contains("static func stopAll()") && ses.contains("callBusy"), "research: a call stops outstanding reads and blocks new ones")
+    expect(ses.contains("partialFailed = !cancelling") && ses.contains("sheet.ui.web.partialFailed"), "research: a sidecar that ended without its report keeps the pages and says so")
+    let call = (try? String(contentsOf: dir.appendingPathComponent("CallEngine.swift"), encoding: .utf8)) ?? ""
+    expect(call.contains("SiteResearchSession.stopAll()"), "research: starting a call stops the reads")
+}
+siteResearchRobustPB37()
 siteResearchShotStaticPB37()
 siteResearchPB37C()
 print("core checks: \(passed) passed, \(failures) failed")

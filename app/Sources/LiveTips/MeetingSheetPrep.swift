@@ -1271,6 +1271,7 @@ struct SheetDraftSourceRow: View {
     @ViewBuilder private var action: some View {
         if source.type == "web" && source.parentURI == nil && draft.research[source.id] == nil {
             Button(draft.pagesRead(of: source) ? L("sheet.ui.web.again") : L("sheet.ui.web.button")) { draft.researchSite(sourceID: source.id) }.buttonStyle(.pnSecondary)
+                .disabled(SiteResearchSession.callBusy)
                 .fixedSize()      // the label never wraps (the long Ukrainian one): the title takes the cut
         }
         switch source.fix {
