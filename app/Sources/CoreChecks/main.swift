@@ -881,8 +881,10 @@ final class FakeHubSpotPeople: CRMTransport {
     var failCallPut = false                            // adding a person to a Call fails with a 500
     var failLeadsRead = false                          // the portal has no Leads scopes: reading a contact's leads is a 403
     var onSend: ((String) -> Void)?                    // runs on each request ("POST /crm/v3/objects/contacts"), e.g. a Relink meanwhile
+    var putDelayMs: UInt64 = 0                         // a slow association PUT, so another task could run in the middle of the write
     func send(_ method: String, _ path: String, _ body: [String: Any]?) async throws -> (Int, [String: Any], [String: String]) {
         let clean = String(path.split(separator: "?")[0])
+        if method == "PUT", putDelayMs > 0 { try? await Task.sleep(nanoseconds: putDelayMs * 1_000_000) }
         let after = Int(path.components(separatedBy: "after=").dropFirst().first ?? "") ?? 0
         log.append(method + " " + clean)
         onSend?(method + " " + clean)
@@ -1121,6 +1123,36 @@ func crmPeople() async {
     let rp2 = await CRMPeople.commit([], company: nil, found: found, portal: "P1", callKey: "k3", callWritten: false, connector: hs, queue: qq,
                                      stored: { CRMStoredLink(callId: "C13", portalId: "P2") }, save: { _ in savedOther = true })
     expect(rp2.failure?.code == CRMPortal.mismatchCode && t.assoc["calls/C13"] == nil && !savedOther, "people: a stored link of another portal is never written, even with a Call id")
+
+    // 7c''. the link has no call key yet: Auto and the Update window each take the key before any write and get the same
+    // stored one, so a Relink started in the middle of Auto's people write waits for its turn and never sees (or causes)
+    // a half-written link. Under another key (the old empty one) the Relink ran in the middle and the PUT went to P2.
+    var keyOnDisk = "", made = 0
+    let autoKey = CRMCallKey.ensure("", stored: { keyOnDisk }, store: { keyOnDisk = $0 }, make: { made += 1; return "key-\(made)" })
+    let windowKey = CRMCallKey.ensure("", stored: { keyOnDisk }, store: { keyOnDisk = $0 }, make: { made += 1; return "key-\(made)" })
+    expect(autoKey == "key-1" && windowKey == autoKey && keyOnDisk == autoKey && made == 1 && CRMCallKey.ensure("kept", stored: { "" }, store: { _ in }) == "kept",
+           "people: a call without a key gets one stored key that Auto, Apply and Relink share")
+    func relinkRace(relinkKey: String) async -> [String] {
+        var sidecar = CRMStoredLink(callId: "C20", portalId: "P1", linked: [CRMRef("companies", cid)])
+        var events: [String] = []
+        var relink: Task<Void, Never>? = nil
+        t.putDelayMs = 150
+        t.onSend = { req in if req.hasPrefix("PUT /crm/v4/objects/calls/C20") { events.append("put:" + sidecar.portalId) } }
+        _ = await CRMPeople.commit([], company: nil, found: found, portal: "P1", callKey: autoKey, callWritten: false, connector: hs, queue: qq,
+                                   stored: {
+                                       events.append("stored:" + sidecar.portalId)
+                                       relink = Task { _ = try? await qq.run(relinkKey) { sidecar = CRMStoredLink(callId: "", portalId: "P2"); events.append("relink") } }
+                                       return sidecar
+                                   },
+                                   save: { _ in events.append("save:" + sidecar.portalId) })
+        await relink?.value
+        t.putDelayMs = 0; t.onSend = nil
+        return events
+    }
+    let sameKey = await relinkRace(relinkKey: windowKey)
+    expect(Array(sameKey.prefix(2)) == ["stored:P1", "save:P1"] && sameKey.last == "relink" && sameKey.dropFirst(2).dropLast().allSatisfy { $0 == "put:P1" } && sameKey.count > 3,"people: Relink under the call's key waits until Auto's people write is done (\(sameKey))")
+    let otherKey = await relinkRace(relinkKey: "")
+    expect(otherKey.firstIndex(of: "relink").map { $0 < otherKey.count - 1 } == true, "people: the check discriminates; under another key the Relink lands in the middle (\(otherKey))")
 
     // 7d. a mixed call with two new domains and the call's company already linked: every company made in this Apply,
     // and the existing company of a third domain, go to the Call too

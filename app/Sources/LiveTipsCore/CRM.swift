@@ -116,6 +116,17 @@ public actor CRMCallQueue {
     }
 }
 
+/// H3: the call's queue key, made once and stored before any write or Relink starts, so Auto, Apply and Relink of one
+/// call always take turns under the same key (an empty key would put them in different queues).
+public enum CRMCallKey {
+    public static func ensure(_ current: String, stored: () -> String, store: (String) -> Void,
+                              make: () -> String = { UUID().uuidString.lowercased() }) -> String {
+        if !current.isEmpty { return current }
+        let s = stored(); if !s.isEmpty { return s }
+        let k = make(); store(k); return k
+    }
+}
+
 public enum CRMCallSync {
     /// One write of a call's Call: in turn per call key, the portal checked, the stored id read when the turn comes,
     /// the new id stored before the turn ends.

@@ -101,15 +101,19 @@ extension CRMService {
 /// H2: the Call engagement of a finished call, from the call page as edited. Nothing from the transcript.
 @MainActor
 enum CRMCallLogger {
+    /// The call key, stored at once, so Auto, an open Update window and its Relink queue under the same one. H3: taken
+    /// before any async step, as the people write and Relink use the queue too.
+    static func keyed(base: String, _ link: CRMLink) -> CRMLink {
+        var l = link
+        l.callKey = CRMCallKey.ensure(link.callKey, stored: { CRMLink.load(base: base)?.callKey ?? "" },
+                                      store: { k in var d = CRMLink.load(base: base) ?? link; d.callKey = k; d.save(base: base) })
+        return l
+    }
+
     static func log(file: String, link: inout CRMLink) -> CRMCallLog? {
         let base = file.hasSuffix(".md") ? String(file.dropLast(3)) : file
+        link = keyed(base: base, link)
         guard let rec = CallHistory.shared.records.first(where: { $0.file == file }) else { return nil }
-        if link.callKey.isEmpty {
-            // the key is stored at once, so Auto and an open Update window use the same one
-            var disk = CRMLink.load(base: base) ?? link
-            if disk.callKey.isEmpty { disk.callKey = UUID().uuidString.lowercased(); disk.save(base: base) }
-            link.callKey = disk.callKey
-        }
         let o = CallOutcome.read(transcript: file) ?? CallOutcome()
         let m = CallNotes.meeting(file)      // the call page's Summary: In short and Recap
         let sales = (try? Data(contentsOf: URL(fileURLWithPath: CallLayout.sidecar(base, ".sales.json")))).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
@@ -152,6 +156,7 @@ enum CRMCallLogger {
         let base = file.hasSuffix(".md") ? String(file.dropLast(3)) : file
         let people = cfg.autoCreateContacts || cfg.autoCreateCompanies || (cfg.autoCreateLeads && cfg.proposeLeads)      // H3: per-object switches
         guard (cfg.autoLogCall && cfg.writeCall) || people, var l = CRMLink.load(base: base), let c = CRMService.shared.connector() else { return }
+        l = keyed(base: base, l)     // H3: before the people write, so it queues with an open window's Apply and Relink
         let callAuto = cfg.autoLogCall && cfg.writeCall
         Task {
             do {
@@ -353,6 +358,7 @@ struct CRMUpdateView: View {
 
     func apply() {
         guard var p = plan, var l = link, let c = crm.connector() else { return }
+        l = CRMCallLogger.keyed(base: base, l); link = l      // H3: one queue key with Auto and Relink, before any write
         if !stage.isEmpty { p.dealFields["dealstage"] = stage }
         busy = true; status = L("crm.writing")
         Task {
@@ -402,7 +408,8 @@ struct CRMUpdateView: View {
     /// H2: links the call again in the portal of the key in use: the company by the attendees' domains (when the
     /// calendar still has the event) or by the linked company's name; the call key is kept, the old ids are not.
     func relink() {
-        guard let l = link else { return }
+        guard let old = link else { return }
+        let l = CRMCallLogger.keyed(base: base, old); link = l      // H3: so the refresh takes its turn in the call's queue
         let rec = CallHistory.shared.records.first { $0.file == file }
         let emails = rec.flatMap { r in CalendarService.shared.events.first { abs($0.start.timeIntervalSince(r.start)) < 20 * 60 }?.emails } ?? []
         busy = true; status = ""

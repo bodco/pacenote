@@ -57,17 +57,21 @@ enum CRMPeopleFlow {
     /// Creates the chosen rows and gives a Call logged earlier all its people and companies (CRMPeople.commit, the
     /// PUTs sent again each time, so a failed one is retried), then stores them on the link on disk, keeping a Call id
     /// another path stored meanwhile. Auto and Apply both use it, after checking that `l` names the key's portal. The
-    /// stored link is read and saved in the call's queue turn: when Relink moved it to another portal meanwhile, it is
-    /// left alone and the link comes back unchanged.
-    static func commit(_ chosen: [CRMProposal], match m: (company: CRMCompany?, companies: [CRMCompany], found: [CRMContact]), link l: CRMLink, base: String,
+    /// stored link is read once in the call's queue turn (under the call key, the one Relink uses) and the save merges
+    /// into that portal-checked read: when Relink moved it to another portal meanwhile, it is left alone and the link
+    /// comes back unchanged.
+    static func commit(_ chosen: [CRMProposal], match m: (company: CRMCompany?, companies: [CRMCompany], found: [CRMContact]), link: CRMLink, base: String,
                        callWritten: Bool, connector pc: CRMPeopleConnector) async -> (CRMLink, CRMPeopleResult) {
+        let l = CRMCallLogger.keyed(base: base, link)
+        final class Snapshot { var link: CRMLink? }
+        let snap = Snapshot()      // stored and save run one after the other in the same turn
         let r = await CRMPeople.commit(chosen, company: m.company, companies: m.companies, found: m.found, portal: l.portalId, callKey: l.callKey,
                                        callWritten: callWritten, connector: pc,
-                                       stored: { let d = CRMLink.load(base: base) ?? l; return CRMStoredLink(callId: d.callId, portalId: d.portalId, linked: CRMCallLogger.refs(d)) },
+                                       stored: { let d = CRMLink.load(base: base) ?? l; snap.link = d; return CRMStoredLink(callId: d.callId, portalId: d.portalId, linked: CRMCallLogger.refs(d)) },
                                        save: { r in
                                            let cos = m.companies + r.companies
                                            if merge(l, company: r.company, companies: cos, contacts: m.found + r.contacts) != l {
-                                               merge(CRMLink.load(base: base) ?? l, company: r.company, companies: cos, contacts: m.found + r.contacts).save(base: base)
+                                               merge(snap.link ?? l, company: r.company, companies: cos, contacts: m.found + r.contacts).save(base: base)
                                            }
                                        })
         let made = ["contacts", "companies", "leads"].map { t in r.created.filter { $0.type == t }.count }
