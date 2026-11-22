@@ -229,6 +229,63 @@ func crmTaskFlowChecks() async {
     expect(!flow.stale() && !flow.error.isEmpty, "hflow: a failed sync counts as an attempt for the 5 minutes")
     hs.offline = []
 
+    // fix round 3
+    // 11. a task completed here and then deleted in HubSpot unlinks its item, which stays done
+    let d = CommitmentRegister.add(folder: folder, text: "Send the signed order form", project: "orbit", title: "Orbit", call: call) ?? ""
+    let dt = await flow.add(item(d)!, properties: props("Send the signed order form"), refs: [CRMRef("deals", "D1")])
+    await flow.tickLinked(item(d)!, done: true)?.value
+    hs.tasks[dt?.id ?? ""] = nil
+    await flow.sync()
+    expect(item(d)?.crmTask == "" && item(d)?.crmPortal == "" && item(d)?.status == "done",
+           "hflow: a completed item whose task was deleted in HubSpot is unlinked and stays done")
+
+    // 12. a queued delete refused at replay is reported with Retry even when the list read fails
+    let l = CommitmentRegister.add(folder: folder, text: "Send the training schedule", project: "orbit", title: "Orbit", call: call) ?? ""
+    let lt = await flow.add(item(l)!, properties: props("Send the training schedule"), refs: [CRMRef("deals", "D1")])
+    let lid = lt?.id ?? ""
+    let ltask = flow.tasks.first { $0.id == lid }!
+    hs.fail["DELETE /crm/v3/objects/tasks/" + lid] = 503
+    await flow.remove(ltask, commitment: flow.linkedCommitment(ltask))?.value
+    hs.fail["DELETE /crm/v3/objects/tasks/" + lid] = 403
+    hs.fail["POST /crm/v3/objects/tasks/search"] = 500
+    box.notes = []
+    await flow.sync()
+    var lretry: (() async -> Void)?
+    if let n = box.notes.last(where: { if case .replayRefused = $0 { return true }; return false }), case .replayRefused(1, _, let r) = n { lretry = r }
+    expect(lretry != nil && flow.pending.isEmpty && item(l)?.status == "open" && !flow.error.isEmpty,
+           "hflow: a refusal at replay is reported with Retry when the list read fails")
+    hs.fail = [:]
+    await lretry?()
+    expect(hs.tasks[lid] == nil && item(l)?.status == "dropped", "hflow: that Retry sends the delete")
+
+    // 13. a queued tick HubSpot refuses at replay gives the item back; Retry ticks it again; a newer change stays
+    let s = CommitmentRegister.add(folder: folder, text: "Send the API keys checklist", project: "orbit", title: "Orbit", call: call) ?? ""
+    let st = await flow.add(item(s)!, properties: props("Send the API keys checklist"), refs: [CRMRef("deals", "D1")])
+    let sid = st?.id ?? ""
+    hs.fail["PATCH /crm/v3/objects/tasks/" + sid] = 503
+    await flow.tickLinked(item(s)!, done: true)?.value
+    expect(item(s)?.status == "done" && flow.pending.contains { $0["task"] == sid && $0["op"] == "status" }, "hflow: a 5xx on a tick keeps it queued")
+    hs.fail["PATCH /crm/v3/objects/tasks/" + sid] = 403
+    box.notes = []
+    await flow.sync()
+    var sretry: (() async -> Void)?
+    if let n = box.notes.last(where: { if case .replayRefused = $0 { return true }; return false }), case .replayRefused(1, _, let r) = n { sretry = r }
+    expect(sretry != nil && flow.pending.isEmpty && item(s)?.status == "open" && hs.tasks[sid]?["hs_task_status"] == "NOT_STARTED"
+           && flow.shown.contains { $0.id == sid }, "hflow: a tick refused at replay gives the item and the row back")
+    hs.fail = [:]
+    await sretry?()
+    expect(item(s)?.status == "done" && hs.tasks[sid]?["hs_task_status"] == "COMPLETED", "hflow: Retry of a refused tick ticks it again")
+    let s2 = CommitmentRegister.add(folder: folder, text: "Send the data export", project: "orbit", title: "Orbit", call: call) ?? ""
+    let s2t = await flow.add(item(s2)!, properties: props("Send the data export"), refs: [CRMRef("deals", "D1")])
+    let s2id = s2t?.id ?? ""
+    hs.fail["PATCH /crm/v3/objects/tasks/" + s2id] = 503
+    await flow.tickLinked(item(s2)!, done: true)?.value
+    CommitmentRegister.mark(folder: folder, id: s2, op: "drop")
+    hs.fail["PATCH /crm/v3/objects/tasks/" + s2id] = 403
+    await flow.sync()
+    expect(item(s2)?.status == "dropped" && flow.pending.isEmpty, "hflow: a refused queued tick leaves a newer change of the item alone")
+    hs.fail = [:]
+
     // the cache keeps the portal; a queued write without one is never sent
     let again = makeFlow()
     expect(again.portal == flow.portal && again.tasks.count == flow.tasks.count, "hflow: the cache keeps the portal")

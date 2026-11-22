@@ -153,9 +153,10 @@ public enum CRMTasks {
     }
 
     /// What the next sync does with a commitment linked to a HubSpot task (rules/hubspot-tasks.yaml > both_ways).
-    /// `task` nil = HubSpot answered 404 (the task was deleted there).
+    /// `task` nil = HubSpot answered 404 (the task was deleted there): the item is unlinked, open or done, and keeps
+    /// its status.
     public static func syncOp(commitmentStatus: String, doneSource: String, task: CRMTask?) -> String? {
-        guard let t = task else { return commitmentStatus == "open" ? "crm_unlink" : nil }
+        guard let t = task else { return "crm_unlink" }
         if commitmentStatus == "open" && !t.open { return "done" }
         if commitmentStatus == "done" && t.open && doneSource == "hubspot" { return "reopen" }
         return nil

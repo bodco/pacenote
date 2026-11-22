@@ -1116,7 +1116,8 @@ struct CallPageView: View {
             m.append(PageRowAction(title: L("htask.add"), run: { _ in Task { await HubSpotTasks.shared.add(c) } }))
         }
         m.append(.separator)
-        m.append(PageRowAction(title: L("callEdit.delete"), destructive: true, run: { _ in register.mark(c, "drop"); changed(section) }))
+        m.append(PageRowAction(title: L("callEdit.delete"), destructive: true, run: { _ in
+            if !HubSpotTasks.shared.mark(c, "drop") { register.mark(c, "drop") }; changed(section) }))   // PB-17: a linked task goes too
         return m
     }
 

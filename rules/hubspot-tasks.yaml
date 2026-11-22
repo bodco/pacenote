@@ -48,7 +48,9 @@ tick: >-
   the reason (the item too). A tick made offline waits in the queue and is sent when HubSpot answers. Undo writes to
   the portal of the tick; when the key opens another portal, Undo changes nothing and says so. A tick on a register
   item linked to a task (On you, Tracker, call page, call window) goes to the saved crm_task and crm_portal, also
-  when the task is not in the lists (closed, another owner's or another queue).
+  when the task is not in the lists (closed, another owner's or another queue). A queued tick HubSpot refuses at a
+  sync gives the row its status before and the item back, unless the item changed since (another tick queued for the
+  task, or dropped); Retry ticks it again.
 open: Double click opens the task in HubSpot (app-eu1.hubspot.com for the EU data region).
 remove: >-
   Remove takes the task out of the lists at once and deletes it in HubSpot (its recycling bin) after the 8 s Undo, so
@@ -57,8 +59,8 @@ remove: >-
   refuses, the task and the item come back and the toast says the task stayed in HubSpot, with Open. Made offline,
   the delete waits in the queue (the task stays out of the lists). Hide here hides it only in Pacenote. Queue: a 4xx
   (not 404, 408, 429) is a refusal; a 5xx, 408, 429 or no answer keeps the write queued (reported after 6 syncs).
-  A queued write HubSpot refuses at a sync is reported in a toast with Retry and stays in the error line after the
-  list is read.
+  A queued write HubSpot refuses at a sync is reported in a toast with Retry before the list is read (a failed list
+  read does not hide it) and stays in the error line after it. Delete in the call page menu on a linked item is Remove.
 call_window: >-
   The On me tab gets a group "HubSpot <deal or company>": the open tasks associated with the call's deal, company or
   contacts (from <call>.crm.json). A call without a CRM link shows none. The tab counter counts them.
@@ -70,9 +72,9 @@ link: >-
   gets op crm_link with crm_task. An item is linked to Notion or HubSpot, never both.
 both_ways: >-
   A tick here completes the task there. A linked item whose task is closed in HubSpot gets done with source hubspot at
-  the next sync; reopened there, reopen (only when HubSpot closed it). A task deleted in HubSpot (404): the item stays
-  open without the link (op crm_unlink) with one line "HubSpot task was deleted". Decided from a read of each task,
-  never from the search alone. Titles and dates are not synced after creation: HubSpot is the source.
+  the next sync; reopened there, reopen (only when HubSpot closed it). A task deleted in HubSpot (404): the item keeps
+  its status (open or done) without the link (op crm_unlink) with one line "HubSpot task was deleted". Decided from a
+  read of each task, never from the search alone; open items are read first (80 per sync). Titles and dates are not synced after creation: HubSpot is the source.
 after_call: >-
   When auto_add is on (and the destination is HubSpot when Notion tasks are set up too), at the end of the call every
   open item owned by me of that call becomes a task, once. An open task with at least 60% of the words (the duplicates

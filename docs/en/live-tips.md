@@ -1677,11 +1677,11 @@ match now and when they were synced, with Refresh. **Add to HubSpot tasks** on a
 page menus) makes a task linked to the call's contacts, company and deal; an open task with the same words on the same
 deal or company (the same contact when the call has neither) is linked instead of made again, and a call without a
 CRM link always makes a new task. A tick sets the task to Completed, Undo for 8 seconds puts the
-status back; a task closed in HubSpot closes the item, reopened there reopens it, deleted there leaves the item open
-with "HubSpot task was deleted". Remove deletes the task in HubSpot after the 8 second Undo; a task Pacenote did not make asks once first.
+status back; a task closed in HubSpot closes the item, reopened there reopens it, deleted there unlinks the item (open or done)
+with "HubSpot task was deleted". Remove (and Delete on the call page) deletes the task in HubSpot after the 8 second Undo; a task Pacenote did not make asks once first.
 When HubSpot refuses a tick or a Remove, the task and the item come back with the reason; made offline (or while
 HubSpot is busy), they wait and are sent when HubSpot answers, and a waiting change HubSpot then refuses says so with
-**Retry**. A tick or Remove on an item linked to a HubSpot task goes to that task from every list (On you, the
+**Retry** (even when the task list cannot be read) and gives the item back. A tick or Remove on an item linked to a HubSpot task goes to that task from every list (On you, the
 Tracker, the call page, the call window), also when the task is not in your lists (closed, or another owner's). Every change goes only to the HubSpot account the task came from: when the key opens
 another account, nothing is written and the list is read again. **Add my commitments to
 HubSpot tasks automatically after each call** is off by default. When Notion tasks are set up too, **New tasks go to**

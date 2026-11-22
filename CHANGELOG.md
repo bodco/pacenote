@@ -33,8 +33,10 @@ Pacenote. Earlier versions are described in the commit messages and in
   call without a CRM link always makes a new task. Changes go only to the HubSpot account the task came from (queued
   offline changes are dropped when the key opens another account, and Undo of a tick never writes to another
   account), and a refused Remove or Undo gives the task and the item back with the reason. A busy HubSpot (5xx) keeps
-  the change queued; a queued change HubSpot refuses later says so with Retry. Ticking or removing an item linked to
-  a HubSpot task updates the task from every list, also when the task is not in your lists.
+  the change queued; a queued change HubSpot refuses later says so with Retry, also when the task list cannot be read,
+  and a refused queued tick gives the item back. Ticking, removing or deleting (call page) an item linked to a HubSpot
+  task updates the task from every list, also when the task is not in your lists. A task deleted in HubSpot unlinks
+  its item even after you completed it.
 
 ## 0.26.4 (2026-11-20)
 

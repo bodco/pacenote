@@ -164,6 +164,7 @@ func crmTasksChecks() async {
     var gone: Result<CRMTask?, Error> = .success(CRMTask(id: "x", title: "x"))
     do { gone = .success(try await hs.task(id: "3")) } catch { gone = .failure(error) }
     expect((try? gone.get()) == .some(nil) && CRMTasks.syncOp(commitmentStatus: "open", doneSource: "", task: nil) == "crm_unlink", "htasks: a deleted task unlinks the item")
+    expect(CRMTasks.syncOp(commitmentStatus: "done", doneSource: "manual", task: nil) == "crm_unlink", "htasks: a deleted task unlinks a done item too")
     expect(t.tasks["3"] == nil && t.log.contains("DELETE /crm/v3/objects/tasks/3"), "htasks: Remove deletes the task")
 
     // the register: crm_link and crm_unlink, separate from the Notion link
