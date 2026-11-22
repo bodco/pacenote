@@ -1676,7 +1676,9 @@ press Refresh in Start call before you start it. When you pick another preparati
 preparation's own link, and Refresh starts from it. Undo deletes a new Call or puts the old values back, and does nothing if the key now belongs to another
 HubSpot account. The link also remembers its HubSpot account: after
 you change the key to another account, or for a call linked before this version, Pacenote writes nothing and Update
-HubSpot offers **Relink**. **Log the call in HubSpot automatically after it
+HubSpot offers **Relink**. Relink takes the attendees only from the calendar event the link was made for, never from
+another meeting at about the same time; when that event is unknown or no longer in the calendar, it finds the company by
+its saved name, without contacts. **Log the call in HubSpot automatically after it
 ends** is off by default; when on, it logs only the Call, about two and a half minutes after the call, without a
 review. Notes, deal fields and tasks stay behind Apply. The design is in `docs/specs/hubspot-crm-integration.md`.
 

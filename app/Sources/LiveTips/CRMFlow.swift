@@ -55,7 +55,8 @@ extension CRMService {
             var link = keep ?? CRMLink()
             let portal = try await c.portalId()
             if link.portalId != portal {     // H2: ids from another portal (or an unknown one) are not kept; the call key
-                var fresh = CRMLink(); fresh.callKey = link.callKey    // and the PM's "No deal" are
+                var fresh = CRMLink(); fresh.callKey = link.callKey    // and the PM's "No deal" are, and the calendar
+                fresh.occurrence = link.occurrence                     // occurrence (it is not a portal id)
                 if link.dealId == "none" { fresh.dealId = "none" }
                 link = fresh
             }
@@ -448,12 +449,13 @@ struct CRMUpdateView: View {
         }
     }
 
-    /// H2: links the call again in the portal of the key in use: the company by the attendees' domains (when the
-    /// calendar still has the event) or by the linked company's name; the call key is kept, the old ids are not.
+    /// H2: links the call again in the portal of the key in use: the company by the attendees' domains of the calendar
+    /// occurrence the link was saved for (fix round 7: never the nearest meeting, it may be another customer's), else
+    /// by the linked company's name without contacts; the call key is kept, the old ids are not.
     func relink() {
         guard let l = link else { return }
-        let rec = CallHistory.shared.records.first { $0.file == file }
-        let emails = rec.flatMap { r in CalendarService.shared.events.first { abs($0.start.timeIntervalSince(r.start)) < 20 * 60 }?.emails } ?? []
+        let emails = CRMLinkCarry.relinkEmails(occurrence: l.occurrence,
+                                               events: CalendarService.shared.events.map { ([$0.id] + $0.copies, $0.emails) })
         busy = true; status = ""
         Task {
             let (nl, e) = await crm.refresh(base: base, emails: emails, name: l.companyName, keep: l)

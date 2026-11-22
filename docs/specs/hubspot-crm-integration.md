@@ -155,8 +155,10 @@ is shown on the card. Behavior to keep and to define:
   `portalId` it was made in (built in H2). Before every write (Apply and Auto) Pacenote asks account-info for the
   portal of the key in use; when the link names another portal, or none (links made before H2), nothing is written:
   Auto skips the call and Update HubSpot says so and offers **Relink**. Relink and Refresh drop the old ids, keep the
-  Pacenote call id, and find the company, deal and contacts again in the current portal (by the attendees' domains
-  while the calendar still has the event, else by the linked company's name).
+  Pacenote call id and the calendar occurrence, and find the company, deal and contacts again in the current portal
+  (by the attendees' domains of the occurrence the link was saved for while the calendar still has it, else by the
+  linked company's name). Relink never takes attendees from a meeting near the recording's start: an overlapping
+  meeting can be another customer's.
 - Several portals at once (an agency with client portals): one key per project in Settings > Projects, kept in the
   Keychain under a per-project name. Not built; decision 3.
 - Data hosting regions (US, EU) use the same base URL for the API; the region is only displayed.
@@ -218,8 +220,9 @@ is shown on the card. Behavior to keep and to define:
 - The link back is the Notion page; a call without a Notion page has only the `Pacenote call id` line in the Call.
 - HubSpot search is not instant after a create: a create that timed out may not be found at once, and the next run
   (Apply or Auto) finds it by the Pacenote call id.
-- Relink of an old call finds contacts only while the calendar still holds the event (3 hours back); otherwise it
-  links the company by name and the deal, without contacts.
+- Relink of an old call finds contacts only while the calendar still holds the occurrence the link was saved for (3
+  hours back); otherwise, and for links saved without an occurrence, it links the company by name and the deal,
+  without contacts.
 
 - A live portal check of the Call create, update and association calls, and of `hs_call_external_id` in search. The
   H2 tests use a mocked HubSpot API only and never call the real one.

@@ -682,9 +682,11 @@ final class FakeHubSpotCalls: CRMTransport {
     var searchLag = 0               // searches that miss a new Call, as HubSpot's index lags a create
     let lock = NSLock()             // the race checks send from two tasks at once; unguarded state crashed the gate
     var rev: [String: Int] = [:]    // H6: id -> HubSpot's revision, moved by every create and update
+    var createStarted: (() -> Void)? = nil   // PB-62 fix round 5: told when a Call create arrives, so a check acts while it is out
     func updatedAt(_ id: String) -> String { ISO8601DateFormatter().string(from: Date(timeIntervalSince1970: 1_780_000_000 + Double(rev[id] ?? 0))) }
     func send(_ method: String, _ path: String, _ body: [String: Any]?) async throws -> (Int, [String: Any], [String: String]) {
         // the delay is waited before the lock, never inside it
+        if method == "POST" && path == "/crm/v3/objects/calls" { createStarted?() }
         if method == "POST" && path == "/crm/v3/objects/calls" && createDelay > 0 { try? await Task.sleep(nanoseconds: createDelay) }
         return lock.withLock { handle(method, path, body) }
     }
@@ -812,6 +814,18 @@ func crmLinkCarry() {
     expect(!CRMLinkCarry.chosenByHand(picked: "prep-2026-11-22-1400-orbit-renewal.brief.md", current: autoFile, path: autoPath),
            "start: a pick replaced since is not this preparation")
     expect(!CRMLinkCarry.chosenByHand(picked: autoFile, current: autoFile, path: nil), "start: a picked file that is gone is not a choice")
+    // fix round 7: Relink of a call recorded at 15:02. Two meetings within 20 minutes: Globex at 15:00 (nearer, another
+    // customer) and Orbit at 15:10 (the occurrence the link was saved for). Only the saved occurrence gives attendees.
+    let nearby: [(ids: [String], emails: [String])] = [
+        (["ev-globex@1795870800"], ["sarah.johnson@globex.example"]),
+        (["ev-orbit@1795871400", "gcal-orbit@1795871400"], ["emily.carter@northwind.example"])]
+    expect(CRMLinkCarry.relinkEmails(occurrence: "ev-orbit@1795871400", events: nearby) == ["emily.carter@northwind.example"],
+           "relink: the attendees of the saved occurrence, not the nearer meeting of another customer")
+    expect(CRMLinkCarry.relinkEmails(occurrence: "gcal-orbit@1795871400", events: nearby) == ["emily.carter@northwind.example"],
+           "relink: the saved occurrence found through a calendar copy")
+    expect(CRMLinkCarry.relinkEmails(occurrence: "", events: nearby).isEmpty, "relink: a link without an occurrence takes no attendees (company by name)")
+    expect(CRMLinkCarry.relinkEmails(occurrence: "ev-orbit@1795267800", events: nearby).isEmpty,
+           "relink: an occurrence the calendar no longer has takes no attendees")
     try? fm.removeItem(atPath: root)
 }
 
@@ -1139,11 +1153,13 @@ func crmSync() async {
     // Auto's consent is asked when its turn comes: switched off while Apply wrote, Auto sends nothing
     final class Consent { var on = true; var id = "" }
     let ct = FakeHubSpotCalls(); ct.createDelay = 50_000_000
+    var ctGo: AsyncStream<Void>.Continuation! = nil
+    let ctOut = AsyncStream<Void> { ctGo = $0 }; ct.createStarted = { ctGo.yield() }
     let hc = HubSpotConnector(transport: ct, sleep: { _ in })
     let cq = CRMCallQueue(), consent = Consent()
     async let applyW = try? CRMCallSync.log(entry, connector: hc, associations: [], queue: cq,
                                             load: { (consent.id, "500") }, save: { consent.id = $0; consent.on = false })
-    try? await Task.sleep(nanoseconds: 5_000_000)
+    for await _ in ctOut { break }      // Apply holds the turn: its create is out
     var autoErr: CRMError? = nil
     do { _ = try await CRMCallSync.log(entry, connector: hc, associations: [], queue: cq, allowed: { consent.on },
                                        load: { (consent.id, "500") }, save: { consent.id = $0 }) } catch { autoErr = error as? CRMError }
@@ -1175,10 +1191,12 @@ func crmSync() async {
     // sends nothing to 600
     final class LinkBox: @unchecked Sendable { var portal = "500" }
     let inflight = FakeHubSpotCalls(); inflight.createDelay = 50_000_000; inflight.failCreate = true
+    var inGo: AsyncStream<Void>.Continuation! = nil
+    let inOut = AsyncStream<Void> { inGo = $0 }; inflight.createStarted = { inGo.yield() }
     let box = LinkBox(), attempt = CRMSyncLog.Attempt()
     async let outW: Error? = { do { _ = try await CRMCallSync.log(entry, connector: HubSpotConnector(transport: inflight, sleep: { _ in }), associations: [CRMRef("companies", "C7")],
                                                               queue: CRMCallQueue(), load: attempt.load { ("", box.portal) }, save: { _ in }); return nil } catch { return error } }()
-    try? await Task.sleep(nanoseconds: 5_000_000)
+    for await _ in inOut { break }      // the portal was checked and the create is out
     box.portal = "600"; inflight.lock.withLock { inflight.portal = 600 }     // reconnected and relinked while the create waits
     let outErr = await outW
     expect(outErr != nil && attempt.portal == "500" && box.portal == "600", "retry: a failure keeps the portal it was sent to, not the one relinked to meanwhile")
