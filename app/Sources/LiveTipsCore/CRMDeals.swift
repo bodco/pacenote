@@ -99,11 +99,11 @@ public enum CRMDealSuggester {
         let plan = (sales["mutual_plan"] as? [[String: Any]]) ?? []
         let day = DateFormatter(); day.locale = Locale(identifier: "en_US_POSIX"); day.timeZone = TimeZone(identifier: "UTC"); day.dateFormat = "yyyy-MM-dd"
         let todayStr = day.string(from: today)
+        // the closing step is chosen first and only then compared with the deal, so a re-run never flips between two steps
         if let m = plan.first(where: { p in
-            let t = s(p["step"]).lowercased()
             guard let d = isoDate(s(p["due"])) else { return false }
-            return has(t, closeWords) && d >= todayStr && d != deal.closeDate
-        }), let d = isoDate(s(m["due"])) {
+            return has(s(p["step"]), closeWords) && d >= todayStr
+        }), let d = isoDate(s(m["due"])), d != deal.closeDate {
             out.append(CRMDealSuggestion(id: "closedate", kind: "closeDate", current: deal.closeDate, value: d,
                                          evidence: s(m["step"]) + " (" + d + ")"))
         }
@@ -118,16 +118,35 @@ public enum CRMDealSuggester {
         return out
     }
 
-    /// A stage only when the call says so (a signal, a plan step or the next step names it), only a later open stage of the
-    /// deal's own pipeline, never Closed won or Closed lost.
+    /// Words that say the milestone happened (ASCII whole words; Cyrillic entries are stems).
+    static let doneWords = ["sent", "signed", "countersigned", "shared", "presented", "delivered", "received", "reviewed", "held",
+                            "gave", "given", "showed", "shown", "demoed", "approved", "agreed", "accepted", "completed", "submitted",
+                            "finished", "done", "надісл", "відправил", "підписал", "підписан", "показал", "провел", "отримал",
+                            "погодил", "узгодил", "презентувал", "передал"]
+    /// Words that say it did not happen, or not yet: negation, a plan, a wish or a request. Whole words only.
+    static let notDoneWords = ["not", "never", "no", "nor", "without", "yet", "neither", "t", "ll", "will", "would", "shall", "should",
+                               "going", "plan", "plans", "planned", "planning", "next", "tomorrow", "later", "soon", "want", "wants",
+                               "need", "needs", "hope", "hopes", "if", "once", "until", "may", "might", "could", "can", "expect",
+                               "expects", "ask", "asks", "asked", "request", "requested", "pending", "waiting", "about",
+                               "не", "ні", "ніколи", "ще", "без", "буде", "будемо", "будуть", "якщо", "завтра", "пізніше", "планує",
+                               "плануємо", "хоче", "хочуть", "треба", "потрібно", "просив", "просила", "просили", "чекаємо"]
+    static func hasWord(_ text: String, _ words: [String]) -> Bool {
+        let tokens = Set(text.lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init))
+        return words.contains { tokens.contains($0) }
+    }
+    /// The text reports a milestone that took place: a completion word, no negation, no plan or request, not a question.
+    /// "The contract was never sent" and "We will send the contract" are not evidence for Contract sent.
+    public static func happened(_ text: String) -> Bool {
+        !text.contains("?") && has(text, doneWords) && !hasWord(text, notDoneWords)
+    }
+
+    /// A stage only when a signal of the call reports that the stage's milestone took place (`happened`), only a later
+    /// open stage of the deal's own pipeline, never Closed won or Closed lost. Plan steps and the next step are things
+    /// still to do, so they never move the stage.
     public static func stageSuggestion(sales: [String: Any], deal: CRMDeal, stages: [CRMStage]) -> CRMDealSuggestion? {
         let mine = pipelineStages(stages, pipeline: deal.pipeline)
         guard let cur = mine.first(where: { $0.id == deal.stage }) else { return nil }
-        var texts: [String] = []
-        texts += ((sales["signals"] as? [[String: Any]]) ?? []).map { s($0["what"]) }
-        texts += ((sales["mutual_plan"] as? [[String: Any]]) ?? []).map { s($0["step"]) }
-        let next = sales["next_step"] as? [String: Any] ?? [:]
-        texts.append(s(next["what"]))
+        let texts = ((sales["signals"] as? [[String: Any]]) ?? []).map { s($0["what"]) }.filter(happened)
         for words in stageWords {
             for text in texts where !text.isEmpty {
                 guard has(text, words) else { continue }
@@ -149,5 +168,123 @@ public enum CRMDealSuggester {
         if !pickedStage.isEmpty { f["dealstage"] = pickedStage }
         if let st = f["dealstage"], !valid.contains(st) { f["dealstage"] = nil }
         return f
+    }
+}
+
+/// What Update HubSpot shows for the call's deal, built for one deal id of the link. Apply writes deal fields only from
+/// a finished preview of the deal the call is linked to now, so a pick of another deal never gets the old suggestions.
+public struct CRMDealPreview: Equatable {
+    public var dealId = ""                    // the link's deal id this preview is for ("" or "none" = no deal)
+    public var loaded = false                 // the reads are done
+    public var deal: CRMDeal? = nil
+    public var open: [CRMDeal] = []           // the company's open deals, for the picker
+    public var stages: [CRMStage] = []        // every pipeline of the portal
+    public var suggestions: [CRMDealSuggestion] = []
+    public var picked = ""                    // a stage chosen by hand ("" = keep the stage)
+    public var error = ""                     // a read failed (deals, the deal or the stages); Retry loads again
+    public var portalMismatch = false         // the link is from another portal: nothing was read, Relink first
+    public init() {}
+
+    public var myStages: [CRMStage] { CRMDealSuggester.pipelineStages(stages, pipeline: deal?.pipeline ?? "") }
+    /// The properties Apply writes: ticked suggestions and a stage picked by hand, only stages of this deal's pipeline.
+    public var fields: [String: String] {
+        deal.map { CRMDealSuggester.fields(suggestions, pickedStage: picked, deal: $0, stages: stages) } ?? [:]
+    }
+    /// True when this preview belongs to the deal the call is linked to now and its reads are finished.
+    public func ready(for linkDeal: String) -> Bool { loaded && !portalMismatch && dealId == linkDeal }
+    /// The deal fields to write for the link's deal; nothing when the preview is for another deal or still loading.
+    public func fields(for linkDeal: String) -> [String: String] {
+        guard ready(for: linkDeal), let d = deal, d.id == linkDeal else { return [:] }
+        return fields
+    }
+    /// A preview for a newly picked deal: the picker list and the stages stay, the old deal and its suggestions go.
+    public func switching(to dealId: String) -> CRMDealPreview {
+        var p = CRMDealPreview(); p.dealId = dealId; p.open = open; p.stages = stages; return p
+    }
+
+    /// The portal is checked first; then the company's open deals, the deal and the portal's stages are read and the
+    /// suggestions built from the call page (sales = <stem>.sales.json as edited). A failed read is kept in `error`.
+    public static func load(connector c: CRMConnector, portalId: String, companyId: String, dealId: String,
+                            sales: [String: Any], mapping: [String: String], today: Date = Date()) async -> CRMDealPreview {
+        var p = CRMDealPreview(); p.dealId = dealId
+        do { try await CRMPortal.verify(link: portalId, connector: c) } catch {
+            p.portalMismatch = (error as? CRMError)?.code == CRMPortal.mismatchCode
+            p.error = (error as? CRMError)?.message ?? error.localizedDescription
+            p.loaded = true
+            return p
+        }
+        func note(_ e: Error) { if p.error.isEmpty { p.error = (e as? CRMError)?.message ?? e.localizedDescription } }
+        if !companyId.isEmpty {
+            do { p.open = try await c.deals(companyId: companyId).filter { $0.open } } catch { note(error) }
+        }
+        if let st = c as? CRMDealStages {
+            do { p.stages = try await st.dealStages() } catch { note(error) }
+        }
+        guard !dealId.isEmpty, dealId != "none" else { p.loaded = true; return p }
+        do { p.deal = try await c.deal(id: dealId) } catch { note(error) }
+        if let d = p.deal {
+            p.suggestions = CRMDealSuggester.build(sales: sales, deal: d, stages: p.stages, mapping: mapping, today: today)
+            // the Stage menu is the one stage control: a suggested stage is preselected there, Apply is the confirmation
+            if let i = p.suggestions.firstIndex(where: { $0.kind == "stage" }) { p.picked = p.suggestions[i].value; p.suggestions[i].on = false }
+        }
+        p.loaded = true
+        return p
+    }
+}
+
+/// Only the newest of several overlapping loads may update the screen; an older answer that comes late is dropped.
+public final class CRMLatestOnly: @unchecked Sendable {
+    private var n = 0
+    private let lock = NSLock()
+    public init() {}
+    public func begin() -> Int { lock.withLock { n += 1; return n } }
+    public func isLatest(_ token: Int) -> Bool { lock.withLock { token == n } }
+}
+
+/// H4: one association of a Call, added or removed, for the deal Pacenote linked the Call to.
+public protocol CRMCallAssociations {
+    func addCallAssociation(callId: String, type: String, id: String) async throws
+    func removeCallAssociation(callId: String, type: String, id: String) async throws
+}
+
+extension HubSpotConnector: CRMCallAssociations {
+    public func addCallAssociation(callId: String, type: String, id: String) async throws {
+        _ = try await call("PUT", "/crm/v4/objects/calls/\(callId)/associations/default/\(type)/\(id)")
+    }
+    /// An association that is already gone (404) counts as removed.
+    public func removeCallAssociation(callId: String, type: String, id: String) async throws {
+        do { _ = try await call("DELETE", "/crm/v4/objects/calls/\(callId)/associations/\(type)/\(id)") }
+        catch let e as CRMError where e.code == 404 {}
+    }
+}
+
+/// H4: the Call follows the call's deal. Pacenote remembers which deal it associated the Call with (`managed`); when the
+/// PM moves the call to another deal or to No deal, that one association is removed on the next write. Associations
+/// Pacenote did not make (a deal a person added in HubSpot, the company, the contacts) are never removed.
+public enum CRMCallDeal {
+    /// The deal the Call should be associated with: "" for none.
+    public static func target(_ linkDeal: String) -> String { linkDeal == "none" ? "" : linkDeal }
+
+    /// The Call write of `CRMCallSync.log` plus the deal move, in the same turn of the per-call queue. `load` gives the
+    /// stored Call id, portal and managed deal when the turn comes; `save` stores the Call id and the managed deal.
+    /// Returns the Call result and the deal whose association was removed ("" when none), for Undo.
+    public static func write(_ entry: CRMCallLog, connector c: CRMConnector, associations: [CRMRef], dealId: String,
+                             queue: CRMCallQueue = .shared,
+                             load: @escaping () -> (callId: String, portalId: String, managed: String),
+                             save: @escaping (_ callId: String, _ managed: String) -> Void) async throws -> (call: CRMCallResult, removed: String) {
+        try await queue.run(entry.key) {
+            let stored = load()
+            try await CRMPortal.verify(link: stored.portalId, connector: c)
+            let r = try await c.upsertCall(entry, knownId: stored.callId, associations: associations)
+            save(r.id, stored.managed)
+            let now = target(dealId)
+            var removed = ""
+            if !stored.managed.isEmpty, stored.managed != now, !r.created, let a = c as? CRMCallAssociations {
+                try await a.removeCallAssociation(callId: r.id, type: "deals", id: stored.managed)
+                removed = stored.managed
+            }
+            save(r.id, now)
+            return (r, removed)
+        }
     }
 }

@@ -5,34 +5,27 @@ import LiveTipsCore
 // changes with the evidence from the call page, and the portal's own stages of the deal's pipeline. Applying goes
 // through the existing Update HubSpot flow (one updateDeal call, Undo restores the old values).
 
-struct CRMDealModel {
-    var deal: CRMDeal? = nil
-    var open: [CRMDeal] = []              // the company's open deals, for the picker
-    var stages: [CRMStage] = []           // every pipeline of the portal
-    var suggestions: [CRMDealSuggestion] = []
-    var picked = ""                       // a stage chosen by hand ("" = keep the stage)
+typealias CRMDealModel = CRMDealPreview
 
-    var myStages: [CRMStage] { CRMDealSuggester.pipelineStages(stages, pipeline: deal?.pipeline ?? "") }
-    /// The properties Apply writes: ticked suggestions and a stage picked by hand, only stages of this deal's pipeline.
-    var fields: [String: String] {
-        deal.map { CRMDealSuggester.fields(suggestions, pickedStage: picked, deal: $0, stages: stages) } ?? [:]
-    }
-
-    /// Reads the linked deal, the company's open deals and the portal's stages, then builds the suggestions from the
-    /// call page (<stem>.sales.json as edited). A read error leaves the model empty: the other rows still work.
-    @MainActor static func load(link: CRMLink, file: String) async -> CRMDealModel {
-        var m = CRMDealModel()
-        guard let c = CRMService.shared.connector() else { return m }
-        if !link.companyId.isEmpty { m.open = ((try? await c.deals(companyId: link.companyId)) ?? []).filter { $0.open } }
-        guard !link.dealId.isEmpty, link.dealId != "none", let d = try? await c.deal(id: link.dealId) else { return m }
-        m.deal = d
-        m.stages = (try? await (c as? CRMDealStages)?.dealStages()) ?? []
+extension CRMDealPreview {
+    /// Reads the linked deal, the company's open deals and the portal's stages for the link's deal (the portal is
+    /// checked first), then builds the suggestions from the call page (<stem>.sales.json as edited).
+    @MainActor static func load(link: CRMLink, file: String) async -> CRMDealPreview {
+        guard let c = CRMService.shared.connector() else { var m = CRMDealPreview(); m.dealId = link.dealId; m.loaded = true; return m }
         let sales = SalesFile.load(file) ?? [:]
         let mapping = SettingsWindow.model.config.crm.qualification[(sales["method"] as? String) ?? ""] ?? [:]
-        m.suggestions = CRMDealSuggester.build(sales: sales, deal: d, stages: m.stages, mapping: mapping)
-        // the Stage menu is the one stage control: a suggested stage is preselected there, Apply is the confirmation
-        if let i = m.suggestions.firstIndex(where: { $0.kind == "stage" }) { m.picked = m.suggestions[i].value; m.suggestions[i].on = false }
-        return m
+        return await load(connector: c, portalId: link.portalId, companyId: link.companyId, dealId: link.dealId, sales: sales, mapping: mapping)
+    }
+}
+
+/// The deal the Call was associated with by Pacenote, so moving the call to another deal removes only that one.
+extension CRMCallLogger {
+    /// The Call write with the deal move (`CRMCallDeal.write`), in turn with Auto; the ids are read from and stored in
+    /// <base>.crm.json when the turn comes.
+    static func writeWithDeal(_ entry: CRMCallLog, base: String, link: CRMLink, connector c: CRMConnector) async throws -> (call: CRMCallResult, removed: String) {
+        try await CRMCallDeal.write(entry, connector: c, associations: refs(link), dealId: link.dealId,
+                                    load: { let d = CRMLink.load(base: base) ?? link; return (d.callId, d.portalId, d.callDealId) },
+                                    save: { id, managed in var d = CRMLink.load(base: base) ?? link; d.callId = id; d.callDealId = managed; d.save(base: base) })
     }
 }
 
@@ -40,6 +33,7 @@ struct CRMDealSection: View {
     @Binding var model: CRMDealModel
     let dealName: String
     let setDeal: (String, String) -> Void
+    let retry: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -52,6 +46,14 @@ struct CRMDealSection: View {
                         Button(L("crm.noDeal")) { setDeal("none", "") }
                     } label: { Image(systemName: "chevron.down") }.menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
                         .accessibilityLabel(L("crm.changeDeal"))
+                }
+                if !model.loaded { PNSpinner(size: 14) }
+            }
+            if model.loaded && !model.error.isEmpty && !model.portalMismatch {
+                // a failed read is not "no open deals": say so and offer to read again
+                HStack(spacing: 6) {
+                    Text(L("crm.deal.loadFailed", ["error": model.error])).font(PN.Font.caption).foregroundStyle(PN.C.text3).lineLimit(2)
+                    Button(L("crm.deal.retry")) { retry() }.buttonStyle(.pnTertiary)
                 }
             }
             if model.deal != nil {
@@ -81,7 +83,7 @@ struct CRMDealSection: View {
                         Text(L("crm.deal.evidence", ["quote": st.evidence])).font(PN.Font.caption).foregroundStyle(PN.C.text3)
                     }
                 }
-            } else if !dealName.isEmpty {
+            } else if model.loaded && !dealName.isEmpty && model.error.isEmpty {
                 Text(L("crm.deal.unreadable")).font(PN.Font.caption).foregroundStyle(PN.C.text3)
             }
         }
