@@ -161,10 +161,33 @@ def test_named_and_plain_transcript_share_one_sidecar(tmp_path):
     assert CL.read_sidecar(named)["output_language"] == "en"
 
 
-def test_adapter_loads_the_call_meta_itself(tmp_path):
+def _recorder_meta(tmp_path, body):
+    """The recorder's real place: <project>/video/<stem>.recording.json, ".app" and ".md" stripped (RecordingFiles.metaPath)."""
+    f = tmp_path / "video" / "2026-11-21-1000-sync.recording.json"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(json.dumps(body), "utf-8")
+
+
+def test_adapter_loads_the_call_meta_from_the_recorders_file(tmp_path):
     t = _call(tmp_path)
-    CL.call_layout.sidecar_of(t, ".recording.json").parent.mkdir(parents=True, exist_ok=True)
-    CL.call_layout.sidecar_of(t, ".recording.json").write_text(json.dumps({"dominant_language": "uk"}), "utf-8")
+    _recorder_meta(tmp_path, {"dominant_language": "uk"})
+    assert CL.meta_path(t) == tmp_path / "video" / "2026-11-21-1000-sync.recording.json"
     text = "[00:00:01] Mike (en): hi"
     assert CL.output_language(t, text) == "uk"
+    assert CL.output_language(t.with_name(t.name[:-3] + ".named.md"), text) == "uk"       # one call, one file
     assert CL.output_language(t, text, {}) == "en"       # an explicit meta is not replaced
+
+
+def test_adapter_ignores_a_file_next_to_the_transcript(tmp_path):
+    """The old lookup wrote <stem>.recording.json beside the transcript; the recorder never does."""
+    t = _call(tmp_path)
+    (t.parent / ".work").mkdir()
+    (t.parent / ".work" / "2026-11-21-1000-sync.app.recording.json").write_text(json.dumps({"dominant_language": "uk"}), "utf-8")
+    assert CL.load_meta(t) is None
+
+
+def test_equal_shares_without_a_dominant_field_pick_the_same_language_as_swift(tmp_path):
+    """Ties: the first code alphabetically, whatever order the metadata lists them in (the shared fixture holds the case too)."""
+    sp = CL.spoken("", {"languages": {"uk": 0.5, "en": 0.5}})
+    assert sp.dominant == "en" and sp.languages() == ["en", "uk"]
+    assert CL.spoken("", {"languages": ["uk", "en"]}).dominant == "uk"      # a list keeps its own order

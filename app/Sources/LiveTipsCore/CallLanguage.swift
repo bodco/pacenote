@@ -87,7 +87,7 @@ public enum CallLanguage {
             let list = codes(l.compactMap { $0 as? String })
             shares = list.map { ($0, 1.0 / Double(list.count)) }
         }
-        if dom == nil, let top = shares.max(by: { $0.share < $1.share }) {   // no dominant field: the largest share (ties: first in key order)
+        if dom == nil, let top = shares.max(by: { $0.share < $1.share }) {   // no dominant field: the largest share (ties: the first code in alphabetical order; a list: first listed)
             dom = shares.first { $0.share == top.share }?.code
         }
         if shares.isEmpty || dom == nil {
@@ -120,6 +120,17 @@ public enum CallLanguage {
 
     public static func isMulti(_ languages: [String]) -> Bool { languages.count >= 2 }
 
+    // MARK: the follow-up Write rules (the call page tab and the tips window share them)
+
+    /// A draft exists when a language is remembered or any text is in it.
+    public static func followUpHasDraft(language: String?, subject: String, body: String) -> Bool { language != nil || !subject.isEmpty || !body.isEmpty }
+
+    /// Write runs when nothing is running and there is no draft, or the caller replaces it.
+    public static func followUpMayWrite(busy: Bool, hasDraft: Bool, replacingDraft: Bool) -> Bool { !busy && (!hasDraft || replacingDraft) }
+
+    /// The tips window's Write: an emptied draft (its language is still remembered) is written again; a draft with text is kept.
+    public static func tipsWriteReplacesDraft(body: String) -> Bool { body.isEmpty }
+
     // MARK: the per-call sidecar (<stem>.outlang.json, in the call folder's .work/)
 
     public struct Sidecar: Equatable {
@@ -141,10 +152,17 @@ public enum CallLanguage {
 
     public static func sidecarPath(transcript: String) -> String { CallLayout.sidecar(of: plainTranscript(transcript), suffix) }
 
-    /// The call's own metadata (<stem>.recording.json), nil when absent or unreadable.
+    /// The call's own metadata, nil when absent or unreadable: the recorder's <project>/video/<stem>.recording.json
+    /// (RecordingFiles: ".app" and ".md" stripped from the stem), where PB-30 puts `dominant_language` and `languages`.
     static func loadMeta(transcript: String) -> [String: Any]? {
-        guard let d = FileManager.default.contents(atPath: CallLayout.sidecar(of: plainTranscript(transcript), ".recording.json")) else { return nil }
+        guard let d = FileManager.default.contents(atPath: RecordingFiles.metaPath(transcript: plainTranscript(transcript))) else { return nil }
         return (try? JSONSerialization.jsonObject(with: d)) as? [String: Any]
+    }
+
+    /// What was spoken in this call, from its metadata when it has some and else from the transcript text: the one result
+    /// the Output language menu, its default and every artifact read (the menu must not disagree with the default).
+    public static func spoken(forCall transcript: String, text: String) -> Spoken {
+        spoken(transcript: text, meta: loadMeta(transcript: transcript))
     }
 
     /// Absent, empty, half-written or unreadable: nothing chosen; never an error.

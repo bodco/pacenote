@@ -224,6 +224,21 @@
    ]
   },
   {
+   "name": "meta equal shares, no dominant: the first code alphabetically in both runtimes",
+   "transcript": "",
+   "meta": {
+    "languages": {
+     "uk": 0.5,
+     "en": 0.5
+    }
+   },
+   "dominant": "en",
+   "languages": [
+    "en",
+    "uk"
+   ]
+  },
+  {
    "name": "meta share under 10 percent is not spoken",
    "transcript": "",
    "meta": {

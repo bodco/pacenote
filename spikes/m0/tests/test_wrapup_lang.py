@@ -78,25 +78,68 @@ def test_notion_language_is_not_recorded_when_the_page_write_fails(call, capsys,
     assert "notion" not in CL.read_sidecar(call.md)["artifacts"]
 
 
-def test_page_argument_appends_to_that_page_and_never_creates(call, capsys, monkeypatch):
-    """PB-32 S6: Regenerate names the call's page; a date lookup that would miss it must not make a second page."""
-    _retag(call, "uk")
-    call.state["pages"] = []                                  # find_page would find nothing
-    pid = "0123456789abcdef0123456789abcdef"
-    got, parents = [], []
+PID = "0123456789abcdef0123456789abcdef"
+
+
+def _blk(i, kind, text=""):
+    body = {"rich_text": [{"type": "text", "text": {"content": text}}]} if kind != "child_page" else {"title": text}
+    return {"id": i, "type": kind, kind: body}
+
+
+def _existing_page(call, monkeypatch, children):
+    """A page written by an earlier run: `children` as Notion lists them; every write is recorded."""
+    got = []
 
     def spy(method, path, body=None):
-        got.append((method, path))
-        if method == "POST" and path == "/pages":
-            parents.append(body["parent"])
-        if method == "GET" and path == "/pages/" + pid:
-            return {"id": pid, "url": "u-call", "properties": {}}
+        got.append((method, path, body))
+        if method == "GET" and path == "/pages/" + PID:
+            return {"id": PID, "url": "u-call", "properties": {}}
+        if method == "GET" and path.startswith("/blocks/" + PID + "/children"):
+            return {"results": children, "has_more": False}
         return call.notion(method, path, body)
     monkeypatch.setattr(W, "notion", spy)
-    assert W.main(call.base + ["--page", "https://www.notion.so/Weekly-sync-" + pid]) == 0
-    assert parents and all(p["type"] == "page_id" for p in parents)      # only the transcript sub-page, no page in the database
-    assert ("PATCH", "/blocks/" + pid + "/children") in got
+    return got
+
+
+def test_regenerate_rewrites_the_generated_section_in_place_and_never_uploads_the_transcript(call, capsys, monkeypatch):
+    """PB-32 S6: Regenerate replaces the old section and the Summary property; the PM's own blocks stay; no second section,
+    no new transcript sub-page."""
+    _retag(call, "uk")
+    call.state["pages"] = []
+    kids = [_blk("mine", "paragraph", "my note"), _blk("h", "heading_2", "Summary"), _blk("o1", "paragraph", "old text"),
+            _blk("o2", "bulleted_list_item", "old bullet"), _blk("t", "heading_2", "Transcript"), _blk("tp", "child_page", "Transcript"),
+            {"id": "d", "type": "divider", "divider": {}}, _blk("f", "paragraph", "footer")]
+    got = _existing_page(call, monkeypatch, kids)
+    assert W.main(call.base + ["--page", "https://www.notion.so/Weekly-sync-" + PID]) == 0
+    assert not [g for g in got if g[0] == "POST"]                                    # no page, no transcript sub-page
+    assert [g[1] for g in got if g[0] == "DELETE"] == ["/blocks/o1", "/blocks/o2"]   # only the old generated body
+    ins = [g for g in got if g[0] == "PATCH" and g[1] == "/blocks/" + PID + "/children"]
+    assert ins and all(g[2]["after"] == "h" for g in ins)                            # right under the heading, not at the end
+    heads = {g[1]: g[2] for g in got if g[0] == "PATCH" and g[1] in ("/blocks/h", "/blocks/t")}
+    assert heads["/blocks/h"]["heading_2"]["rich_text"][0]["text"]["content"] == "Підсумок"
+    assert heads["/blocks/t"]["heading_2"]["rich_text"][0]["text"]["content"] == "Транскрипт"
+    prop = [g for g in got if g[0] == "PATCH" and g[1] == "/pages/" + PID][0][2]["properties"]
+    assert prop["Summary"]["rich_text"][0]["text"]["content"] == "We agreed."
     assert CL.read_sidecar(call.md)["artifacts"] == {"notion": "uk"}
+
+
+def test_regenerate_inserts_before_it_archives(call, capsys, monkeypatch):
+    _retag(call, "uk")
+    kids = [_blk("h", "heading_2", "Pacenote: summary (10:00)"), _blk("o1", "paragraph", "old"), _blk("t", "heading_3", "Transcript (Pacenote)")]
+    got = _existing_page(call, monkeypatch, kids)
+    assert W.main(call.base + ["--page", PID]) == 0
+    first_delete = next(i for i, g in enumerate(got) if g[0] == "DELETE")
+    assert any(g[0] == "PATCH" and g[1] == "/blocks/" + PID + "/children" for g in got[:first_delete])
+    head = [g for g in got if g[0] == "PATCH" and g[1] == "/blocks/h"][0][2]["heading_2"]["rich_text"][0]["text"]["content"]
+    assert head.startswith("Pacenote: підсумок (")
+
+
+def test_regenerate_without_a_section_appends_one_and_still_no_transcript(call, capsys, monkeypatch):
+    _retag(call, "uk")
+    got = _existing_page(call, monkeypatch, [_blk("mine", "paragraph", "only mine")])
+    assert W.main(call.base + ["--page", PID]) == 0
+    assert not [g for g in got if g[0] in ("POST", "DELETE")]
+    assert [g for g in got if g[0] == "PATCH" and g[1] == "/blocks/" + PID + "/children"]
 
 
 def test_page_argument_that_is_not_a_page_fails_without_a_write(call, capsys, monkeypatch):

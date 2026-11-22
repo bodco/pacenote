@@ -28,7 +28,7 @@ final class OutputLanguageModel: ObservableObject {
     /// Read the sidecar and the transcript again (cheap: counting tags and one small file).
     func refresh() {
         let text = (try? String(contentsOfFile: file, encoding: .utf8)) ?? ""
-        languages = CallLanguage.toggleLanguages(CallLanguage.spoken(transcript: text))
+        languages = CallLanguage.toggleLanguages(CallLanguage.spoken(forCall: file, text: text))     // the same metadata as the default below
         sidecar = CallLanguage.readSidecar(transcript: file)
         current = CallLanguage.outputLanguage(transcript: file, text: text)
     }
@@ -70,12 +70,20 @@ final class OutputLanguageModel: ObservableObject {
         Task { @MainActor in
             while job.running { try? await Task.sleep(nanoseconds: 500_000_000) }
             if let err = job.failed { self.failed = err; self.running = false; self.refresh(); return }
-            if let page = CallPageSync.of(self.file).notionURL { await self.rewriteNotionPage(page: page) }
+            var problems: [String] = []                // every step that did not finish, shown together; each language is recorded only by the step that wrote it
+            let meetingFailed = !job.failedSteps.isEmpty
+            if meetingFailed { problems.append(L("call.outlang.meetingFailed")) }
+            if let page = CallPageSync.of(self.file).notionURL {
+                if meetingFailed { problems.append(L("call.outlang.notionSkipped")) }     // the page would lose its meeting notes
+                else if let err = await self.rewriteNotionPage(page: page) { problems.append(err) }
+            }
             let fu = FollowUpModel.of(self.file)
             if fu.hasDraft, !CallLanguage.readSidecar(transcript: self.file).followUpUsesClientLanguage {
                 fu.write(replacingDraft: true)
                 while fu.busy { try? await Task.sleep(nanoseconds: 500_000_000) }     // the follow-up records its language when it is done
+                if !fu.error.isEmpty { problems.append(L("call.outlang.followUpFailed", ["why": fu.error])) }
             }
+            self.failed = problems.isEmpty ? nil : problems.joined(separator: "\n")
             self.running = false
             self.refresh()
         }
@@ -83,7 +91,7 @@ final class OutputLanguageModel: ObservableObject {
 
     /// The page's Summary, Recap and Meeting notes: the same wrapup_notion run as after a call, on the call's own page (--page: never a lookup by date, never a new page). wrapup_notion
     /// records the Notion language in the sidecar itself, after Notion took the write; a failure leaves "out of date" and shows here.
-    private func rewriteNotionPage(page: String) async {
+    private func rewriteNotionPage(page: String) async -> String? {
         let c = AppConfig.load(from: AppPaths.config)
         let appRoot = c.effectiveAppRoot(appSupport: AppPaths.support.path)
         let (proj, ws) = PyTool.project(of: file)
@@ -96,7 +104,7 @@ final class OutputLanguageModel: ObservableObject {
             PyTool.run("wrapup_notion", args, notion: true) { k.resume(returning: $0) }
         }
         if let usd = r["cost_usd"] as? Double, usd > 0 { SpendDays.add(usd); CallHistory.shared.addCost(file: file, usd) }
-        if (r["ok"] as? Bool) != true { failed = L("call.outlang.notionFailed", ["why": (r["error"] as? String) ?? ""]) }
+        return (r["ok"] as? Bool) == true ? nil : L("call.outlang.notionFailed", ["why": (r["error"] as? String) ?? ""])
     }
 }
 

@@ -34,7 +34,7 @@ final class FollowUpModel: ObservableObject {
     var project: String { CallHistory.shared.records.first { $0.file == file }?.project ?? "" }
     private var draftText: String { subject + "\n" + body }
 
-    var hasDraft: Bool { draftLanguage != nil || !subject.isEmpty || !body.isEmpty }
+    var hasDraft: Bool { CallLanguage.followUpHasDraft(language: draftLanguage, subject: subject, body: body) }
 
     var languageOffer: String? {
         guard !busy, !hasDraft, !answeredLanguageOffer,
@@ -57,7 +57,7 @@ final class FollowUpModel: ObservableObject {
     }
 
     func write(replacingDraft: Bool = false) {
-        guard !busy, !hasDraft || replacingDraft else { return }
+        guard CallLanguage.followUpMayWrite(busy: busy, hasDraft: hasDraft, replacingDraft: replacingDraft) else { return }
         logHandEdits()
         let target = preferredLanguage ?? FollowUpWindow.language(of: file)
         let usesClientLanguage = preferredLanguage != nil
@@ -202,7 +202,7 @@ extension PrompterController {
         if let b = d["body"] as? String { fu.body = b }
         if let s = d["subject"] as? String { fu.subject = s }
         switch d["item"] as? String ?? "" {
-        case "write": fu.write(replacingDraft: fu.body.isEmpty)   // a cleared draft with a remembered language must not make Write a no-op
+        case "write": fu.write(replacingDraft: CallLanguage.tipsWriteReplacesDraft(body: fu.body))   // a cleared draft with a remembered language must not make Write a no-op
         case "revise": fu.revise(d["instruction"] as? String ?? "")
         case "edited": fu.logHandEdits()
         case "copy": fu.copy()

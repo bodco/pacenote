@@ -568,14 +568,14 @@ final class CallEngine {
     /// again from <stem>.named.md over the old ones (callnotes --rewrite, which also moves this call's untouched register
     /// items to the new names). The PM's edits on the call page live in the tips file and still win (CallLists). Then the
     /// call's Notion page gets its Decisions, Action items, Open questions and Risks again (CallPageSync), and the server
-    /// copy the changed notes. On the "After the call" way; the cost goes to SpendDays and the call's history.
-    @MainActor func rewriteCallNotes(file: String, done: @escaping @MainActor (String?) -> Void) {
+    /// copy the changed notes. `done` gets the error (nil when the notes are written) and the steps that failed (a meeting-notes failure keeps the notes). On the "After the call" way; the cost goes to SpendDays and the call's history.
+    @MainActor func rewriteCallNotes(file: String, done: @escaping @MainActor (String?, [String]) -> Void) {
         let c = config
         guard AIRoute.canRun(job: "after", config: c), !c.engine.sidecarPython.isEmpty, !c.engine.sidecarDir.isEmpty else {
-            done(L("page.mn.noRoute")); return
+            done(L("page.mn.noRoute"), []); return
         }
         let notes = CallNotes.path(file)
-        guard !Self.notesInWork.contains(notes) else { done(L("transcript.spk.rewriteBusy")); return }
+        guard !Self.notesInWork.contains(notes) else { done(L("transcript.spk.rewriteBusy"), []); return }
         let cfg = PyTool.project(of: file).project?.config
         let p = Process()
         p.executableURL = URL(fileURLWithPath: c.engine.sidecarPython)
@@ -608,19 +608,19 @@ final class CallEngine {
                     guard ok else {
                         AnalyticsTracker.shared.error("ai", proc.terminationReason == .uncaughtSignal ? "crashed" : "other", provider: prov, fallbackTo: nil)
                         AppLog.app("notes: rewrite failed call=\(AppLog.stem(file))")
-                        done((d["error"] as? String).map { L("transcript.spk.rewriteFailed", ["error": String($0.prefix(200))]) } ?? L("page.mn.failed"))
+                        done((d["error"] as? String).map { L("transcript.spk.rewriteFailed", ["error": String($0.prefix(200))]) } ?? L("page.mn.failed"), [])
                         return
                     }
                     AppLog.app("notes: rewritten call=\(AppLog.stem(file))")
                     let sync = CallPageSync.of(file)
                     for s in ["decisions", "open", "risks", "actions"] { sync.changed(s) }   // no Notion page: nothing happens
                     CallSyncService.shared.sync(file)
-                    done(nil)
+                    done(nil, d["failed_steps"] as? [String] ?? [])
                 }
             }
         }
         Self.notesInWork.insert(notes)
-        do { try p.run() } catch { Self.notesInWork.remove(notes); done(error.localizedDescription) }
+        do { try p.run() } catch { Self.notesInWork.remove(notes); done(error.localizedDescription, []) }
     }
 
     /// `lines`: the real transcript lines when known (the call just ended); a call under NotionGate.minLines gets no page.

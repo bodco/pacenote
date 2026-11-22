@@ -30,6 +30,8 @@ adapter:                               # the one place that reads the recorder (
     majority of the transcript line tags "[hh:mm:ss] Name (xx):" (same value as livetips_m0.callnotes.call_lang),
     else the header "- Languages: Я = xx"
   shares: lines per tag over all tagged lines
+  meta_file: <project>/video/<stem>.recording.json   # the recorder's file (RecordingFiles.metaPath); <stem> without ".app" and ".md"
+  tie: no dominant field and equal shares -> a dict picks the first code alphabetically, a list the first listed (Python and Swift alike)
 sidecar:
   file: <stem>.outlang.json            # next to the transcript, in the call folder's .work/ (CallLayout rules)
   fields:

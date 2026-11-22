@@ -91,11 +91,20 @@ def _named_to_md(transcript) -> str:
     return t[:-len(".named.md")] + ".md" if t.endswith(".named.md") else t
 
 
+def meta_path(transcript) -> Path:
+    """<project>/video/<stem>.recording.json: where the recorder keeps a call's metadata (RecordingFiles.metaPath in Swift;
+    <stem> is the transcript's name without ".named", ".md" and ".app")."""
+    t = Path(_named_to_md(transcript))
+    stem = t.name[:-3] if t.name.endswith(".md") else t.name
+    stem = stem[:-4] if stem.endswith(".app") else stem
+    return call_layout.live_folder(t).parent / "video" / (stem + ".recording.json")
+
+
 def load_meta(transcript) -> Optional[dict]:
-    """The call's own metadata (<stem>.recording.json, where PB-30 puts `dominant_language` and `languages`);
+    """The call's own metadata (the recorder's .recording.json, where PB-30 puts `dominant_language` and `languages`);
     None when absent or unreadable."""
     try:
-        d = json.loads(call_layout.sidecar_of(_named_to_md(transcript), ".recording.json").read_text("utf-8"))
+        d = json.loads(meta_path(transcript).read_text("utf-8"))
     except (OSError, ValueError):
         return None
     return d if isinstance(d, dict) else None
@@ -112,7 +121,7 @@ def spoken(transcript_text: str = "", meta: Optional[dict] = None) -> Spoken:
     shares: dict = {}
     langs = meta.get("languages")
     if isinstance(langs, dict):
-        for k, v in langs.items():
+        for k, v in sorted(langs.items(), key=lambda kv: str(kv[0])):      # key order, as in Swift: equal shares tie the same way
             c = normalize(k)
             if c and isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0:
                 shares[c] = float(v)
@@ -120,7 +129,7 @@ def spoken(transcript_text: str = "", meta: Optional[dict] = None) -> Spoken:
         c_list = _codes(langs)
         shares = {c: 1.0 / len(c_list) for c in c_list}
     if shares and not dom:
-        dom = max(shares, key=shares.get)           # no dominant field: the largest share (ties: first listed)
+        dom = max(shares, key=shares.get)           # no dominant field: the largest share (ties: the first code in alphabetical order; a list: first listed)
     if not shares or not dom:
         tags = _TAG.findall(transcript_text or "")
         if tags:

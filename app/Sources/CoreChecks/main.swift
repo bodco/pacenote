@@ -4816,6 +4816,32 @@ func outputLanguageS1() {
            "outlang sidecar: a normal follow-up can become stale again")
     try? "{".write(toFile: CallLanguage.sidecarPath(transcript: t), atomically: true, encoding: .utf8)
     expect(CallLanguage.readSidecar(transcript: t) == CallLanguage.Sidecar(), "outlang sidecar: half-written is nothing")
+
+    // the recorder's real layout: <project>/video/<stem>.recording.json (".app" stripped), one result for the menu and the default
+    let dir2 = base + "/live/2026-11-22-mixed"
+    try? FileManager.default.createDirectory(atPath: dir2, withIntermediateDirectories: true)
+    try? FileManager.default.createDirectory(atPath: base + "/video", withIntermediateDirectories: true)
+    let t2 = dir2 + "/2026-11-22-1000-mixed.app.md"
+    let tagsEn = "# Live transcript: Mixed\n" + (0..<6).map { "[10:00:0\($0)] Me (en): line\n" }.joined()      // every tag says English
+    try? tagsEn.write(toFile: t2, atomically: true, encoding: .utf8)
+    try? #"{"dominant_language": "uk", "languages": {"uk": 0.6, "en": 0.4}}"#.write(toFile: base + "/video/2026-11-22-1000-mixed.recording.json", atomically: true, encoding: .utf8)
+    expect(RecordingFiles.metaPath(transcript: t2) == base + "/video/2026-11-22-1000-mixed.recording.json", "outlang meta: the recorder's path")
+    let sp2 = CallLanguage.spoken(forCall: t2, text: tagsEn)
+    expect(sp2.dominant == "uk" && CallLanguage.toggleLanguages(sp2) == ["uk", "en"], "outlang meta: the menu follows the metadata, not the tags")
+    expect(CallLanguage.outputLanguage(transcript: t2, text: tagsEn) == "uk", "outlang meta: the default follows the same metadata")
+    expect(CallLanguage.outputLanguage(transcript: dir2 + "/2026-11-22-1000-mixed.app.named.md", text: tagsEn) == "uk", "outlang meta: .named.md is the same call")
+    expect(CallLanguage.spoken(forCall: dir2 + "/2026-11-22-1000-other.app.md", text: tagsEn).dominant == "en", "outlang meta: a call without metadata reads its tags")
+
+    // the follow-up Write rules the tips window uses: an emptied draft with a remembered language is written again, text is kept
+    expect(CallLanguage.followUpHasDraft(language: "uk", subject: "", body: "") && !CallLanguage.followUpHasDraft(language: nil, subject: "", body: ""),
+           "outlang follow-up: a remembered language is a draft")
+    expect(CallLanguage.tipsWriteReplacesDraft(body: "") && !CallLanguage.tipsWriteReplacesDraft(body: "Hi Emily"), "outlang follow-up: tips Write replaces only an empty body")
+    let emptied = CallLanguage.tipsWriteReplacesDraft(body: "")
+    expect(CallLanguage.followUpMayWrite(busy: false, hasDraft: CallLanguage.followUpHasDraft(language: "uk", subject: "", body: ""), replacingDraft: emptied),
+           "outlang follow-up: empty body with a remembered language can be written again")
+    expect(!CallLanguage.followUpMayWrite(busy: false, hasDraft: true, replacingDraft: CallLanguage.tipsWriteReplacesDraft(body: "Hi Emily")),
+           "outlang follow-up: a populated draft is preserved")
+    expect(!CallLanguage.followUpMayWrite(busy: true, hasDraft: false, replacingDraft: true), "outlang follow-up: never while one runs")
 }
 outputLanguageS1()
 print("core checks: \(passed) passed, \(failures) failed")

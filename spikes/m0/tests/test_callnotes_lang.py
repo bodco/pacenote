@@ -90,3 +90,20 @@ def test_named_transcript_uses_the_same_sidecar(tmp_path):
     CL.write_sidecar(md, output_language="pl")
     named = md.with_name(md.name[:-3] + ".named.md")
     assert CN.notes_lang(named, "x", "auto") == "pl"
+
+
+def test_a_failed_meeting_notes_step_is_reported_and_its_language_is_not_recorded(tmp_path, monkeypatch):
+    """PB-32 review: the notes are written, the meeting notes threw: success must name the failed step, and the sidecar
+    must not say meeting notes are current in the new language."""
+    md = _call(tmp_path)
+    CL.write_sidecar(md, artifact="meeting_notes", written_in="en")
+    monkeypatch.setattr(CN, "make_meeting", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("model down")))
+    res = CN.make_notes(md, "m", "uk", provider=Prov())
+    assert res["ok"] and res["failed_steps"] == ["meeting_notes"]
+    assert CL.read_sidecar(md)["artifacts"] == {"meeting_notes": "en", "notes": "uk"}      # notes current, meeting notes still old
+
+
+def test_without_a_failure_both_languages_are_recorded_and_no_step_failed(tmp_path):
+    md = _call(tmp_path)
+    res = CN.make_notes(md, "m", "uk", provider=Prov())
+    assert res["failed_steps"] == [] and CL.read_sidecar(md)["artifacts"] == {"notes": "uk", "meeting_notes": "uk"}

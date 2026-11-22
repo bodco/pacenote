@@ -419,17 +419,20 @@ def make_notes(md: Path, model: str, lang: str, provider=None, aliases: List[str
         notes = ask(FIX_SYS.format(LANG=L), "## Missing details (transcript lines)\n" + "\n".join(uniq) + "\n\n## The notes\n" + notes, 12000)
         c = covered(notes, d)
     notes = notes.rstrip() + "\n\n" + coverage_line(c) + f". Made {time.strftime('%Y-%m-%d %H:%M')} by {model}.\n"
+    failed: list = []
     try:   # 0.9.5.2 (rules/notes.yaml schema 2): the readable meeting notes; the full notes are kept whatever happens
         notes = put_meeting(notes, make_meeting(md, notes, text, lang, ask, names))
     except Exception as e:  # noqa: BLE001
         print("meeting notes: " + str(e)[:200], file=sys.stderr)
+        failed.append("meeting_notes")
     out = call_layout.place(md.name[:-3].replace(".named", "") + ".notes.md", md.parent)
     _write_then_check(out, md, notes, text, lang, ask)
     _written_in(md, "notes", lang)
-    _written_in(md, "meeting_notes", lang)
+    if "meeting_notes" not in failed:      # recorded only once written: a failed step stays "out of date" and can be retried
+        _written_in(md, "meeting_notes", lang)
     _register_tasks(md, notes, aliases, rewrite)
     return {"ok": True, "path": str(out), "coverage": coverage_line(c), "cost_usd": round(usd[0], 4), "parts": len(ps),
-            "error": None}
+            "error": None, "failed_steps": failed}
 
 
 def main(argv=None) -> int:

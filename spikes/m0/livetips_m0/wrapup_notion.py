@@ -578,7 +578,7 @@ def parse_args(argv=None):
     ap.add_argument("--when", default="", help="ISO date and time of the meeting set in Start call (title date)")
     ap.add_argument("--wait-notes", type=int, default=0,
                     help="0.9.5.2: seconds to wait for the call notes' Meeting notes being written (the app starts both)")
-    ap.add_argument("--page", default="", help="PB-32 S6: the call's existing Notion page (id or url): append to it, never look up by date, never create")
+    ap.add_argument("--page", default="", help="PB-32 S6: the call's existing Notion page (id or url): rewrite its generated Summary in place, never look up by date, never create, never upload the transcript")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--find-only", action="store_true", help="only look up this meeting's page in Notion")
     return ap.parse_args(argv)
@@ -703,6 +703,79 @@ def write_to_page(page: dict, sc, ids, a, w, blocks, plain, info, lang) -> dict:
     return {"ok": True, "url": page.get("url"), "page_id": page.get("id")}
 
 
+def _children(page_id: str) -> list:
+    """All top-level blocks of a page, in order."""
+    out, cursor = [], None
+    while True:
+        r = notion("GET", f"/blocks/{page_id}/children?page_size=100" + (f"&start_cursor={cursor}" if cursor else "")) or {}
+        out += r.get("results", [])
+        cursor = r.get("next_cursor")
+        if not r.get("has_more") or not cursor:
+            return out
+
+
+def _plain(block: dict) -> str:
+    body = block.get(block.get("type"), {}) or {}
+    return "".join((t.get("text") or {}).get("content", "") or t.get("plain_text", "") for t in body.get("rich_text", []))
+
+
+def _generated_section(children: list):
+    """The last section Pacenote wrote: (index of its heading, index of the first block after its body). The body ends at
+    the transcript heading or sub-page, the footer divider or the end of the page; None when there is none."""
+    starts = {T["summary"] for T in TXT.values()}
+    append_rx = re.compile("^(?:" + "|".join(re.escape(T["append"]).replace(re.escape("{hhmm}"), r"\d\d:\d\d")
+                                              for T in TXT.values()) + ")$")
+    ends = {T["transcript"] for T in TXT.values()} | {T["tr_app"] for T in TXT.values()}
+    head = None
+    for i, b in enumerate(children):
+        if b.get("type") == "heading_2" and (_plain(b) in starts or append_rx.match(_plain(b))):
+            head = i
+    if head is None:
+        return None
+    end = len(children)
+    for j in range(head + 1, len(children)):
+        b = children[j]
+        if b.get("type") in ("child_page", "divider") or (b.get("type") in ("heading_2", "heading_3") and _plain(b) in ends):
+            end = j
+            break
+    return head, end
+
+
+def regenerate_page(page: dict, sc, ids, a, w, blocks, lang) -> dict:
+    """Regenerate (--page): the generated Summary section of the call's own page and its Summary property are replaced in
+    place. Blocks outside the section (the PM's own, the transcript sub-page, the footer) stay; the transcript is never
+    uploaded again. New blocks go in first, the old ones are archived after, so a failure in between leaves text, not a hole."""
+    pid = page["id"]
+    upd = link_props(sc, ids, page.get("properties", {}), a.project_name, getattr(a, "workspace_value", ""))
+    if sc["summary"]:
+        upd[sc["summary"]] = {"rich_text": rt(w.get("summary", ""))}
+    if upd:
+        notion("PATCH", f"/pages/{pid}", {"properties": upd})
+    children = _children(pid)
+    sec = _generated_section(children)
+    head = [] if blocks and blocks[0].get("type") == "paragraph" else [para(w.get("summary", ""))]
+    new = head + blocks
+    if sec is None:             # the section was removed by hand: write it again, still without a transcript
+        append(pid, [h(2, TXT[lang]["summary"])] + new)
+        return {"ok": True, "url": page.get("url"), "page_id": pid}
+    i, end = sec
+    old, start = children[i + 1:end], children[i]
+    label = TXT[lang]["append"].format(hhmm=dt.datetime.now().strftime("%H:%M")) if start.get("type") == "heading_2" and \
+        _plain(start) not in {T["summary"] for T in TXT.values()} else TXT[lang]["summary"]
+    notion("PATCH", f"/blocks/{start['id']}", {"heading_2": {"rich_text": rt(label)}})
+    chunks = [new[k:k + 90] for k in range(0, len(new), 90)]
+    for chunk in reversed(chunks):          # each chunk goes right after the heading, so the last one inserted ends up first
+        notion("PATCH", f"/blocks/{pid}/children", {"children": chunk, "after": start["id"]})
+    for b in old:
+        notion("DELETE", f"/blocks/{b['id']}")
+    if end < len(children):     # the transcript heading follows the page language too
+        tb = children[end]
+        if tb.get("type") in ("heading_2", "heading_3") and _plain(tb) in {T["transcript"] for T in TXT.values()} | {T["tr_app"] for T in TXT.values()}:
+            key = "tr_app" if tb["type"] == "heading_3" or _plain(tb) in {T["tr_app"] for T in TXT.values()} else "transcript"
+            notion("PATCH", f"/blocks/{tb['id']}", {tb["type"]: {"rich_text": rt(TXT[lang][key])}})
+    return {"ok": True, "url": page.get("url"), "page_id": pid}
+
+
 def create_page(sc, ids, a, w, blocks, plain, info, lang) -> dict:
     """A new page in the Meetings database."""
     name = page_name(info["title"], w.get("name"))
@@ -753,7 +826,7 @@ def run(a, res: dict) -> int:
         page = notion("GET", f"/pages/{pid}")
         if not page.get("id"):
             raise RuntimeError("the call's Notion page was not found")
-        res.update(write_to_page(page, sc, ids, a, w, blocks, plain, info, lang))
+        res.update(regenerate_page(page, sc, ids, a, w, blocks, lang))
         res["created"] = False
     elif (page := find_page(ids["meetings_db"], info["start"], sc["date"])):
         res.update(write_to_page(page, sc, ids, a, w, blocks, plain, info, lang))

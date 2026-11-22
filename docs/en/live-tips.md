@@ -1334,8 +1334,8 @@ The skill and the app follow the same rules, in `rules/agenda.yaml`, `rules/comm
 - **Output language.** A call with two or three languages (each at least 10% of the call) shows an Output language
   menu and **Regenerate** under the status lines. The default is the dominant language of the call. Choosing another
   only remembers it for this call; nothing is rewritten until you press Regenerate, which writes the notes, Summary,
-  Recap and an existing follow-up draft again in that language and adds the Summary, Recap and meeting notes to the
-  Notion page again (a new section; the old one stays); it asks first for a call over one hour. A line shows the language each text was written in and marks the ones out of date; a follow-up chosen in the
+  Recap and an existing follow-up draft again in that language and rewrites the Summary, Recap and meeting notes on the
+  Notion page in place (blocks outside the Pacenote section and the transcript page stay; the transcript is not uploaded again); a step that fails is named so you can press Regenerate again; it asks first for a call over one hour. A line shows the language each text was written in and marks the ones out of date; a follow-up chosen in the
   client’s language is not marked. The transcript never changes. A one-language call shows no control.
 - **Follow-up email.** The draft uses the call's output language. If the project's client language differs,
   the Follow-up tab and inspector offer it before the first draft. Choosing the client’s language keeps the
