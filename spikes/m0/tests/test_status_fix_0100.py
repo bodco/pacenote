@@ -150,9 +150,12 @@ def test_provider_reads_and_removes_its_own_log(tmp_path, monkeypatch, mode):
     monkeypatch.setenv("FAKE_TID", TID)
     monkeypatch.setenv("FAKE_MODE", mode)
     monkeypatch.delenv("LT_AI_STATE", raising=False)
-    c = CodexProvider(str(cli), timeout=10).complete(model="m", system=[{"text": "rules"}], user="q", max_tokens=10, cache_ttl=None)
+    # 2026-11-22: 60 s, not 10: the limit only guards a stuck fake CLI (two Python starts); 10 s ran out under load in a
+    # full gate run and left no usage, the same class as the live tail fix
+    c = CodexProvider(str(cli), timeout=60).complete(model="m", system=[{"text": "rules"}], user="q", max_tokens=10, cache_ttl=None)
     assert rollout_files(TID, str(home)) == [] and os.path.exists(keep)
     u = c.account_usage
+    assert u is not None, c.error
     assert [w["name"] for w in u["windows"]] == ["five_hour", "seven_day"]
     if mode == "ok":
         assert c.error is None and c.text == "OK" and u["limited"] is False
