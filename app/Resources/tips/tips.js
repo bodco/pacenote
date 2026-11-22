@@ -1128,18 +1128,22 @@
       if (S.ui.tipsPending && S.ui.tipsPending.l === S.tipsLang.current) S.ui.tipsPending = null;
     });
   }
+  /** The tips language the app last asked for: an unanswered pick counts, so a quick second switch compares against it. */
+  const tipsWanted = () => (S.ui.tipsPending && S.ui.tipsPending.l) || (S.tipsLang && S.tipsLang.current) || '';
   function langShown() {
     consumeAck();
     const cl = callLangNow(), p = S.ui.langPending;
     if (p && !p.demo && sameLangs(p.langs, cl.langs) && p.main === cl.main) {
       S.ui.langPending = null;
-      if (p.tips && !(S.tipsLang && S.tipsLang.current === p.tips)) { S.ui.comboWait = { names: langNames(p.langs), tips: p.tips, at: Date.now() }; tipsLangSet(p.tips); }   // tips follow only once the recorder confirmed; the toast waits for the tips ack
+      if (p.tips && tipsWanted() !== p.tips) { S.ui.comboWait = { names: langNames(p.langs), tips: p.tips, at: Date.now() }; tipsLangSet(p.tips); }   // tips follow only once the recorder confirmed; the toast waits for the tips ack
       else showToast({ text: T().cl.ok(langNames(p.langs), p.tips ? langNames([p.tips]) : ''), kind: 'ok', at: Date.now() });
     }
     else if (p && Date.now() - p.at > 4000) { S.ui.langPending = null; showToast({ text: T().cl.fail, kind: 'warn', at: Date.now() }); }
     const w = S.ui.comboWait;
     if (w && S.tipsLang && S.tipsLang.current === w.tips) { S.ui.comboWait = null; showToast({ text: T().cl.ok(w.names, langNames([w.tips])), kind: 'ok', at: Date.now() }); }
     else if (w && Date.now() - w.at > 4000) { S.ui.comboWait = null; showToast({ text: T().cl.tipsFail, kind: 'warn', at: Date.now() }); }
+    const tp = S.ui.tipsPending;
+    if (tp && Date.now() - tp.at > 4000) { S.ui.tipsPending = null; if (!w) showToast({ text: T().cl.tipsFail, kind: 'warn', at: Date.now() }); }   // no ack: drop the pick and say so
     const q = S.ui.langPending;
     return q ? { langs: q.langs, main: q.main, pending: true, cands: cl.cands } : { langs: cl.langs, main: cl.main, pending: false, cands: cl.cands };
   }
@@ -1197,9 +1201,10 @@
     if (!validCallLangs(langs)) { showToast({ text: T().cl.fail, kind: 'warn', at: Date.now() }); render(); return; }
     if (!(sameLangs(langs, cl.langs) && main === cl.main && !S.ui.langPending)) {
       S.ui.langPending = { value: v, langs, main, at: Date.now() };
+      S.ui.comboWait = null;   // a superseded switch must not toast when its late tips ack arrives
       post('setting', { key: 'call_lang', value: v });
       // tips follow the main language of a one-language call; a mixed call keeps its tips language
-      if (langs.length === 1 && (main === 'uk' || main === 'en') && !(S.tipsLang && S.tipsLang.current === main)) S.ui.langPending.tips = main;
+      if (langs.length === 1 && (main === 'uk' || main === 'en') && tipsWanted() !== main) S.ui.langPending.tips = main;
       setTimeout(render, 4100);
     }
     render(); const b = $('langBtn'); if (b && !b.hidden) b.focus();
@@ -2057,6 +2062,19 @@
     const h = Math.ceil($('tcard').getBoundingClientRect().height);
     if (h > 0 && h !== cardH) { cardH = h; post('size', { h }); }
   }).observe($('tcard'));
+
+  /** PB-49: below 760 px the exit group (End call, Home, More) is drawn in row 1; move it in the DOM too so Tab follows the picture. */
+  function syncBarOrder() {
+    const bar = document.querySelector('header.bar'), brk = bar && bar.querySelector('.brk'), app = $('app');
+    if (!brk || !app) return;
+    const narrow = app.clientWidth < 760, ex = ['endBtn', 'homeBtn', 'moreBtn'].map($).filter(Boolean);
+    if (ex.length < 3) return;
+    const inRow1 = ex[0].compareDocumentPosition(brk) & Node.DOCUMENT_POSITION_FOLLOWING;
+    if (narrow && !inRow1) ex.forEach((x) => bar.insertBefore(x, brk));
+    else if (!narrow && inRow1) ex.forEach((x) => bar.appendChild(x));
+  }
+  if (window.ResizeObserver && $('app')) new ResizeObserver(syncBarOrder).observe($('app'));
+  syncBarOrder();
 
   // ---------- Public API ----------
   window.LiveTips = {

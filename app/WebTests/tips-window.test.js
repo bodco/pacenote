@@ -226,6 +226,32 @@ const jsErrors = (b, s) => s.posts.filter((m) => m.action === 'jserror').map((m)
       await b.evaluate(`document.getElementById('langBtn').click(); document.querySelector('#langMenu [data-v="en"]').click(); true`); await sleep(4400);
       assert.ok(!(await posted()).some((x) => x.indexOf('tips_lang') === 0), await posted());
     });
+    await openQ(520, '?call_lang=uk+en');
+    await test('520 px: Tab goes through the narrow header in the order it is drawn (row 1, then row 2)', async () => {
+      const ids = ['endBtn', 'homeBtn', 'moreBtn', 'trBtn', 'onmeBtn', 'micBtn', 'langBtn'];
+      const pos = await b.evaluate(`(${JSON.stringify(ids)}).map((id) => { const e = document.getElementById(id), r = e.getBoundingClientRect(); return { id, top: Math.round(r.top), left: Math.round(r.left), hidden: e.hidden || !r.width }; })`);
+      const dom = await b.evaluate(`Array.from(document.querySelectorAll('header.bar button')).map((e) => e.id)`);
+      const vis = pos.filter((x) => !x.hidden).sort((a, c) => a.top - c.top || a.left - c.left).map((x) => x.id);
+      assert.deepStrictEqual(dom.filter((id) => vis.includes(id)), vis, 'DOM order ' + dom.join() + ' vs drawn ' + vis.join());
+    });
+    await openQ(1100, '?call_lang=en');
+    await test('quick switch uk then back to en: tips end in English, no toast for the superseded switch', async () => {
+      const pick = (v) => b.evaluate(`document.getElementById('langBtn').click(); document.querySelector('#langMenu [data-v="${v}"]').click(); true`);
+      await pick('uk'); await sleep(100);
+      await b.evaluate(`window.setStatus({ state: 'recording', call_lang: 'uk', me_lang: 'uk', langs: ['uk'] }); true`); await sleep(200);
+      assert.ok((await posted()).includes('tips_lang=uk'), 'tips follow the first confirmation');
+      await pick('en'); await sleep(100);
+      await b.evaluate(`window.setStatus({ state: 'recording', call_lang: 'en', me_lang: 'en', langs: ['en'] }); true`); await sleep(200);
+      assert.strictEqual((await posted()).filter((x) => x.indexOf('tips_lang=') === 0).pop(), 'tips_lang=en', 'the last tips request is English');
+      await b.evaluate(`window.addItems([{ t: '10:00:00', kind: 'ack', key: 'tips_lang', value: 'uk' }, { t: '10:00:01', kind: 'ack', key: 'tips_lang', value: 'en' }]); document.getElementById('toast').textContent = ''; true`); await sleep(300);
+      assert.ok(!/Ukrainian|українськ/i.test(await b.evaluate(`document.getElementById('toast').textContent`)), 'no toast for the superseded switch');
+      await b.evaluate(`document.getElementById('langBtn').click(); true`); await sleep(100);
+    });
+    await openQ(1100, '?call_lang=uk+en');
+    await test('a standalone Tips in pick that is never acknowledged is dropped after 4 s with a retry message', async () => {
+      await b.evaluate(`document.getElementById('langBtn').click(); document.querySelector('#langMenu [data-l="en"]').click(); true`); await sleep(4500);
+      assert.ok(/did not\. Try again|Try again/.test(await b.evaluate(`document.getElementById('toast').textContent`)));
+    });
     await openQ(1100, '?state=ready&call_lang=uk+en');
     await test('Ready: the language chip is hidden', async () => {
       assert.strictEqual(await b.evaluate(`document.getElementById('langBtn').hidden`), true);
