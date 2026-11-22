@@ -47,16 +47,21 @@ write:
     Notes, deal fields and tasks never write without a click.
   call: >-
     Call row in the review, ticked by default; associations contact 194, company 182, deal 206; dedupe by
-    hs_call_external_id = pacenote:<call id>. Full design: docs/specs/hubspot-crm-integration.md.
+    hs_call_external_id = pacenote:<call id>; Auto and Apply of one call take turns. <stem>.crm.json keeps the
+    portalId; no write (Apply or Auto) when it differs from the portal of the key in use or is missing: Relink first.
+    Full design: docs/specs/hubspot-crm-integration.md.
   meeting: >-
     H5: Meeting row, ticked by default, never automatic. The call page's Summary, Decisions and Next steps go to
-    hs_internal_meeting_notes; associations contact 200, company 188, deal 212. A meeting already on the same contacts,
-    company or deal within 15 minutes of the start (HubSpot's calendar sync) is used instead of a new one; only
-    Pacenote's block of the notes is written, and a re-run replaces it. Never transcript text.
+    hs_internal_meeting_notes; associations contact 200, company 188, deal 212. A meeting on one of the call's contacts
+    within 15 minutes of the start (HubSpot's calendar sync) is used instead of a new one only when it is the only one,
+    or the only one with the call's title; otherwise a new Meeting, never a guess. Only Pacenote's block for this call
+    (bounded by start and end lines naming the call id) is written, and a re-run replaces just that block. Never
+    transcript text. Writes take turns with the Call of the same call.
   email: >-
     H5: Email row, never ticked for the PM, never automatic. Pacenote sends no mail; the PM ticks it after sending the
     follow-up, and an email engagement (hs_email_direction EMAIL, status SENT) with the subject and text as edited is
-    logged; associations contact 198, company 186, deal 210. The id is kept with the call; the same subject on the
-    same contacts in the last day is left alone.
+    logged; associations contact 198, company 186, deal 210. The id is kept with the call with whether Pacenote made it;
+    an email HubSpot logged (one of the call's contacts, same subject, text holding the draft, last day) is never
+    changed and only gets the missing associations.
 mapping:
   qualification: for each criterion of the method, a deal property chosen by name in Settings > Integrations > HubSpot, or "Don't write"

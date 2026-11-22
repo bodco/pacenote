@@ -28,7 +28,7 @@ HubSpot association type ids below are HUBSPOT_DEFINED, from the object on the l
 | Call | the logged call (H2) | no | yes (H2, built) | contact 194, company 182, deal 206 |
 | Note | summary, decisions, next steps | yes (recent activity) | yes (built in 0.8.7) | contact 202, company 190, deal 214 |
 | Task | the follow-up | open tasks | yes (built in 0.8.7) | contact 204, company 192, deal 216 |
-| Meeting | the call's calendar slot | recent activity; searched by contacts, company, deal and start time to find HubSpot's own | yes (H5, decision 6): a new Meeting, or the notes added to the one HubSpot's calendar sync made | contact 200, company 188, deal 212 |
+| Meeting | the call's calendar slot | recent activity; searched by the call's contacts and start time to find HubSpot's own | yes (H5, decision 6): a new Meeting, or the notes added to the one HubSpot's calendar sync made | contact 200, company 188, deal 212 |
 | Email | the follow-up email the PM sent | recent activity | yes (H5): an email engagement that records an email the PM sent. Pacenote never sends mail, through HubSpot or otherwise | contact 198, company 186, deal 210 |
 | Lead | an unqualified prospect | no | later, opt in (decision 5) | contact, company |
 
@@ -44,7 +44,7 @@ HubSpot association type ids below are HUBSPOT_DEFINED, from the object on the l
 | `hs_call_direction` | Settings > Integrations > HubSpot > Direction of logged calls (default OUTBOUND; Pacenote cannot tell in which direction a conference call went) |
 | `hs_call_status` | `COMPLETED` |
 | `hs_call_disposition` | the outcome id; `Connected` (HubSpot's built-in outcome id, `CRMCallLog.connected`, the same in every portal) because a recorded call was a conversation. No-answer outcomes are not logged by Pacenote |
-| `hs_call_body` | participants' names, Summary, Next steps, the link back to the call (the Notion page when there is one), and the line `Pacenote call id: <id>`. Never transcript text |
+| `hs_call_body` | participants' names; Summary = the call page's Summary (the meeting notes' In short and Recap); Next steps = what the PM and the other side took on (else the sales next step), never a copy of the Summary; the link back to the call (the Notion page when there is one), and the line `Pacenote call id: <id>`. Never transcript text |
 | `hs_call_external_id` | `pacenote:<Pacenote call id>`, the dedupe key |
 | `hubspot_owner_id` | the owner chosen in Matching (section 7) |
 
@@ -54,11 +54,14 @@ HubSpot association type ids below are HUBSPOT_DEFINED, from the object on the l
 |---|---|
 | `hs_meeting_title`, `hs_timestamp`, `hs_meeting_start_time`, `hs_meeting_end_time` | the call's title, start and end (the call is the meeting) |
 | `hs_meeting_outcome` | `COMPLETED` |
-| `hs_internal_meeting_notes` | Pacenote's block: Summary, Decisions, Next steps, the link back, the line `Pacenote call id: <id>`. Never transcript text, even when "Add the transcript to the CRM note" is on |
+| `hs_internal_meeting_notes` | Pacenote's block: the line `Pacenote notes (call id <id>)`, Summary (the call page's Summary, as in the Call), Decisions, Next steps, the link back, the line `End of Pacenote notes (<id>)`. Never transcript text, even when "Add the transcript to the CRM note" is on |
 | `hubspot_owner_id` | the owner chosen in Matching (section 7), for a new Meeting only |
 
 The notes go to the internal notes field, not to `hs_meeting_body` (the invite text), which belongs to the PM and to
-HubSpot's calendar sync. The block starts with the heading `Pacenote notes` and is always the last part of the field.
+HubSpot's calendar sync. The block is bounded by its start and end lines, both naming the Pacenote call id. A re-run
+replaces only the text from this call's start line to its end line (with the tags that open and close them) and keeps
+everything before and after it; a PM's mention of "Pacenote notes", or another call's block, is never touched. With no
+block for this call, the new one is added at the end of the field.
 
 ### Email (H5)
 
@@ -120,12 +123,19 @@ decides, the service key stays the only path.
    Update HubSpot behind Apply and Undo. The Meeting row is ticked by default; the Email row is never ticked for the PM,
    because it records an email the PM says was sent, and Pacenote cannot know that.
 2. **Transcript text is never sent** to the Call, the Task, the Deal or any field. The note may carry it only when the
-   PM turns on "Add the transcript to the CRM note" (off by default, per click shown as a row "Attach the transcript").
+   PM turns on "Add the transcript to the CRM note" (off by default). Today (built in 0.8.7) the setting puts the
+   transcript into the note when the Update HubSpot window opens; the "Attach the transcript" row only shows that, and
+   unticking it does not take the transcript out of the note. Privacy follow-up: make the row the per-Apply consent
+   (the note gets the transcript only when the row is ticked at Apply).
 3. **Texts come from the call page as the PM edited it.** Pacenote never writes a text the PM could not see on the call
    page.
 4. **Undo.** A new object is deleted; an updated object gets its old property values back. Associations added during a
    re-run are not removed by Undo (they are harmless and HubSpot has no history for them); the Undo failure line says
-   what is left.
+   what is left. A re-run of the Call adds the associations first and changes the fields last, so a failed association
+   leaves the Call's fields as they were and nothing changed is outside Undo. Meetings and Emails (H5) go further:
+   they add only the associations the object does not have yet, before any field; if an association or the field
+   update then fails, the associations just added are removed again, so a failed write leaves the object as it was.
+   Their Undo also removes the associations the write added. Undo checks the portal like Apply (section 8).
 5. **Errors are one line where the action was**, never a modal; 429 waits (Retry-After, else 1, 2, 4 s) and retries three
    times; 401 and 403 say what to fix (key, or the named scope).
 6. **No silent overwrites of the PM's own edits in HubSpot.** A re-run updates only the Pacenote-owned properties of the
@@ -138,9 +148,9 @@ decides, the service key stays the only path.
 |---|---|---|
 | Contact | email (lowercase, trimmed) | search `email EQ`; found: use it; several: take the one on the matched company, else the oldest; never create a second contact with the same email. Creating a missing contact is a later, opt-in step (decision 4) |
 | Company | domain, then name | search `domain EQ`, then `name EQ`; free-mail domains (gmail.com, outlook.com, icloud.com, yahoo.com, hotmail.com) and the PM's own domains never match a company |
-| Call | the Pacenote call id | the id is made once and stored with the call (`<stem>.crm.json`, `callKey`) together with the HubSpot Call id (`callId`). A re-run PATCHes `callId`. If `callId` is missing, HubSpot is searched by `hs_call_external_id = pacenote:<id>`. If the stored id was deleted in HubSpot (404), the same search runs, then a new Call is created. A second Call for one call id is never created |
-| Meeting | the Pacenote call id, then HubSpot's own meeting | the HubSpot Meeting id is stored with the call (`<stem>.crm.json`, `meetingId`). A re-run PATCHes it. Without it (or on a 404), HubSpot is searched for a Meeting associated with any of the linked contacts, company or deal whose `hs_timestamp` is within 15 minutes of the call's start; the nearest one is used (HubSpot's calendar sync made it, or an earlier Pacenote run). Found: only Pacenote's notes block is replaced or appended in `hs_internal_meeting_notes`, the title, invite and every other property stay, the missing associations are added, and Undo restores the old notes. Not found: a new Meeting is created. Pacenote never creates a second Meeting of its own for one call (a calendar move over 15 minutes is the gap in section 11) |
-| Email | the stored id, then subject and contacts | the HubSpot Email id is stored with the call (`emailId`). A re-run PATCHes it. Without it, HubSpot is searched for an email with the same subject on the same contacts, company or deal in the last day; found: it is left as it is (HubSpot's own mail logging may have made it) and only the missing associations are added; Undo has nothing to undo. Not found: a new Email is created |
+| Call | the Pacenote call id | the id is made once and stored with the call (`<stem>.crm.json`, `callKey`) together with the HubSpot Call id (`callId`). A re-run PATCHes `callId`. If `callId` is missing, HubSpot is searched by `hs_call_external_id = pacenote:<id>`. If the stored id was deleted in HubSpot (404), the same search runs, then a new Call is created. Auto and Apply of one call take turns (a queue per call id) and each reads the stored `callId` when its turn comes. A create that gets no answer or a 5xx is checked by the same search before it is reported as failed. A second Call for one call id is never created |
+| Meeting | the Pacenote call id, then HubSpot's own meeting | the HubSpot Meeting id is stored with the call (`<stem>.crm.json`, `meetingId`). A re-run updates it. Without it (or on a 404), HubSpot is searched for Meetings associated with one of the call's **contacts** (a shared company or deal alone is never enough) whose `hs_timestamp` is within 15 minutes of the call's start. A Meeting holding this call's block is ours from an earlier run and is used; a Meeting holding another call's block is never used. Of the rest: exactly one is used; of several, the one whose title is the call's title is used when only one has it; otherwise none is guessed, a new Meeting is created and Update HubSpot says so. Used: only this call's block in `hs_internal_meeting_notes` is replaced or appended (section 3), the title, invite and every other property stay, the missing associations are added, and Undo restores the old notes and removes the added associations. Not found: a new Meeting is created. The Meeting writes take turns with the Call writes of the same call (the same queue) and the ids are read from and stored to `<stem>.crm.json` inside the turn |
+| Email | the stored id and who made it, then contact, subject and text | the HubSpot Email id is stored with the call (`emailId`) together with `emailOurs`: whether Pacenote created it. A re-run updates the email only when Pacenote created it. Without a stored id, HubSpot is searched for emails on one of the call's contacts in the last day with the same subject whose text holds the start of the draft (HubSpot's own mail logging adds signatures and quotes). Exactly one: it is stored as not ours and stays read only: only the missing associations are added, now and on every re-run, and Undo removes only those. Several: the email is logged already; nothing is written. None (or no contact): a new Email is created and stored as ours. The same subject with another text is never claimed |
 | Note, Task | none | created per Apply; the 8 second Undo and the "already applied" lock protect against a double click. No dedupe across sessions (decision 8) |
 | Deal | the PM's link | the open deal updated last, or what the PM chose in Start call; "No deal" is kept for the series |
 
@@ -165,10 +175,13 @@ written as `hubspot_owner_id` on notes, tasks and (H2) Calls. Rules:
 Today: one service key means one portal; the portal's name (from account-info, else "HubSpot <portalId> (<region>)")
 is shown on the card. Behavior to keep and to define:
 
-- A key belongs to exactly one portal. Changing the key switches the portal; links in `<stem>.crm.json` of old calls
-  keep their ids, which do not exist in the new portal, so Refresh reports "not linked" and the update plan is empty
-  rather than writing to wrong ids. (To add: `portalId` in the link, and refuse to write when it differs from the
-  connected portal.)
+- A key belongs to exactly one portal. Changing the key switches the portal. Each link in `<stem>.crm.json` keeps the
+  `portalId` it was made in (built in H2). Before every write (Apply and Auto) Pacenote asks account-info for the
+  portal of the key in use; when the link names another portal, or none (links made before H2), nothing is written:
+  Auto skips the call and Update HubSpot says so and offers **Relink**. Relink and Refresh drop the old ids, keep the
+  Pacenote call id, and find the company, deal and contacts again in the current portal (by the attendees' domains
+  while the calendar still has the event, else by the linked company's name). H5: the Meeting and Email writes check
+  the portal again inside their turn, and Undo checks it before it writes.
 - Several portals at once (an agency with client portals): one key per project in Settings > Projects, kept in the
   Keychain under a per-project name. Not built; decision 3.
 - Data hosting regions (US, EU) use the same base URL for the API; the region is only displayed.
@@ -177,7 +190,7 @@ is shown on the card. Behavior to keep and to define:
 ## 9. Auto, review and Undo flow (H2)
 
 1. Start call: Refresh links company, deal and contacts (`.crm.json`).
-2. The call ends. If Auto is on and the call is linked, Pacenote waits for the call page's notes (about 2.5 minutes),
+2. The call ends. If Auto is on and the call is linked in the portal of the current key (section 8), Pacenote waits for the call page's notes (about 2.5 minutes),
    then logs the Call. No review and no Undo in this path; the switch is the consent. The PM sees it in HubSpot and in
    the call's Update HubSpot window (Call row, ticked).
 3. Otherwise the PM opens Update HubSpot on the call page: the Call row is ticked by default (Settings can untick it),
@@ -191,8 +204,8 @@ is shown on the card. Behavior to keep and to define:
    paying HubSpot users.*
 2. **Direction of logged calls.** Pacenote cannot tell inbound from outbound. *Recommend: a Settings choice with
    Outbound as the default (built).*
-3. **Several portals.** *Recommend: not now; add `portalId` to the link and refuse writes on a mismatch (cheap
-   protection), per-project keys only when an agency user asks.*
+3. **Several portals.** *Recommend: not now; `portalId` in the link and no writes on a mismatch are built (H2),
+   per-project keys only when an agency user asks.*
 4. **Create missing contacts and companies?** *Recommend: yes, but only as an unticked row in Update HubSpot, never in
    Auto, and only for external participants of the call (not the PM's own domains or free-mail addresses without a
    name).*
@@ -214,6 +227,10 @@ is shown on the card. Behavior to keep and to define:
 
 - Auto has no place to show an error (rule 5 says "where the action was"). A failed Auto log is recorded only as an analytics error code; the Call is then logged by Update HubSpot. Auto does nothing for a call that has no CRM link or no history record 150 seconds after the call ended.
 - The link back is the Notion page; a call without a Notion page has only the `Pacenote call id` line in the Call.
+- HubSpot search is not instant after a create: a create that timed out may not be found at once, and the next run
+  (Apply or Auto) finds it by the Pacenote call id.
+- Relink of an old call finds contacts only while the calendar still holds the event (3 hours back); otherwise it
+  links the company by name and the deal, without contacts.
 
 - A live portal check of the Call create, update and association calls, and of `hs_call_external_id` in search. The
   H2 tests use a mocked HubSpot API only and never call the real one.
@@ -222,8 +239,14 @@ is shown on the card. Behavior to keep and to define:
 - H5, on a live portal: that a Meeting and an Email engagement can be created with the contacts scopes alone (otherwise
   `crm.objects.meetings.*` or the email scopes are needed, and the 403 line names them); the association type ids
   (meeting 200, 188, 212; email 198, 186, 210); that `hs_internal_meeting_notes`, `hs_email_html` and `hs_email_headers`
-  are accepted; that the search by `associations.contact`, `associations.company`, `associations.deal` together with
-  `hs_timestamp` finds a calendar-synced Meeting; and how HubSpot shows an email that has no `hs_email_headers`.
-- H5: the Meeting uses the call's own start and end, not the calendar event's (the event is not kept with the call). A
-  meeting that was moved in the calendar by more than 15 minutes is not recognized and a second Meeting is created.
+  are accepted; that the search by `associations.contact` together with `hs_timestamp` finds a calendar-synced Meeting;
+  that a GET with `associations=contacts,companies,deals` lists the associations and that the v4 association DELETE
+  removes one; and how HubSpot shows an email that has no `hs_email_headers`.
+- H5: the Meeting is matched by the call's contacts, start and title, not by the calendar event's own identity: the
+  call record does not keep the event, and which HubSpot meeting property holds the calendar's event id is not
+  verified on a live portal. A meeting that was moved in the calendar by more than 15 minutes, or a synced meeting
+  without any of the call's contacts, is not recognized and a second Meeting is created; two meetings at the time with
+  no decisive title also give a new Meeting rather than a guess. Picking the meeting by hand is a later option.
+- H5: an email is matched when HubSpot's logged text holds the first 200 characters of the draft (spaces and case
+  ignored). An email the PM changed after copying the draft is not matched, and a second email engagement is created.
 - H5: the follow-up draft is kept only in memory, so the Email row exists only once a draft was written in this session of the app.

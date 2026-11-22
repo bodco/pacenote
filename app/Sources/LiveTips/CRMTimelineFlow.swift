@@ -16,14 +16,19 @@ enum CRMTimelineLogger {
         return r
     }
 
-    /// The call is the meeting: its start and end, the call page's summary, decisions and next steps, the link back.
+    /// The call is the meeting: its start and end, the call page's Summary (In short and Recap), decisions and next
+    /// steps (the same sections as the Call), the link back.
     static func meeting(file: String, link: CRMLink) -> CRMMeetingLog? {
         guard !link.callKey.isEmpty, let rec = CallHistory.shared.records.first(where: { $0.file == file }) else { return nil }
+        let base = file.hasSuffix(".md") ? String(file.dropLast(3)) : file
         let o = CallOutcome.read(transcript: file) ?? CallOutcome()
-        let steps = o.onMe + o.theirs.map { $0.who + ": " + $0.what }
+        let m = CallNotes.meeting(file)
+        let sales = (try? Data(contentsOf: URL(fileURLWithPath: CallLayout.sidecar(base, ".sales.json")))).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
+        let next = (sales["next_step"] as? String) ?? ((sales["next_step"] as? [String: Any])?["what"] as? String) ?? ""
+        let s = CRMCallLog.sections(tldr: m?.tldr ?? "", recap: m?.recap ?? [], onMe: o.onMe, theirs: o.theirs.map { $0.who + ": " + $0.what }, salesNext: next)
         let end = rec.end ?? rec.start.addingTimeInterval((rec.minutes ?? 0) * 60)
         return CRMMeetingLog(key: link.callKey, title: CallPageView.title(file), start: rec.start, end: end,
-                             notes: CRMMeetingLog.notes(summary: o.onMe, decisions: o.decisions, nextSteps: steps, link: rec.notionURL ?? "", key: link.callKey))
+                             notes: CRMMeetingLog.notes(summary: s.summary, decisions: o.decisions, nextSteps: s.nextSteps, link: rec.notionURL ?? "", key: link.callKey))
     }
 
     /// Only once a follow-up draft was written in this session (the draft is not saved to a file): the subject and text as edited.
@@ -34,24 +39,30 @@ enum CRMTimelineLogger {
         return CRMEmailLog(key: link.callKey, subject: m.subject, text: body)
     }
 
-    /// One Apply step for the two rows; returns what Undo needs as (type, id, old fields) and the ids to keep with the call.
-    static func apply(_ w: CRMTimelineWriter, meeting: CRMMeetingLog?, email: CRMEmailLog?, link: CRMLink, refs: [CRMRef],
-                      on: (String) -> Bool) async -> (undo: [(String, String, [String: String])], link: CRMLink, error: Error?) {
-        var l = link
-        var undo: [(String, String, [String: String])] = []
-        do {
-        if on("meeting"), let m = meeting {
-            let r = try await w.upsertMeeting(m, knownId: l.meetingId, associations: refs)
-            l.meetingId = r.id
-            if r.created || !r.old.isEmpty { undo.append(("meetings", r.id, r.old)) }
-        }
-        if on("email"), var e = email {
-            e.sent = Date()
-            let r = try await w.upsertEmail(e, knownId: l.emailId, associations: refs)
-            l.emailId = r.id
-            if r.created || !r.old.isEmpty { undo.append(("emails", r.id, r.old)) }
-        }
-        } catch { return (undo, l, error) }      // what was written before the failure stays undoable
-        return (undo, l, nil)
+    /// One Apply step for the two rows, in turn with the Call writes of this call (Auto included): the ids are read
+    /// from <base>.crm.json when the turn comes and each new one is stored there at once, so neither path loses the
+    /// other's ids. Returns what Undo needs, the ids now stored, and what was written before a failure.
+    static func apply(_ w: CRMTimelineWriter, connector c: CRMConnector, meeting: CRMMeetingLog?, email: CRMEmailLog?, base: String, link: CRMLink,
+                      refs: [CRMRef], on: (String) -> Bool) async -> (undo: [(String, String, [String: String])], link: CRMLink, ambiguous: Bool, error: Error?) {
+        var e = on("email") ? email : nil
+        e?.sent = Date()
+        let o = await CRMTimelineSync.log(key: link.callKey, writer: w, connector: c, meeting: on("meeting") ? meeting : nil, email: e, associations: refs,
+            load: { ids(CRMLink.load(base: base) ?? link) },
+            save: { i in var d = CRMLink.load(base: base) ?? link; d.meetingId = i.meetingId; d.emailId = i.emailId; d.emailOurs = i.emailOurs; d.save(base: base) })
+        var l = link; l.meetingId = o.ids.meetingId; l.emailId = o.ids.emailId; l.emailOurs = o.ids.emailOurs
+        return (o.undo, l, o.ambiguous, o.error)
+    }
+
+    nonisolated static func ids(_ l: CRMLink) -> CRMTimelineIds {
+        CRMTimelineIds(portalId: l.portalId, meetingId: l.meetingId, emailId: l.emailId, emailOurs: l.emailOurs)
+    }
+
+    /// Undo deleted a Meeting or an Email Pacenote made: the stored id goes, so the next Apply makes it again.
+    static func forget(type: String, id: String, base: String) {
+        guard var d = CRMLink.load(base: base) else { return }
+        if type == "meetings", d.meetingId == id { d.meetingId = "" }
+        else if type == "emails", d.emailId == id { d.emailId = ""; d.emailOurs = false }
+        else { return }
+        d.save(base: base)
     }
 }

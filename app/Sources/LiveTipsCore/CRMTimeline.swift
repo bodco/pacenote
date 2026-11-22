@@ -14,33 +14,41 @@ public struct CRMMeetingLog: Equatable {
     public var notes: String            // Summary, Decisions, Next steps, link back; see `notes(...)`
     /// How far apart two starts may be and still be the same meeting (calendar sync and the call start differ by minutes).
     public static let tolerance: TimeInterval = 15 * 60
-    public static let heading = "<p><b>Pacenote notes</b></p>"
 
     public init(key: String, title: String, start: Date, end: Date, notes: String) {
         self.key = key; self.title = title; self.start = start; self.end = max(end, start); self.notes = notes
     }
 
+    /// Pacenote's block in the notes field starts and ends with a line that names the call id, so a re-run finds its
+    /// own block and nothing else (a PM writing "Pacenote notes", or another call's block, is not it).
+    public static func startMark(_ key: String) -> String { "Pacenote notes (call id \(key))" }
+    public static func endMark(_ key: String) -> String { "End of Pacenote notes (\(key))" }
+    static let anyStart = "Pacenote notes (call id "
+
     /// The text comes from the call page as edited; the transcript is not an input on purpose.
     public static func notes(summary: [String], decisions: [String], nextSteps: [String], link: String, key: String) -> String {
-        var b = heading
+        var b = "<p><b>\(CRMCallLog.esc(startMark(key)))</b></p>"
         func list(_ h: String, _ xs: [String]) { if !xs.isEmpty { b += "<p><b>\(h)</b></p><ul>" + xs.map { "<li>\(CRMCallLog.esc($0))</li>" }.joined() + "</ul>" } }
         list("Summary", summary); list("Decisions", decisions); list("Next steps", nextSteps)
         if !link.isEmpty { b += "<p>Call page: <a href=\"\(CRMCallLog.esc(link))\">\(CRMCallLog.esc(link))</a></p>" }
-        b += "<p>Pacenote call id: \(CRMCallLog.esc(key))</p>"
+        b += "<p>\(CRMCallLog.esc(endMark(key)))</p>"
         return b
     }
 
-    /// Our block is always the last part of the field: a re-run replaces it, the PM's or HubSpot's own text stays above it.
-    public static func merge(existing: String, notes: String) -> String {
-        var keep = existing
-        // HubSpot may rewrite the markup of a rich-text field (<strong> for <b>), so find the heading by its words and
-        // cut at the tag that opens it
-        if let r = existing.range(of: "Pacenote notes") {
-            let head = existing[..<r.lowerBound]
-            let cut = head.range(of: "<p", options: .backwards)?.lowerBound ?? r.lowerBound
-            keep = String(existing[..<cut])
+    /// Replaces only this call's block (start line to end line, with the tags that open and close them) and keeps the
+    /// text before and after it. Without this call's block the new one is added at the end.
+    public static func merge(existing: String, notes: String, key: String) -> String {
+        // HubSpot may rewrite the markup of a rich-text field (<strong> for <b>), so the lines are found by their words
+        if let er = existing.range(of: endMark(key), options: .backwards),
+           let sr = existing.range(of: startMark(key), options: .backwards, range: existing.startIndex..<er.lowerBound) {
+            var lo = sr.lowerBound        // the opening tags right before the start line (never a closing tag of the text above)
+            while lo > existing.startIndex, existing[existing.index(before: lo)] == ">",
+                  let lt = existing[..<lo].lastIndex(of: "<"), !existing[lt...].hasPrefix("</") { lo = lt }
+            var hi = er.upperBound        // the closing tags right after the end line
+            while hi < existing.endIndex, existing[hi...].hasPrefix("</"), let gt = existing[hi...].firstIndex(of: ">") { hi = existing.index(after: gt) }
+            return String(existing[..<lo]) + notes + String(existing[hi...])
         }
-        return keep.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? notes : keep + notes
+        return existing.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? notes : existing + notes
     }
 
     var properties: [String: Any] {
@@ -78,18 +86,77 @@ public struct CRMEmailLog: Equatable {
         if let h = headers { p["hs_email_headers"] = h }
         return p
     }
+    /// The same email in HubSpot's own logging: its text holds the start of the draft (signature and quotes may follow).
+    static func sameText(_ theirs: String, _ ours: String) -> Bool {
+        func norm(_ s: String) -> String { s.lowercased().split(whereSeparator: { $0.isWhitespace }).joined(separator: " ") }
+        let o = String(norm(ours).prefix(200))
+        return !o.isEmpty && norm(theirs).contains(o)
+    }
 }
 
-/// created: a new engagement (Undo deletes it). attached: HubSpot already had it (its own calendar sync or an email
-/// logged by hand), so only the notes were added. old: the values an update replaced, for Undo; empty when nothing
-/// was changed, in which case Undo must not touch the object.
-public struct CRMTimelineResult: Equatable { public var id: String; public var created: Bool; public var attached: Bool; public var old: [String: String]
-    public init(id: String, created: Bool, attached: Bool = false, old: [String: String] = [:]) { self.id = id; self.created = created; self.attached = attached; self.old = old } }
+/// created: a new engagement (Undo deletes it). attached: not Pacenote's (HubSpot's own calendar sync, or an email
+/// logged by HubSpot or by hand): only the notes, or only the associations, were added. old: what Undo puts back,
+/// empty when nothing was changed, in which case Undo must not touch the object. ambiguous: several meetings matched,
+/// so none was guessed and a new one was made.
+public struct CRMTimelineResult: Equatable { public var id: String; public var created: Bool; public var attached: Bool; public var old: [String: String]; public var ambiguous: Bool
+    public init(id: String, created: Bool, attached: Bool = false, old: [String: String] = [:], ambiguous: Bool = false) {
+        self.id = id; self.created = created; self.attached = attached; self.old = old; self.ambiguous = ambiguous } }
 
 public protocol CRMTimelineWriter {
     func upsertMeeting(_ log: CRMMeetingLog, knownId: String, associations: [CRMRef]) async throws -> CRMTimelineResult
-    func upsertEmail(_ log: CRMEmailLog, knownId: String, associations: [CRMRef]) async throws -> CRMTimelineResult
+    /// ours: Pacenote created knownId. An email that is not ours only gets the missing associations, never new content.
+    func upsertEmail(_ log: CRMEmailLog, knownId: String, ours: Bool, associations: [CRMRef]) async throws -> CRMTimelineResult
+    /// Puts the old fields back and removes the associations the write added (`CRMTimeline.addedKey` in fields).
     func restore(type: String, id: String, fields: [String: String]) async throws
+}
+
+public enum CRMTimeline {
+    /// In an Undo record: the associations a write added, "type/id" joined by commas. Not a HubSpot property.
+    public static let addedKey = "pacenote.associations"
+    static func encode(_ refs: [CRMRef]) -> String { refs.map { $0.type + "/" + $0.id }.joined(separator: ",") }
+    public static func decode(_ s: String) -> [CRMRef] {
+        s.split(separator: ",").compactMap { p in let x = p.split(separator: "/", maxSplits: 1); return x.count == 2 ? CRMRef(String(x[0]), String(x[1])) : nil }
+    }
+}
+
+/// The ids kept with a call (<stem>.crm.json) that the timeline writes read and update.
+public struct CRMTimelineIds: Equatable {
+    public var portalId: String; public var meetingId: String; public var emailId: String; public var emailOurs: Bool
+    public init(portalId: String, meetingId: String = "", emailId: String = "", emailOurs: Bool = false) {
+        self.portalId = portalId; self.meetingId = meetingId; self.emailId = emailId; self.emailOurs = emailOurs }
+}
+
+/// One Apply of the Meeting and Email rows, in turn with the Call writes of the same call (the same queue key): the
+/// stored ids and the portal are read when the turn comes, each new id is stored as soon as it is known, and what was
+/// written before a failure is returned for Undo.
+public enum CRMTimelineSync {
+    public struct Outcome { public var undo: [(String, String, [String: String])] = []; public var ids: CRMTimelineIds; public var ambiguous = false; public var error: Error? }
+
+    public static func log(key: String, writer w: CRMTimelineWriter, connector c: CRMConnector, meeting: CRMMeetingLog?, email: CRMEmailLog?,
+                           associations: [CRMRef], queue: CRMCallQueue = .shared,
+                           load: @escaping () -> CRMTimelineIds, save: @escaping (CRMTimelineIds) -> Void) async -> Outcome {
+        final class Box { var out: Outcome; init(_ o: Outcome) { out = o } }
+        let box = Box(Outcome(ids: load()))
+        guard meeting != nil || email != nil else { return box.out }
+        do {
+            try await queue.run(key) {
+                var ids = load()
+                box.out.ids = ids
+                try await CRMPortal.verify(link: ids.portalId, connector: c)
+                if let m = meeting {
+                    let r = try await w.upsertMeeting(m, knownId: ids.meetingId, associations: associations)
+                    ids.meetingId = r.id; save(ids); box.out.ids = ids; box.out.ambiguous = r.ambiguous
+                    if r.created || !r.old.isEmpty { box.out.undo.append(("meetings", r.id, r.old)) }
+                }
+                if let e = email {
+                    let r = try await w.upsertEmail(e, knownId: ids.emailId, ours: ids.emailOurs, associations: associations)
+                    ids.emailId = r.id; ids.emailOurs = !r.id.isEmpty && !r.attached; save(ids); box.out.ids = ids
+                    if r.created || !r.old.isEmpty { box.out.undo.append(("emails", r.id, r.old)) }
+                }
+            }
+        } catch { box.out.error = error }
+        return box.out
+    }
 }
 
 extension HubSpotConnector: CRMTimelineWriter {
@@ -101,14 +168,26 @@ extension HubSpotConnector: CRMTimelineWriter {
         refs.compactMap { a in ids[a.type].map { ["to": ["id": a.id], "types": [["associationCategory": "HUBSPOT_DEFINED", "associationTypeId": $0]]] } }
     }
 
-    private func associate(_ type: String, _ id: String, _ refs: [CRMRef], _ ids: [String: Int]) async throws {
-        for a in refs where ids[a.type] != nil { _ = try await call("PUT", "/crm/v4/objects/\(type)/\(id)/associations/default/\(a.type)/\(a.id)") }
+    /// Adds only the associations the object does not have yet. If one fails, the ones just added are taken off again.
+    private func associateMissing(_ type: String, _ id: String, _ refs: [CRMRef], _ ids: [String: Int], have: Set<String>) async throws -> [CRMRef] {
+        var added: [CRMRef] = []
+        do {
+            for a in refs where ids[a.type] != nil && !have.contains(a.type + "/" + a.id) {
+                _ = try await call("PUT", "/crm/v4/objects/\(type)/\(id)/associations/default/\(a.type)/\(a.id)")
+                added.append(a)
+            }
+        } catch { await dissociate(type, id, added); throw error }
+        return added
     }
 
-    /// One search group per linked object (HubSpot allows five): the engagement is on the timeline of any of them.
-    private func timelineFilters(_ refs: [CRMRef], _ extra: [[String: Any]]) -> [[String: Any]] {
-        let kinds = ["contacts": "contact", "companies": "company", "deals": "deal"]
-        return refs.filter { kinds[$0.type] != nil }.prefix(5).map { ["filters": extra + [["propertyName": "associations." + kinds[$0.type]!, "operator": "EQ", "value": $0.id]]] }
+    private func dissociate(_ type: String, _ id: String, _ refs: [CRMRef]) async {
+        for a in refs { _ = try? await call("DELETE", "/crm/v4/objects/\(type)/\(id)/associations/\(a.type)/\(a.id)") }
+    }
+
+    /// The contacts of the call: a Meeting or an Email is only taken as this call's when it is on one of them (a shared
+    /// company or deal alone is not enough). One search group per contact (HubSpot allows five).
+    private func contactFilters(_ refs: [CRMRef], _ extra: [[String: Any]]) -> [[String: Any]] {
+        refs.filter { $0.type == "contacts" }.prefix(5).map { ["filters": extra + [["propertyName": "associations.contact", "operator": "EQ", "value": $0.id]]] }
     }
 
     /// HubSpot returns ISO 8601 with milliseconds, or epoch milliseconds.
@@ -117,77 +196,124 @@ extension HubSpotConnector: CRMTimelineWriter {
         return f.date(from: v) ?? ISO8601DateFormatter().date(from: v) ?? Double(v).map { Date(timeIntervalSince1970: $0 / 1000) } ?? fallback
     }
 
-    private func read(_ type: String, _ id: String, _ keys: [String]) async throws -> [String: String] {
-        let r = try await call("GET", "/crm/v3/objects/\(type)/\(id)?properties=" + keys.sorted().joined(separator: ","))
+    /// The properties and the contacts, companies and deals the object is associated with ("type/id").
+    private func read(_ type: String, _ id: String, _ keys: [String]) async throws -> ([String: String], Set<String>) {
+        let r = try await call("GET", "/crm/v3/objects/\(type)/\(id)?properties=" + keys.sorted().joined(separator: ",") + "&associations=contacts,companies,deals")
         var out: [String: String] = [:]
         for k in keys { out[k] = Self.p(r, k) }
-        return out
+        var have = Set<String>()
+        for (kind, v) in (r["associations"] as? [String: Any]) ?? [:] {
+            for a in ((v as? [String: Any])?["results"] as? [[String: Any]]) ?? [] { if let aid = a["id"].map({ "\($0)" }) { have.insert(kind + "/" + aid) } }
+        }
+        return (out, have)
     }
 
-    /// The known id (kept with the call) first; else a Meeting already on the same contacts, company or deal within 15
-    /// minutes of the start (HubSpot's own calendar sync, or ours from an earlier run): the notes go into it. Else a new one.
-    public func upsertMeeting(_ log: CRMMeetingLog, knownId: String, associations: [CRMRef]) async throws -> CRMTimelineResult {
-        let keys = [Self.meetingNotes, "hs_meeting_title", "hs_meeting_start_time", "hs_meeting_end_time", "hs_meeting_outcome"] + (ownerId.isEmpty ? [] : ["hubspot_owner_id"])
-        var id = knownId
-        var old: [String: String] = [:]
-        if !id.isEmpty {
-            do { old = try await read("meetings", id, keys) } catch let e as CRMError where e.code == 404 { id = "" }
+    enum Match: Equatable { case none, one(String), several }
+
+    /// HubSpot's own Meeting of this call (its calendar sync, or ours from a run whose id was lost): on one of the
+    /// call's contacts, starting within 15 minutes. Ours (our block in the notes) wins; a meeting holding another call's
+    /// block is never it. More than one left: the one with the call's title, else no guess.
+    func findMeeting(_ log: CRMMeetingLog, _ refs: [CRMRef]) async throws -> Match {
+        let lo = Int((log.start.timeIntervalSince1970 - CRMMeetingLog.tolerance) * 1000), hi = Int((log.start.timeIntervalSince1970 + CRMMeetingLog.tolerance) * 1000)
+        let groups = contactFilters(refs, [["propertyName": "hs_timestamp", "operator": "GTE", "value": String(lo)],
+                                           ["propertyName": "hs_timestamp", "operator": "LTE", "value": String(hi)]])
+        guard !groups.isEmpty else { return .none }
+        let r = try await call("POST", "/crm/v3/objects/meetings/search", ["filterGroups": groups, "properties": ["hs_timestamp", "hs_meeting_title", Self.meetingNotes], "limit": 20])
+        var seen = Set<String>()
+        let hits = ((r["results"] as? [[String: Any]]) ?? []).compactMap { h -> (id: String, title: String, notes: String)? in
+            guard let id = h["id"] as? String, seen.insert(id).inserted else { return nil }
+            return (id, Self.p(h, "hs_meeting_title"), Self.p(h, Self.meetingNotes))
         }
-        var attached = false
+        if let ours = hits.first(where: { $0.notes.contains(CRMMeetingLog.startMark(log.key)) }) { return .one(ours.id) }
+        let free = hits.filter { !$0.notes.contains(CRMMeetingLog.anyStart) }
+        if free.count == 1 { return .one(free[0].id) }
+        if free.isEmpty { return .none }
+        func norm(_ s: String) -> String { s.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) }
+        let titled = free.filter { norm($0.title) == norm(log.title) }
+        return titled.count == 1 ? .one(titled[0].id) : .several
+    }
+
+    /// The known id (kept with the call) first; else HubSpot's own Meeting of this call (`findMeeting`): the notes go
+    /// into it. Else a new one. Associations are added before the notes change; a failure leaves nothing changed.
+    public func upsertMeeting(_ log: CRMMeetingLog, knownId: String, associations: [CRMRef]) async throws -> CRMTimelineResult {
+        let keys = [Self.meetingNotes, "hs_meeting_title", "hs_meeting_start_time", "hs_meeting_end_time", "hs_meeting_outcome"]
+        var id = knownId
+        var cur: ([String: String], Set<String>) = ([:], [])
+        if !id.isEmpty {
+            do { cur = try await read("meetings", id, keys) } catch let e as CRMError where e.code == 404 { id = "" }
+        }
+        var attached = false, ambiguous = false
         if id.isEmpty {
-            let lo = Int((log.start.timeIntervalSince1970 - CRMMeetingLog.tolerance) * 1000), hi = Int((log.start.timeIntervalSince1970 + CRMMeetingLog.tolerance) * 1000)
-            let groups = timelineFilters(associations, [["propertyName": "hs_timestamp", "operator": "GTE", "value": String(lo)],
-                                                        ["propertyName": "hs_timestamp", "operator": "LTE", "value": String(hi)]])
-            if !groups.isEmpty {
-                let r = try await call("POST", "/crm/v3/objects/meetings/search", ["filterGroups": groups, "properties": ["hs_timestamp"], "limit": 10])
-                let hits = ((r["results"] as? [[String: Any]]) ?? []).compactMap { h -> (String, Double)? in
-                    guard let hid = h["id"] as? String else { return nil }
-                    return (hid, abs(Self.time(Self.p(h, "hs_timestamp"), or: log.start).timeIntervalSince(log.start)))
-                }
-                if let best = hits.min(by: { $0.1 < $1.1 }) { id = best.0; attached = true; old = try await read("meetings", id, keys) }
+            switch try await findMeeting(log, associations) {
+            case .one(let found): id = found; attached = true; cur = try await read("meetings", id, keys)
+            case .several: ambiguous = true
+            case .none: break
             }
         }
         if id.isEmpty {
             let r = try await call("POST", "/crm/v3/objects/meetings", [
                 "properties": owned(log.properties.merging([Self.meetingNotes: log.notes]) { a, _ in a }),
                 "associations": Self.assocBody(associations, Self.meetingAssoc)])
-            return CRMTimelineResult(id: (r["id"] as? String) ?? "", created: true)
+            return CRMTimelineResult(id: (r["id"] as? String) ?? "", created: true, ambiguous: ambiguous)
         }
-        let merged = CRMMeetingLog.merge(existing: old[Self.meetingNotes] ?? "", notes: log.notes)
-        _ = try await call("PATCH", "/crm/v3/objects/meetings/\(id)", ["properties": [Self.meetingNotes: merged]])
-        try await associate("meetings", id, associations, Self.meetingAssoc)
-        return CRMTimelineResult(id: id, created: false, attached: attached, old: [Self.meetingNotes: old[Self.meetingNotes] ?? ""])
+        let before = cur.0[Self.meetingNotes] ?? ""
+        let merged = CRMMeetingLog.merge(existing: before, notes: log.notes, key: log.key)
+        let added = try await associateMissing("meetings", id, associations, Self.meetingAssoc, have: cur.1)
+        if merged != before {
+            do { _ = try await call("PATCH", "/crm/v3/objects/meetings/\(id)", ["properties": [Self.meetingNotes: merged]]) }
+            catch { await dissociate("meetings", id, added); throw error }
+        }
+        var old: [String: String] = merged != before ? [Self.meetingNotes: before] : [:]
+        if !added.isEmpty { old[CRMTimeline.addedKey] = CRMTimeline.encode(added) }
+        return CRMTimelineResult(id: id, created: false, attached: attached, old: old)
     }
 
-    /// Known id: update it. Else an email with the same subject already on the same contacts, company or deal in the
-    /// last day (HubSpot's own mail logging) is left alone: nothing is written and Undo has nothing to undo. Else new.
-    public func upsertEmail(_ log: CRMEmailLog, knownId: String, associations: [CRMRef]) async throws -> CRMTimelineResult {
+    /// HubSpot's own logging of the sent email: on one of the call's contacts in the last day, the same subject, and a
+    /// text that holds the draft. Several such: it is logged already, and none is taken as Pacenote's.
+    func findEmail(_ log: CRMEmailLog, _ refs: [CRMRef]) async throws -> Match {
+        let since = Int((log.sent.timeIntervalSince1970 - 86400) * 1000)
+        let groups = contactFilters(refs, [["propertyName": "hs_email_subject", "operator": "EQ", "value": log.subject],
+                                           ["propertyName": "hs_timestamp", "operator": "GTE", "value": String(since)]])
+        guard !groups.isEmpty else { return .none }
+        let r = try await call("POST", "/crm/v3/objects/emails/search", ["filterGroups": groups, "properties": ["hs_email_subject", "hs_email_text"], "limit": 20])
+        let ids = Set(((r["results"] as? [[String: Any]]) ?? []).filter { CRMEmailLog.sameText(Self.p($0, "hs_email_text"), log.text) }.compactMap { $0["id"] as? String })
+        return ids.count == 1 ? .one(ids.first!) : (ids.isEmpty ? .none : .several)
+    }
+
+    /// Pacenote's own email (known id, ours): updated. An email Pacenote did not create (found, or a known id that is
+    /// not ours) is read only: just the missing associations are added. Else a new one.
+    public func upsertEmail(_ log: CRMEmailLog, knownId: String, ours: Bool, associations: [CRMRef]) async throws -> CRMTimelineResult {
         let keys = ["hs_email_subject", "hs_email_text", "hs_email_html", "hs_email_headers", "hs_timestamp"]
-        var id = knownId
-        var old: [String: String] = [:]
+        var id = knownId, mine = ours
+        var cur: ([String: String], Set<String>) = ([:], [])
         if !id.isEmpty {
-            do { old = try await read("emails", id, keys) } catch let e as CRMError where e.code == 404 { id = "" }
+            do { cur = try await read("emails", id, keys) } catch let e as CRMError where e.code == 404 { id = "" }
         }
         if id.isEmpty {
-            let since = Int((log.sent.timeIntervalSince1970 - 86400) * 1000)
-            let groups = timelineFilters(associations, [["propertyName": "hs_email_subject", "operator": "EQ", "value": log.subject],
-                                                        ["propertyName": "hs_timestamp", "operator": "GTE", "value": String(since)]])
-            if !groups.isEmpty {
-                let r = try await call("POST", "/crm/v3/objects/emails/search", ["filterGroups": groups, "properties": ["hs_email_subject"], "limit": 1])
-                if let found = ((r["results"] as? [[String: Any]])?.first?["id"]) as? String {
-                    try await associate("emails", found, associations, Self.emailAssoc)
-                    return CRMTimelineResult(id: found, created: false, attached: true)
-                }
+            mine = false
+            switch try await findEmail(log, associations) {
+            case .one(let found): id = found; cur = try await read("emails", id, keys)
+            case .several: return CRMTimelineResult(id: "", created: false, attached: true)     // logged already; nothing to write
+            case .none:
+                let r = try await call("POST", "/crm/v3/objects/emails", ["properties": owned(log.properties), "associations": Self.assocBody(associations, Self.emailAssoc)])
+                return CRMTimelineResult(id: (r["id"] as? String) ?? "", created: true)
             }
-            let r = try await call("POST", "/crm/v3/objects/emails", ["properties": owned(log.properties), "associations": Self.assocBody(associations, Self.emailAssoc)])
-            return CRMTimelineResult(id: (r["id"] as? String) ?? "", created: true)
         }
-        _ = try await call("PATCH", "/crm/v3/objects/emails/\(id)", ["properties": owned(log.properties)])
-        try await associate("emails", id, associations, Self.emailAssoc)
-        return CRMTimelineResult(id: id, created: false, old: old)
+        let added = try await associateMissing("emails", id, associations, Self.emailAssoc, have: cur.1)
+        var old: [String: String] = [:]
+        if mine {
+            do { _ = try await call("PATCH", "/crm/v3/objects/emails/\(id)", ["properties": owned(log.properties)]) }
+            catch { await dissociate("emails", id, added); throw error }
+            old = cur.0
+        }
+        if !added.isEmpty { old[CRMTimeline.addedKey] = CRMTimeline.encode(added) }
+        return CRMTimelineResult(id: id, created: false, attached: !mine, old: old)
     }
 
     public func restore(type: String, id: String, fields: [String: String]) async throws {
-        _ = try await call("PATCH", "/crm/v3/objects/\(type)/\(id)", ["properties": fields])
+        var f = fields
+        let added = f.removeValue(forKey: CRMTimeline.addedKey).map(CRMTimeline.decode) ?? []
+        if !f.isEmpty { _ = try await call("PATCH", "/crm/v3/objects/\(type)/\(id)", ["properties": f]) }
+        for a in added { _ = try await call("DELETE", "/crm/v4/objects/\(type)/\(id)/associations/\(a.type)/\(a.id)") }
     }
 }

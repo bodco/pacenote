@@ -16,19 +16,24 @@ Pacenote. Earlier versions are described in the commit messages and in
   Cancelling a retry also removes partial files saved by earlier attempts for that pull.
 
 - **The call is logged in HubSpot (H2).** Update HubSpot has a new Call row: a HubSpot Call with the title, start
-  time, duration, direction, outcome, participants, the Summary and next steps, and a link back to the call,
-  associated with the matched contacts, company and open deal. Applying again updates the same Call instead of
-  adding a second one, and Undo removes a new Call or restores the old values. Transcript text is never sent. A new
+  time, duration, direction, outcome, participants, the call page's Summary, the next steps, and a link back to the
+  call, associated with the matched contacts, company and open deal. Applying again, even while Auto runs, updates the
+  same Call instead of adding a second one, and Undo removes a new Call or restores the old values. Transcript text is
+  never sent. A call's HubSpot link now remembers its HubSpot account: after the key changes to another account, or
+  for a call linked before this version, nothing is written and Update HubSpot offers **Relink**. A new
   switch in Settings > Integrations > HubSpot, **Log the call in HubSpot automatically after it ends**, is off by
   default and logs only the Call. The HubSpot integration design is in `docs/specs/hubspot-crm-integration.md`.
 
 - **Meetings and follow-up emails on the HubSpot timeline (H5).** Update HubSpot has two more rows. **Meeting**
-  (ticked by default) adds the call's Summary, Decisions and Next steps to a HubSpot Meeting associated with the
-  matched contacts, company and deal; if HubSpot's own calendar sync already created that meeting, the notes are
-  added to it instead of making a second one, and applying again replaces Pacenote's block. **Email** appears once
-  the follow-up draft has been written in the app, is never ticked for you, and records the email you sent as a HubSpot email engagement
-  (Pacenote still sends no mail). No automatic switch for either, Undo works as for the other rows, and transcript
-  text is never sent.
+  (ticked by default) adds the call page's Summary, Decisions and Next steps to a HubSpot Meeting associated with the
+  matched contacts, company and deal. If HubSpot's own calendar sync already created that meeting (on one of the
+  call's contacts, within 15 minutes), the notes are added to it instead of making a second one; when two meetings
+  fit and the title does not decide, Pacenote makes its own Meeting rather than guess. Applying again replaces only
+  Pacenote's block for this call and keeps any text around it. **Email** appears once the follow-up draft has been
+  written in the app, is never ticked for you, and records the email you sent as a HubSpot email engagement (Pacenote
+  still sends no mail); an email HubSpot already logged is never changed, it only gets the missing associations. No
+  automatic switch for either, Undo also removes the associations Pacenote added, a failed write leaves nothing half
+  done, and transcript text is never sent.
 
 ## 0.26.4 (2026-11-20)
 
