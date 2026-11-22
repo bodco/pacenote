@@ -46,15 +46,18 @@ def test_a_row_event_read_after_the_line_still_reaches_it_and_a_translation_neve
             f.write(json.dumps(dict(t=hms, ch=ch, seg_end="10:00:02.000", written="10:00:03.000")) + "\n")
     run.read_timing()
 
-    def publish(line):
-        with tm.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(dict(event="row", seq=line.seq, t=hms, ch=line.channel, text=line.text)) + "\n")
+    held = []                                       # the row events land only after the Markdown was read
 
-    w.on_row = publish
+    w.on_row = held.append
     w.add(T.Line("them", t0, "en", "Okay, sounds good", sid="S1", seq=1))
     w.add(T.Line("them", t0, "en", "Okay, sounds good", sid="S2", seq=2))
+    run.t_tm.read = lambda: []                       # read_lines() looks at the timing file first: nothing there yet
     run.read_lines()
     run.feed_ready()
+    del run.t_tm.read
+    with tm.open("a", encoding="utf-8") as f:
+        for line in held:
+            f.write(json.dumps(dict(event="row", seq=line.seq, t=hms, ch=line.channel, text=line.text)) + "\n")
     assert [h.seq for h in eng.history] == [None, None]               # the row events are not read yet
     run.step()
     assert [h.seq for h in eng.history] == [1, 2]

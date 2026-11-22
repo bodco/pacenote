@@ -342,6 +342,20 @@ def drop_silence_stop(seg: "Segment", text: str, cfg: dict) -> bool:
     return False
 
 
+class Decoded(tuple):
+    """PB-30: a decode result (text, language tag, translated_from) that also says whether a kept segment was unsure
+    (`low_conf`). It compares equal to the plain tuple."""
+    low_conf = False
+
+    def __new__(cls, items, low_conf: bool = False):
+        self = super().__new__(cls, items)
+        self.low_conf = low_conf
+        return self
+
+
+LOW_CONF_LOGPROB = -1.0       # a kept segment below this was decoded unsure (the hard cut is -1.25)
+
+
 def asr_segment(whisper, seg: "Segment", cfg: dict, lang_share: LangShare, last_lang: dict, prompt: str | None,
                 prompt_words: set[str]) -> tuple[str, str, str | None] | None:
     """PB-30 (D56): one segment -> (text, language tag, translated_from), or None when nothing real is left. A short
@@ -361,20 +375,23 @@ def asr_segment(whisper, seg: "Segment", cfg: dict, lang_share: LangShare, last_
         if lang is None and short:
             lang = last_lang[seg.channel]           # no detector: a short segment keeps the channel's language
     auto = lang is None                             # Whisper picks the language: what it says is the evidence
-    text, lang, translated_from = whisper.decode(seg.audio, lang, prompt, main, foreign)
+    dec = whisper.decode(seg.audio, lang, prompt, main, foreign)
+    text, lang, translated_from = dec
+    low_conf = bool(getattr(dec, "low_conf", False))
     text = clean_text(text, prompt_words)
     if not text or not norm(text):
         return None
     if drop_silence_stop(seg, text, cfg):
         return None                                 # "Дякую за перегляд!", "Bye." on near-silence
     lang_share.add(None if translated_from else (heard or (lang if auto else None)), seg.speech_s)
-    return text, lang, translated_from
+    return Decoded((text, lang, translated_from), low_conf)
 
 
-def needs_translation(text: str, lang: str, translated_from: str | None) -> bool:
-    """PB-30 (D56): a marked line whose text is Russian or in a wrong script is translated in the background. A line the
-    main language was forced onto (French speech written in English) is only marked."""
-    return bool(translated_from) and (is_russian(text) or script_mismatch(text, lang))
+def needs_translation(text: str, lang: str, translated_from: str | None, low_conf: bool = False) -> bool:
+    """PB-30 (D56): a marked line whose text is Russian, in a wrong script, or an unsure decode forced onto the main
+    language (French speech written in English, low confidence) is translated in the background. A confident forced
+    decode is only marked."""
+    return bool(translated_from) and (is_russian(text) or script_mismatch(text, lang) or low_conf)
 
 
 def translation_ok(new: str, dst: str) -> bool:
@@ -745,6 +762,7 @@ class Whisper:
             # is fine, but "be", "pl", "pt" are not). Redo with the main language.
             return self.decode(audio, main, prompt, main, foreign or lang)
         parts = []
+        low_conf = False
         segs = res.get("segments", [])
         if segs and min(x.get("no_speech_prob", 0) for x in segs) > self.max_no_speech:
             return "", lang, None   # Whisper itself is sure there is no speech
@@ -755,6 +773,7 @@ class Whisper:
             if lp < -1.25 or s.get("compression_ratio", 0) > 2.4:
                 continue   # low confidence or a repetition loop
             parts.append(s.get("text", "").strip())
+            low_conf = low_conf or lp < LOW_CONF_LOGPROB
         text = " ".join(p for p in parts if p).strip()
         lang = fix_lang_by_script(text, lang, self.langs)
         russian = "ru" not in self.langs and is_russian(text)
@@ -772,7 +791,7 @@ class Whisper:
             return text, lang, None
         # TODO(PB-30): no translation model yet; a line still in a foreign script after the redo stays as Whisper wrote
         # it and is only marked (translated_from, "und" when the language is unknown).
-        return text, lang, foreign or "und"
+        return Decoded((text, lang, foreign or "und"), low_conf)
 
 
 class FakeWhisper:
@@ -5372,8 +5391,9 @@ def main() -> int:
                 tf.write(json.dumps({"event": "translated", "seq": j["line"].seq, "t": j["t"], "ch": j["ch"],
                                      "translated_from": j["src"], "original": j["text"], "text": new},
                                     ensure_ascii=False) + "\n")
-        except OSError:
-            pass
+        except OSError as e:
+            # the saved row is already queued for the translation: say that the live view will stay stale
+            log(f"translate: live event for row {j['line'].seq} not written: {type(e).__name__}")
 
     def publish_row(line: Line) -> None:
         """The writer is about to append this row: publish its seq. Readers pair rows with seq by this event (time,
@@ -5402,6 +5422,7 @@ def main() -> int:
         if res is None:
             return
         text, lang, translated_from = res
+        low_conf = bool(getattr(res, "low_conf", False))
         text = apply_dictionary(text, DICT_RULES)          # 0.10.0: the PM's dictionary, before anything sees the line
         last_lang[seg.channel] = lang
         sid = None
@@ -5419,7 +5440,7 @@ def main() -> int:
         line_obj = Line(seg.channel, seg.t_start, lang, text, sid=sid, translated_from=translated_from,
                         seq=next(line_seq))
         writer.add(line_obj)
-        if tr_worker is not None and needs_translation(text, lang, translated_from):
+        if tr_worker is not None and needs_translation(text, lang, translated_from, low_conf):
             tr_worker.submit({"text": text, "src": translated_from, "dst": lang, "line": line_obj,
                               "t": hhmmss(seg.t_start), "ch": seg.channel})
         if sid:

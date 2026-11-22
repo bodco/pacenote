@@ -18,7 +18,9 @@ import os
 import subprocess
 import threading
 import time
+import urllib.error
 import urllib.request
+from urllib.parse import urlsplit
 from typing import Callable
 
 LANG_NAMES = {"uk": "Ukrainian", "en": "English", "ru": "Russian", "pl": "Polish", "de": "German", "fr": "French",
@@ -31,6 +33,22 @@ def prompt_for(src: str, dst: str) -> str:
     d = LANG_NAMES.get(dst, dst)
     return (f"Translate the user's text from {s} to {d}. Keep names, numbers and product terms as they are. "
             "Answer with the translation only, no quotes, no comments.")
+
+
+def is_loopback(url: str) -> bool:
+    try:
+        return urlsplit(url).hostname in ("127.0.0.1", "localhost", "::1")
+    except ValueError:
+        return False
+
+
+class _LoopbackOnly(urllib.request.HTTPRedirectHandler):
+    """A redirect never takes the transcript text off this Mac."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if not is_loopback(newurl):
+            raise urllib.error.URLError("redirect to a remote host refused")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
 class Translator:
@@ -46,15 +64,20 @@ class Translator:
         # config.json alone is never enough (a stale command from an earlier call), and no flag means local only
         self.cmd = [str(c) for c in (cfg.get("translate_cmd") or [])] if os.environ.get("LT_TRANSLATE_ROUTE") == "1" else []
         self.cmd_dir = str(cfg.get("translate_dir") or "")
+        # a model server that is not on this Mac gets transcript text only with the call's permission (the same flag)
+        self.ollama_allowed = is_loopback(self.url) or os.environ.get("LT_TRANSLATE_ROUTE") == "1"
+        self._opener = urllib.request.build_opener(_LoopbackOnly)
         self._up_until = 0.0
         self._up = False
 
     def _ollama_up(self) -> bool:
         """Ollama answers and has the model; asked at most once a minute."""
+        if not self.ollama_allowed:
+            return False
         if time.monotonic() < self._up_until:
             return self._up
         try:
-            with urllib.request.urlopen(self.url + "/api/tags", timeout=min(2.0, self.timeout)) as r:
+            with self._opener.open(self.url + "/api/tags", timeout=min(2.0, self.timeout)) as r:
                 names = {m.get("name") for m in json.load(r).get("models", [])}
             self._up = self.model in names or f"{self.model}:latest" in names
         except Exception:  # noqa: BLE001
@@ -67,7 +90,7 @@ class Translator:
                 "messages": [{"role": "system", "content": prompt_for(src, dst)}, {"role": "user", "content": text}]}
         req = urllib.request.Request(self.url + "/api/chat", data=json.dumps(body).encode("utf-8"),
                                      headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=self.timeout) as r:
+        with self._opener.open(req, timeout=self.timeout) as r:
             return str(json.load(r).get("message", {}).get("content", "")).strip() or None
 
     def _route(self, text: str, src: str, dst: str) -> str | None:

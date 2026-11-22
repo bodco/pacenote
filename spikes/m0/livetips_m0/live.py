@@ -226,6 +226,8 @@ class LiveRun:
         self.unseq = []                              # PB-30: fed lines whose "row" event had not arrived yet
         self.translations = []                       # PB-30: "translated" events not applied yet: [(event, first seen)]
         self.seen_lines = set()
+        self.row_total = {}                          # PB-30: (t, ch, text) -> "row" events read: rows the writer appended
+        self.fed_rows = {}                           # PB-30: (t, ch, text) -> lines fed for it
         self.last_new = self.t0 = time.monotonic()
         self.last_touch = 0.0
         self.first_written = self.last_written = None
@@ -249,19 +251,30 @@ class LiveRun:
                         self.translations.append((r, time.monotonic()))
                     elif r["event"] == "row":               # the writer appended this row: its stable seq
                         self.rows.setdefault((r.get("t"), r.get("ch")), []).append(r)
+                        k = self.row_key(r.get("t"), r.get("ch"), r.get("text"))
+                        self.row_total[k] = self.row_total.get(k, 0) + 1
                     continue
                 self.timing.setdefault((r.get("t"), r.get("ch")), []).append(r)
             except ValueError:
                 pass
 
+    @staticmethod
+    def row_key(t, ch, text) -> tuple:
+        return (t, ch, " ".join(str(text or "").split()))
+
     def read_lines(self) -> None:
+        self.read_timing()                   # the writer publishes a row's event before it appends the row: read it first
         for raw in self.t_md.read():
             ln = parse_line(raw, self.n, self.cfg["me_label"])
             if ln:
                 identity = (ln.t, ln.label, ln.stag, ln.text)     # two people saying "Yes" in one second are two lines
-                if identity in self.seen_lines:
+                key = self.row_key(ln.t, ln.speaker, ln.text)
+                # a file read again (the recorder rewrote it) shows a row twice; the writer's row events say how many
+                # identical rows really exist, so the same speaker saying the same words twice is two lines
+                if identity in self.seen_lines and not self.row_total.get(key, 0) > self.fed_rows.get(key, 0):
                     continue
                 self.seen_lines.add(identity)
+                self.fed_rows[key] = self.fed_rows.get(key, 0) + 1
                 self.n += 1
                 self.pending.append((ln, time.monotonic()))
                 self.last_new = time.monotonic()

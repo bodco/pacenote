@@ -26,7 +26,10 @@ Pacenote. Earlier versions are described in the commit messages and in
   channel (you or the other side), even when the row is read after the translation, and even when the recorder dropped
   an echo of your mic in the same second (the writer publishes each row's id when it appends the row). With no route the marked line stays. A short out-of-set phrase now uses the call's
   main language (not the previous line's); "Субтитри зроблені спільнотою" and "Subtitles by" are dropped only on
-  near-silence, like the other stop-phrases.
+  near-silence, like the other stop-phrases. A forced decode that was unsure (low confidence) is translated even when
+  the foreign text is in the call's own script (French marked as English); a confident one is only marked. The local
+  model is used only on this Mac (redirects included); a model server elsewhere gets the text only with the call's
+  permission. Two identical rows from one speaker stay two lines in the live view.
 
 ## 0.26.4 (2026-11-20)
 
