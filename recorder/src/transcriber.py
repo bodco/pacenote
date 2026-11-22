@@ -812,7 +812,8 @@ class Line:
     sid: str | None = None    # speaker cluster of a system-channel line ("S2"), None = no speaker tag
     translated_from: str | None = None   # PB-30: the language the speech was in when Whisper wrote it in another one
     seq: int = 0              # PB-30: stable id of the line in this call (the timing record and "translated" event carry it)
-    row: str = ""             # the transcript row as written (set by Writer._write); a translation replaces it by this key
+    row: str = ""             # the transcript row as written (set by Writer._write)
+    row_occ: int = 0          # how many rows with the same text were written before this one: tells identical rows apart
 
 
 def hold_me_line(last_them_speech: float | None, line_t: float, window: float = 4.0) -> bool:
@@ -832,7 +833,8 @@ class Writer:
         self.held_me: list[Line] = []
         self.lines = 0
         self.last_line_at = None
-        self.replaced: list[tuple[str, str]] = []   # PB-30: (row as written, row after translation), applied in close()
+        self.replaced: list[tuple[str, int, str]] = []   # PB-30: (row as written, its occurrence among identical rows, row after translation), applied in close()
+        self.written_rows: dict[str, int] = {}           # row text -> how many were appended
         self.closed = False
         self.on_row = None          # PB-30: called with a line just before its row is appended (publishes the row's seq)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -906,28 +908,28 @@ class Writer:
             old = line.row
             line.text = " ".join(text.split())      # a row is one line; a break would leave an untagged tail
             if old:
-                self.replaced.append((old, self._row(line)))
+                self.replaced.append((old, line.row_occ, self._row(line)))
             return old
 
     def _rewrite(self) -> None:
         """Apply the translations to the file (atomic); a row that is no longer there is left alone."""
         if not self.replaced:
             return
-        todo = list(self.replaced)
+        todo = {(old, occ): new for old, occ, new in self.replaced}
+        seen: dict[str, int] = {}
         out = []
         for raw in self.path.read_text(encoding="utf-8").split("\n"):
-            for i, (old, new) in enumerate(todo):
-                if raw == old:
-                    raw = new
-                    del todo[i]
-                    break
-            out.append(raw)
+            k = seen.get(raw, 0)       # the k-th identical row is the k-th one written: a translation targets that one
+            seen[raw] = k + 1
+            out.append(todo.pop((raw, k), raw))
         tmp = self.path.with_name(self.path.name + ".tr.tmp")
         tmp.write_text("\n".join(out), encoding="utf-8")
         os.replace(tmp, self.path)
 
     def _write(self, line: Line) -> None:
         line.row = self._row(line)
+        line.row_occ = self.written_rows.get(line.row, 0)
+        self.written_rows[line.row] = line.row_occ + 1
         if self.on_row is not None:
             try:
                 self.on_row(line)

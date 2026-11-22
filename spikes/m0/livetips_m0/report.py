@@ -41,7 +41,8 @@ def skill_tips(md: Path):
     tips = jl(call_layout.sidecar(md.parent / stem, ".tips.jsonl"))
     timing = {}
     for r in jl(call_layout.sidecar(str(md), ".timing.jsonl")):
-        timing.setdefault(r.get("t"), r)
+        if not r.get("event"):                      # PB-30: row and translated events are not a line's timing
+            timing.setdefault(r.get("t"), r)
     out = []
     for t in tips:
         if t.get("kind") not in ("tip", "fact", "answer") or t.get("q") or "src" not in t or "at" not in t:

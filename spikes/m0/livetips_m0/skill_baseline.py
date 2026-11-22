@@ -30,7 +30,8 @@ def main(argv=None):
                 continue
             timing = {}
             for r in jl(tf):
-                timing.setdefault(r.get("t"), r)
+                if not r.get("event"):                  # PB-30: row and translated events are not a line's timing
+                    timing.setdefault(r.get("t"), r)
             src_l, end_l = [], []
             for t in tips:
                 if t.get("kind") not in ("tip", "fact", "answer") or t.get("q") or "src" not in t or "at" not in t:

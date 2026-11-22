@@ -154,14 +154,15 @@ def test_a_translation_that_arrives_before_the_engine_read_the_line_is_applied_w
     md.write_text("", encoding="utf-8")
     ev = {"event": "translated", "seq": 1, "t": "10:00:00", "ch": "them", "translated_from": "ru",
           "original": "Это", "text": "Це"}
-    tm.write_text(json.dumps(ev, ensure_ascii=False) + "\n", encoding="utf-8")
+    row = {"event": "row", "seq": 1, "t": "10:00:00", "ch": "them", "text": "Это"}
+    tm.write_text(json.dumps(row, ensure_ascii=False) + "\n" + json.dumps(ev, ensure_ascii=False) + "\n", encoding="utf-8")
     eng = Eng()
     run = LiveRun({"me_label": "Me"}, eng, md, from_start=True)
     run.step()
     assert run.translations and not eng.history                      # kept, not lost
     md.write_text("[10:00:00] Співрозмовник (uk): Это\n", encoding="utf-8")
     run.step()
-    assert run.pending[0][0].text == "Це" and not run.translations     # the line waits for its timing: translated already
+    assert run.translations                                           # the line has no seq until it is fed: an id is never matched by text
     run.pending = [(ln, seen - 5) for ln, seen in run.pending]
     run.step()
     assert [h.text for h in eng.history] == ["Це"]

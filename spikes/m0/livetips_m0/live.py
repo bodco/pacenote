@@ -223,6 +223,7 @@ class LiveRun:
             skip_existing(self.t_md, self.t_tm)
         self.timing, self.pending, self.n = {}, [], 0
         self.rows = {}                               # PB-30: "row" events (written by the recorder's writer): {(t, ch): [event]}
+        self.unseq = []                              # PB-30: fed lines whose "row" event had not arrived yet
         self.translations = []                       # PB-30: "translated" events not applied yet: [(event, first seen)]
         self.seen_lines = set()
         self.last_new = self.t0 = time.monotonic()
@@ -233,6 +234,7 @@ class LiveRun:
         self.read_timing()
         self.read_lines()
         self.feed_ready()
+        self.reconcile_seq()
         self.apply_translations()
         if self.t_in:
             for raw in self.t_in.read():
@@ -282,13 +284,26 @@ class LiveRun:
             ln.written = now_sod()
         # the seq comes from the writer's "row" event for this exact row (time, channel, text), never from timing order:
         # the timing file also has entries for lines the writer dropped as echo
-        rows = self.rows.get((getattr(ln, "t", None), getattr(ln, "speaker", None))) or []
-        text = " ".join(str(getattr(ln, "text", "")).split())
-        i = next((k for k, r in enumerate(rows) if " ".join(str(r.get("text") or "").split()) == text), None)
-        ln.seq = rows.pop(i).get("seq") if i is not None else None
+        ln.seq = None
+        if not self.claim_seq(ln):
+            self.unseq.append(ln)                # the row event may land after the line was read: see reconcile_seq
         self.eng.on_line(ln)
         self.first_written = self.first_written or ln.written
         self.last_written = ln.written
+
+    def claim_seq(self, ln) -> bool:
+        rows = self.rows.get((getattr(ln, "t", None), getattr(ln, "speaker", None))) or []
+        text = " ".join(str(getattr(ln, "text", "")).split())
+        i = next((k for k, r in enumerate(rows) if " ".join(str(r.get("text") or "").split()) == text), None)
+        if i is None:
+            return False
+        with self.eng.lock:
+            ln.seq = rows.pop(i).get("seq")
+        return True
+
+    def reconcile_seq(self) -> None:
+        """A line fed before its "row" event was read gets the seq now (the timing file is read before the Markdown)."""
+        self.unseq = [ln for ln in self.unseq if not self.claim_seq(ln)]
 
     def apply_translations(self) -> None:
         """PB-30: a background translation changes the text of the line in place (same line_id, same object), keyed by
@@ -298,7 +313,7 @@ class LiveRun:
         for ev, seen in self.translations:
             by_seq = ev.get("seq") is not None
             def hit(h):
-                if by_seq and h.seq is not None:
+                if by_seq:                                   # an id on the event: only the exact row, never a text match
                     return h.seq == ev["seq"]
                 return h.t == ev.get("t") and h.speaker == ev.get("ch") and h.text == ev.get("original")
             with self.eng.lock:
