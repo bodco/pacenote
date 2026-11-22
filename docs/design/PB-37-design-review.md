@@ -1,130 +1,108 @@
-# PB-37 (G6 Research this website): design review after code
+# PB-37 (G6 Research this website): design review after code, pass 2
 
-Role: Design. Branch `team/PB-37-g6-integration`. Gate run `gate-int-PB-37-g6`. Product code not changed.
+Role: Design. Branch `team/PB-37-g6-integration`. Gate run `gate-wave16-2026-11-22-PB-37-dev`. Product code not changed.
+Pass 1 (B1 panel not in shots, B2 narrow UK, B3 Stepper) is superseded by this file.
 
 ## Verdict
 
-**Not approvable yet: the panel itself is in no screenshot.** Only the entry button is visible. Nothing below about the
-panel's look is verified by pixels; items marked "(code)" are read from `SheetSiteResearch.swift` and
-`MeetingSheetPrep.swift` and need a screenshot to confirm.
+**Expert Sources panel: approvable after two small fixes (B1, B2 below). Quick panel: not approvable, still in no screenshot (B3).**
 
-What I opened:
+The harness now stages the Expert panel in 19 states x light/dark x EN/UK (`app-sheet/web-*`). I opened these (pixels, not code):
+`web-plan-usd` (light, dark), `web-reading` (light), `web-finished` (light), `web-budget-reached` (light),
+`web-blocked` (light), `web-unreachable` (dark), `web-cancelled-kept` (dark), `web-js-only` (dark),
+`web-long-name` (dark), `web-narrow-dark`, `web-narrow-long-name` (dark, light-uk), `web-plan-failed` (light-uk),
+`web-quick-plan` (light-uk), `web-quick-finished` (dark). Not opened (same layout as the siblings I did open):
+`web-plan-free/window`, `web-cancelling`, the remaining dark/UK variants. Tips-window shots ignored as instructed.
 
-- `app-sheet/expert-3-sources-light.png` (against `baselines/app-sheet/expert-3-sources-light.png`), `-dark.png` and
-  `-light-uk.png`.
-- `app-sheet/quick-ready-dark.png` and `quick-attention-light.png`.
-- The gate wrote diffs for the sheet screens in `app-sheet/diff/`: only `expert-3-sources-dark`, `-light` and
-  `-light-uk` (plus two unrelated d3 what's-new UK shots). That matches what I saw: no other sheet screen moved. No
-  `app-win/diff/` was needed for this branch (no app-win screen in the diff list).
-- Not opened: other app-sheet and app-win files and the tips-window shots (stale, ignored). I did not review them.
+Pass 1 items now closed by pixels:
 
-Owner rules, checked in the diff against `main` (Swift files): **no `NSAlert`** (0 matches); no red used for actions
-(failure text uses the amber `PN.C.pending`, Cancel is a secondary button); buttons are the square `pnSecondary`,
-`pnPrimary`, `pnTertiary` styles except the `Stepper` (B3). **i18n parity**: 48 `sheet.ui.web.*` keys in `en.json`
-and 48 in `uk.json`; no long dash in them (spec criterion 18).
-
-## What the screenshots show
-
-1. **Expert step 3, light, dark and UK (diff against baseline).** The only change is the new secondary button
-   **RESEARCH THIS WEBSITE** / **ДОСЛІДИТИ ЦЕЙ САЙТ** on the `lumenfield.example/about` row, between the ACCESS OK
-   label and the x. It is square, outlined, condensed caps: the same style as CONNECT GOOGLE and PASTE THE TEXT in
-   all three shots (in dark the outline is white, the amber and green statuses keep their colours). No red. The row
-   grew by about 8 px in the 956 px rendering and the rows below shifted down. Expected. In UK the longer label fits
-   at the default width with room to spare (about 200 px of free space between the title and the status). Narrow
-   windows are still unchecked (B2).
-2. **Quick, dark and light "attention".** The Sources row is collapsed in every Quick shot. The link field, the source
-   rows and the panel live inside **Change** (code: `MeetingSheetPrep.swift:174-186`) and no screenshot opens it,
-   so P5 is code-only. The collapsed row looks as before (summary line cut with "...", FIX and Change), so no
-   regression there.
-3. The summary line "cases/..., lumenfield.example/about, Emily Parker (fi..." hides child pages (code:
-   `parentURI == nil` filter, line 168). Good. It also shows no "N pages read", see P4.
+- **Stepper (old B3): fixed.** It is two square outlined "-" and "+" buttons around "12 of 15 pages", the same style as
+  CHOOSE FILES. Disabled state (reading, budget) is greyed, readable in both themes.
+- **No red anywhere.** Failure text is amber/brown on light and orange on dark (blocked, unreachable, JS-only, plan
+  failed). Cancel is an outlined square button; READ N PAGES is the yellow primary. Contrast looks fine in both themes
+  (not measured with a tool).
+- **P3 hint** "Budget reached. Untick a page or raise the number to add another." is present (`web-budget-reached`).
+- **P2 nested scroll:** the plan list is not a scroll box any more; all 15 to 21 rows show and the page scrolls. Good.
+- **Long site name and long path** (`web-long-name`): title and progress line fit at default width, no clipping. OK.
+- **No NSAlert** (0 matches in the diff), 48 `sheet.ui.web.*` keys in en and uk (checked in pass 1).
 
 ## Blocking
 
-**B1. The panel is not in any screenshot (Expert and Quick).** No shot name has a research state, and `SheetShots.swift`
-has no staging for it. `SiteResearchSession.read` also returns early under `SheetShots.active`
-(`SheetSiteResearch.swift:52`), so the reading and finished states cannot be reached by clicking in shot mode.
-Fix: give the shot harness a way to inject a `SiteResearchSession` in a fixed phase with a fixture `SitePlan` and
-`SiteReadReport` (no process, no network), and add the shots listed in "Screenshots needed". Until then Design cannot
-approve the panel.
+**B1. Finished state keeps the plan controls live and leaves failed pages ticked (`web-finished-light`, `-dark`,
+`web-cancelled-kept-dark`, `web-js-only-dark`).** After reading, the panel still shows the stepper (active), the
+"12 of 15 pages" counter, the ~19K cost line and the "12 will be read" line, then the result line "7 pages read, about
+6.0K tokens" below them. The numbers contradict each other (12 of 15 / ~19K vs 7 pages / 6.0K; in `web-js-only` "7 of
+15 pages" and "~0 tokens" next to "0 pages read"). Pages that failed (blocked, empty, 503, duplicate) keep a yellow
+ticked box, which reads as success.
+Fix: in the finished/cancelled phases hide the stepper, the cost line and the "N will be read" line (the plan is
+spent); show only the result line, the counts line and READ AGAIN / Close. READ AGAIN brings the plan controls back.
+Replace the ticked box on a failed row by an empty box or a small "x" mark in `text3`, keep the reason line.
 
-**B2. Narrow window with the longer UK button is unchecked.** At the default width EN and UK are fine (see above).
-At the narrowest allowed width, with a long domain as the row title, the row can push the title into truncation
-or wrap the button (code: `MeetingSheetPrep.swift:1269`). Needs the narrow shot in EN and UK. If it crowds: move
-the button under the title line (as the fix text already sits there), or shorten the label to "Read the site" /
-"Читати сайт".
+**B2. UK failure text leaks English (`web-plan-failed-light-uk`).** "Не вдалося спланувати цей сайт: the site did not
+answer in 30 s". The detail comes from the engine untranslated. Fix: map the engine error to a localized key
+(`sheet.ui.web.err.timeout` and the like, EN and UK) and never print the raw engine string. Same check for the HTTP
+reason in unreachable and for per-page reasons in UK finished ("blocked by robots.txt", "duplicate (same text as
+/about)", "could not be read (HTTP 503)" were fine in EN; I did not open UK finished, so check it).
 
-**B3. The system `Stepper` in the plan summary (code: `SheetSiteResearch.swift:215`): confirm in the shot, then fix.**
-The spec asks for one stepper (question 2, option b), so the fix is styling, not removal. A SwiftUI `Stepper`
-normally draws the rounded macOS control, which would not match the owner's square buttons. I cannot confirm how it
-renders in Roadbook/Broadsheet without a screenshot, so this is blocking only if the plan shot shows a rounded
-control (likely). Fix: two square `pnSecondary` buttons "-" and "+" (min 28 px hit area, accessibility labels
-"Fewer pages" / "More pages") around the counter.
+**B3. Quick panel is still in no screenshot.** `web-quick-plan-*`, `web-quick-finished-*` and `web-quick-collapsed-*` all
+show the same collapsed Quick screen (Sources row "cases/..., lumenfield.example/about, Emily Parker (fi..." with
+Change). The plan and finished panels inside Change are never rendered, so the link field placeholder (old P5), the
+indent of the panel under the row and the "N pages" summary (old P4) are unverified. Fix: the harness must open the
+Sources row (set the expanded state) before capture for the three `web-quick-*` shots, light/dark, EN/UK.
+Until these exist Design cannot approve Quick.
 
 ## Polish
 
-**P1. Cost line in mono 11 pt, long in UK (code: line 219).** "N% of one pass of {route}; this route has no per-token
-price" and its UK form are sentences, not data. In `homeMono(11)` they wrap to three lines in a narrow window.
-Fix: keep "~14K tokens" in mono, put the cost sentence on its own line in `homeText(12)`, `text2`.
+**P1. The "narrow" shots are not narrow.** `web-narrow-*` are 1440 px wide (600 pt) against 1720 px (717 pt) for the
+default, about 17% less. Pass 1 asked for the smallest allowed window. At 600 pt: the panel itself holds up (rows,
+cost line, READ 12 PAGES, stepper all fit; the long UK label "ПРОЧИТАТИ СТОРІНОК: 12" fits). Things that
+break are older and outside the panel: step tabs truncate ("З...", "Щ...", "Д...", "Пе..."), the footer "ДАЛІ:
+ПЕРЕВІР..." is cut, the Paste field placeholder is cut in UK ("Посилання, листування, нот"). Not caused by PB-37, so not
+blocking, but add one shot at the real minimum width (the window's `minWidth`) to confirm the panel there.
 
-**P2. Nested scroll.** The plan list is its own `ScrollView` (max 240 pt) inside the Sources page scroll
-(line 190-209). The mouse wheel will stick on the inner list. Fix: show up to about 8 rows, then "and N more" inside a
-disclosure, or let the list grow and not scroll; check in the 15-row shot.
+**P2. Error-state frames shrink-wrap, the plan frame is full width.** Blocked light ends at about 573 px, unreachable
+at 426, plan failed UK at 374, plan/finished at 696. The panel's width jumps between states. Fix: give the panel a
+fixed `maxWidth: .infinity` frame in every phase.
 
-**P3. Disabled ticks with no reason.** When the budget is reached, unticked rows are disabled (line 195) and nothing
-says why. Fix: a one-line hint under the counter, "Budget reached. Untick a page or raise the number to add another."
-Needs a UK string.
+**P3. Blocked copy still has jargon (old P6).** `web-blocked-light`: "robots.txt does not allow Pacenote to read this
+site, so nothing was read. Add the text by hand or skip the site." Suggested: "The site asks programs not to read it
+(robots.txt), so nothing was read. Add the text by hand or skip the site." Same shorter form for the per-page
+"blocked by robots.txt (robots.txt)" in `web-finished-light`, which repeats the word ("blocked by robots.txt
+(robots.txt)"): drop the parenthesis.
 
-**P4. "N pages read" is only in Expert.** In Quick the collapsed Sources row does not tell that pages were read.
-Fix: append "· 7 pages of lumenfield.example" to the summary line, or show a count in the row's right side.
+**P4. Route name grammar.** "9% of one pass of Claude account; this route has no price per token" (EN) reads like a
+placeholder was filled with the account name; UK: "9% одного проходу Акаунт Claude" is wrong case (capital A,
+nominative after "одного проходу"). Fix: "of one pass on your Claude account" / "одного проходу через ваш акаунт Claude".
+Same for "Page text goes to Claude account..." -> "goes to your Claude account".
 
-**P5. Quick link field placeholder is long** ("Paste a link: Notion, Google Docs, a website, LinkedIn",
-line 180) at 14 pt in a 34 pt field; it will be cut in the narrow window and longer still in UK. Fix: "Paste a link" with the
-list of kinds in the existing "What can I add?" help; or let the field take the full row width above the ADD button.
+**P5. UK token format inconsistent.** In the row subtitle UK shows "~токенів: 900" while the plan rows show "~1.0K
+токенів". Both formats in one panel. Pick one ("~900 токенів"). Likely an existing string, check whether PB-37 added it.
 
-**P6. Jargon in the blocked line.** `sheet.ui.web.start.blocked` says "robots.txt does not allow Pacenote". Fix: "The
-site asks programs not to read it (robots.txt). Nothing was read. Add the text by hand or skip the site." Same
-for `pageState.blocked`.
+**P6. Cost line typography (old P1).** The cost sentence is already in the proportional font (not mono) and wraps to
+two lines at 600 pt, fine. Nothing to do.
 
-**P7. Failure colour is correct, keep it.** Errors and blocked text use `PN.C.pending` (the amber/brown seen on NO
-ACCESS), Cancel is `pnSecondary`, no red anywhere. Please keep this. Check that the amber text on the panel in
-dark theme has 4.5:1 contrast (screenshot needed).
+**P7. Spinner is a still glyph in the shots** (`web-reading-*`: a small icon left of "Reading page 4 of 12"). This is the
+agreed static staging, but it looks like a person icon. Fine for the harness; in the live app confirm it is the standard
+spinner.
 
-**P8. The panel has no title weight difference from the row above it.** The frame is a 1 px `ruleStrong` outline like
-the LinkedIn card, which is good and consistent. Add the same 30 pt indent in Quick as in Expert (it reuses the row, so it
-should), and check the left edge lines up with the child rows.
+**P8. Accessibility (old P10), not blocking:** tick boxes are labelled by path only; add the state ("planned, about
+900 tokens"); give the spinner and the stepper buttons labels ("Fewer pages" / "More pages").
 
-**P9. Copy.** The strings use three ASCII dots ("Reading the home page...", "Stopping..."), which fits the rule of no
-long dash; keep ASCII dots and do not switch to the "…" character. "Read 1 page" and "Read N pages" are fine.
-Change "Stopping..." to "Stopping after this page..." so the person knows that pages already read are kept;
-"Stopped: pages already read are kept." already exists, good.
+**P9. Copy "Stopping..." (old P9)**: still no "after this page"; I did not open `web-cancelling`. Check and change if
+unchanged.
 
-**P10. Accessibility.** Page toggles are labelled with the path only; add the state ("About, planned, about 900
-tokens"). Spinner has no label. The plan list should announce "Plan: 12 pages" when it appears
-(`.accessibilityElement` + a live-region post). Not blocking.
+## Remaining screenshots
 
-## Screenshots needed (light and dark, EN; UK for the starred ones)
-
-Expert step 3, window at default width unless said:
-
-1. **plan**: site with 12 planned, 2 skipped (sign-in, policy), 1 over limit, counter, cost line, "Read 12 pages" (all
-   three cost kinds once: dollars, free, window), footer "sent to {route}". Light and dark. *UK*.
-2. **reading**: "Reading page 4 of 12: /team", Cancel enabled.
-3. **cancelling** ("Stopping...") and **cancelled with pages kept** ("Stopped: pages already read are kept").
-4. **finished**: "7 pages read, about 6K tokens", the counts line (empty, blocked, duplicate), child rows under the
-   site row in "In this sheet" with "7 pages read". *UK*.
-5. **blocked site** (robots) and **site unreachable**, each with its one-line explanation and Close.
-6. **JavaScript-only** (0 read, empty pages): the `js` message.
-7. **plan failed** with Retry.
-8. **long site name**: `a-very-long-company-name-and-division.example.co.uk` in the title, the row and the progress
-   line (middle truncation of the path).
-9. **narrow window** (the smallest allowed): the source row with the button, the plan, the cost line. *UK*.
-10. **budget reached**: 15 of 15, disabled rows, hint (once P3 is done).
-
-Quick, with Change open: the link field, the source rows, the panel in **plan** and **finished**; the collapsed row
-after reading. Light and dark, *UK* for plan.
+Add or fix: (1) the three Quick shots with Sources open (B3); (2) a real-minimum-width Expert shot, EN and UK (P1);
+(3) re-shoot finished, cancelled, JS-only and plan-failed UK after B1 and B2.
 
 ## Approve baseline?
 
-Not now. After B1 shots arrive and B2/B3 are checked, propose approving the new `expert-3-sources-*` baselines (button
-added; the +8 px row growth is expected). That decision is Bohdan's: put it in Questions for client.
+After B1, B2, B3 are fixed and re-shot, I propose approving the new `expert-3-sources-*` baselines (the RESEARCH THIS
+WEBSITE button on the site row, row grows by about 8 px; light, dark, UK) and adding the `web-*` shots as new baselines.
+Both are Bohdan's decision, to be put in Questions for client. The tips-window baselines are stale and out of scope.
+
+## Handoff
+
+Task PB-37, role Design. Verdict: Expert panel approvable after B1 and B2; Quick not approvable until B3. If B1/B2 are
+fixed and the Quick shots exist, a short third look (finished, plan-failed UK, three Quick shots) is enough.
