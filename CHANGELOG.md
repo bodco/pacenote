@@ -12,7 +12,7 @@ Pacenote. Earlier versions are described in the commit messages and in
   and the line is marked `translated_from` in the call's `.timing.jsonl`; Russian is never written (redone in the
   main language, also a short "Пока."; even when English is the main one). A short reply in another language keeps
   its own language. On a one-language call the language is forced (no detection), so no marker. Whisper's stop-phrases on silence ("Дякую за перегляд!", "Thank you for watching", "Bye") are dropped when
-  the line is short and its speech is near-silent; the same words in a normal voice are kept. The transcript line format is unchanged. Rules: `rules/asr_filters.yaml`.
+  the line is short and its speech is near-silent; the same words in a normal voice are kept. Rules: `rules/asr_filters.yaml`.
   A marked line that is still Russian or in a wrong script is translated in the background (a local model through
   Ollama first, else the AI route from Settings > AI, which the app passes to the recorder for the call, when the call
   may use the AI; a local answer that is still Russian or in a wrong script falls through to that route; text only,
@@ -37,6 +37,12 @@ Pacenote. Earlier versions are described in the commit messages and in
   other language of the call (French with English as the main one, written in Ukrainian letters); Ukrainian heard as
   Russian stays Ukrainian. A failed translation is logged with its route and the reason (a timeout, an exit code,
   a bad answer), never with the text.
+  A marked row now ends with the language the speech was in, ` (← fr)` (the start of the row is unchanged), and the
+  transcript pane shows "translated from fr" next to it, whether the translation succeeded, the model said SAME or no
+  translator answered. When the saved transcript is replaced at the end of the call, the pane reloads the new file
+  (by its identity, also when it is longer) instead of adding it again or reading it from the old offset, and the tips
+  engine keeps each row's own id and speaker when one speaker's translated line matches another speaker's words in
+  the same second.
 
 ## 0.26.4 (2026-11-20)
 

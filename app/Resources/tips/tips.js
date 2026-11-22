@@ -98,7 +98,7 @@
       readyStatus: 'Ready', readyTitle: 'Ready when you are', startListening: 'Start listening', openBrief: 'Open brief',
       listeningTitle: 'Listening', tipsOffTitle: 'Transcript only', tipsOffSub: 'Tips are off. The summary and the follow-up come after the call. Turn tips on in Call settings.', listeningSub: (k) => `Tips show up here when they matter. Stuck? Press ${k}.`, onDevice: 'Audio stays on this Mac',
       searched: (o) => `You searched: ${o.q}`, heardMeta: (o) => `Heard${o.who ? ' from ' + o.who : ''}, searching the project`, heardAnswer: (o) => `${o.who ? o.who + ' asked' : 'Asked'}: ${o.q}`, shorterMeta: 'Shorter', applied: 'Settings applied', prepReady: 'The brief is ready',
-      speakerN: (o) => `Speaker ${o.n}`, yourTurn: 'Your turn: give your update', me: 'Me', them: 'Unknown voice', lineWhoTip: 'The voice was not recognised. Click to say who said this line.', lineWhoSaved: 'Saved: the transcript shows it after the call',
+      translatedFrom: (o) => o.lang ? `translated from ${o.lang}` : 'translated', translatedTip: 'Spoken in another language and written in the call language', speakerN: (o) => `Speaker ${o.n}`, yourTurn: 'Your turn: give your update', me: 'Me', them: 'Unknown voice', lineWhoTip: 'The voice was not recognised. Click to say who said this line.', lineWhoSaved: 'Saved: the transcript shows it after the call',
       briefReady: (o) => o.at ? `Brief ready · ${o.at}` : 'Brief ready', briefPreparing: 'Preparing the brief…', briefFailed: 'The brief could not be prepared', noBrief: 'No brief yet',
       bbReady: (o) => o.made ? `Brief · made ${o.made}${o.before ? ', before the call' : ''}` : 'Brief', bbReadySub: 'Uses what was said so far, plus the project files',
       bbFailed: 'The brief could not be prepared', bbRetry: 'Try again', bbAgain: 'Prepare again', bbNone: 'No brief · tips use only the call so far', bbNow: 'Prepare now', bbRunning: 'Preparing in the background…',
@@ -187,7 +187,7 @@
       readyStatus: 'Готово', readyTitle: 'Можна починати', startListening: 'Почати слухати', openBrief: 'Відкрити бриф',
       listeningTitle: 'Слухаю', tipsOffTitle: 'Лише транскрипт', tipsOffSub: 'Підказки вимкнено. Підсумок і фоллоу-ап будуть після дзвінка. Увімкнути підказки можна в налаштуваннях дзвінка.', listeningSub: (k) => `Підказки зʼявляться тут, коли будуть потрібні. Застряг? Натисни ${k}.`, onDevice: 'Аудіо лишається на цьому Mac',
       searched: (o) => `Ви шукали: ${o.q}`, heardMeta: (o) => `Почув${o.who ? ' від ' + o.who : ''}, шукаю в проєкті`, heardAnswer: (o) => `${o.who ? o.who + ' питав' : 'Питання'}: ${o.q}`, shorterMeta: 'Коротше', applied: 'Налаштування застосовано', prepReady: 'Бриф готовий',
-      speakerN: (o) => `Спікер ${o.n}`, yourTurn: 'Твоя черга: розкажи свій апдейт', me: 'Я', them: 'Невідомий голос', lineWhoTip: 'Голос не розпізнано. Клацніть, щоб вказати, хто сказав цей рядок.', lineWhoSaved: 'Збережено: у транскрипті буде після дзвінка',
+      translatedFrom: (o) => o.lang ? `перекладено з ${o.lang}` : 'перекладено', translatedTip: 'Сказано іншою мовою і записано мовою дзвінка', speakerN: (o) => `Спікер ${o.n}`, yourTurn: 'Твоя черга: розкажи свій апдейт', me: 'Я', them: 'Невідомий голос', lineWhoTip: 'Голос не розпізнано. Клацніть, щоб вказати, хто сказав цей рядок.', lineWhoSaved: 'Збережено: у транскрипті буде після дзвінка',
       briefReady: (o) => o.at ? `Бриф готовий · ${o.at}` : 'Бриф готовий', briefPreparing: 'Готую бриф…', briefFailed: 'Бриф не вдалося підготувати', noBrief: 'Брифу ще немає',
       bbReady: (o) => o.made ? `Бриф · зроблено ${o.made}${o.before ? ', до дзвінка' : ''}` : 'Бриф', bbReadySub: 'Враховує сказане досі і файли проєкту',
       bbFailed: 'Бриф не вдалося підготувати', bbRetry: 'Спробувати ще раз', bbAgain: 'Підготувати ще раз', bbNone: 'Брифу немає · підказки лише з того, що сказано', bbNow: 'Підготувати зараз', bbRunning: 'Готую у фоні…',
@@ -1278,7 +1278,9 @@
             ? `<button class="ghost" type="button" data-act="line-undel" data-i="${i}">${esc(t.restore)}</button>`
             : `<button class="ghost${S.ui.delArm === k ? ' armed' : ''}" type="button" data-act="line-del" data-i="${i}" title="${esc(t.delTip)}">${esc(S.ui.delArm === k ? t.delConfirm : t.del)}</button>`;
           const mine = !l.t || l.speakerId === 'me' ? '' : `<button class="ghost" type="button" data-act="line-mine" data-i="${i}" title="${esc(t.mineTip)}">${esc(t.mine)}</button>`;
-          return `<div class="tl${gone ? ' gone' : ''}">${btn}<span class="tx">${esc(l.text)}</span><span class="hover-acts">${mine}${del}</span></div>`;
+          // PB-30: a line whose speech was in another language says so (the row's " (← fr)" marker or a live translation)
+          const trf = l.translatedFrom ? ` <span class="meta trfrom" title="${esc(t.translatedTip)}">${esc(t.translatedFrom({ lang: l.translatedFrom === 'und' ? '' : l.translatedFrom }))}</span>` : '';
+          return `<div class="tl${gone ? ' gone' : ''}">${btn}<span class="tx">${esc(l.text)}${trf}</span><span class="hover-acts">${mine}${del}</span></div>`;
         }).join('');
     } else if (tab === 'onme') {
       const item = (o) => S.ui.onmeEdit === o.id
@@ -1985,6 +1987,7 @@
     window.addItems = (items) => feed.addItems(items);
     window.setStatus = (s) => feed.setStatus(s);
     window.addTranscript = (lines) => feed.addTranscript(lines);
+    window.setTranscript = (lines) => feed.setTranscript(lines);      // PB-30: the transcript file was replaced
     window.updateTranscript = (events) => feed.updateTranscript(events);      // PB-30: a translated row, in place
     window.setSpeakers = (d) => feed.setSpeakers(d);
     window.setPrepDoc = (p) => feed.setPrepDoc(p);

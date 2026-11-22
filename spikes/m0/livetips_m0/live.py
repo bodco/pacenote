@@ -291,15 +291,25 @@ class LiveRun:
                 if (identity in self.seen_lines and not self.row_total.get(key, 0) > self.fed_rows.get(key, 0)
                         and not unread):
                     continue
-                # the end-of-call rewrite shows a translated row with its new text (unless the writer appended such a
-                # row): it is the row of the "translated" event's seq. Read already: the line has the text from the
-                # event. Not read yet (the engine polled first after the rewrite): it is that row, fed now, once.
-                if self.tr_events.get(key) and not self.row_total.get(key, 0) > self.fed_rows.get(key, 0):
-                    ev = self.tr_events[key].pop(0)
+                # the end-of-call rewrite shows a translated row with its new text: it is the row of the "translated"
+                # event's seq. Read already: the line has the text from the event. Not read yet (the engine polled
+                # first after the rewrite): it is that row, fed now, once. When a real row has the same time, channel
+                # and text (S1's "Bonjour" translated to S2's "Hello"), the file is in write order, so the lower unread
+                # seq is the row read now (review round 6).
+                tr = self.tr_events.get(key) or []
+                fresh = [e for e in tr if e.get("seq") is not None and e["seq"] not in self.read_seqs]
+                row_seq = next((q for q in self.row_seqs.get(key, []) if q not in self.read_seqs), None)
+                ev = min(fresh, key=lambda e: e["seq"]) if fresh else None
+                if ev is not None and row_seq is not None and row_seq < ev["seq"]:
+                    ev = None                                     # the real row was written first
+                if ev is None and tr and row_seq is None:
+                    ev = next((e for e in tr if e.get("seq") is None or e["seq"] in self.read_seqs), None)
+                if ev is not None:
+                    tr.remove(ev)
                     seq = ev.get("seq")
                     self.seen_lines.add(identity)
                     if seq is None or seq in self.read_seqs:
-                        continue
+                        continue                                  # a row read again after the rewrite
                     self.read_seqs.add(seq)
                     ln.preset_seq = seq
                     orig = self.row_key(ln.t, ln.speaker, ev.get("original"))
@@ -307,7 +317,7 @@ class LiveRun:
                 else:
                     self.seen_lines.add(identity)
                     self.fed_rows[key] = self.fed_rows.get(key, 0) + 1
-                    seq = next((q for q in self.row_seqs.get(key, []) if q not in self.read_seqs), None)
+                    seq = row_seq
                     if seq is None:
                         self.read_unknown[key] = self.read_unknown.get(key, 0) + 1
                     else:

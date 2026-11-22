@@ -844,6 +844,15 @@ class Line:
     row_occ: int = 0          # how many rows with the same text were written before this one: tells identical rows apart
 
 
+def tr_mark(src: str | None) -> str:
+    """PB-30 (review round 6): the end of a row whose speech was in another language: ` (← fr)`, ` (← ?)` when the
+    language is unknown. The row prefix stays as it was, so every reader of the row format keeps working; the tips
+    window shows it as "translated from fr" and the tips engine strips it."""
+    if not src:
+        return ""
+    return f" (← {'?' if src == 'und' else src})"
+
+
 def hold_me_line(last_them_speech: float | None, line_t: float, window: float = 4.0) -> bool:
     """A mic line waits for a matching system line (echo check) only when the system channel
     had speech within `window` s before the line started or later. With nobody else talking
@@ -923,7 +932,7 @@ class Writer:
         label = self.cfg["me_label"] if line.channel == "me" else self.cfg["them_label"]
         if line.channel == "them" and line.sid:
             label += f" [{line.sid}]"
-        return f"[{hhmmss(line.t)}] {label} ({line.lang}): {line.text}"
+        return f"[{hhmmss(line.t)}] {label} ({line.lang}): {line.text}{tr_mark(line.translated_from)}"
 
     def replace(self, line: Line, text: str, announce=None) -> str | None:
         """PB-30: a background translation replaces the line text. A line still held is changed in memory; a written

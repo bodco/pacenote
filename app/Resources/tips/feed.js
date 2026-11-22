@@ -512,26 +512,40 @@
   };
 
   const TR_RX = /^\[(\d\d:\d\d:\d\d)\] (.+?)(?: \[(S\d+)\])? \(([\w+-]+)\): (.*)$/;
+  const MARK_RX = /\s\(\u2190 ([a-z]{2,3}|\?)\)$/;      // PB-30: " (← fr)" ends a row whose speech was in another language
   Feed.prototype.addTranscript = function (lines) {
     for (const l of lines || []) {
       let m;
       if ((m = /^- (?:Канали|Channels): (.+?) = .*?, (.+?) = /.exec(l))) { this.channels = { me: m[1], them: m[2] }; continue; }
       if ((m = /^- (?:Канали|Channels): (.+?) = /.exec(l))) { this.channels.me = m[1]; continue; }
       m = TR_RX.exec(l); if (!m) continue;
+      let text = m[5];
+      const mk = MARK_RX.exec(text);
+      const from = mk ? (mk[1] === '?' ? 'und' : mk[1]) : undefined;
+      if (mk) text = text.slice(0, mk.index);
       const sid = m[3] || (this.channels.me && m[2] === this.channels.me ? 'me' : /^(я|me|pm)$/i.test(m[2]) ? 'me' : 'other');
       if (!m[3] && sid === 'other' && !/^(співрозмовник|other)$/i.test(m[2])) {
         // An older line with a typed name and no cluster: the name is the speaker.
         const key = 'n:' + m[2];
         if (!this.speakers[key]) this.speakers[key] = { name: clean(m[2]), side: '' };
-        this.transcript.push({ speakerId: key, text: m[5], t: m[1], ch: 'them' });
+        this.transcript.push({ speakerId: key, text, t: m[1], ch: 'them', translatedFrom: from });
         continue;
       }
       if (m[3] && !this.speakers[m[3]]) this.speakers[m[3]] = { name: '', side: '', label: this.tr('speakerN', { n: m[3].replace(/^S/i, '') }) };
-      this.transcript.push({ speakerId: sid, text: m[5], t: m[1], ch: sid === 'me' ? 'me' : 'them' });
+      this.transcript.push({ speakerId: sid, text, t: m[1], ch: sid === 'me' ? 'me' : 'them', translatedFrom: from });
     }
     if (this.transcript.length > 600) this.transcript = this.transcript.slice(-600);
     this.updateTranscript([]);      // a translation that came before its row
     this.emit();
+  };
+
+  /** PB-30 (review round 6): the transcript file was replaced (the recorder's end-of-call rewrite with the translations,
+   *  the speaker names after the call): the pane shows the new file as it is, row by row, instead of appending it to
+   *  the rows already shown. The file has the translated text and the " (← fr)" markers; the speaker names stay. */
+  Feed.prototype.setTranscript = function (lines) {
+    this.transcript = [];
+    this.pendingTranslations = [];
+    this.addTranscript(lines);
   };
 
   const flat = (s) => String(s == null ? '' : s).split(/\s+/).filter(Boolean).join(' ');
@@ -569,11 +583,12 @@
     for (let i = 0; i < pending.length;) {
       const e = pending[i], ch = e.ch === 'me' ? 'me' : 'them';
       const item = e.seq != null
-        ? this.transcript.find((x) => x.seq === +e.seq && x.t === e.t && x.ch === ch && !x.translatedFrom)
-        : this.transcript.find((x) => x.t === e.t && x.ch === ch && x.text === e.original && !x.translatedFrom);
+        ? this.transcript.find((x) => x.seq === +e.seq && x.t === e.t && x.ch === ch && !x.translated)
+        : this.transcript.find((x) => x.t === e.t && x.ch === ch && x.text === e.original && !x.translated);
       if (!item) { i++; continue; }
       item.text = String(e.text);
-      item.translatedFrom = String(e.translated_from || 'und');
+      item.translatedFrom = String(e.translated_from || item.translatedFrom || 'und');
+      item.translated = true;
       pending.splice(i, 1);
       changed = true;
     }

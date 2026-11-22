@@ -171,7 +171,7 @@ def test_the_live_event_is_written_under_the_writer_lock_before_the_rewrite(T, t
     w.add(ln)
     held = []
     assert w.replace(ln, "I would like a coffee", lambda row: held.append((row, w.lock.locked()))) == ln.row
-    assert held == [("[" + T.hhmmss(ln.t) + "] " + T.DEFAULTS["them_label"] + " (en): Je voudrais un cafe", True)]
+    assert held == [("[" + T.hhmmss(ln.t) + "] " + T.DEFAULTS["them_label"] + " (en): Je voudrais un cafe (← fr)", True)]
     w.close("")
     assert w.replace(ln, "x", lambda row: pytest.fail("closed: no event")) is None
 

@@ -210,6 +210,37 @@ test('transcript: a timing entry of a line the writer dropped as echo does not s
   assert.deepStrictEqual(f.transcript.map((x) => x.seq), [2, 3]);
 });
 
+test('transcript: the saved row says which language the speech was in, translated, SAME or no translator (PB-30 round 6)', () => {
+  const { f } = make();
+  f.addTranscript(['[10:31:02] Emily C. [S1] (en): Je voudrais un cafe (← fr)', '[10:31:05] Mike [S2] (en): Hello (← fr)',
+                   '[10:31:08] Me (uk): Добре (← ?)', '[10:31:09] Me (uk): Так']);
+  assert.deepStrictEqual(f.transcript.map((x) => [x.text, x.translatedFrom]),
+    [['Je voudrais un cafe', 'fr'], ['Hello', 'fr'], ['Добре', 'und'], ['Так', undefined]]);   // the marker is not in the text
+  f.updateTranscript([{ event: 'row', t: '10:31:02', ch: 'them', seq: 1, text: 'Je voudrais un cafe' }]);
+  f.updateTranscript([{ event: 'translated', seq: 1, t: '10:31:02', ch: 'them', translated_from: 'fr', original: 'Je voudrais un cafe', text: 'I would like a coffee' }]);
+  assert.deepStrictEqual([f.transcript[0].text, f.transcript[0].translatedFrom], ['I would like a coffee', 'fr']);   // translated
+  assert.deepStrictEqual([f.transcript[1].text, f.transcript[1].translatedFrom], ['Hello', 'fr']);   // SAME: no event, still marked
+  f.updateTranscript([{ event: 'translated', seq: 1, t: '10:31:02', ch: 'them', translated_from: 'fr', original: 'x', text: 'again' }]);
+  assert.strictEqual(f.transcript[0].text, 'I would like a coffee');                              // one translation per row
+});
+
+for (const [name, rewrite] of [
+  ['shorter', ['# Call', '[10:31:02] Emily C. [S1] (en): Hi (← fr)', '[10:31:02] Mike [S2] (en): Hello', '[10:31:05] Me (en): Okay']],
+  ['longer', ['# Call', '[10:31:02] Emily C. [S1] (en): Hello, I would like a cup of coffee with milk and no sugar, please (← fr)',
+              '[10:31:02] Mike [S2] (en): Hello', '[10:31:05] Me (en): Okay', '[10:31:09] Me (en): See you']],
+]) {
+  test(`transcript: a ${name} rewrite of the file after a partial read shows the new file once, in order (PB-30 round 6)`, () => {
+    const { f } = make();
+    f.addTranscript(['# Call', '[10:31:02] Emily C. [S1] (en): Bonjour (← fr)', '[10:31:02] Mike [S2] (en): Hello']);   // read so far
+    f.setTranscript(rewrite);                                    // the app read the replaced file from its start
+    const want = rewrite.filter((l) => l.startsWith('[')).map((l) => {
+      const m = /^\[(\S+)\] .*?(?: \[(S\d)\])? \((\w+)\): (.*?)(?: \(← (\w+)\))?$/.exec(l);
+      return [m[1], m[2] || 'me', m[4], m[5]];
+    });
+    assert.deepStrictEqual(f.transcript.map((x) => [x.t, x.speakerId, x.text, x.translatedFrom]), want);
+  });
+}
+
 test('presentation steps from slides; a skippable step', () => {
   const { f, get } = make();
   f.addItems([{ kind: 'slides', slides: [{ n: 1, title: 'Why', sec: 90, body: [{ k: 'p', t: 'Five users.' }, { k: 's', t: 'Skip if short.' }] }, { n: 2, title: 'Plan', sec: 120, body: [{ k: 'p', t: 'Monday.' }] }] }]);

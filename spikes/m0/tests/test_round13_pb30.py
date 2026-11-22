@@ -46,7 +46,30 @@ def test_identical_rows_one_translated_before_the_first_read_are_both_fed_once(T
     w.close("\n")
     run.step()
     run.step()
-    assert sorted((h.seq, h.text) for h in eng.history) == [(1, "Bonjour"), (2, "Hello")]
+    assert [(h.seq, h.stag, h.text) for h in eng.history] == [(1, "S1", "Bonjour"), (2, "S1", "Hello")]
+
+
+@pytest.mark.parametrize("first", ["S1", "S2"])
+def test_two_speakers_one_translated_to_the_other_ones_words_keep_their_own_seq(T, tmp_path, first):
+    """Review round 6 (PB-30): S1 says "Bonjour", S2 says "Hello" in the same second; S1's line is translated to "Hello"
+    before the engine's first poll. Each row keeps its own seq and speaker, whichever of the two was written first."""
+    md, eng, run, w, event = call(T, tmp_path)
+    t0 = 1_700_000_000.0
+    hms = T.hhmmss(t0)
+    fr = T.Line("them", t0, "en", "Bonjour", sid="S1", translated_from="fr")
+    en = T.Line("them", t0, "en", "Hello", sid="S2")
+    order = [fr, en] if first == "S1" else [en, fr]
+    for seq, ln in enumerate(order, 1):
+        ln.seq = seq
+        w.add(ln)
+        event(t=hms, ch="them", seg_end=hms, written=hms)
+    w.replace(fr, "Hello")
+    event(event="translated", seq=fr.seq, t=hms, ch="them", translated_from="fr", original="Bonjour", text="Hello")
+    w.close("\n")
+    run.step()
+    run.step()
+    want = sorted([(fr.seq, "S1", "Hello"), (en.seq, "S2", "Hello")])
+    assert [(h.seq, h.stag, h.text) for h in eng.history] == want
 
 
 def test_a_row_rewritten_to_the_text_of_a_real_later_row_is_not_dropped(T, tmp_path):
@@ -63,7 +86,7 @@ def test_a_row_rewritten_to_the_text_of_a_real_later_row_is_not_dropped(T, tmp_p
     w.close("\n")                                           # the file now has "Hello" twice
     run.step()
     run.step()
-    assert sorted((h.seq, h.text) for h in eng.history) == [(1, "Hello"), (2, "Hello")]
+    assert [(h.seq, h.stag, h.text) for h in eng.history] == [(1, "S1", "Hello"), (2, "S1", "Hello")]
 
 
 # ---- blocker 2: the target language does not follow the script Whisper wrote ---------------------------------

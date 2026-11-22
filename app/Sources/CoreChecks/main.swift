@@ -4774,5 +4774,29 @@ func translateRoutePB30() {
     expect(granted["LT_TRANSLATE_ROUTE"] == "1" && granted["CLAUDE_API"] == "k" && granted["LT_AI_ROUTE"] == "code", "PB-30: an allowed call: the permission is 1 and the tips route reaches the recorder")
 }
 translateRoutePB30()
+/// PB-30 (review round 6): the transcript reader tells a replaced file by its identity, shorter or longer.
+func tailReaderPB30() {
+    let dir = (NSTemporaryDirectory() as NSString).appendingPathComponent("pb30-tail-\(getpid())")
+    try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(atPath: dir) }
+    let path = (dir as NSString).appendingPathComponent("c.md")
+    func replace(_ s: String) {          // the recorder's way: a new file renamed over the old one
+        let tmp = path + ".tr.tmp"
+        try? s.write(toFile: tmp, atomically: false, encoding: .utf8)
+        _ = rename(tmp, path)
+    }
+    try? "# Call\n[10:31:02] Emily (en): Bonjour (← fr)\n[10:31:05] Mike (en): Hello\n[10:31:0".write(toFile: path, atomically: false, encoding: .utf8)
+    let r = TailReader(path: path)
+    expect(r.newLines() == ["# Call", "[10:31:02] Emily (en): Bonjour (← fr)", "[10:31:05] Mike (en): Hello"] && !r.replaced, "PB-30: a partial read: the complete rows only")
+    replace("# Call\n[10:31:02] Emily (en): Hi (← fr)\n[10:31:05] Mike (en): Hello\n")
+    expect(r.newLines() == ["# Call", "[10:31:02] Emily (en): Hi (← fr)", "[10:31:05] Mike (en): Hello"] && r.replaced, "PB-30: a shorter new file: the whole file, once, marked replaced")
+    expect(r.newLines().isEmpty && !r.replaced, "PB-30: nothing new after the replacement")
+    let long = "# Call\n[10:31:02] Emily (en): Hello, I would like a cup of coffee with milk and no sugar, please (← fr)\n[10:31:05] Mike (en): Hello\n[10:31:09] Me (en): Okay\n"
+    replace(long)
+    expect(r.newLines() == long.split(separator: "\n").map(String.init) && r.replaced, "PB-30: a longer new file: the whole file from its start, not from the old offset")
+    if let fh = FileHandle(forWritingAtPath: path) { _ = try? fh.seekToEnd(); fh.write(Data("[10:31:12] Me (en): Bye\n".utf8)); try? fh.close() }
+    expect(r.newLines() == ["[10:31:12] Me (en): Bye"] && !r.replaced, "PB-30: an append after the replacement is read as new")
+}
+tailReaderPB30()
 print("core checks: \(passed) passed, \(failures) failed")
 exit(failures == 0 ? 0 : 1)

@@ -239,13 +239,14 @@ def test_stop_phrases_in_code_match_the_rules_file(T):
     assert "ru" in rules["never_languages"]
 
 
-def test_line_record_has_the_translated_from_field_and_the_transcript_format_is_unchanged(T, tmp_path):
+def test_line_record_has_the_translated_from_field_and_the_row_ends_with_the_marker(T, tmp_path):
     ln = T.Line("them", 1000.0, "uk", "Привіт", translated_from="en")
     assert ln.translated_from == "en" and T.Line("me", 1.0, "uk", "x").translated_from is None
     w = T.Writer(tmp_path / "c.md", dict(T.DEFAULTS), "")
     w._write(ln)
     row = (tmp_path / "c.md").read_text(encoding="utf-8").strip()
-    assert row.endswith("Співрозмовник (uk): Привіт")              # old readers (LINE_RE: two-letter tag) still match
+    # review round 6: the source language is saved at the end of the row; the prefix (time, label, tag) is unchanged
+    assert row.endswith("Співрозмовник (uk): Привіт (← en)")
 
 
 # ---- the recorder path: asr_segment() = choose -> decode -> clean_text -> silence filter -> language share ----------

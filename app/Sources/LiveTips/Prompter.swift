@@ -19,36 +19,7 @@ struct PrompterArgs {
     var demoPresentation = false
 }
 
-/// Reads only the lines appended to a file since the previous call.
-final class TailReader {
-    let path: String
-    private var offset: UInt64 = 0
-    private var buffer = Data()
-
-    init(path: String) { self.path = path }
-
-    func newLines() -> [String] {
-        guard let fh = FileHandle(forReadingAtPath: path) else { return [] }
-        defer { try? fh.close() }
-        let size = (try? fh.seekToEnd()) ?? 0
-        if size < offset { offset = 0; buffer = Data() }   // file was replaced
-        if size == offset { return [] }
-        try? fh.seek(toOffset: offset)
-        let data = fh.readDataToEndOfFile()
-        offset += UInt64(data.count)
-        buffer.append(data)
-        var lines: [String] = []
-        while let r = buffer.range(of: Data([0x0A])) {
-            let lineData = buffer.subdata(in: buffer.startIndex..<r.lowerBound)
-            buffer.removeSubrange(buffer.startIndex..<r.upperBound)
-            if let s = String(data: lineData, encoding: .utf8),
-               !s.trimmingCharacters(in: .whitespaces).isEmpty {
-                lines.append(s)
-            }
-        }
-        return lines
-    }
-}
+// TailReader (reads the lines appended to a file since the previous call) is in LiveTipsCore (PB-30: CoreChecks test it).
 
 func isJSONObject(_ s: String) -> Bool {
     guard let d = s.data(using: .utf8),
@@ -258,8 +229,10 @@ final class PrompterController: NSObject, NSWindowDelegate, WKScriptMessageHandl
         // The live transcript and the speaker names (speakers.json) for the transcript pane.
         if let tr = transcript {
             let lines = tr.newLines()
-            if !lines.isEmpty, let d = try? JSONSerialization.data(withJSONObject: lines), let js = String(data: d, encoding: .utf8) {
-                push("window.addTranscript && window.addTranscript(" + js + ")")
+            // PB-30: a replaced file (the end-of-call rewrite with the translations) is shown anew, never appended
+            if !lines.isEmpty || tr.replaced, let d = try? JSONSerialization.data(withJSONObject: lines), let js = String(data: d, encoding: .utf8) {
+                push(tr.replaced ? "window.setTranscript && window.setTranscript(" + js + ")"
+                                 : "window.addTranscript && window.addTranscript(" + js + ")")
             }
             // after the rows above: a translation finds its row in the pane, by the line's seq
             let ev = (translations?.newLines() ?? []).filter { isJSONObject($0) }      // timing rows give the rows their seq
