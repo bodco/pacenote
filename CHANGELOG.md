@@ -15,7 +15,7 @@ Pacenote. Earlier versions are described in the commit messages and in
   call) shows an Output language menu and a Regenerate button under the status lines. Choosing a language only
   remembers it for this call. Regenerate writes the notes, Summary, Recap and an existing follow-up
   draft again in that language, adds the Summary, Recap and meeting notes to the Notion page again (a new section;
-  the old one stays; the Notion line turns current only after Notion took the write), asks first for a call over one
+  the old one stays; always on the call's own page, never a second page; the Notion line turns current only after Notion took the write), asks first for a call over one
   hour, and a line says which language each text was written in and which is out of date. A one-language call shows nothing.
 - Follow-up email drafts use the call's output language. If the project's client language differs, the Follow-up
   tab and inspector offer that language before the first draft. Write again asks before replacing the draft.

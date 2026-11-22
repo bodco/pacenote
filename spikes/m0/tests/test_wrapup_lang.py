@@ -76,3 +76,31 @@ def test_notion_language_is_not_recorded_when_the_page_write_fails(call, capsys,
     monkeypatch.setattr(W, "notion", failing)
     assert W.main(call.base) == 1
     assert "notion" not in CL.read_sidecar(call.md)["artifacts"]
+
+
+def test_page_argument_appends_to_that_page_and_never_creates(call, capsys, monkeypatch):
+    """PB-32 S6: Regenerate names the call's page; a date lookup that would miss it must not make a second page."""
+    _retag(call, "uk")
+    call.state["pages"] = []                                  # find_page would find nothing
+    pid = "0123456789abcdef0123456789abcdef"
+    got, parents = [], []
+
+    def spy(method, path, body=None):
+        got.append((method, path))
+        if method == "POST" and path == "/pages":
+            parents.append(body["parent"])
+        if method == "GET" and path == "/pages/" + pid:
+            return {"id": pid, "url": "u-call", "properties": {}}
+        return call.notion(method, path, body)
+    monkeypatch.setattr(W, "notion", spy)
+    assert W.main(call.base + ["--page", "https://www.notion.so/Weekly-sync-" + pid]) == 0
+    assert parents and all(p["type"] == "page_id" for p in parents)      # only the transcript sub-page, no page in the database
+    assert ("PATCH", "/blocks/" + pid + "/children") in got
+    assert CL.read_sidecar(call.md)["artifacts"] == {"notion": "uk"}
+
+
+def test_page_argument_that_is_not_a_page_fails_without_a_write(call, capsys, monkeypatch):
+    _retag(call, "uk")
+    assert W.main(call.base + ["--page", "nonsense"]) == 1
+    assert not [c for c in call.calls if c[0] in ("POST", "PATCH")]
+    assert "notion" not in CL.read_sidecar(call.md)["artifacts"]

@@ -70,7 +70,7 @@ final class OutputLanguageModel: ObservableObject {
         Task { @MainActor in
             while job.running { try? await Task.sleep(nanoseconds: 500_000_000) }
             if let err = job.failed { self.failed = err; self.running = false; self.refresh(); return }
-            if CallPageSync.of(self.file).notionURL != nil { await self.rewriteNotionPage() }
+            if let page = CallPageSync.of(self.file).notionURL { await self.rewriteNotionPage(page: page) }
             let fu = FollowUpModel.of(self.file)
             if fu.hasDraft, !CallLanguage.readSidecar(transcript: self.file).followUpUsesClientLanguage {
                 fu.write(replacingDraft: true)
@@ -81,13 +81,13 @@ final class OutputLanguageModel: ObservableObject {
         }
     }
 
-    /// The page's Summary, Recap and Meeting notes: the same wrapup_notion run as after a call (the existing path). wrapup_notion
+    /// The page's Summary, Recap and Meeting notes: the same wrapup_notion run as after a call, on the call's own page (--page: never a lookup by date, never a new page). wrapup_notion
     /// records the Notion language in the sidecar itself, after Notion took the write; a failure leaves "out of date" and shows here.
-    private func rewriteNotionPage() async {
+    private func rewriteNotionPage(page: String) async {
         let c = AppConfig.load(from: AppPaths.config)
         let appRoot = c.effectiveAppRoot(appSupport: AppPaths.support.path)
         let (proj, ws) = PyTool.project(of: file)
-        var args = ["--md", file, "--lt", c.engine.python, (appRoot as NSString).appendingPathComponent("bin/lt"), "--model", c.models.analysis]
+        var args = ["--md", file, "--page", page, "--lt", c.engine.python, (appRoot as NSString).appendingPathComponent("bin/lt"), "--model", c.models.analysis]
         args += proj != nil ? NotionTargets.projectArgs(c, proj) : NotionTargets.workspaceArgs(c, ws, kind: "meetings")
         if !c.notionMeetingsDB.isEmpty { args += ["--meetings-db", c.notionMeetingsDB] }
         let title = CallPageView.title(file)
