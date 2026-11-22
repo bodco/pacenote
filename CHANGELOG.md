@@ -16,19 +16,24 @@ Pacenote. Earlier versions are described in the commit messages and in
   Cancelling a retry also removes partial files saved by earlier attempts for that pull.
 
 - **The call is logged in HubSpot (H2).** Update HubSpot has a new Call row: a HubSpot Call with the title, start
-  time, duration, direction, outcome, participants, the Summary and next steps, and a link back to the call,
-  associated with the matched contacts, company and open deal. Applying again updates the same Call instead of
-  adding a second one, and Undo removes a new Call or restores the old values. Transcript text is never sent. A new
+  time, duration, direction, outcome, participants, the call page's Summary, the next steps, and a link back to the
+  call, associated with the matched contacts, company and open deal. Applying again, even while Auto runs, updates the
+  same Call instead of adding a second one, and Undo removes a new Call or restores the old values. Transcript text is
+  never sent. A call's HubSpot link now remembers its HubSpot account: after the key changes to another account, or
+  for a call linked before this version, nothing is written and Update HubSpot offers **Relink**. A new
   switch in Settings > Integrations > HubSpot, **Log the call in HubSpot automatically after it ends**, is off by
   default and logs only the Call. The HubSpot integration design is in `docs/specs/hubspot-crm-integration.md`.
 
-- **Contacts, companies and leads of the call in HubSpot (H3).** Update HubSpot matches the call's invitees by email,
-  then by name inside the company, and the company by domain, and reuses what exists. Missing contacts, the company
-  and, if you turn Leads on, a Lead are shown as unticked rows with the name, email, job title and company filled in;
-  Apply creates them before the Call, so the Call is associated with them, and Undo removes them. An existing email or
-  domain is never duplicated. Four new switches in Settings > Integrations > HubSpot, all off by default, create
-  contacts, the company or Leads automatically after the call. Leads need the scopes `crm.objects.leads.read` and
-  `crm.objects.leads.write`.
+- **Contacts, companies and leads of the call in HubSpot (H3).** Update HubSpot matches each invitee by email, then
+  by name inside the company of their own email domain, and reuses what exists. On a call with people from several
+  companies, each person is matched and created in their own company. Missing contacts, missing companies and, if you
+  turn Leads on, a Lead are shown as unticked rows with the name, email and company filled in. A contact already in
+  HubSpot without a Lead also gets a Lead row. Apply creates them before the Call, so the Call is associated with
+  them, and Undo removes them. A Call logged earlier is associated with the new people too, and if that fails the
+  error is shown instead of "Updated". An existing email or domain is never duplicated. Four new switches in
+  Settings > Integrations > HubSpot, all off by default, create contacts, the company or Leads automatically after
+  the call. Leads need the scopes `crm.objects.leads.read` and `crm.objects.leads.write`. The job title is left empty
+  for now: the calendar does not provide one.
 
 ## 0.26.4 (2026-11-20)
 

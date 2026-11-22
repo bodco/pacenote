@@ -1,13 +1,13 @@
 import Foundation
 
-/// H3 (PB-59, docs/specs/hubspot-crm-integration.md sections 2, 6 and 7): find or create the contacts, the company and
-/// the leads of a call. Match first (email, then name inside the company), propose what is missing with the fields
-/// filled in, create only after the PM's click or with the per-object Auto switch, never a duplicate, and give the new
-/// ids to the Call of H2. Own file on purpose: the CRMConnector protocol does not change.
+/// H3 (PB-59, docs/specs/hubspot-crm-integration.md sections 2, 6 and 7): find or create the contacts, the companies and
+/// the leads of a call. Match first (email, then name inside the participant's own company), propose what is missing
+/// with the fields filled in, create only after the PM's click or with the per-object Auto switch, never a duplicate,
+/// and give the new ids to the Call of H2. Own file on purpose: the CRMConnector protocol does not change.
 public struct CRMParticipant: Equatable {
     public var name: String
     public var email: String
-    public var role: String          // the job title when the call page or the calendar has one, else empty
+    public var role: String          // the job title; no source in the app yet, so empty (the PM types it in HubSpot)
     public init(name: String, email: String = "", role: String = "") { self.name = name; self.email = email; self.role = role }
 }
 
@@ -15,15 +15,19 @@ public enum CRMProposalKind: String { case company, contact, lead }
 
 /// One thing Pacenote would create, with every field the PM sees in the review row.
 public struct CRMProposal: Equatable, Identifiable {
-    public var id: String            // "company", "contact.<n>", "lead.<n>"
+    public var id: String            // "company.<n>", "contact.<n>", "lead.<n>"
     public var kind: CRMProposalKind
     public var name: String          // the person's or company's name; the lead's name
     public var email = ""
     public var role = ""
     public var company = ""          // the company's name (contact and lead rows)
-    public var domain = ""           // the company's domain
-    public init(id: String, kind: CRMProposalKind, name: String, email: String = "", role: String = "", company: String = "", domain: String = "") {
+    public var domain = ""           // the company's domain; a contact or lead with no companyId gets the company made for it
+    public var companyId = ""        // the participant's company already in HubSpot
+    public var contactId = ""        // a lead for a contact already in HubSpot
+    public init(id: String, kind: CRMProposalKind, name: String, email: String = "", role: String = "", company: String = "", domain: String = "",
+                companyId: String = "", contactId: String = "") {
         self.id = id; self.kind = kind; self.name = name; self.email = email; self.role = role; self.company = company; self.domain = domain
+        self.companyId = companyId; self.contactId = contactId
     }
     /// The row's second line: what will be written.
     public var detail: String {
@@ -36,8 +40,8 @@ public struct CRMProposal: Equatable, Identifiable {
 }
 
 public struct CRMPeopleMatch: Equatable {
-    public var company: CRMCompany?
-    public var contacts: [CRMContact]        // found in HubSpot: by email, else by name inside the company
+    public var company: CRMCompany?          // the call's company (the link's): linked, else the first domain's, else by name
+    public var contacts: [CRMContact]        // found in HubSpot: by email, else by name inside the participant's company
     public var proposals: [CRMProposal]
 }
 
@@ -56,7 +60,10 @@ public struct CRMCreated: Equatable { public var id: String; public var created:
 
 /// The write side of H3. HubSpotConnector implements it; the app uses it when `connector() as? CRMPeopleConnector`.
 public protocol CRMPeopleConnector: CRMConnector {
-    func findContacts(named: String, companyId: String) async throws -> [CRMContact]
+    /// Every contact associated with the company (all pages).
+    func companyContacts(companyId: String) async throws -> [CRMContact]
+    /// The contact's lead, if it has one.
+    func leadId(contactId: String) async throws -> String?
     func createCompany(name: String, domain: String) async throws -> CRMCreated
     func createContact(name: String, email: String, role: String, companyId: String) async throws -> CRMCreated
     func createLead(name: String, contactId: String, companyId: String) async throws -> CRMCreated
@@ -94,26 +101,27 @@ public enum CRMPeople {
     }
 
     /// Calendar names and emails (the PM left out) become participants. The two lists are paired by position only when
-    /// they have the same length; otherwise each email gets the name derived from it.
-    public static func participants(names: [String], emails: [String], titles: [String: String] = [:]) -> [CRMParticipant] {
+    /// they have the same length; otherwise each email gets the name derived from it. No job title: the calendar has
+    /// none and the call page does not show one, so the role stays empty.
+    public static func participants(names: [String], emails: [String]) -> [CRMParticipant] {
         var out: [CRMParticipant] = [], seen = Set<String>()
         let paired = names.count == emails.count
         for (i, raw) in emails.enumerated() {
             let e = normEmail(raw)
             guard e.contains("@"), seen.insert(e).inserted else { continue }
-            let name = paired ? names[i] : derivedName(e)
-            out.append(CRMParticipant(name: name, email: e, role: titles[nameKey(name)] ?? ""))
+            out.append(CRMParticipant(name: paired ? names[i] : derivedName(e), email: e))
         }
         if !paired {      // names without an email still help the name match inside the company
-            for n in names where !n.isEmpty && !out.contains(where: { nameKey($0.name) == nameKey(n) }) {
-                out.append(CRMParticipant(name: n, role: titles[nameKey(n)] ?? ""))
-            }
+            for n in names where !n.isEmpty && !out.contains(where: { nameKey($0.name) == nameKey(n) }) { out.append(CRMParticipant(name: n)) }
         }
         return out
     }
 
     /// Finds what exists and proposes what is missing. Reads only.
-    /// - existing: the company the call is already linked to (skips the company search)
+    /// Each participant's company comes from their own email domain. The call's company (the link's, or the one found
+    /// by the PM's name for the account) stands in only on a call with one client domain, and never for a free-mail
+    /// address: on a mixed call it cannot tell whose company it is.
+    /// - existing: the company the call is already linked to
     /// - companyName: what the PM calls the account (the project's CRM company), else the name comes from the domain
     /// - hasDeal: a call with an open deal gets no lead (the deal is the sales loop)
     public static func match(participants: [CRMParticipant], existing: CRMCompany?, ownDomains: Set<String>, companyName: String,
@@ -125,77 +133,134 @@ public enum CRMPeople {
         for chunk in stride(from: 0, to: emails.count, by: 5).map({ Array(emails[$0..<min($0 + 5, emails.count)]) }) {
             for k in try await c.findContacts(emails: chunk) where !found.contains(where: { $0.id == k.id }) { found.append(k) }
         }
-        let foundEmails = Set(found.map { normEmail($0.email) })
+        var contactOf: [String: CRMContact] = [:]       // participant email -> the HubSpot contact
+        for k in found { contactOf[normEmail(k.email)] = k }
 
-        var company = existing
         let clientDomains = CRMSnapshot.clientDomains(emails: emails, ownDomains: own)
-        if company == nil {
-            for d in clientDomains { if let co = try await c.findCompany(domain: d, name: ""), !co.id.isEmpty { company = co; break } }
-        }
+        var byDomain: [String: CRMCompany] = [:]
+        for d in clientDomains { if let co = try await c.findCompany(domain: d, name: ""), !co.id.isEmpty { byDomain[d] = co } }
+        var company = existing ?? clientDomains.lazy.compactMap { byDomain[$0] }.first
         if company == nil, !companyName.isEmpty { company = try await c.findCompany(domain: "", name: companyName) }
+        let single = clientDomains.count <= 1
+        func companyOf(_ p: CRMParticipant) -> CRMCompany? {
+            let d = domain(p.email)
+            if let co = byDomain[d] { return co }
+            return single && (p.email.isEmpty || clientDomains.first == d) ? company : nil
+        }
 
-        // second pass: an invitee whose email is not in HubSpot may be the same person under another email
-        var unmatched = external.filter { $0.email.isEmpty || !foundEmails.contains(normEmail($0.email)) }
-        if let co = company, !unmatched.isEmpty {
-            for p in unmatched {
-                let key = nameKey(p.name)
-                guard key.split(separator: " ").count >= 2 else { continue }
-                let hits = try await c.findContacts(named: p.name, companyId: co.id).filter { nameKey($0.name) == key }
-                if let hit = hits.first {
+        // second pass: an invitee whose email is not in HubSpot may be the same person under another email, inside their own company
+        var roster: [String: [CRMContact]] = [:]         // company id -> its contacts, read once
+        var unmatched: [CRMParticipant] = []
+        for p in external where p.email.isEmpty || contactOf[normEmail(p.email)] == nil {
+            let key = nameKey(p.name)
+            if key.split(separator: " ").count >= 2, let co = companyOf(p) {
+                if roster[co.id] == nil { roster[co.id] = try await c.companyContacts(companyId: co.id) }
+                if let hit = roster[co.id]?.first(where: { nameKey($0.name) == key }) {
                     if !found.contains(where: { $0.id == hit.id }) { found.append(hit) }
-                    unmatched.removeAll { $0 == p }
+                    if !p.email.isEmpty { contactOf[normEmail(p.email)] = hit }
+                    continue
                 }
             }
+            unmatched.append(p)
         }
 
         var proposals: [CRMProposal] = []
-        let coName = companyName.isEmpty ? (clientDomains.first.map(companyName(fromDomain:)) ?? "") : companyName
-        if company == nil, let d = clientDomains.first {
-            proposals.append(CRMProposal(id: "company", kind: .company, name: coName, domain: d))
+        var newCompany: [String: String] = [:]           // domain -> the name of the company proposed for it
+        for d in clientDomains where byDomain[d] == nil && !(single && company != nil) {
+            let name = single && !companyName.isEmpty ? companyName : Self.companyName(fromDomain: d)
+            newCompany[d] = name
+            proposals.append(CRMProposal(id: "company.\(newCompany.count - 1)", kind: .company, name: name, domain: d))
+        }
+        func place(_ p: CRMParticipant) -> (name: String, domain: String, id: String) {
+            if let co = companyOf(p) { return (co.name, co.domain, co.id) }
+            let d = domain(p.email)
+            return newCompany[d].map { ($0, d, "") } ?? ("", "", "")
         }
         var n = 0
+        func lead(_ person: String, email: String, at co: (name: String, domain: String, id: String), contactId: String = "") {
+            proposals.append(CRMProposal(id: "lead.\(n)", kind: .lead, name: person + (co.name.isEmpty ? "" : " (\(co.name))"), email: email,
+                                         company: co.name, domain: co.domain, companyId: co.id, contactId: contactId))
+        }
         for p in unmatched where !p.email.isEmpty {
             let e = normEmail(p.email), d = domain(e)
             let name = p.name.isEmpty ? derivedName(e) : p.name
             // decision 4: an address at a free-mail service without a real name is not worth a contact
             if freeMail.contains(d) && (p.name.isEmpty || nameKey(p.name) == nameKey(derivedName(e))) { continue }
-            let cname = company?.name ?? (clientDomains.contains(d) ? coName : "")
-            let dom = company?.domain.isEmpty == false ? company!.domain : (clientDomains.contains(d) ? d : "")
-            proposals.append(CRMProposal(id: "contact.\(n)", kind: .contact, name: name, email: e, role: p.role, company: cname, domain: dom))
-            if leads && !hasDeal {
-                proposals.append(CRMProposal(id: "lead.\(n)", kind: .lead, name: name + (cname.isEmpty ? "" : " (\(cname))"), email: e, company: cname, domain: dom))
-            }
+            let co = place(p)
+            proposals.append(CRMProposal(id: "contact.\(n)", kind: .contact, name: name, email: e, role: p.role, company: co.name, domain: co.domain, companyId: co.id))
+            if leads && !hasDeal { lead(name, email: e, at: co) }
             n += 1
+        }
+        // a person already in HubSpot gets a lead too when they have none (a contact made by an earlier Apply whose lead failed)
+        if leads && !hasDeal {
+            var asked = Set<String>()
+            for p in external where !p.email.isEmpty {
+                guard let k = contactOf[normEmail(p.email)], asked.insert(k.id).inserted, try await c.leadId(contactId: k.id) == nil else { continue }
+                lead(k.name.isEmpty ? (p.name.isEmpty ? derivedName(p.email) : p.name) : k.name, email: normEmail(p.email), at: place(p), contactId: k.id)
+                n += 1
+            }
         }
         return CRMPeopleMatch(company: company, contacts: found, proposals: proposals)
     }
 
-    /// Creates the given proposals, company first, then contacts, then leads. Every create looks for an existing
+    /// Creates the given proposals, companies first, then contacts, then leads. Every create looks for an existing
     /// object first (the email, the domain, the contact's leads), so a second run or a second Pacenote never makes a
     /// duplicate; what existed is reused and counted, not undone. A failure stops the run; what was made stays listed.
+    /// A contact or lead goes to its own company: the one it was matched with, else the one made for its domain.
     public static func apply(_ chosen: [CRMProposal], company existing: CRMCompany?, connector c: CRMPeopleConnector) async -> CRMPeopleResult {
         var r = CRMPeopleResult()
         r.company = existing
         var byEmail: [String: String] = [:]      // email -> contact id
+        var madeFor: [String: String] = [:]      // domain -> company id
+        func companyId(_ p: CRMProposal) -> String { !p.companyId.isEmpty ? p.companyId : (madeFor[p.domain] ?? "") }
         do {
-            if let p = chosen.first(where: { $0.kind == .company }) {
+            for p in chosen where p.kind == .company {
                 let k = try await c.createCompany(name: p.name, domain: p.domain)
-                r.company = CRMCompany(id: k.id, name: p.name, domain: p.domain)
+                madeFor[p.domain] = k.id
+                if r.company == nil { r.company = CRMCompany(id: k.id, name: p.name, domain: p.domain) }
                 if k.created { r.created.append(("companies", k.id)) } else { r.reused += 1 }
             }
             for p in chosen where p.kind == .contact {
-                let k = try await c.createContact(name: p.name, email: p.email, role: p.role, companyId: r.company?.id ?? "")
+                let k = try await c.createContact(name: p.name, email: p.email, role: p.role, companyId: companyId(p))
                 byEmail[p.email] = k.id
                 r.contacts.append(CRMContact(id: k.id, name: p.name, email: p.email, role: p.role))
                 if k.created { r.created.append(("contacts", k.id)) } else { r.reused += 1 }
             }
             for p in chosen where p.kind == .lead {
-                guard let cid = byEmail[p.email] else { continue }       // a lead needs its contact (HubSpot requires one)
-                let k = try await c.createLead(name: p.name, contactId: cid, companyId: r.company?.id ?? "")
+                let cid = byEmail[p.email] ?? p.contactId
+                guard !cid.isEmpty else { continue }       // a lead needs its contact (HubSpot requires one)
+                let k = try await c.createLead(name: p.name, contactId: cid, companyId: companyId(p))
                 if k.created { r.created.append(("leads", k.id)) } else { r.reused += 1 }
             }
         } catch {
             r.failure = (error as? CRMError) ?? CRMError(code: 0, message: error.localizedDescription)
+        }
+        return r
+    }
+
+    /// The one write path of Auto and Apply: creates the chosen rows, then gives a Call logged earlier the people it
+    /// does not have yet (`before` = the refs it was written with). When the Call is written in this run its own upsert
+    /// associates them first, so nothing is added here. A failed association is the result's failure, never hidden;
+    /// what was created stays listed for Undo. The association takes its turn in the per-call queue of H2 and reads
+    /// the stored Call id when the turn comes.
+    public static func commit(_ chosen: [CRMProposal], company: CRMCompany?, found: [CRMContact], before: [CRMRef], callKey: String,
+                              callWritten: Bool, connector c: CRMPeopleConnector, queue: CRMCallQueue = .shared,
+                              callId: @escaping () -> String) async -> CRMPeopleResult {
+        var r = chosen.isEmpty ? CRMPeopleResult(company: company) : await apply(chosen, company: company, connector: c)
+        guard !callWritten else { return r }
+        var add: [CRMRef] = []
+        if let co = r.company, !co.id.isEmpty { add.append(CRMRef("companies", co.id)) }
+        for k in found + r.contacts where !k.id.isEmpty { add.append(CRMRef("contacts", k.id)) }
+        add = add.reduce(into: []) { out, a in if !before.contains(a) && !out.contains(a) { out.append(a) } }
+        guard !add.isEmpty else { return r }
+        do {
+            try await queue.run(callKey) {
+                let id = callId()
+                if !id.isEmpty { try await c.associateCall(callId: id, refs: add) }
+            }
+        } catch {
+            let e = (error as? CRMError) ?? CRMError(code: 0, message: error.localizedDescription)
+            r.failure = r.failure.map { CRMError(code: $0.code, message: $0.message + " " + e.message, scope: $0.scope) } ?? e
         }
         return r
     }
@@ -207,17 +272,29 @@ extension HubSpotConnector: CRMPeopleConnector {
     // HUBSPOT_DEFINED association type ids, object on the left to object on the right
     static let contactToCompany = 1, leadToContact = 578, leadToCompany = 610
 
-    public func findContacts(named: String, companyId: String) async throws -> [CRMContact] {
-        let a = try await call("GET", "/crm/v4/objects/companies/\(companyId)/associations/contacts?limit=500")
-        let ids = ((a["results"] as? [[String: Any]]) ?? []).compactMap { r -> String? in (r["toObjectId"]).map { "\($0)" } }
-        guard !ids.isEmpty else { return [] }
-        let r = try await call("POST", "/crm/v3/objects/contacts/batch/read", [
-            "properties": ["firstname", "lastname", "email", "jobtitle"], "inputs": ids.prefix(100).map { ["id": $0] }])
-        return ((r["results"] as? [[String: Any]]) ?? []).compactMap { c in
-            guard let id = c["id"] as? String else { return nil }
-            return CRMContact(id: id, name: [Self.p(c, "firstname"), Self.p(c, "lastname")].filter { !$0.isEmpty }.joined(separator: " "),
-                              email: Self.p(c, "email"), role: Self.p(c, "jobtitle"))
+    public func companyContacts(companyId: String) async throws -> [CRMContact] {
+        var ids: [String] = [], after = ""
+        repeat {
+            let a = try await call("GET", "/crm/v4/objects/companies/\(companyId)/associations/contacts?limit=500" + (after.isEmpty ? "" : "&after=" + after))
+            ids += ((a["results"] as? [[String: Any]]) ?? []).compactMap { r -> String? in (r["toObjectId"]).map { "\($0)" } }
+            after = (((a["paging"] as? [String: Any])?["next"] as? [String: Any])?["after"]).map { "\($0)" } ?? ""
+        } while !after.isEmpty
+        var out: [CRMContact] = []
+        for start in stride(from: 0, to: ids.count, by: 100) {      // batch read takes 100 at a time
+            let r = try await call("POST", "/crm/v3/objects/contacts/batch/read", [
+                "properties": ["firstname", "lastname", "email", "jobtitle"], "inputs": ids[start..<min(start + 100, ids.count)].map { ["id": $0] }])
+            out += ((r["results"] as? [[String: Any]]) ?? []).compactMap { c in
+                guard let id = c["id"] as? String else { return nil }
+                return CRMContact(id: id, name: [Self.p(c, "firstname"), Self.p(c, "lastname")].filter { !$0.isEmpty }.joined(separator: " "),
+                                  email: Self.p(c, "email"), role: Self.p(c, "jobtitle"))
+            }
         }
+        return out
+    }
+
+    public func leadId(contactId: String) async throws -> String? {
+        let a = try await call("GET", "/crm/v4/objects/contacts/\(contactId)/associations/leads?limit=1")
+        return ((a["results"] as? [[String: Any]])?.first?["toObjectId"]).map { "\($0)" }
     }
 
     public func createCompany(name: String, domain: String) async throws -> CRMCreated {
@@ -254,8 +331,7 @@ extension HubSpotConnector: CRMPeopleConnector {
 
     public func createLead(name: String, contactId: String, companyId: String) async throws -> CRMCreated {
         // one lead per contact: an existing one is reused
-        let a = try await call("GET", "/crm/v4/objects/contacts/\(contactId)/associations/leads?limit=1")
-        if let id = ((a["results"] as? [[String: Any]])?.first?["toObjectId"]).map({ "\($0)" }) { return CRMCreated(id: id, created: false) }
+        if let id = try await leadId(contactId: contactId) { return CRMCreated(id: id, created: false) }
         var types: [[String: Any]] = [["to": ["id": contactId], "types": [["associationCategory": "HUBSPOT_DEFINED", "associationTypeId": Self.leadToContact]]]]
         if !companyId.isEmpty { types.append(["to": ["id": companyId], "types": [["associationCategory": "HUBSPOT_DEFINED", "associationTypeId": Self.leadToCompany]]]) }
         let r = try await call("POST", "/crm/v3/objects/leads", ["properties": owned(["hs_lead_name": name]), "associations": types])

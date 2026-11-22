@@ -7,18 +7,12 @@ import LiveTipsCore
 
 @MainActor
 enum CRMPeopleFlow {
-    /// The invitees of the call from its calendar event (the PM left out), with a job title when the call page has one.
+    /// The invitees of the call from its calendar event (the PM left out). No job title: see CRMPeople.participants.
     static func participants(file: String) -> [CRMParticipant] {
         guard let r = CallHistory.shared.records.first(where: { $0.file == file }) else { return [] }
         let key = EditLog.seriesKey(r.title)
         guard let ev = CalendarService.shared.events.first(where: { abs($0.start.timeIntervalSince(r.start)) < 1800 && EditLog.seriesKey($0.title) == key }) else { return [] }
-        let base = file.hasSuffix(".md") ? String(file.dropLast(3)) : file
-        let sales = (try? Data(contentsOf: URL(fileURLWithPath: CallLayout.sidecar(base, ".sales.json")))).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
-        var titles: [String: String] = [:]      // stakeholders[].title, when the PM or the notes gave one (the buying "role" is not a job title)
-        for s in (sales["stakeholders"] as? [[String: Any]]) ?? [] {
-            if let n = s["name"] as? String, let t = s["title"] as? String, !t.isEmpty { titles[CRMPeople.nameKey(n)] = t }
-        }
-        return CRMPeople.participants(names: ev.attendees, emails: ev.emails, titles: titles)
+        return CRMPeople.participants(names: ev.attendees, emails: ev.emails)
     }
 
     static func existingCompany(_ l: CRMLink) -> CRMCompany? { l.companyId.isEmpty ? nil : CRMCompany(id: l.companyId, name: l.companyName, domain: "") }
@@ -51,10 +45,25 @@ enum CRMPeopleFlow {
         return n
     }
 
-    /// After the call, without a click, for the objects whose own Auto switch is on. Needs a linked call. Returns the new link.
-    static func auto(file: String, link l: CRMLink, connector c: CRMConnector, name: String) async -> CRMLink {
+    /// Creates the chosen rows and gives a Call logged earlier its new people (CRMPeople.commit), then stores the
+    /// people on the link on disk, keeping a Call id another path stored meanwhile. Auto and Apply both use it.
+    static func commit(_ chosen: [CRMProposal], match m: (company: CRMCompany?, found: [CRMContact]), link l: CRMLink, base: String,
+                       callWritten: Bool, connector pc: CRMPeopleConnector) async -> (CRMLink, CRMPeopleResult) {
+        let before = CRMCallLogger.refs(CRMLink.load(base: base) ?? l)      // what the stored Call was written with
+        let r = await CRMPeople.commit(chosen, company: m.company, found: m.found, before: before, callKey: l.callKey, callWritten: callWritten,
+                                       connector: pc, callId: { CRMLink.load(base: base)?.callId ?? l.callId })
+        let n = merge(l, company: r.company, contacts: m.found + r.contacts)
+        if n != l { merge(CRMLink.load(base: base) ?? l, company: r.company, contacts: m.found + r.contacts).save(base: base) }
+        let made = ["contacts", "companies", "leads"].map { t in r.created.filter { $0.type == t }.count }
+        if !chosen.isEmpty { UsageLog.log("update_crm", ["fields": 0, "contacts": made[0], "companies": made[1], "leads": made[2]]) }
+        return (n, r)
+    }
+
+    /// After the call, without a click, for the objects whose own Auto switch is on. Needs a linked call. Returns the
+    /// new link and the failure (an analytics code only: Auto has no window).
+    static func auto(file: String, link l: CRMLink, connector c: CRMConnector, name: String, callWritten: Bool) async -> (CRMLink, CRMError?) {
         let cfg = SettingsWindow.model.config.crm
-        guard let pc = c as? CRMPeopleConnector, let m = await match(file: file, link: l, connector: pc, name: name) else { return l }
+        guard let pc = c as? CRMPeopleConnector, let m = await match(file: file, link: l, connector: pc, name: name) else { return (l, nil) }
         var chosen = m.proposals.filter {
             switch $0.kind {
             case .company: return cfg.autoCreateCompanies
@@ -62,15 +71,19 @@ enum CRMPeopleFlow {
             case .lead: return cfg.autoCreateLeads && cfg.proposeLeads
             }
         }
-        for lead in chosen where lead.kind == .lead {              // a lead's contact is created or reused with it
-            if let k = m.proposals.first(where: { $0.kind == .contact && $0.email == lead.email }), !chosen.contains(k) { chosen.append(k) }
+        chosen = CRMPeopleFlow.withCompanions(chosen, from: m.proposals)
+        let base = file.hasSuffix(".md") ? String(file.dropLast(3)) : file
+        let (n, r) = await commit(chosen, match: (m.company, m.contacts), link: l, base: base, callWritten: callWritten, connector: pc)
+        return (n, r.failure)
+    }
+
+    /// A lead's new contact is created with it (a company only with its own row or switch).
+    static func withCompanions(_ chosen: [CRMProposal], from all: [CRMProposal]) -> [CRMProposal] {
+        var out = chosen
+        for lead in chosen where lead.kind == .lead && lead.contactId.isEmpty {
+            if let k = all.first(where: { $0.kind == .contact && $0.email == lead.email }), !out.contains(k) { out.append(k) }
         }
-        let r = await CRMPeople.apply(chosen, company: m.company, connector: pc)
-        if let f = r.failure { AnalyticsTracker.shared.error("crm", Analytics.errorCode(message: f.message), provider: "hubspot") }
-        if !chosen.isEmpty { UsageLog.log("update_crm", ["fields": 0, "contacts": r.created.filter { $0.type == "contacts" }.count, "companies": r.created.filter { $0.type == "companies" }.count, "leads": r.created.filter { $0.type == "leads" }.count]) }
-        let n = merge(l, company: r.company, contacts: m.contacts + r.contacts)
-        if n != l { n.save(base: file.hasSuffix(".md") ? String(file.dropLast(3)) : file) }
-        return n
+        return out
     }
 }
 
@@ -94,20 +107,14 @@ final class CRMPeopleModel: ObservableObject {
         return CRMPeopleFlow.merge(l, company: m.company, contacts: m.contacts)
     }
 
-    /// Creates the ticked rows (a lead only with its contact) before the Call. Returns the link, what to undo and an error line.
-    func apply(link l: CRMLink, connector c: CRMConnector, base: String) async -> (CRMLink, [(String, String, [String: String])], String) {
-        guard let pc = c as? CRMPeopleConnector else { return (l, [], "") }
-        var ticked = rows.filter { $0.on }.map(\.p)
-        for lead in ticked where lead.kind == .lead {               // a lead's contact is created or reused with it
-            if let k = rows.first(where: { $0.p.kind == .contact && $0.p.email == lead.email })?.p, !ticked.contains(k) { ticked.append(k) }
-        }
-        guard !ticked.isEmpty else { return (l, [], "") }
-        let r = await CRMPeople.apply(ticked, company: company, connector: pc)
-        let n = CRMPeopleFlow.merge(l, company: r.company, contacts: r.contacts)
-        if n != l { n.save(base: base) }
+    /// Creates the ticked rows (a lead with its contact) before the Call; a Call logged earlier that is not written in
+    /// this Apply gets the new and the found people. Returns the link, what to undo and an error line.
+    func apply(link l: CRMLink, connector c: CRMConnector, base: String, callWritten: Bool) async -> (CRMLink, [(String, String, [String: String])], String) {
+        guard let pc = c as? CRMPeopleConnector, checked else { return (l, [], "") }
+        let ticked = CRMPeopleFlow.withCompanions(rows.filter { $0.on }.map(\.p), from: rows.map(\.p))
+        let (n, r) = await CRMPeopleFlow.commit(ticked, match: (company, found), link: l, base: base, callWritten: callWritten, connector: pc)
         let done = ticked.map(\.id)
         rows.removeAll { done.contains($0.id) && r.failure == nil }
-        UsageLog.log("update_crm", ["fields": 0, "contacts": r.created.filter { $0.type == "contacts" }.count, "companies": r.created.filter { $0.type == "companies" }.count, "leads": r.created.filter { $0.type == "leads" }.count])
         return (n, r.created.map { ($0.type, $0.id, [:]) }, r.failure?.message ?? "")
     }
 }

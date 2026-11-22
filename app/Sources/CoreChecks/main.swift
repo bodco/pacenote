@@ -674,10 +674,21 @@ final class FakeHubSpotCalls: CRMTransport {
     var log: [String] = []
     var bodies: [[String: Any]] = []
     var next = 100
+    var portal = 500                // the portal of the key, from account-info
+    var createDelay: UInt64 = 0     // ns a create takes, so two writers can overlap
+    var createThenFail = false      // the Call is made but the answer is a 502 (an ambiguous create)
+    var failPut = false             // adding an association fails with a 500
+    let lock = NSLock()             // the race checks send from two tasks at once; unguarded state crashed the gate
     func send(_ method: String, _ path: String, _ body: [String: Any]?) async throws -> (Int, [String: Any], [String: String]) {
+        // the delay is waited before the lock, never inside it
+        if method == "POST" && path == "/crm/v3/objects/calls" && createDelay > 0 { try? await Task.sleep(nanoseconds: createDelay) }
+        return lock.withLock { handle(method, path, body) }
+    }
+    func handle(_ method: String, _ path: String, _ body: [String: Any]?) -> (Int, [String: Any], [String: String]) {
         log.append(method + " " + path.split(separator: "?")[0])
         if let b = body { bodies.append(b) }
         let props = { (b: [String: Any]?) -> [String: String] in ((b?["properties"] as? [String: Any]) ?? [:]).mapValues { "\($0)" } }
+        if path == "/account-info/v3/details" { return (200, ["portalId": portal], [:]) }
         if method == "POST" && path == "/crm/v3/objects/calls/search" {
             let want = ((((body?["filterGroups"] as? [[String: Any]])?.first?["filters"]) as? [[String: Any]])?.first?["value"] as? String) ?? ""
             let hit = calls.first { $0.value["hs_call_external_id"] == want }
@@ -688,10 +699,12 @@ final class FakeHubSpotCalls: CRMTransport {
             calls[id] = props(body)
             assoc[id] = ((body?["associations"] as? [[String: Any]]) ?? []).map { a in
                 "\((a["to"] as! [String: Any])["id"]!)#\(((a["types"] as! [[String: Any]])[0])["associationTypeId"]!)" }
+            if createThenFail { return (502, ["message": "Bad gateway"], [:]) }
             return (200, ["id": id], [:])
         }
         let id = String(path.split(separator: "?")[0].split(separator: "/")[4])
         if path.hasPrefix("/crm/v4/objects/calls/") && method == "PUT" {
+            if failPut { return (500, ["message": "association failed"], [:]) }
             assoc[id, default: []].append(String(path.split(separator: "/").suffix(2).joined(separator: "/"))); return (200, [:], [:])
         }
         guard calls[id] != nil else { return (404, ["message": "not found"], [:]) }
@@ -757,6 +770,76 @@ func crmCalls() async {
     let old = try? JSONDecoder().decode(CRMSettings.self, from: Data("{\"provider\":\"hubspot\"}".utf8))
     expect(old?.autoLogCall == false && old?.writeCall == true && old?.callDirection == "OUTBOUND" && CRMSettings().autoLogCall == false, "calls: Auto is off by default")
     expect(CRMCallLog(key: "k", title: "t", start: start, durationMs: -5, direction: "sideways", body: "").direction == "OUTBOUND", "calls: direction and duration are clamped")
+
+    // Auto and Apply overlap on one call: without the queue the fake makes two Calls, through it one
+    final class Stored { var id = ""; var portal = "500" }
+    let race = FakeHubSpotCalls(); race.createDelay = 50_000_000
+    let hr = HubSpotConnector(transport: race, sleep: { _ in })
+    let ea = entry(["a"])
+    async let x1 = try? hr.upsertCall(ea, knownId: "", associations: [])
+    async let x2 = try? hr.upsertCall(ea, knownId: "", associations: [])
+    _ = await (x1, x2)
+    expect(race.calls.count == 2, "calls: the fake shows the double create when two writers overlap")
+    let race2 = FakeHubSpotCalls(); race2.createDelay = 50_000_000
+    let hq = HubSpotConnector(transport: race2, sleep: { _ in })
+    let st = Stored(), q = CRMCallQueue()
+    func sync() async -> CRMCallResult? {
+        try? await CRMCallSync.log(ea, connector: hq, associations: [], queue: q,
+                                   load: { (st.id, st.portal) }, save: { st.id = $0 })
+    }
+    async let y1 = sync()
+    async let y2 = sync()
+    let (z1, z2) = await (y1, y2)
+    expect(race2.calls.count == 1 && z1?.id == z2?.id && st.id == z1?.id && Set([z1?.created, z2?.created]) == [true, false],
+           "calls: Auto and Apply at the same time make one Call; the second updates it")
+    // the link's portal must be the key's portal; another or an unknown one writes nothing
+    let pf = FakeHubSpotCalls(); pf.portal = 777
+    let hp = HubSpotConnector(transport: pf, sleep: { _ in })
+    var perr: CRMError? = nil
+    do { _ = try await CRMCallSync.log(entry(["a"]), connector: hp, associations: [], queue: q, load: { ("101", "500") }, save: { _ in }) }
+    catch { perr = error as? CRMError }
+    expect(perr?.code == CRMPortal.mismatchCode && pf.calls.isEmpty && !pf.log.contains { !$0.hasPrefix("GET /account-info") }, "calls: a link from another portal writes nothing")
+    perr = nil
+    do { _ = try await CRMCallSync.log(entry(["a"]), connector: hp, associations: [], queue: q, load: { ("", "") }, save: { _ in }) }
+    catch { perr = error as? CRMError }
+    expect(perr?.code == CRMPortal.mismatchCode && pf.calls.isEmpty, "calls: a link with no portal needs Relink")
+    expect(CRMPortal.matches(link: "777", current: "777") && !CRMPortal.matches(link: "", current: ""), "calls: portal match")
+    // an association fails on a re-run: the Call keeps its old fields (no PATCH), so nothing is left outside Undo
+    let af = FakeHubSpotCalls()
+    let ha = HubSpotConnector(transport: af, sleep: { _ in })
+    let made = try? await ha.upsertCall(entry(["Old summary"]), knownId: "", associations: [])
+    af.failPut = true
+    var aerr: Error? = nil
+    do { _ = try await ha.upsertCall(entry(["New summary"]), knownId: made?.id ?? "", associations: refs) } catch { aerr = error }
+    expect(aerr != nil && (af.calls[made?.id ?? ""]?["hs_call_body"] ?? "").contains("Old summary") && !af.log.contains { $0.hasPrefix("PATCH") },
+           "calls: a failed association leaves the Call's fields unchanged")
+    // an ambiguous create (the Call is made, the answer is a 502): found by the Pacenote call id, not made again
+    let amb = FakeHubSpotCalls(); amb.createThenFail = true
+    let hb = HubSpotConnector(transport: amb, sleep: { _ in })
+    let rb = try? await hb.upsertCall(entry(["a"]), knownId: "", associations: [])
+    amb.createThenFail = false
+    let rb2 = try? await hb.upsertCall(entry(["b"]), knownId: "", associations: [])
+    expect(rb?.id != nil && rb?.id == amb.calls.keys.first && amb.calls.count == 1 && rb2?.id == rb?.id, "calls: an ambiguous create is reconciled, never a second Call")
+    // a 4xx create is a real failure and is not reconciled
+    let rejected = try? await HubSpotConnector(transport: FakeBadCreate(), sleep: { _ in }).upsertCall(entry(["a"]), knownId: "", associations: [])
+    expect(rejected == nil, "calls: a rejected create fails")
+    // Summary is the notes' In short and Recap, next steps are what people took on; distinct texts stay distinct
+    let sec = CRMCallLog.sections(tldr: "**Budget** approved for Q3.", recap: ["Legal reviewed the terms"], onMe: ["Send the demo link"],
+                                  theirs: ["Emily Clark: share the security review"], salesNext: "Book the pilot")
+    expect(sec.summary == ["Budget approved for Q3.", "Legal reviewed the terms"] && sec.nextSteps == ["Send the demo link", "Emily Clark: share the security review"],
+           "calls: Summary from the notes, next steps from the commitments")
+    let body = CRMCallLog.body(summary: sec.summary, nextSteps: sec.nextSteps, participants: [], link: "", key: "k")
+    expect(body.contains("<b>Summary</b></p><ul><li>Budget approved") && body.components(separatedBy: "Send the demo link").count == 2,
+           "calls: next steps are not repeated as the Summary")
+    expect(CRMCallLog.sections(tldr: "", recap: [], onMe: [], theirs: [], salesNext: "Book the pilot").nextSteps == ["Book the pilot"], "calls: the sales next step when nobody took anything on")
+}
+
+/// H2: a create HubSpot rejects (400): never reconciled by search.
+final class FakeBadCreate: CRMTransport {
+    func send(_ method: String, _ path: String, _ body: [String: Any]?) async throws -> (Int, [String: Any], [String: String]) {
+        if path == "/crm/v3/objects/calls/search" { return (200, ["results": []], [:]) }
+        return (400, ["message": "Property values were not valid"], [:])
+    }
 }
 
 /// H3: a small in-memory HubSpot with contacts, companies and leads. Never the network.
@@ -771,8 +854,11 @@ final class FakeHubSpotPeople: CRMTransport {
     var bodies: [[String: Any]] = []
     var next = 500
     var raceEmail = ""                                 // a contact with this email appears between the search and the create (409)
+    var pageSize = 500                                 // company associations per page
+    var failCallPut = false                            // adding a person to a Call fails with a 500
     func send(_ method: String, _ path: String, _ body: [String: Any]?) async throws -> (Int, [String: Any], [String: String]) {
         let clean = String(path.split(separator: "?")[0])
+        let after = Int(path.components(separatedBy: "after=").dropFirst().first ?? "") ?? 0
         log.append(method + " " + clean)
         if let b = body { bodies.append(b) }
         let props = ((body?["properties"] as? [String: Any]) ?? [:]).mapValues { "\($0)" }
@@ -805,11 +891,15 @@ final class FakeHubSpotPeople: CRMTransport {
         }
         let parts = clean.split(separator: "/").map(String.init)
         if method == "GET", clean.hasPrefix("/crm/v4/objects/companies/"), parts.last == "contacts" {
-            return (200, ["results": (companyContacts[parts[4]] ?? []).map { ["toObjectId": Int($0)!] }], [:])
+            let all = companyContacts[parts[4]] ?? [], page = Array(all.dropFirst(after).prefix(pageSize))
+            var out: [String: Any] = ["results": page.map { ["toObjectId": Int($0)!] }]
+            if after + page.count < all.count { out["paging"] = ["next": ["after": "\(after + page.count)"]] }
+            return (200, out, [:])
         }
         if method == "GET", clean.hasPrefix("/crm/v4/objects/contacts/"), parts.last == "leads" {
             return (200, ["results": (leadsOf[parts[4]] ?? []).map { ["toObjectId": Int($0)!] }], [:])
         }
+        if method == "PUT", clean.hasPrefix("/crm/v4/objects/calls/"), failCallPut { return (500, ["message": "association failed"], [:]) }
         if method == "PUT", clean.hasPrefix("/crm/v4/objects/calls/") { assoc["calls/" + parts[4]] = (assoc["calls/" + parts[4]] ?? []) + [parts[7] + "/" + parts[8]]; return (200, [:], [:]) }
         if method == "DELETE", parts.count == 5 {
             switch parts[3] { case "contacts": contacts[parts[4]] = nil; case "companies": companies[parts[4]] = nil; default: leads[parts[4]] = nil }
@@ -825,10 +915,11 @@ func crmPeople() async {
     let me = CRMParticipant(name: "Mike Doe", email: "mike@mycompany.example"), gm = CRMParticipant(name: "Liv Hart", email: "olivia.hart@gmail.com")
     let anon = CRMParticipant(name: "Jaxon Moss", email: "jaxon.moss@gmail.com")      // free-mail and the name is only the email's own
     // participants: paired by position when the lists match, else the name comes from the email
-    let ps = CRMPeople.participants(names: ["Emily Clark", "Noah Reed"], emails: ["Emily.Clark@Orbit.example", "noah@orbit.example", "noah@orbit.example"], titles: ["noah reed": "VP Sales"])
+    let ps = CRMPeople.participants(names: ["Emily Clark", "Noah Reed"], emails: ["Emily.Clark@Orbit.example", "noah@orbit.example", "noah@orbit.example"])
     expect(ps.count == 3 && ps[0].email == "emily.clark@orbit.example" && ps[0].name == "Emily Clark" && ps[1].name == "Noah" && ps[2].email.isEmpty, "people: deduped by email, lowercased, names derived when the lists do not line up")
-    let pp = CRMPeople.participants(names: ["Emily Clark", "Noah Reed"], emails: ["emily.clark@orbit.example", "noah@orbit.example"], titles: ["noah reed": "VP Sales"])
-    expect(pp.map(\.name) == ["Emily Clark", "Noah Reed"] && pp[1].role == "VP Sales" && pp[0].role.isEmpty, "people: lists of the same length are paired and take the job title from the call page")
+    let pp = CRMPeople.participants(names: ["Emily Clark", "Noah Reed"], emails: ["emily.clark@orbit.example", "noah@orbit.example"])
+    // the app's only source is the calendar event (names and emails): no job title, so the role is never invented
+    expect(pp.map(\.name) == ["Emily Clark", "Noah Reed"] && pp.allSatisfy { $0.role.isEmpty }, "people: lists of the same length are paired; the role stays empty without a source")
     expect(CRMPeople.splitName("Mary Ann Smith") == ("Mary Ann", "Smith") && CRMPeople.splitName("Noah").last == "" && CRMPeople.nameKey("  Zoë  Clark ") == CRMPeople.nameKey("zoe clark"), "people: names split and compare without accents")
 
     // 1. nothing exists: a company, two contacts (email lowercased, role kept), no one for the PM or the nameless free-mail address, no lead without the switch
@@ -836,19 +927,21 @@ func crmPeople() async {
     let hs = HubSpotConnector(transport: t, ownerId: "9", sleep: { _ in })
     let m1 = try? await CRMPeople.match(participants: [emily, noah, me, gm, anon], existing: nil, ownDomains: own, companyName: "", hasDeal: false, leads: false, connector: hs)
     let kinds = m1?.proposals.map(\.id) ?? []
-    expect(kinds == ["company", "contact.0", "contact.1", "contact.2"], "people: company, Emily, Noah and the named free-mail contact are proposed; the PM and the nameless free-mail one are not")
+    expect(kinds == ["company.0", "contact.0", "contact.1", "contact.2"], "people: company, Emily, Noah and the named free-mail contact are proposed; the PM and the nameless free-mail one are not")
+    let pg = m1?.proposals.first { $0.email == "olivia.hart@gmail.com" }
+    expect(pg?.company == "" && pg?.domain == "" && pg?.companyId == "", "people: a free-mail contact is not put in the call's company")
     expect(m1?.proposals.first?.name == "Orbit" && m1?.proposals.first?.domain == "orbit.example", "people: company name from the domain when the PM gave none")
     let pe = m1?.proposals.first { $0.kind == .contact && $0.name == "Emily Clark" }
     expect(pe?.email == "emily.clark@orbit.example" && pe?.company == "Orbit" && m1?.proposals.first { $0.name == "Noah Reed" }?.role == "VP Sales", "people: rows are prefilled with email, company and role")
     expect(t.log.allSatisfy { $0.hasPrefix("POST") && $0.hasSuffix("search") || $0.hasPrefix("GET") }, "people: matching only reads")
     // Leads: only with the switch and only without a deal
     let m1l = try? await CRMPeople.match(participants: [emily], existing: nil, ownDomains: own, companyName: "Orbit Inc", hasDeal: false, leads: true, connector: hs)
-    expect(m1l?.proposals.map(\.id) == ["company", "contact.0", "lead.0"] && m1l?.proposals.first?.name == "Orbit Inc", "people: a lead is proposed with its contact; the PM's company name wins")
+    expect(m1l?.proposals.map(\.id) == ["company.0", "contact.0", "lead.0"] && m1l?.proposals.first?.name == "Orbit Inc", "people: a lead is proposed with its contact; the PM's company name wins")
     let m1d = try? await CRMPeople.match(participants: [emily], existing: nil, ownDomains: own, companyName: "", hasDeal: true, leads: true, connector: hs)
     expect(m1d?.proposals.contains { $0.kind == .lead } == false, "people: no lead when the call has an open deal")
 
     // 2. Apply the company and Emily: associated, no owner on a company or contact, one POST each
-    let chosen = (m1?.proposals ?? []).filter { $0.id == "company" || $0.name == "Emily Clark" }
+    let chosen = (m1?.proposals ?? []).filter { $0.id == "company.0" || $0.name == "Emily Clark" }
     let r1 = await CRMPeople.apply(chosen, company: nil, connector: hs)
     expect(r1.failure == nil && r1.created.map(\.type) == ["companies", "contacts"] && t.companies.count == 1 && t.contacts.count == 1, "people: created once")
     let cid = r1.company?.id ?? "", kid = r1.contacts.first?.id ?? ""
@@ -857,10 +950,22 @@ func crmPeople() async {
     expect(t.assoc["contacts/" + kid] == [cid + "#1"], "people: the contact is associated with the new company")
 
     // 3. a second run finds everything: nothing is proposed, nothing is created
-    let m2 = try? await CRMPeople.match(participants: [emily], existing: nil, ownDomains: own, companyName: "", hasDeal: false, leads: true, connector: hs)
+    let m2 = try? await CRMPeople.match(participants: [emily], existing: nil, ownDomains: own, companyName: "", hasDeal: false, leads: false, connector: hs)
     expect(m2?.proposals.isEmpty == true && m2?.contacts.first?.id == kid && m2?.company?.id == cid, "people: an existing email and domain are reused, nothing proposed")
     let r2 = await CRMPeople.apply(chosen, company: nil, connector: hs)      // a stale review applied again (double click, second Mac)
     expect(r2.failure == nil && r2.created.isEmpty && r2.reused == 2 && t.companies.count == 1 && t.contacts.count == 1, "people: applying again never duplicates")
+    // the contact exists but has no lead (Leads were off, or the lead failed after the contact was made): the lead is still proposed
+    let m2l = try? await CRMPeople.match(participants: [emily], existing: nil, ownDomains: own, companyName: "", hasDeal: false, leads: true, connector: hs)
+    let ml = m2l?.proposals.first
+    expect(m2l?.proposals.map(\.id) == ["lead.0"] && ml?.contactId == kid && ml?.companyId == cid && ml?.name == "Emily Clark (Orbit)", "people: an existing contact without a lead gets a lead row")
+    let leadPosts = t.log.filter { $0 == "POST /crm/v3/objects/leads" }.count
+    let r2l = await CRMPeople.apply(m2l?.proposals ?? [], company: nil, connector: hs)
+    let l2 = r2l.created.first?.id ?? ""
+    expect(r2l.created.map(\.type) == ["leads"] && t.log.filter { $0 == "POST /crm/v3/objects/leads" }.count == leadPosts + 1 && Set(t.assoc["leads/" + l2] ?? []) == ["\(kid)#578", "\(cid)#610"],
+           "people: a lead row for an existing contact makes one lead on that contact and its company")
+    let m2n = try? await CRMPeople.match(participants: [emily], existing: nil, ownDomains: own, companyName: "", hasDeal: false, leads: true, connector: hs)
+    expect(m2n?.proposals.isEmpty == true, "people: once the contact has a lead, nothing is proposed")
+    if !l2.isEmpty { try? await hs.delete(type: "leads", id: l2); t.leadsOf[kid] = nil }
 
     // 4. email in another case; a person under another email is found by name inside the company
     let m3 = try? await CRMPeople.match(participants: [CRMParticipant(name: "Emily Clark", email: "EMILY.CLARK@orbit.example")], existing: nil, ownDomains: own, companyName: "", hasDeal: false, leads: false, connector: hs)
@@ -882,8 +987,8 @@ func crmPeople() async {
     expect(r3.failure == nil && r3.contacts.first?.id == "777" && r3.created.isEmpty && r3.reused == 1, "people: a 409 reuses the existing contact")
 
     // 6. leads: one per contact, reused when the contact has one, associated with the contact and the company; undo deletes
-    let lp = [CRMProposal(id: "contact.0", kind: .contact, name: "Ava Stone", email: "ava@orbit.example", company: "Orbit", domain: "orbit.example"),
-              CRMProposal(id: "lead.0", kind: .lead, name: "Ava Stone (Orbit)", email: "ava@orbit.example", company: "Orbit")]
+    let lp = [CRMProposal(id: "contact.0", kind: .contact, name: "Ava Stone", email: "ava@orbit.example", company: "Orbit", domain: "orbit.example", companyId: cid),
+              CRMProposal(id: "lead.0", kind: .lead, name: "Ava Stone (Orbit)", email: "ava@orbit.example", company: "Orbit", companyId: cid)]
     let r4 = await CRMPeople.apply(lp, company: CRMCompany(id: cid, name: "Orbit", domain: "orbit.example"), connector: hs)
     let lid = r4.created.first { $0.type == "leads" }?.id ?? ""
     expect(r4.created.map(\.type) == ["contacts", "leads"] && Set(t.assoc["leads/" + lid] ?? []) == ["\(r4.contacts[0].id)#578", "\(cid)#610"], "people: the lead is associated with its contact and company")
@@ -896,6 +1001,56 @@ func crmPeople() async {
     try? await hs.associateCall(callId: "C9", refs: [CRMRef("contacts", kid), CRMRef("companies", cid), CRMRef("deals", "D1"), CRMRef("notes", "X")])
     expect(Set(t.assoc["calls/C9"] ?? []) == ["contacts/" + kid, "companies/" + cid, "deals/D1"], "people: the Call is associated with the new contact and company")
     expect(CRMPeople.participants(names: [], emails: []).isEmpty, "people: no invitees, no people")
+
+    // 7a. a mixed call (Orbit and Lumen): each person's company comes from their own domain. Orbit has a namesake of
+    // the Lumen guest; the Lumen guest is not matched to them and is not put in Orbit
+    t.contacts["601"] = ["firstname": "Liam", "lastname": "Price", "email": "liam.price@orbit.example"]
+    t.companyContacts[cid] = [kid, "601"]
+    let liam = CRMParticipant(name: "Liam Price", email: "liam@lumen.example")
+    let mx = try? await CRMPeople.match(participants: [emily, liam], existing: CRMCompany(id: cid, name: "Orbit", domain: "orbit.example"), ownDomains: own,
+                                        companyName: "Orbit", hasDeal: false, leads: false, connector: hs)
+    let lc = mx?.proposals.first { $0.kind == .contact }
+    expect(mx?.contacts.contains { $0.id == "601" } == false && lc?.email == "liam@lumen.example" && lc?.companyId == "" && lc?.domain == "lumen.example" && lc?.company == "Lumen",
+           "people: on a mixed call a namesake in another company is not a match, and the row names the guest's own company")
+    expect(mx?.proposals.filter { $0.kind == .company }.map(\.domain) == ["lumen.example"] && mx?.company?.id == cid, "people: a company row for the domain that has none; the call keeps its company")
+    let rx = await CRMPeople.apply(mx?.proposals ?? [], company: mx?.company, connector: hs)
+    let lumen = rx.created.first { $0.type == "companies" }?.id ?? "", lk = rx.contacts.first?.id ?? ""
+    expect(rx.failure == nil && t.assoc["contacts/" + lk] == [lumen + "#1"] && lumen != cid && rx.company?.id == cid, "people: the new contact goes to the company of its own domain")
+    // the same namesake on a call with only Orbit people (another email) is the same person
+    let ms = try? await CRMPeople.match(participants: [CRMParticipant(name: "Liam Price", email: "lprice@orbit.example")], existing: nil, ownDomains: own,
+                                        companyName: "", hasDeal: false, leads: false, connector: hs)
+    expect(ms?.contacts.contains { $0.id == "601" } == true && ms?.proposals.isEmpty == true, "people: inside the guest's own company the name still matches")
+
+    // 7b. a company's contacts are read once and on every page (more than 100, the batch read limit)
+    let big = FakeHubSpotPeople(); big.pageSize = 60
+    big.companies["300"] = ["name": "Northwind", "domain": "northwind.example"]
+    for i in 1...150 { big.contacts["\(1000 + i)"] = ["firstname": "Guest", "lastname": "N\(i)", "email": "x\(i)@northwind-old.example"] }
+    big.companyContacts["300"] = (1...150).map { "\(1000 + $0)" }
+    big.contacts["1150"] = ["firstname": "Grace", "lastname": "Hall", "email": "grace@northwind-old.example"]
+    let hb = HubSpotConnector(transport: big, sleep: { _ in })
+    let mb = try? await CRMPeople.match(participants: [CRMParticipant(name: "Grace Hall", email: "grace@northwind.example"), CRMParticipant(name: "Owen Hart", email: "owen@northwind.example")],
+                                        existing: nil, ownDomains: own, companyName: "", hasDeal: false, leads: false, connector: hb)
+    expect(mb?.contacts.first?.id == "1150" && big.log.filter { $0.hasPrefix("GET /crm/v4/objects/companies/300") }.count == 3
+           && big.log.filter { $0 == "POST /crm/v3/objects/contacts/batch/read" }.count == 2, "people: the name match sees the 150th contact; the company is read once, three pages, two batches")
+
+    // 7c. Auto and Apply share one write path: a Call logged earlier gets the new and the found people; a Call written
+    // in the same run gets them from its own upsert; a failed association is reported and the contact stays for Undo
+    let ac = [CRMProposal(id: "contact.0", kind: .contact, name: "Mia Ross", email: "mia@orbit.example", companyId: cid)]
+    let qq = CRMCallQueue()
+    let found = [CRMContact(id: kid, name: "Emily Clark", email: "emily.clark@orbit.example")]
+    let rc = await CRMPeople.commit(ac, company: CRMCompany(id: cid, name: "Orbit", domain: "orbit.example"), found: found, before: [CRMRef("companies", cid)],
+                                    callKey: "k1", callWritten: false, connector: hs, queue: qq, callId: { "C7" })
+    let mia = rc.contacts.first?.id ?? ""
+    expect(rc.failure == nil && Set(t.assoc["calls/C7"] ?? []) == ["contacts/" + mia, "contacts/" + kid], "people: a Call logged earlier gets the new and the found contacts, not what it had")
+    let puts = t.log.filter { $0.hasPrefix("PUT /crm/v4/objects/calls/") }.count
+    _ = await CRMPeople.commit([], company: nil, found: found, before: [], callKey: "k1", callWritten: true, connector: hs, queue: qq, callId: { "C7" })
+    _ = await CRMPeople.commit([], company: nil, found: found, before: [], callKey: "k1", callWritten: false, connector: hs, queue: qq, callId: { "" })
+    expect(t.log.filter { $0.hasPrefix("PUT /crm/v4/objects/calls/") }.count == puts, "people: no association when the Call is written in this run or there is no Call")
+    t.failCallPut = true
+    let rf = await CRMPeople.commit([CRMProposal(id: "contact.0", kind: .contact, name: "Zoe Park", email: "zoe@orbit.example", companyId: cid)], company: nil, found: [],
+                                    before: [], callKey: "k1", callWritten: false, connector: hs, queue: qq, callId: { "C7" })
+    t.failCallPut = false
+    expect(rf.failure?.code == 500 && rf.created.map(\.type) == ["contacts"], "people: a failed Call association is reported, never a silent success, and the contact stays for Undo")
 
     // 8. an error stops the run and says what was already made
     final class Failing403: CRMTransport {
