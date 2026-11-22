@@ -223,13 +223,20 @@ no open deal. Rows are unticked.
 HubSpot is searched again (domain, email, the contact's leads), and a 409 on a contact reuses the id HubSpot names, so a
 stale review, a double click or a second Mac never makes a duplicate; what existed is reused and not undone. Contact
 to company uses association type 1; Lead to contact 578 and to company 610 (HUBSPOT_DEFINED). A Call logged earlier
-gets the new people through the default association `PUT /crm/v4/objects/calls/{id}/associations/default/{type}/{id}`.
+gets the people through the default association `PUT /crm/v4/objects/calls/{id}/associations/default/{type}/{id}`.
+These PUTs are idempotent and every run (Apply or Auto) sends them again for all the companies and contacts of the
+link, so an association that failed once is made on the next run even though the link already lists the id. A call
+with people from several companies is associated with every one of them: the link keeps the other companies in
+`companyIds`, and the Call of H2, the note and the task get them too. A failed lead lookup (no Leads scopes) drops only
+the Lead rows; the contact and company rows stay and the review names the error.
 Owners are never set on contacts and companies (section 7). Undo deletes the created objects and takes them out of the
 link; the usage log keeps counts only.
 
 **Auto.** Four switches in Settings > Integrations > HubSpot, all off by default: create contacts, create the company,
 propose Leads, create Leads. Each Auto switch writes only its own object, after the call ends, for a call that has a CRM
-link, before the Call is logged. The owner's decisions 4 and 5 recommended no Auto and later for Leads; the task for
+link, before the Call is logged. Create Leads never creates a contact: without Create contacts, a new contact's Lead
+stays an unticked row in Update HubSpot (ticking it creates the contact with it); a contact already in HubSpot gets
+its Lead automatically. The owner's decisions 4 and 5 recommended no Auto and later for Leads; the task for
 H3 asked for both behind their own switches, so they are built that way. Turn them off by default and keep them off.
 
 **Not verified yet (needs a live portal):** `hs_lead_name` and association type ids 578 and 610 for Leads, whether a

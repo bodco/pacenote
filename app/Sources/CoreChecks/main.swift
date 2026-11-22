@@ -856,6 +856,7 @@ final class FakeHubSpotPeople: CRMTransport {
     var raceEmail = ""                                 // a contact with this email appears between the search and the create (409)
     var pageSize = 500                                 // company associations per page
     var failCallPut = false                            // adding a person to a Call fails with a 500
+    var failLeadsRead = false                          // the portal has no Leads scopes: reading a contact's leads is a 403
     func send(_ method: String, _ path: String, _ body: [String: Any]?) async throws -> (Int, [String: Any], [String: String]) {
         let clean = String(path.split(separator: "?")[0])
         let after = Int(path.components(separatedBy: "after=").dropFirst().first ?? "") ?? 0
@@ -897,6 +898,7 @@ final class FakeHubSpotPeople: CRMTransport {
             return (200, out, [:])
         }
         if method == "GET", clean.hasPrefix("/crm/v4/objects/contacts/"), parts.last == "leads" {
+            if failLeadsRead { return (403, ["message": "This app hasn't been granted all required scopes. Missing crm.objects.leads.read"], [:]) }
             return (200, ["results": (leadsOf[parts[4]] ?? []).map { ["toObjectId": Int($0)!] }], [:])
         }
         if method == "PUT", clean.hasPrefix("/crm/v4/objects/calls/"), failCallPut { return (500, ["message": "association failed"], [:]) }
@@ -1053,19 +1055,67 @@ func crmPeople() async {
     let ac = [CRMProposal(id: "contact.0", kind: .contact, name: "Mia Ross", email: "mia@orbit.example", companyId: cid)]
     let qq = CRMCallQueue()
     let found = [CRMContact(id: kid, name: "Emily Clark", email: "emily.clark@orbit.example")]
-    let rc = await CRMPeople.commit(ac, company: CRMCompany(id: cid, name: "Orbit", domain: "orbit.example"), found: found, before: [CRMRef("companies", cid)],
+    let rc = await CRMPeople.commit(ac, company: CRMCompany(id: cid, name: "Orbit", domain: "orbit.example"), found: found, linked: [CRMRef("companies", cid), CRMRef("deals", "D1")],
                                     callKey: "k1", callWritten: false, connector: hs, queue: qq, callId: { "C7" })
     let mia = rc.contacts.first?.id ?? ""
-    expect(rc.failure == nil && Set(t.assoc["calls/C7"] ?? []) == ["contacts/" + mia, "contacts/" + kid], "people: a Call logged earlier gets the new and the found contacts, not what it had")
+    expect(rc.failure == nil && Set(t.assoc["calls/C7"] ?? []) == ["companies/" + cid, "contacts/" + mia, "contacts/" + kid],
+           "people: a Call logged earlier gets the company, the new and the found contacts (the PUTs are idempotent and sent again); the deal is H2's")
     let puts = t.log.filter { $0.hasPrefix("PUT /crm/v4/objects/calls/") }.count
-    _ = await CRMPeople.commit([], company: nil, found: found, before: [], callKey: "k1", callWritten: true, connector: hs, queue: qq, callId: { "C7" })
-    _ = await CRMPeople.commit([], company: nil, found: found, before: [], callKey: "k1", callWritten: false, connector: hs, queue: qq, callId: { "" })
+    _ = await CRMPeople.commit([], company: nil, found: found, callKey: "k1", callWritten: true, connector: hs, queue: qq, callId: { "C7" })
+    _ = await CRMPeople.commit([], company: nil, found: found, callKey: "k1", callWritten: false, connector: hs, queue: qq, callId: { "" })
     expect(t.log.filter { $0.hasPrefix("PUT /crm/v4/objects/calls/") }.count == puts, "people: no association when the Call is written in this run or there is no Call")
     t.failCallPut = true
     let rf = await CRMPeople.commit([CRMProposal(id: "contact.0", kind: .contact, name: "Zoe Park", email: "zoe@orbit.example", companyId: cid)], company: nil, found: [],
-                                    before: [], callKey: "k1", callWritten: false, connector: hs, queue: qq, callId: { "C7" })
+                                    callKey: "k1", callWritten: false, connector: hs, queue: qq, callId: { "C8" })
     t.failCallPut = false
     expect(rf.failure?.code == 500 && rf.created.map(\.type) == ["contacts"], "people: a failed Call association is reported, never a silent success, and the contact stays for Undo")
+    // the retry: the link was saved with Zoe although HubSpot did not attach her; the next run (nothing new to create)
+    // reads the saved link's refs back and sends the association again
+    let zoe = rf.contacts.first?.id ?? ""
+    let savedLink = [CRMRef("companies", cid)] + rf.contacts.map { CRMRef("contacts", $0.id) }
+    expect(t.assoc["calls/C8"] == nil, "people: after the failure the Call has nobody")
+    let rr = await CRMPeople.commit([], company: nil, found: [], linked: savedLink, callKey: "k1", callWritten: false, connector: hs, queue: qq, callId: { "C8" })
+    expect(rr.failure == nil && Set(t.assoc["calls/C8"] ?? []) == ["companies/" + cid, "contacts/" + zoe], "people: a retry after a failed association attaches the people the link already lists")
+
+    // 7d. a mixed call with two new domains and the call's company already linked: every company made in this Apply,
+    // and the existing company of a third domain, go to the Call too
+    let ella = CRMParticipant(name: "Ella Stone", email: "ella@cedar.example"), maxF = CRMParticipant(name: "Max Fields", email: "max@birch.example")
+    let mm = try? await CRMPeople.match(participants: [emily, ella, maxF, liam], existing: CRMCompany(id: cid, name: "Orbit", domain: "orbit.example"), ownDomains: own,
+                                        companyName: "Orbit", hasDeal: false, leads: false, connector: hs)
+    expect(Set(mm?.proposals.filter { $0.kind == .company }.map(\.domain) ?? []) == ["cedar.example", "birch.example"] && mm?.companies.contains { $0.id == lumen } == true,
+           "people: two new domains get two company rows; the existing Lumen company is carried for the Call")
+    let rm = await CRMPeople.commit(mm?.proposals ?? [], company: mm?.company, companies: mm?.companies ?? [], found: mm?.contacts ?? [],
+                                    callKey: "k2", callWritten: false, connector: hs, queue: qq, callId: { "C11" })
+    let madeCos = rm.created.filter { $0.type == "companies" }.map { "companies/" + $0.id }
+    let callCos = Set((t.assoc["calls/C11"] ?? []).filter { $0.hasPrefix("companies/") })
+    expect(rm.failure == nil && madeCos.count == 2 && rm.companies.count == 2 && callCos == Set(madeCos + ["companies/" + cid, "companies/" + lumen]),
+           "people: the Call gets every company of the call, the two made in this Apply included")
+
+    // 7e. Auto: each kind only with its own switch; Lead Auto never creates the lead's contact
+    let newK = CRMProposal(id: "contact.0", kind: .contact, name: "Ivy Lane", email: "ivy@orbit.example", companyId: cid)
+    let newL = CRMProposal(id: "lead.0", kind: .lead, name: "Ivy Lane (Orbit)", email: "ivy@orbit.example", companyId: cid)
+    let oldL = CRMProposal(id: "lead.1", kind: .lead, name: "Emily Clark (Orbit)", email: "emily.clark@orbit.example", companyId: cid, contactId: kid)
+    let newCo = CRMProposal(id: "company.0", kind: .company, name: "Cedar", domain: "cedar.example")
+    let pool = [newCo, newK, newL, oldL]
+    expect(CRMPeople.autoChosen(pool, contacts: false, companies: false, leads: true).map(\.id) == ["lead.1"],
+           "people: Lead Auto with Contact Auto off makes a lead only for a contact already in HubSpot, never a contact")
+    expect(CRMPeople.autoChosen(pool, contacts: true, companies: false, leads: true).map(\.id) == ["contact.0", "lead.0", "lead.1"],
+           "people: with Contact Auto on too, the new contact and its lead are made together")
+    expect(CRMPeople.autoChosen(pool, contacts: false, companies: true, leads: false).map(\.id) == ["company.0"] && CRMPeople.autoChosen(pool, contacts: false, companies: false, leads: false).isEmpty,
+           "people: Company Auto makes only the company; all switches off make nothing")
+
+    // 7f. the lead lookup fails (a portal without the Leads scopes): the contact rows stay, the error is kept for the review
+    t.failLeadsRead = true
+    let mf = try? await CRMPeople.match(participants: [emily, CRMParticipant(name: "Ruby Cole", email: "ruby@orbit.example")], existing: CRMCompany(id: cid, name: "Orbit", domain: "orbit.example"),
+                                        ownDomains: own, companyName: "", hasDeal: false, leads: true, connector: hs)
+    t.failLeadsRead = false
+    expect(mf != nil && mf?.problem?.code == 403 && mf?.proposals.map(\.kind) == [.contact] && mf?.contacts.first?.id == kid,
+           "people: a failed lead lookup keeps the contact rows and the found people, names the error and proposes no lead")
+    // a person matched by name only (the calendar gave no email) can still get a lead
+    let mn = try? await CRMPeople.match(participants: [CRMParticipant(name: "Emily Clark")], existing: CRMCompany(id: cid, name: "Orbit", domain: "orbit.example"),
+                                        ownDomains: own, companyName: "", hasDeal: false, leads: true, connector: hs)
+    expect(mn?.proposals.map(\.id) == ["lead.0"] && mn?.proposals.first?.contactId == kid && mn?.proposals.first?.email == "emily.clark@orbit.example",
+           "people: a contact found by name without an email gets a lead row too")
 
     // 8. an error stops the run and says what was already made
     final class Failing403: CRMTransport {

@@ -18,18 +18,24 @@ enum CRMPeopleFlow {
 
     static func existingCompany(_ l: CRMLink) -> CRMCompany? { l.companyId.isEmpty ? nil : CRMCompany(id: l.companyId, name: l.companyName, domain: "") }
 
-    static func match(file: String, link l: CRMLink, connector c: CRMPeopleConnector, name: String) async -> CRMPeopleMatch? {
+    /// The match, or the HubSpot error that stopped it (shown in the review, never swallowed). No invitees: nothing.
+    static func match(file: String, link l: CRMLink, connector c: CRMPeopleConnector, name: String) async -> Result<CRMPeopleMatch, CRMError>? {
         let cfg = SettingsWindow.model.config.crm
         let parts = participants(file: file)
         guard !parts.isEmpty else { return nil }
-        return try? await CRMPeople.match(participants: parts, existing: existingCompany(l), ownDomains: CRMService.ownDomains, companyName: name,
-                                          hasDeal: !l.dealId.isEmpty && l.dealId != "none", leads: cfg.proposeLeads, connector: c)
+        do {
+            return .success(try await CRMPeople.match(participants: parts, existing: existingCompany(l), ownDomains: CRMService.ownDomains, companyName: name,
+                                                      hasDeal: !l.dealId.isEmpty && l.dealId != "none", leads: cfg.proposeLeads, connector: c))
+        } catch {
+            return .failure((error as? CRMError) ?? CRMError(code: 0, message: error.localizedDescription))
+        }
     }
 
-    /// The link with the company and the people the call now has (ids and names only, like the rest of <stem>.crm.json).
-    static func merge(_ l: CRMLink, company: CRMCompany?, contacts: [CRMContact]) -> CRMLink {
+    /// The link with the companies and the people the call now has (ids and names only, like the rest of <stem>.crm.json).
+    static func merge(_ l: CRMLink, company: CRMCompany?, companies: [CRMCompany] = [], contacts: [CRMContact]) -> CRMLink {
         var n = l
         if let co = company, n.companyId.isEmpty { n.companyId = co.id; n.companyName = co.name }
+        for co in companies where !co.id.isEmpty && co.id != n.companyId && !n.companyIds.contains(co.id) { n.companyIds.append(co.id) }
         for k in contacts where !n.contactIds.contains(k.id) {
             n.contactIds.append(k.id); n.contactNames.append(k.name.isEmpty ? k.email : k.name)
         }
@@ -40,21 +46,24 @@ enum CRMPeopleFlow {
     static func forget(type: String, id: String, in l: CRMLink) -> CRMLink {
         var n = l
         if type == "companies" && n.companyId == id { n.companyId = ""; n.companyName = "" }
+        if type == "companies" { n.companyIds.removeAll { $0 == id } }
         if type == "contacts", let i = n.contactIds.firstIndex(of: id) {
             n.contactIds.remove(at: i); if i < n.contactNames.count { n.contactNames.remove(at: i) }
         }
         return n
     }
 
-    /// Creates the chosen rows and gives a Call logged earlier its new people (CRMPeople.commit), then stores the
-    /// people on the link on disk, keeping a Call id another path stored meanwhile. Auto and Apply both use it.
-    static func commit(_ chosen: [CRMProposal], match m: (company: CRMCompany?, found: [CRMContact]), link l: CRMLink, base: String,
+    /// Creates the chosen rows and gives a Call logged earlier all its people and companies (CRMPeople.commit, the
+    /// PUTs sent again each time, so a failed one is retried), then stores them on the link on disk, keeping a Call id
+    /// another path stored meanwhile. Auto and Apply both use it.
+    static func commit(_ chosen: [CRMProposal], match m: (company: CRMCompany?, companies: [CRMCompany], found: [CRMContact]), link l: CRMLink, base: String,
                        callWritten: Bool, connector pc: CRMPeopleConnector) async -> (CRMLink, CRMPeopleResult) {
-        let before = CRMCallLogger.refs(CRMLink.load(base: base) ?? l)      // what the stored Call was written with
-        let r = await CRMPeople.commit(chosen, company: m.company, found: m.found, before: before, callKey: l.callKey, callWritten: callWritten,
-                                       connector: pc, callId: { CRMLink.load(base: base)?.callId ?? l.callId })
-        let n = merge(l, company: r.company, contacts: m.found + r.contacts)
-        if n != l { merge(CRMLink.load(base: base) ?? l, company: r.company, contacts: m.found + r.contacts).save(base: base) }
+        let linked = CRMCallLogger.refs(CRMLink.load(base: base) ?? l)
+        let r = await CRMPeople.commit(chosen, company: m.company, companies: m.companies, found: m.found, linked: linked, callKey: l.callKey,
+                                       callWritten: callWritten, connector: pc, callId: { CRMLink.load(base: base)?.callId ?? l.callId })
+        let cos = m.companies + r.companies
+        let n = merge(l, company: r.company, companies: cos, contacts: m.found + r.contacts)
+        if n != l { merge(CRMLink.load(base: base) ?? l, company: r.company, companies: cos, contacts: m.found + r.contacts).save(base: base) }
         let made = ["contacts", "companies", "leads"].map { t in r.created.filter { $0.type == t }.count }
         if !chosen.isEmpty { UsageLog.log("update_crm", ["fields": 0, "contacts": made[0], "companies": made[1], "leads": made[2]]) }
         return (n, r)
@@ -64,21 +73,19 @@ enum CRMPeopleFlow {
     /// new link and the failure (an analytics code only: Auto has no window).
     static func auto(file: String, link l: CRMLink, connector c: CRMConnector, name: String, callWritten: Bool) async -> (CRMLink, CRMError?) {
         let cfg = SettingsWindow.model.config.crm
-        guard let pc = c as? CRMPeopleConnector, let m = await match(file: file, link: l, connector: pc, name: name) else { return (l, nil) }
-        var chosen = m.proposals.filter {
-            switch $0.kind {
-            case .company: return cfg.autoCreateCompanies
-            case .contact: return cfg.autoCreateContacts
-            case .lead: return cfg.autoCreateLeads && cfg.proposeLeads
-            }
-        }
-        chosen = CRMPeopleFlow.withCompanions(chosen, from: m.proposals)
+        guard let pc = c as? CRMPeopleConnector, let res = await match(file: file, link: l, connector: pc, name: name) else { return (l, nil) }
+        let m: CRMPeopleMatch
+        switch res { case .success(let v): m = v; case .failure(let e): return (l, e) }
+        // each kind only with its own switch; Lead Auto never creates a contact (the lead waits for it)
+        let chosen = CRMPeople.autoChosen(m.proposals, contacts: cfg.autoCreateContacts, companies: cfg.autoCreateCompanies,
+                                          leads: cfg.autoCreateLeads && cfg.proposeLeads)
         let base = file.hasSuffix(".md") ? String(file.dropLast(3)) : file
-        let (n, r) = await commit(chosen, match: (m.company, m.contacts), link: l, base: base, callWritten: callWritten, connector: pc)
-        return (n, r.failure)
+        let (n, r) = await commit(chosen, match: (m.company, m.companies, m.contacts), link: l, base: base, callWritten: callWritten, connector: pc)
+        return (n, r.failure ?? (cfg.autoCreateLeads ? m.problem : nil))
     }
 
-    /// A lead's new contact is created with it (a company only with its own row or switch).
+    /// The click path only: a ticked lead's new contact is created with it, the PM's tick covers both (a company only
+    /// with its own row). Auto uses CRMPeople.autoChosen instead.
     static func withCompanions(_ chosen: [CRMProposal], from all: [CRMProposal]) -> [CRMProposal] {
         var out = chosen
         for lead in chosen where lead.kind == .lead && lead.contactId.isEmpty {
@@ -95,17 +102,24 @@ final class CRMPeopleModel: ObservableObject {
     @Published var rows: [Row] = []
     @Published var found: [CRMContact] = []
     @Published var company: CRMCompany?
+    @Published var companies: [CRMCompany] = []
     @Published var checked = false         // the search ran (so "nothing to add" can be said)
+    @Published var problem = ""            // HubSpot's answer when the search, or only the lead lookup, failed
 
     /// Reads HubSpot (no writes). Contacts found by name inside the company are added to the link so the Call gets them.
     func load(file: String, link l: CRMLink, name: String) async -> CRMLink {
         guard let c = CRMService.shared.connector() as? CRMPeopleConnector else { return l }
-        let m = await CRMPeopleFlow.match(file: file, link: l, connector: c, name: name)
+        let res = await CRMPeopleFlow.match(file: file, link: l, connector: c, name: name)
         checked = true
-        guard let m else { return l }
-        found = m.contacts; company = m.company
-        rows = m.proposals.map { Row(p: $0) }
-        return CRMPeopleFlow.merge(l, company: m.company, contacts: m.contacts)
+        guard let res else { return l }
+        switch res {
+        case .failure(let e): problem = e.message; return l
+        case .success(let m):
+            problem = m.problem?.message ?? ""
+            found = m.contacts; company = m.company; companies = m.companies
+            rows = m.proposals.map { Row(p: $0) }
+            return CRMPeopleFlow.merge(l, company: m.company, companies: m.companies, contacts: m.contacts)
+        }
     }
 
     /// Creates the ticked rows (a lead with its contact) before the Call; a Call logged earlier that is not written in
@@ -113,7 +127,7 @@ final class CRMPeopleModel: ObservableObject {
     func apply(link l: CRMLink, connector c: CRMConnector, base: String, callWritten: Bool) async -> (CRMLink, [(String, String, [String: String])], String) {
         guard let pc = c as? CRMPeopleConnector, checked else { return (l, [], "") }
         let ticked = CRMPeopleFlow.withCompanions(rows.filter { $0.on }.map(\.p), from: rows.map(\.p))
-        let (n, r) = await CRMPeopleFlow.commit(ticked, match: (company, found), link: l, base: base, callWritten: callWritten, connector: pc)
+        let (n, r) = await CRMPeopleFlow.commit(ticked, match: (company, companies, found), link: l, base: base, callWritten: callWritten, connector: pc)
         let done = ticked.map(\.id)
         rows.removeAll { done.contains($0.id) && r.failure == nil }
         return (n, r.created.map { ($0.type, $0.id, [:]) }, r.failure?.message ?? "")
@@ -123,9 +137,13 @@ final class CRMPeopleModel: ObservableObject {
 struct CRMPeopleSection: View {
     @ObservedObject var model: CRMPeopleModel
     var body: some View {
-        if !model.rows.isEmpty || !model.found.isEmpty {
+        if !model.rows.isEmpty || !model.found.isEmpty || !model.problem.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
                 Text(L("crm.people.title")).font(PN.Font.body.weight(.semibold))
+                if !model.problem.isEmpty {
+                    Text(L("crm.people.problem", ["error": model.problem]))
+                        .font(PN.Font.caption).foregroundStyle(PN.C.text3).fixedSize(horizontal: false, vertical: true)
+                }
                 if !model.found.isEmpty {
                     Text(L("crm.people.found", ["names": model.found.map { $0.name.isEmpty ? $0.email : $0.name }.joined(separator: ", ")]))
                         .font(PN.Font.caption).foregroundStyle(PN.C.text3).fixedSize(horizontal: false, vertical: true)

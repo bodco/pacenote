@@ -43,12 +43,15 @@ public struct CRMPeopleMatch: Equatable {
     public var company: CRMCompany?          // the call's company (the link's): linked, else the first domain's, else by name
     public var contacts: [CRMContact]        // found in HubSpot: by email, else by name inside the participant's company
     public var proposals: [CRMProposal]
+    public var companies: [CRMCompany] = []  // every participant domain's company already in HubSpot (a mixed call has several)
+    public var problem: CRMError?            // the lead lookup failed (a portal without the Leads scopes): no lead rows, the rest stays
 }
 
 /// What was created (and so can be undone) and what already existed (reused, never undone).
 public struct CRMPeopleResult {
     public var created: [(type: String, id: String)] = []
     public var company: CRMCompany?
+    public var companies: [CRMCompany] = []  // every company made or reused in this run, one per domain
     public var contacts: [CRMContact] = []
     public var reused = 0
     public var failure: CRMError?
@@ -151,6 +154,8 @@ public enum CRMPeople {
         }
         var contactOf: [String: CRMContact] = [:]       // participant email -> the HubSpot contact
         for k in found { contactOf[normEmail(k.email)] = k }
+        var matched: [(contact: CRMContact, person: CRMParticipant)] = []     // for the lead rows, with or without an email
+        for p in external where !p.email.isEmpty { if let k = contactOf[normEmail(p.email)] { matched.append((k, p)) } }
 
         let clientDomains = CRMSnapshot.clientDomains(emails: emails, ownDomains: own)
         var byDomain: [String: CRMCompany] = [:]
@@ -174,6 +179,7 @@ public enum CRMPeople {
                 if let hit = roster[co.id]?.first(where: { nameKey($0.name) == key }) {
                     if !found.contains(where: { $0.id == hit.id }) { found.append(hit) }
                     if !p.email.isEmpty { contactOf[normEmail(p.email)] = hit }
+                    matched.append((hit, p))
                     continue
                 }
             }
@@ -207,16 +213,50 @@ public enum CRMPeople {
             if leads && !hasDeal { lead(name, email: e, at: co) }
             n += 1
         }
-        // a person already in HubSpot gets a lead too when they have none (a contact made by an earlier Apply whose lead failed)
+        // a person already in HubSpot gets a lead too when they have none (a contact made by an earlier Apply whose lead
+        // failed, or one found by name without an email). A failed lookup (no Leads scopes) drops the lead rows only.
+        var problem: CRMError?
         if leads && !hasDeal {
             var asked = Set<String>()
-            for p in external where !p.email.isEmpty {
-                guard let k = contactOf[normEmail(p.email)], asked.insert(k.id).inserted, try await c.leadId(contactId: k.id) == nil else { continue }
-                lead(k.name.isEmpty ? (p.name.isEmpty ? derivedName(p.email) : p.name) : k.name, email: normEmail(p.email), at: place(p), contactId: k.id)
+            for (k, p) in matched where asked.insert(k.id).inserted {
+                let has: String?
+                do { has = try await c.leadId(contactId: k.id) } catch {
+                    problem = (error as? CRMError) ?? CRMError(code: 0, message: error.localizedDescription)
+                    proposals.removeAll { $0.kind == .lead }
+                    break
+                }
+                guard has == nil else { continue }
+                let e = p.email.isEmpty ? normEmail(k.email) : normEmail(p.email)
+                lead(k.name.isEmpty ? (p.name.isEmpty ? derivedName(e) : p.name) : k.name, email: e, at: place(p), contactId: k.id)
                 n += 1
             }
         }
-        return CRMPeopleMatch(company: company, contacts: found, proposals: proposals)
+        let all = clientDomains.compactMap { byDomain[$0] }
+        return CRMPeopleMatch(company: company, contacts: found, proposals: proposals, companies: all, problem: problem)
+    }
+
+    /// What Auto creates by itself: only the kinds whose own switch is on. A new contact's lead waits until the contact
+    /// exists (its row comes back on the next run, for the contact then in HubSpot) unless Contact Auto made it too;
+    /// Lead Auto never creates a contact. The click path adds a lead's contact instead (the PM ticked the lead).
+    public static func autoChosen(_ proposals: [CRMProposal], contacts: Bool, companies: Bool, leads: Bool) -> [CRMProposal] {
+        let on = proposals.filter {
+            switch $0.kind {
+            case .company: return companies
+            case .contact: return contacts
+            case .lead: return leads
+            }
+        }
+        return on.filter { p in
+            p.kind != .lead || !p.contactId.isEmpty || on.contains { $0.kind == .contact && $0.email == p.email }
+        }
+    }
+
+    /// The people refs a Call needs: every company and every contact the call has (the link's and this run's).
+    public static func callRefs(companies: [CRMCompany], contacts: [CRMContact]) -> [CRMRef] {
+        var out: [CRMRef] = []
+        for r in companies.filter({ !$0.id.isEmpty }).map({ CRMRef("companies", $0.id) }) + contacts.filter({ !$0.id.isEmpty }).map({ CRMRef("contacts", $0.id) })
+            where !out.contains(r) { out.append(r) }
+        return out
     }
 
     /// Creates the given proposals, companies first, then contacts, then leads. Every create looks for an existing
@@ -233,7 +273,9 @@ public enum CRMPeople {
             for p in chosen where p.kind == .company {
                 let k = try await c.createCompany(name: p.name, domain: p.domain)
                 madeFor[p.domain] = k.id
-                if r.company == nil { r.company = CRMCompany(id: k.id, name: p.name, domain: p.domain) }
+                let co = CRMCompany(id: k.id, name: p.name, domain: p.domain)
+                if r.company == nil { r.company = co }
+                r.companies.append(co)
                 if k.created { r.created.append(("companies", k.id)) } else { r.reused += 1 }
             }
             for p in chosen where p.kind == .contact {
@@ -254,20 +296,21 @@ public enum CRMPeople {
         return r
     }
 
-    /// The one write path of Auto and Apply: creates the chosen rows, then gives a Call logged earlier the people it
-    /// does not have yet (`before` = the refs it was written with). When the Call is written in this run its own upsert
-    /// associates them first, so nothing is added here. A failed association is the result's failure, never hidden;
-    /// what was created stays listed for Undo. The association takes its turn in the per-call queue of H2 and reads
-    /// the stored Call id when the turn comes.
-    public static func commit(_ chosen: [CRMProposal], company: CRMCompany?, found: [CRMContact], before: [CRMRef], callKey: String,
-                              callWritten: Bool, connector c: CRMPeopleConnector, queue: CRMCallQueue = .shared,
+    /// The one write path of Auto and Apply: creates the chosen rows, then gives a Call logged earlier every person and
+    /// company of the call (`linked` = the people refs the link already has, `companies` = the matched ones). The
+    /// association PUTs are idempotent and are all sent again on every run, so one that failed before (while the link
+    /// kept the ids) is made by the next Apply or Auto. When the Call is written in this run its own upsert associates
+    /// them, so nothing is added here. A failed association is the result's failure, never hidden; what was created
+    /// stays listed for Undo. The association takes its turn in the per-call queue of H2 and reads the stored Call id
+    /// when the turn comes.
+    public static func commit(_ chosen: [CRMProposal], company: CRMCompany?, companies: [CRMCompany] = [], found: [CRMContact], linked: [CRMRef] = [],
+                              callKey: String, callWritten: Bool, connector c: CRMPeopleConnector, queue: CRMCallQueue = .shared,
                               callId: @escaping () -> String) async -> CRMPeopleResult {
         var r = chosen.isEmpty ? CRMPeopleResult(company: company) : await apply(chosen, company: company, connector: c)
         guard !callWritten else { return r }
-        var add: [CRMRef] = []
-        if let co = r.company, !co.id.isEmpty { add.append(CRMRef("companies", co.id)) }
-        for k in found + r.contacts where !k.id.isEmpty { add.append(CRMRef("contacts", k.id)) }
-        add = add.reduce(into: []) { out, a in if !before.contains(a) && !out.contains(a) { out.append(a) } }
+        let people = linked.filter { $0.type == "companies" || $0.type == "contacts" }
+        let add = (people + callRefs(companies: [r.company].compactMap { $0 } + companies + r.companies, contacts: found + r.contacts))
+            .reduce(into: [CRMRef]()) { out, a in if !out.contains(a) { out.append(a) } }
         guard !add.isEmpty else { return r }
         do {
             try await queue.run(callKey) {

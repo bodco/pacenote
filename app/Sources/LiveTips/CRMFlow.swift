@@ -16,6 +16,7 @@ struct CRMLink: Codable, Equatable {
     var callKey = ""                    // H2: the Pacenote call id, made once and kept with the call
     var callId = ""                     // H2: the HubSpot Call engagement of this call, so a re-run updates it
     var portalId = ""                   // H2: the portal these ids belong to; writes need it to match the key's portal
+    var companyIds: [String] = []       // H3: the other companies of the call's people (a mixed call), besides companyId
 
     init() {}
     init(from d: Decoder) throws {
@@ -25,6 +26,7 @@ struct CRMLink: Codable, Equatable {
         contactIds = (try? c.decodeIfPresent([String].self, forKey: .contactIds)) ?? nil ?? []
         contactNames = (try? c.decodeIfPresent([String].self, forKey: .contactNames)) ?? nil ?? []
         callKey = s(.callKey); callId = s(.callId); portalId = s(.portalId)
+        companyIds = (try? c.decodeIfPresent([String].self, forKey: .companyIds)) ?? nil ?? []
     }
 
     static func url(base: String) -> URL { URL(fileURLWithPath: CallLayout.sidecar(base, ".crm.json")) }
@@ -124,6 +126,7 @@ enum CRMCallLogger {
         var r: [CRMRef] = []
         if !l.dealId.isEmpty && l.dealId != "none" { r.append(CRMRef("deals", l.dealId)) }
         if !l.companyId.isEmpty { r.append(CRMRef("companies", l.companyId)) }
+        r += l.companyIds.filter { $0 != l.companyId }.map { CRMRef("companies", $0) }     // H3: a mixed call's other companies
         return r + l.contactIds.map { CRMRef("contacts", $0) }
     }
 

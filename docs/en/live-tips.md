@@ -1678,11 +1678,14 @@ and associated with the Call. What is missing shows as unticked rows, "Create th
 when turned on, "Create a Lead" (with the name, email and company): nothing is created without your click. A contact
 already in HubSpot that has no Lead also gets a "Create a Lead" row. The job title comes from the project's
 "Team - Client" table, matched by the full name; the calendar has none, so without a match it stays empty. Apply creates the companies and the contacts first and then the Call, so the Call is already associated
-with them; a Call logged earlier gets the new people too, and if that fails the error is shown where Apply was. Undo
+with them; a Call logged earlier gets the new people too, and if that fails the error is shown where Apply was and
+the next Apply (or Auto) tries again. A call with people from several companies is associated with every company.
+If HubSpot refuses the Lead lookup (no Leads scopes), the contact and company rows still show, with the error. Undo
 deletes what was created. An existing email or domain is never duplicated, even when Apply runs twice. Each kind has
 its own switch in Settings > Integrations > HubSpot, all off by default: create contacts automatically, create the
 company automatically, propose a Lead (needs the scopes `crm.objects.leads.read` and `crm.objects.leads.write` and a
-HubSpot plan with Leads) and create Leads automatically. Automatic creation runs after the call ends and only for a
+HubSpot plan with Leads) and create Leads automatically. Automatic Leads never create a contact: unless contacts are
+created automatically too, a new contact's Lead stays an unticked row in Update HubSpot. Automatic creation runs after the call ends and only for a
 call linked to HubSpot in the account of the current key. The owner of contacts and companies is never set.
 
 **What Pacenote can do.** Help > What Pacenote can do lists every feature with Try it and how often you used it
