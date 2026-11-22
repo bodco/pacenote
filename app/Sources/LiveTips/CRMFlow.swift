@@ -118,7 +118,8 @@ enum CRMCallLogger {
     }
 
     /// H2: writes the Call through the per-call queue; the stored id and portal are read from <base>.crm.json when the
-    /// turn comes and the new id is stored before the next turn. H6: `allowed` is asked when the turn comes; a Retry's
+    /// turn comes and the new id is stored before the next turn, only while the link still names the portal the write was
+    /// checked against (PB-62 fix round 6). H6: `allowed` is asked when the turn comes; a Retry's
     /// `bound` portal (the failed line's) must still be the link's, else nothing is sent (CRMSyncLog.retryPortal).
     /// `attempt` keeps the portal the turn was checked against, for the sync line (PB-62 fix round 4).
     static func write(_ entry: CRMCallLog, base: String, link: CRMLink, connector c: CRMConnector,
@@ -127,7 +128,13 @@ enum CRMCallLogger {
         try await CRMCallSync.log(entry, connector: c, associations: refs(link), allowed: allowed,
                                   load: attempt.load { let d = CRMLink.load(base: base) ?? link
                                           return (d.callId, bound.map { CRMSyncLog.retryPortal(bound: $0, link: d.portalId) } ?? d.portalId) },
-                                  save: { id in var d = CRMLink.load(base: base) ?? link; d.callId = id; d.save(base: base) })
+                                  save: { id, portal in
+                                      // on main, where Relink saves, so the link cannot change between the check and the write
+                                      await MainActor.run {
+                                          var d = CRMLink.load(base: base) ?? link
+                                          guard CRMCallSync.keepsId(wrote: portal, link: d.portalId) else { return }    // relinked meanwhile
+                                          d.callId = id; d.save(base: base)
+                                      } })
     }
 
     static func refs(_ l: CRMLink) -> [CRMRef] {
@@ -420,7 +427,7 @@ struct CRMUpdateView: View {
                 try await CRMPortal.verify(link: retryPortal.map { CRMSyncLog.retryPortal(bound: $0, link: l.portalId) } ?? l.portalId, connector: c)
                 let o = await CRMApply.run(plan: p, dealId: l.dealId, refs: CRMCallLogger.refs(l), connector: c, sync: SettingsWindow.model.config.crm.sync) { entry in
                     let r = try await CRMCallLogger.write(entry, base: base, link: l, connector: c, bound: retryPortal)    // in turn with Auto and Retry
-                    link?.callId = r.id
+                    if link?.portalId == l.portalId { link?.callId = r.id }    // not into a link relinked meanwhile
                     return r
                 }
                 done = o.done; failed = o.failed

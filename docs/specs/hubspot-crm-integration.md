@@ -305,6 +305,10 @@ key. Shown at the bottom of the call's Update HubSpot window.
   both Retry paths write only there: when the write goes out, the call's link must still name that portal and the
   key must belong to it (`CRMSyncLog.retryPortal`, then `CRMPortal.verify`). After a reconnect or Relink to another
   portal, or for a line without a portal, Retry sends nothing and says so; the PM writes again with Update HubSpot.
+- The Call id a write returns belongs to the portal that write was checked against. It is stored on the call's link
+  only while the link still names that portal (`CRMCallSync.keepsId`, checked in `CRMCallSync.log` after the request
+  and again on the main actor where the link is saved), so a Relink while the request was out never leaves the old
+  portal's id on the new link for the next write to trust.
 - If Auto's line cannot be saved to the log, a notice says so (Auto has no window to show it in).
 - **Undo** on the latest good write of an object, within 24 hours (`CRMSyncLog.logUndoSeconds`; Apply's own Undo stays
   8 seconds, `applyUndoSeconds`). The click reads the log from disk again and rechecks the window and that no later

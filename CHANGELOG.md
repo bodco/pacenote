@@ -52,7 +52,8 @@ Pacenote. Earlier versions are described in the commit messages and in
   whose fields are all set to Don't write is skipped, not blamed). If the sync log itself cannot be saved, Update
   HubSpot says so next to the HubSpot result, and for Auto a notice says so. Retry writes only to the HubSpot account
   the failed write was meant for: after you connect another account or Relink the call, even while that write was
-  still being sent, it sends nothing and says so. When HubSpot does not answer a scope probe, the live check says the
+  still being sent, it sends nothing and says so. A Call written while you Relink the call to another account is not
+  remembered for the new link, so the next write there never updates a Call of the old account. When HubSpot does not answer a scope probe, the live check says the
   check is not complete instead of showing everything as fine.
 
 ## 0.26.4 (2026-11-20)

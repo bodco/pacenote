@@ -101,18 +101,25 @@ public enum CRMCallSync {
 
     /// One write of a call's Call: in turn per call key, the portal checked, the stored id read when the turn comes,
     /// the new id stored before the turn ends. H6: `allowed` is asked when the turn comes (Auto rechecks its switch).
+    /// The new id belongs to the portal the write was checked against: it is stored only while the link still names that
+    /// portal (PB-62 fix round 6), so a Relink while the request was out never gets another portal's Call id. `save` gets
+    /// that portal too and checks it again where it writes.
     public static func log(_ entry: CRMCallLog, connector c: CRMConnector, associations: [CRMRef], queue: CRMCallQueue = .shared,
                            allowed: @escaping () async -> Bool = { true },
-                           load: @escaping () -> (callId: String, portalId: String), save: @escaping (String) -> Void) async throws -> CRMCallResult {
+                           load: @escaping () -> (callId: String, portalId: String),
+                           save: @escaping (_ id: String, _ portal: String) async -> Void) async throws -> CRMCallResult {
         try await queue.run(entry.key) {
             guard await allowed() else { throw CRMError(code: notAllowedCode, message: "", scope: "auto") }
             let stored = load()
             try await CRMPortal.verify(link: stored.portalId, connector: c)
             let r = try await c.upsertCall(entry, knownId: stored.callId, associations: associations)
-            save(r.id)
+            if keepsId(wrote: stored.portalId, link: load().portalId) { await save(r.id, stored.portalId) }
             return r
         }
     }
+
+    /// A Call id from a write to `wrote` may be stored on a link only while that link names the same portal.
+    public static func keepsId(wrote: String, link: String) -> Bool { CRMPortal.matches(link: link, current: wrote) }
 
     /// Undo of one Apply: the portal the Apply wrote to is checked first, so a key changed in between never deletes or
     /// overwrites another portal's records with the same ids. Deal fields and updated Calls get their old values back,

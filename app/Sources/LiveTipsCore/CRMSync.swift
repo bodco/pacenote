@@ -258,12 +258,13 @@ public enum CRMSyncLog {
     /// would tag a failure with the new portal and let its Retry send the call there. "" when the turn never came.
     public final class Attempt: @unchecked Sendable {
         private let lock = NSLock()
-        private var value = ""
+        private var value = "", checked = false
         public init() {}
         public var portal: String { lock.withLock { value } }
-        /// Wraps a `load` for CRMCallSync.log and records the portal it gives.
+        /// Wraps a `load` for CRMCallSync.log and records the portal its first call gives (the one checked); the
+        /// re-read after the request, to decide whether the new id is kept, does not move it.
         public func load(_ inner: @escaping () -> (callId: String, portalId: String)) -> () -> (callId: String, portalId: String) {
-            { let r = inner(); self.lock.withLock { self.value = r.portalId }; return r }
+            { let r = inner(); self.lock.withLock { if !self.checked { self.value = r.portalId; self.checked = true } }; return r }
         }
     }
 

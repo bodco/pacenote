@@ -1692,7 +1692,8 @@ Matching) and lets you add other Pacenote users by email with their HubSpot owne
 ends with a **Sync log**: what was written, when, by Apply, Auto or Retry, and the result. A failed line has Retry (a
 Call is written again at once; a note, deal fields or a task reopen Update HubSpot with only that row ticked). Retry
 writes only to the HubSpot account the failed write was meant for: after you connect another account or Relink the
-call, it sends nothing and says so. The latest write of a record has Undo for 24 hours, unless someone changed it in HubSpot after Pacenote wrote it. Neither
+call, it sends nothing and says so. A Call written while you Relink the call to another account is not remembered for
+the new link, so the next write there makes its own Call. The latest write of a record has Undo for 24 hours, unless someone changed it in HubSpot after Pacenote wrote it. Neither
 Undo (this one or the 8 seconds after Apply) changes anything after its time has passed, after an edit in HubSpot, or
 when the key now belongs to another HubSpot account. If the log cannot be saved, the window says so next to the
 HubSpot result. The log keeps property names and, for an updated Call or deal, the old values Undo needs; never

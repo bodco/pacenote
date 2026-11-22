@@ -897,7 +897,7 @@ func crmCalls() async {
     let st = Stored(), q = CRMCallQueue()
     func sync() async -> CRMCallResult? {
         try? await CRMCallSync.log(ea, connector: hq, associations: [], queue: q,
-                                   load: { (st.id, st.portal) }, save: { st.id = $0 })
+                                   load: { (st.id, st.portal) }, save: { id, _ in st.id = id })
     }
     async let y1 = sync()
     async let y2 = sync()
@@ -908,11 +908,11 @@ func crmCalls() async {
     let pf = FakeHubSpotCalls(); pf.portal = 777
     let hp = HubSpotConnector(transport: pf, sleep: { _ in })
     var perr: CRMError? = nil
-    do { _ = try await CRMCallSync.log(entry(["a"]), connector: hp, associations: [], queue: q, load: { ("101", "500") }, save: { _ in }) }
+    do { _ = try await CRMCallSync.log(entry(["a"]), connector: hp, associations: [], queue: q, load: { ("101", "500") }, save: { _, _ in }) }
     catch { perr = error as? CRMError }
     expect(perr?.code == CRMPortal.mismatchCode && pf.calls.isEmpty && !pf.log.contains { !$0.hasPrefix("GET /account-info") }, "calls: a link from another portal writes nothing")
     perr = nil
-    do { _ = try await CRMCallSync.log(entry(["a"]), connector: hp, associations: [], queue: q, load: { ("", "") }, save: { _ in }) }
+    do { _ = try await CRMCallSync.log(entry(["a"]), connector: hp, associations: [], queue: q, load: { ("", "") }, save: { _, _ in }) }
     catch { perr = error as? CRMError }
     expect(perr?.code == CRMPortal.mismatchCode && pf.calls.isEmpty, "calls: a link with no portal needs Relink")
     expect(CRMPortal.matches(link: "777", current: "777") && !CRMPortal.matches(link: "", current: ""), "calls: portal match")
@@ -1158,11 +1158,11 @@ func crmSync() async {
     let hc = HubSpotConnector(transport: ct, sleep: { _ in })
     let cq = CRMCallQueue(), consent = Consent()
     async let applyW = try? CRMCallSync.log(entry, connector: hc, associations: [], queue: cq,
-                                            load: { (consent.id, "500") }, save: { consent.id = $0; consent.on = false })
+                                            load: { (consent.id, "500") }, save: { id, _ in consent.id = id; consent.on = false })
     for await _ in ctOut { break }      // Apply holds the turn: its create is out
     var autoErr: CRMError? = nil
     do { _ = try await CRMCallSync.log(entry, connector: hc, associations: [], queue: cq, allowed: { consent.on },
-                                       load: { (consent.id, "500") }, save: { consent.id = $0 }) } catch { autoErr = error as? CRMError }
+                                       load: { (consent.id, "500") }, save: { id, _ in consent.id = id }) } catch { autoErr = error as? CRMError }
     let applied1 = await applyW
     expect(applied1?.created == true && ct.calls.count == 1 && autoErr?.code == CRMCallSync.notAllowedCode
            && ct.log.filter { $0 == "GET /account-info/v3/details" }.count == 1 && !ct.log.contains { $0.hasPrefix("PATCH") },
@@ -1173,7 +1173,7 @@ func crmSync() async {
     let hm = HubSpotConnector(transport: moved, sleep: { _ in })
     var retryErr: CRMError? = nil
     do { _ = try await CRMCallSync.log(entry, connector: hm, associations: [CRMRef("companies", "C7")], queue: CRMCallQueue(),
-                                       load: { ("", CRMSyncLog.retryPortal(bound: "500", link: "600")) }, save: { _ in }) } catch { retryErr = error as? CRMError }
+                                       load: { ("", CRMSyncLog.retryPortal(bound: "500", link: "600")) }, save: { _, _ in }) } catch { retryErr = error as? CRMError }
     expect(retryErr?.code == CRMPortal.mismatchCode && moved.calls.isEmpty && moved.log == ["GET /account-info/v3/details"],
            "retry: a failure in another portal is never sent to the portal the key and link moved to: \(moved.log)")
     // a key changed back while the link still names the new portal: still refused, and an old line without a portal too
@@ -1181,7 +1181,7 @@ func crmSync() async {
            && CRMSyncLog.retryPortal(bound: "600", link: "600") == "600", "retry: only the failed line's portal, and only while the link names it")
     let same = FakeHubSpotCalls(); same.portal = 600
     let r600 = try? await CRMCallSync.log(entry, connector: HubSpotConnector(transport: same, sleep: { _ in }), associations: [], queue: CRMCallQueue(),
-                                          load: { ("", CRMSyncLog.retryPortal(bound: "600", link: "600")) }, save: { _ in })
+                                          load: { ("", CRMSyncLog.retryPortal(bound: "600", link: "600")) }, save: { _, _ in })
     expect(r600?.created == true && same.calls.count == 1, "retry: the failed line's own portal is written")
     let failedLine = CRMSyncEntry(object: "calls", action: "create", source: "auto", ok: false, error: "HTTP 500", portal: "500")
     let failedJSON = (try? JSONEncoder().encode([failedLine])).flatMap { try? JSONDecoder().decode([CRMSyncEntry].self, from: $0) }
@@ -1195,7 +1195,7 @@ func crmSync() async {
     let inOut = AsyncStream<Void> { inGo = $0 }; inflight.createStarted = { inGo.yield() }
     let box = LinkBox(), attempt = CRMSyncLog.Attempt()
     async let outW: Error? = { do { _ = try await CRMCallSync.log(entry, connector: HubSpotConnector(transport: inflight, sleep: { _ in }), associations: [CRMRef("companies", "C7")],
-                                                              queue: CRMCallQueue(), load: attempt.load { ("", box.portal) }, save: { _ in }); return nil } catch { return error } }()
+                                                              queue: CRMCallQueue(), load: attempt.load { ("", box.portal) }, save: { _, _ in }); return nil } catch { return error } }()
     for await _ in inOut { break }      // the portal was checked and the create is out
     box.portal = "600"; inflight.lock.withLock { inflight.portal = 600 }     // reconnected and relinked while the create waits
     let outErr = await outW
@@ -1203,13 +1203,35 @@ func crmSync() async {
     let relinked = FakeHubSpotCalls(); relinked.portal = 600
     var relinkErr: CRMError? = nil
     do { _ = try await CRMCallSync.log(entry, connector: HubSpotConnector(transport: relinked, sleep: { _ in }), associations: [CRMRef("companies", "C7")], queue: CRMCallQueue(),
-                                       load: { ("", CRMSyncLog.retryPortal(bound: attempt.portal, link: box.portal)) }, save: { _ in }) } catch { relinkErr = error as? CRMError }
+                                       load: { ("", CRMSyncLog.retryPortal(bound: attempt.portal, link: box.portal)) }, save: { _, _ in }) } catch { relinkErr = error as? CRMError }
     expect(relinkErr?.code == CRMPortal.mismatchCode && relinked.calls.isEmpty && relinked.log == ["GET /account-info/v3/details"],
            "retry: a failure from before a relink sends nothing to the new portal: \(relinked.log)")
+    // PB-62 review round 6: the Call write to portal 500 is out when the PM relinks the call to 600, then it succeeds.
+    // 500's new Call id is not stored on the 600 link (the next sync would trust it there and overwrite another Call),
+    // and the sync line still names 500
+    final class IdBox: @unchecked Sendable { var portal = "500", callId = "" }
+    func relinkWhileOut(_ relink: Bool) async -> (CRMCallResult?, IdBox, CRMSyncLog.Attempt) {
+        let ok = FakeHubSpotCalls(); ok.createDelay = 50_000_000
+        var go: AsyncStream<Void>.Continuation! = nil
+        let out = AsyncStream<Void> { go = $0 }; ok.createStarted = { go.yield() }
+        let b = IdBox(), at = CRMSyncLog.Attempt()
+        async let w = try? CRMCallSync.log(entry, connector: HubSpotConnector(transport: ok, sleep: { _ in }), associations: [], queue: CRMCallQueue(),
+                                           load: at.load { (b.callId, b.portal) }, save: { id, _ in b.callId = id })
+        for await _ in out { break }      // the portal was checked and the create is out
+        if relink { b.portal = "600"; b.callId = "" }
+        return (await w, b, at)
+    }
+    let (okR, okBox, okAt) = await relinkWhileOut(true)
+    expect(okR?.created == true && okBox.callId == "" && okBox.portal == "600" && okAt.portal == "500",
+           "relink: a Call id written to the old portal is not stored on the relinked call: \(okBox.callId) \(okAt.portal)")
+    let (keptR, keptBox, _) = await relinkWhileOut(false)
+    expect(keptR?.created == true && !keptBox.callId.isEmpty && keptBox.callId == keptR?.id, "relink: without a relink the new Call id is stored")
+    expect(CRMCallSync.keepsId(wrote: "500", link: "500") && !CRMCallSync.keepsId(wrote: "500", link: "600") && !CRMCallSync.keepsId(wrote: "", link: ""),
+           "relink: an id is kept only on a link of the portal it was written to")
     // the turn never came (Auto switched off while waiting): no portal, so no Retry target
     let never = CRMSyncLog.Attempt()
     _ = try? await CRMCallSync.log(entry, connector: HubSpotConnector(transport: FakeHubSpotCalls(), sleep: { _ in }), associations: [], queue: CRMCallQueue(),
-                                   allowed: { false }, load: never.load { ("", "500") }, save: { _ in })
+                                   allowed: { false }, load: never.load { ("", "500") }, save: { _, _ in })
     expect(never.portal == "", "retry: a write that never had its turn names no portal")
     // owners: the mapping, then the user of this Mac gets the Matching owner, then the same email, else HubSpot's default
     var o = CRMSettings(); o.ownerId = "7"
