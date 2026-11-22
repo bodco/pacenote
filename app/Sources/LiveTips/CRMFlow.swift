@@ -15,6 +15,8 @@ struct CRMLink: Codable, Equatable {
     var contactNames: [String] = []     // H2: the participants named in the Call engagement
     var callKey = ""                    // H2: the Pacenote call id, made once and kept with the call
     var callId = ""                     // H2: the HubSpot Call engagement of this call, so a re-run updates it
+    var meetingId = ""                  // H5: the HubSpot Meeting that holds this call's notes (ours, or the one HubSpot's calendar sync made)
+    var emailId = ""                    // H5: the HubSpot Email engagement of the follow-up
 
     init() {}
     init(from d: Decoder) throws {
@@ -23,7 +25,7 @@ struct CRMLink: Codable, Equatable {
         provider = s(.provider, "hubspot"); companyId = s(.companyId); companyName = s(.companyName); dealId = s(.dealId); dealName = s(.dealName)
         contactIds = (try? c.decodeIfPresent([String].self, forKey: .contactIds)) ?? nil ?? []
         contactNames = (try? c.decodeIfPresent([String].self, forKey: .contactNames)) ?? nil ?? []
-        callKey = s(.callKey); callId = s(.callId)
+        callKey = s(.callKey); callId = s(.callId); meetingId = s(.meetingId); emailId = s(.emailId)
     }
 
     static func url(base: String) -> URL { URL(fileURLWithPath: CallLayout.sidecar(base, ".crm.json")) }
@@ -235,6 +237,8 @@ struct CRMUpdateView: View {
     @State private var status = ""
     @State private var undo: [(String, String, [String: String])] = []    // (type, id, old fields)
     @State private var undoUntil: Date? = nil
+    @State private var meetingLog: CRMMeetingLog? = nil      // H5 (CRMTimelineFlow.swift)
+    @State private var emailLog: CRMEmailLog? = nil
     @State private var applied = false     // 0.8.7.1: a second Apply wrote the note and the task twice
 
     var base: String { file.hasSuffix(".md") ? String(file.dropLast(3)) : file }
@@ -294,6 +298,11 @@ struct CRMUpdateView: View {
                                    qualification: qual, mapping: mapping, followUp: next.isEmpty ? nil : (next, nil),
                                    writeNote: crmCfg.writeNote, writeDeal: crmCfg.writeDeal, writeTask: crmCfg.writeTask,
                                    callLog: callLog, writeCall: crmCfg.writeCall)
+        if let l = link {       // H5: the Meeting and the sent follow-up Email as two more rows
+            meetingLog = CRMTimelineLogger.meeting(file: file, link: l); emailLog = CRMTimelineLogger.email(file: file, link: l)
+            let at = plan?.rows.firstIndex { $0.id == "transcript" } ?? plan?.rows.count ?? 0      // the transcript row stays last
+            plan?.rows.insert(contentsOf: CRMTimelineLogger.rows(meeting: meetingLog, email: emailLog), at: at)
+        }
     }
 
     func apply() {
@@ -312,6 +321,11 @@ struct CRMUpdateView: View {
                     let r = try await c.upsertCall(entry, knownId: l.callId, associations: refs)
                     done.append(("calls", r.id, r.old))       // a new Call: old is empty and Undo deletes it; an update: Undo restores
                     var nl = link ?? l; nl.callId = r.id; nl.save(base: base); link = nl
+                }
+                if let w = c as? CRMTimelineWriter {
+                    let t = await CRMTimelineLogger.apply(w, meeting: meetingLog, email: emailLog, link: link ?? l, refs: refs) { id in p.rows.first(where: { $0.id == id })?.on == true }
+                    done += t.undo; link = t.link; t.link.save(base: base)
+                    if let e = t.error { throw e }
                 }
                 if p.rows.first(where: { $0.id == "deal" })?.on == true, !l.dealId.isEmpty, l.dealId != "none", !p.dealFields.isEmpty {
                     let old = try await c.updateDeal(id: l.dealId, fields: p.dealFields); done.append(("deals", l.dealId, old)); fields = p.dealFields.count
@@ -342,9 +356,14 @@ struct CRMUpdateView: View {
                 do {
                     if type == "deals" { _ = try await c.updateDeal(id: id, fields: old) }
                     else if type == "calls" && !old.isEmpty { try await c.restoreCall(id: id, fields: old) }
+                    else if (type == "meetings" || type == "emails") && !old.isEmpty { try await (c as? CRMTimelineWriter)?.restore(type: type, id: id, fields: old) }   // H5
                     else {
                         try await c.delete(type: type, id: id)
                         if type == "calls", var l = link { l.callId = ""; l.save(base: base); link = l }   // the next Apply makes a new Call
+                        if type == "meetings" || type == "emails", var l = link {      // H5: a deleted one is made again by the next Apply
+                            if type == "meetings" { l.meetingId = "" } else { l.emailId = "" }
+                            l.save(base: base); link = l
+                        }
                     }
                 } catch { failed += 1 }
             }

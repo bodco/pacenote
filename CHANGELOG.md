@@ -22,6 +22,14 @@ Pacenote. Earlier versions are described in the commit messages and in
   switch in Settings > Integrations > HubSpot, **Log the call in HubSpot automatically after it ends**, is off by
   default and logs only the Call. The HubSpot integration design is in `docs/specs/hubspot-crm-integration.md`.
 
+- **Meetings and follow-up emails on the HubSpot timeline (H5).** Update HubSpot has two more rows. **Meeting**
+  (ticked by default) adds the call's Summary, Decisions and Next steps to a HubSpot Meeting associated with the
+  matched contacts, company and deal; if HubSpot's own calendar sync already created that meeting, the notes are
+  added to it instead of making a second one, and applying again replaces Pacenote's block. **Email** appears once
+  the follow-up draft has been written in the app, is never ticked for you, and records the email you sent as a HubSpot email engagement
+  (Pacenote still sends no mail). No automatic switch for either, Undo works as for the other rows, and transcript
+  text is never sent.
+
 ## 0.26.4 (2026-11-20)
 
 - **A new organization project includes the person who made it (2026-11-20):** in New project > start a new

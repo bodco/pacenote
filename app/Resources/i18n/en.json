@@ -1629,6 +1629,8 @@
  "crm.row.deal": "Deal fields",
  "crm.row.task": "A follow-up task",
  "crm.row.call": "A Call in HubSpot (title, time, duration, summary, next steps, link back; no transcript)",
+ "crm.row.meeting": "A Meeting in HubSpot with the call's notes (Summary, Decisions, Next steps; no transcript). If HubSpot's calendar sync already has this meeting, the notes go into it",
+ "crm.row.email": "The follow-up email you sent, on the timeline (Pacenote does not send mail: tick this only after you sent it)",
  "int.hubspot.writeCall": "A Call with the summary and next steps (no transcript)",
  "int.hubspot.autoCall": "Log the call in HubSpot automatically after it ends",
  "int.hubspot.autoCallHelp": "Off by default. Writes only the Call, with no review. A re-run updates the same Call. Notes, deal fields and tasks still go through Update HubSpot.",

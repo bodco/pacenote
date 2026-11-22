@@ -1668,6 +1668,18 @@ second one; Undo deletes a new Call or puts the old values back. **Log the call 
 ends** is off by default; when on, it logs only the Call, about two and a half minutes after the call, without a
 review. Notes, deal fields and tasks stay behind Apply. The design is in `docs/specs/hubspot-crm-integration.md`.
 
+**Meetings and follow-up emails on the timeline.** Update HubSpot also has a Meeting row, ticked by default: the call's
+Summary, Decisions and Next steps, with the link back, go into HubSpot as a Meeting with the call's title, start and
+end, outcome Completed, associated with the matched contacts, the company and the open deal. If HubSpot's own calendar
+sync already made that meeting (same contacts, company or deal, a start within 15 minutes), Pacenote does not add a
+second one: the notes are added to that meeting's internal notes, below your own text, and the meeting's title and
+invite stay as they are. Applying again replaces Pacenote's block instead of repeating it. The **Email** row appears
+once the call's follow-up draft has been written in this session of the app (the draft is not saved to a file) and is never ticked for you: Pacenote does not send mail, so
+tick it after you sent the email yourself, and HubSpot gets an email engagement with the subject and text as you
+edited them (not an email sent through HubSpot), associated the same way. An email with the same subject already on
+those contacts in the last day is left alone. Both rows need Apply; there is no automatic switch for them, Undo works
+for 8 seconds, and no transcript text is sent.
+
 **What Pacenote can do.** Help > What Pacenote can do lists every feature with Try it and how often you used it
 (from the local usage log, Settings > General > Data). For the first 14 days it is also a card on Home.
 

@@ -48,5 +48,15 @@ write:
   call: >-
     Call row in the review, ticked by default; associations contact 194, company 182, deal 206; dedupe by
     hs_call_external_id = pacenote:<call id>. Full design: docs/specs/hubspot-crm-integration.md.
+  meeting: >-
+    H5: Meeting row, ticked by default, never automatic. The call page's Summary, Decisions and Next steps go to
+    hs_internal_meeting_notes; associations contact 200, company 188, deal 212. A meeting already on the same contacts,
+    company or deal within 15 minutes of the start (HubSpot's calendar sync) is used instead of a new one; only
+    Pacenote's block of the notes is written, and a re-run replaces it. Never transcript text.
+  email: >-
+    H5: Email row, never ticked for the PM, never automatic. Pacenote sends no mail; the PM ticks it after sending the
+    follow-up, and an email engagement (hs_email_direction EMAIL, status SENT) with the subject and text as edited is
+    logged; associations contact 198, company 186, deal 210. The id is kept with the call; the same subject on the
+    same contacts in the last day is left alone.
 mapping:
   qualification: for each criterion of the method, a deal property chosen by name in Settings > Integrations > HubSpot, or "Don't write"
