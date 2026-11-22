@@ -246,7 +246,9 @@
       case 'question': return false;                      // heard-question lines are not shown (2026-10-26 review)
       case 'ask': return false;                           // echoes of what the PM typed: the field already shows it
       case 'consent': return false;                       // 0.13.0: the consent record of the call, for the call page only
-      case 'ack': this.toast = { text: this.tr('applied'), kind: 'ok', at: this.now() }; return true;
+      case 'ack': this.ack = { key: it.key, value: it.value, n: (this.ack ? this.ack.n : 0) + 1 };   // PB-49: the window reads which setting was applied
+        (this.acks = this.acks || {})[it.key] = { value: it.value, n: this.ack.n };   // kept per key: a later ack of another setting in the same batch must not hide this one
+        this.toast ={ text: this.tr('applied'), kind: 'ok', at: this.now() }; return true;
       case 'notice': this.prep = 'ready'; this.toast = { text: this.tr('prepReady'), kind: 'ok', at: this.now() }; return true;
       case 'deal':
         // 0.8.7 (H4): the qualification tracker; criteria with state unknown | partial | known, a short what and a quote
@@ -517,6 +519,8 @@
       let m;
       if ((m = /^- (?:Канали|Channels): (.+?) = .*?, (.+?) = /.exec(l))) { this.channels = { me: m[1], them: m[2] }; continue; }
       if ((m = /^- (?:Канали|Channels): (.+?) = /.exec(l))) { this.channels.me = m[1]; continue; }
+      // PB-49: the recorder's own marker for a call-language switch ("--- language: en+uk 10:31:40 ---"): a divider in the pane
+      if ((m = /^--- (?:language|мова): ([a-z]{2,3}(?:\+[a-z]{2,3})*) (\d\d:\d\d:\d\d) ---$/.exec(l))) { this.transcript.push({ marker: 'lang', langs: m[1].split('+'), t: m[2] }); continue; }
       m = TR_RX.exec(l); if (!m) continue;
       const sid = m[3] || (this.channels.me && m[2] === this.channels.me ? 'me' : /^(я|me|pm)$/i.test(m[2]) ? 'me' : 'other');
       if (!m[3] && sid === 'other' && !/^(співрозмовник|other)$/i.test(m[2])) {

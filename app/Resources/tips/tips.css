@@ -271,6 +271,13 @@ button{font:inherit;color:inherit;cursor:pointer}
   .row{padding:11px 20px}
   .agenda{padding:0 20px 14px}
 }
+/* PB-49 (owner 22.11): below 760 px two deliberate rows. Row 1: status and exit. Row 2: views (Transcript, On me) and call controls. */
+@container app (max-width: 759px){
+  header.bar .brk{display:block;order:2;flex:0 0 100%;height:0}
+  .bar .endcall,.bar #homeBtn,.bar #moreBtn{order:1}
+  .bar .onme,.bar .trbtn,.bar .tools,.bar .recc{order:3}
+  .bar .tools{margin-left:auto}
+}
 /* Narrow: On me shows only its count, so the three tools and the menu always fit */
 @container app (max-width: 459px){
   .onme{padding:0 8px}
@@ -283,6 +290,7 @@ button{font:inherit;color:inherit;cursor:pointer}
   .row .kind{width:70px}
   .help .k{display:none}
   #homeBtn{display:none}   /* ⌘0 still opens Home */
+  .langbtn .car{display:none}
 }
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
 
@@ -437,8 +445,32 @@ button{font:inherit;color:inherit;cursor:pointer}
 .onme-item .hover-acts{opacity:0;display:flex;gap:2px}
 .onme-item:hover .hover-acts,.onme-item:focus-within .hover-acts{opacity:1}
 .onme-item.editing input[type=text]{flex:1;font:inherit;font-size:14px;border:1px solid var(--border);border-radius:var(--radius-s);padding:4px 6px;background:var(--bg);color:var(--text)}
-.langbtn{height:24px;padding:0 8px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text-2);font-size:11px;font-weight:600;letter-spacing:.04em}
+.langbtn{display:inline-flex;align-items:center;gap:4px;height:24px;min-width:36px;justify-content:center;padding:0 8px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:12px;font-weight:700;letter-spacing:.04em;margin-left:4px}
 .langbtn[hidden]{display:none}
+.langbtn .car{font-size:10px;opacity:.7}
+.langbtn:focus-visible,.icon-btn.trbtn:focus-visible{outline:2px solid var(--accent-fill);outline-offset:2px}
+.langbtn[disabled]{opacity:.5}
+/* a switch waiting for the recorder's echo: the amber outline plus a dotted underline, so it is not colour alone */
+.langbtn.pending{border-color:var(--pn-notready,var(--k-onme))}
+.langbtn.pending .lc{text-decoration:underline dotted;text-underline-offset:3px}
+.icon-btn.trbtn.on{color:var(--accent);background:var(--accent-soft,color-mix(in srgb,var(--accent) 14%,transparent))}
+[data-style] .icon-btn.trbtn.on{background:transparent;box-shadow:inset 0 -2px 0 var(--pn-notready,var(--accent))}
+/* the call-language menu, under the chip */
+.menu.langmenu{right:auto;min-width:230px;overflow-y:auto}
+.menu.langmenu .mh{padding:4px 10px 6px;font-size:12px;color:var(--text-3)}
+.menu.langmenu button .rd{width:16px;flex:none}
+.menu.langmenu button[role=menuitemradio]{justify-content:flex-start;gap:6px}
+.menu.langmenu .tipsin{display:flex;align-items:center;gap:6px;padding:4px 10px;font-size:13px}
+.menu.langmenu .tipsin>span{flex:1}
+.menu.langmenu .tipsin button{padding:3px 10px;font-size:12px;font-weight:700;border:1px solid var(--border);border-radius:6px}
+.menu.langmenu .tipsin button[aria-checked=true]{background:var(--accent-fill);color:#fff;border-color:transparent}
+.menu.langmenu .foot{padding:4px 10px 2px;font-size:12px;color:var(--text-3)}
+.menu.langmenu button:focus-visible{outline:2px solid var(--accent-fill);outline-offset:-2px}
+[data-style] .menu.langmenu .tipsin button{border-radius:0}
+.tl-mark{display:flex;align-items:center;gap:10px;margin:6px 0;font-size:12px;color:var(--text-3)}
+.tl-mark::before,.tl-mark::after{content:"";flex:1;height:1px;background:var(--separator)}
+.tr-empty{margin:0;font-size:13px;color:var(--text-3)}
+.bar .brk{display:none}
 
 /* 0.8.5 fix: a card's points show under its phrase again (an answer was only its first line) */
 .hero .items{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:4px;font-size:15px;line-height:1.4;color:var(--text-2)}

@@ -19,12 +19,18 @@
     <!-- 0.10.0 (AI chain): the limit status of the AIs the jobs use; hover or click lists them -->
     <span class="aist" id="aiSt"></span>
     <span class="spacer"></span>
+    <!-- PB-49: below 760 px the header is two rows: status and exit, then views and call controls (this empty box ends row 1) -->
+    <span class="brk" aria-hidden="true"></span>
     <button class="onme deal" id="dealBtn" type="button" hidden></button>
+    <!-- PB-49: the transcript, always there; left of On me -->
+    <button class="icon-btn tool trbtn" id="trBtn" type="button" aria-controls="pane" aria-expanded="false"></button>
     <button class="onme" id="onmeBtn" type="button"><span id="onmeLbl"></span><span class="n" id="onmeN">0</span></button>
     <span class="tools" role="group">
       <button class="icon-btn tool mic" id="micBtn" type="button" aria-pressed="false"></button>
       <button class="icon-btn tool pause" id="pauseBtn" type="button" aria-pressed="false"></button>
       <button class="icon-btn tool bulb" id="bulbBtn" type="button" aria-pressed="false"></button>
+      <!-- PB-49: the call language (what the recorder listens for); the menu is #langMenu -->
+      <button class="langbtn" id="langBtn" type="button" data-act="lang-menu" aria-haspopup="menu" aria-expanded="false" hidden></button>
     </span>
     <!-- 0.9.5: the call recording: Record, then the time with Pause and Stop -->
     <span class="recc" id="recCtl" role="group"></span>
@@ -84,6 +90,7 @@
 
 <div class="sheet" id="sheet" hidden role="dialog" aria-modal="true"></div>
 <div class="menu" id="menu" hidden role="menu"></div>
+<div class="menu langmenu" id="langMenu" hidden role="menu"></div>
 <div class="popover" id="pop" hidden role="dialog"></div>
 
 <div class="toast" id="toast" role="status" aria-live="polite"></div>

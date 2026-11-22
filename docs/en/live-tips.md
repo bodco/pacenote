@@ -511,6 +511,12 @@ The layout since 1.8.0, top to bottom (hover any control for a hint):
 - **Top bar:** a recording dot, the call title, the timer, your talk share, `⏸` pause,
   `🎙` mic mute and `⚙` (one menu for everything else). A small "Tips paused" pill shows while tips are
   paused.
+- **Transcript and call language (PB-49):** the `💬` Transcript button is always in the strip, left of On me (`⌘⇧T`;
+  a second click closes the panel). The language chip next to mic, pause and the bulb (`UK`, `EN`, `UK+EN`) opens a
+  menu with one row per language and a mixed row. A pick changes only what is transcribed, from the next phrase and for
+  this call only; the call's output language still follows the language mostly spoken. In a mixed call the menu also has
+  "Tips in" (UK or EN); switching to one language also moves the tips to it, once the recorder confirms (the message
+  says "Call and tips language"). A mixed row lists at most three languages. Below 760 px the strip has two rows.
 - **"Now speaking" line** under it (with speaker identification on): `🗣 Maria` or
   `🗣 Speaker 2`. Click it to rename that speaker, move one line to someone else ("this line
   was someone else") or merge two speakers. Hidden when you speak or nobody does.
