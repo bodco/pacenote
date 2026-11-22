@@ -77,6 +77,9 @@ struct CRMSyncLogView: View {
                 if !line.isEmpty { Text(line).font(PN.Font.caption).foregroundStyle(PN.C.text3).lineLimit(2) }
             }
             .font(PN.Font.caption)
+        } else if CRMSyncLog.unreadable(stem: stem) {
+            // fix round 9: a damaged file is kept, not shown as an empty log that the next write would replace
+            Text(L("crm.log.unreadable")).font(PN.Font.caption).foregroundStyle(PN.C.danger).fixedSize(horizontal: false, vertical: true)
         }
     }
 

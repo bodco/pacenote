@@ -201,10 +201,19 @@ public enum CRMSyncLog {
         return (e, d)
     }
 
-    public static func load(path: String) -> [CRMSyncEntry] {
-        guard let data = FileManager.default.contents(atPath: path) else { return [] }
-        return (try? coder().1.decode([CRMSyncEntry].self, from: data)) ?? []
+    /// The log as it is on disk: [] only when there is no file yet; nil when a file is there but cannot be read or
+    /// decoded (fix round 9: such a file is never written over, its lines may still be recovered by hand).
+    public static func read(path: String) -> [CRMSyncEntry]? {
+        guard FileManager.default.fileExists(atPath: path) else { return [] }
+        guard let data = FileManager.default.contents(atPath: path) else { return nil }
+        return try? coder().1.decode([CRMSyncEntry].self, from: data)
     }
+
+    /// For showing and for the Undo and Retry checks: an unreadable log shows as empty (nothing can be undone from it).
+    public static func load(path: String) -> [CRMSyncEntry] { read(path: path) ?? [] }
+
+    /// Whether the call's log file is there but cannot be read; the log view says so instead of showing nothing.
+    public static func unreadable(stem: String) -> Bool { read(path: path(stem: stem)) == nil }
 
     /// false when the log could not be written: the HubSpot write itself still happened, so callers say both.
     @discardableResult
@@ -216,12 +225,14 @@ public enum CRMSyncLog {
         } catch { return false }
     }
 
-    /// Appends lines to the log of the call with this stem; the only writer other branches need. false: not saved.
+    /// Appends lines to the log of the call with this stem; the only writer other branches need. false: not saved,
+    /// also when the file there cannot be read (it is left as it is, never replaced by the new lines alone).
     @discardableResult
     public static func append(_ new: [CRMSyncEntry], stem: String) -> Bool {
         guard !new.isEmpty else { return true }
         let p = path(stem: stem)
-        return save(load(path: p) + new, path: p)
+        guard let old = read(path: p) else { return false }
+        return save(old + new, path: p)
     }
 
     /// Only the latest good write of an object can be undone (older old values would overwrite a newer write), within
@@ -345,7 +356,8 @@ public enum CRMSyncLog {
     @discardableResult
     public static func recordUndo(object: String, hubspotId: String, error: String?, source: String, stem: String) -> Bool {
         let p = path(stem: stem)
-        return save(withUndo(load(path: p), object: object, hubspotId: hubspotId, error: error, source: source), path: p)
+        guard let old = read(path: p) else { return false }     // an unreadable log is left as it is
+        return save(withUndo(old, object: object, hubspotId: hubspotId, error: error, source: source), path: p)
     }
 }
 

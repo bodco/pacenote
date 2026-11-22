@@ -1696,7 +1696,8 @@ writes only to the HubSpot account the failed write was meant for: after you con
 call, it sends nothing and says so. The latest write of a record has Undo for 24 hours, unless someone changed it in HubSpot after Pacenote wrote it. Neither
 Undo (this one or the 8 seconds after Apply) changes anything after its time has passed, after an edit in HubSpot, or
 when the key now belongs to another HubSpot account. If the log cannot be saved, the window says so next to the
-HubSpot result. The log keeps property names and, for an updated Call or deal, the old values Undo needs; never
+HubSpot result. If the log file cannot be read, Pacenote keeps it as it is, adds no lines to it and says so in the
+window. The log keeps property names and, for an updated Call or deal, the old values Undo needs; never
 transcript text, never the key.
 
 **What Pacenote can do.** Help > What Pacenote can do lists every feature with Try it and how often you used it

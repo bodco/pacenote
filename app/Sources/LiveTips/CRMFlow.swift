@@ -445,8 +445,11 @@ struct CRMUpdateView: View {
                 let mismatch = (error as? CRMError)?.code == CRMPortal.mismatchCode
                 needsRelink = mismatch && retryPortal == nil
                 status = mismatch ? (retryPortal == nil ? L("crm.relink.needed") : L("crm.log.otherPortal")) :((error as? CRMError)?.message ?? error.localizedDescription)
-                if !mismatch {     // a portal mismatch wrote nothing; Relink, not Retry, is the way on
-                    let saved = CRMSyncRecorder.applied(plan: p, portal: l.portalId, done: done, error: status, failed: failed, stem: base, source: source, revisions: revs)
+                // a portal mismatch sent nothing for its row (Relink, not Retry, is the way on, so no failed line), but
+                // rows written before it (a note before a Call relinked meanwhile) still get their lines (fix round 9)
+                if !mismatch || !done.isEmpty {
+                    let saved = CRMSyncRecorder.applied(plan: p, portal: l.portalId, done: done, error: mismatch ? nil : status, failed: mismatch ? nil : failed,
+                                                        stem: base, source: source, revisions: revs)
                     status = CRMSyncRecorder.status(status, saved: saved)
                 }
                 AnalyticsTracker.shared.error("crm", Analytics.errorCode(message: status), provider: "hubspot")   // S5: code only

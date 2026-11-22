@@ -3219,6 +3219,7 @@
  "crm.log.changed": "Not undone: this record was changed in HubSpot after Pacenote wrote it, or Pacenote could not confirm that it was not. Change it in HubSpot.",
  "crm.log.expired": "Undo is no longer possible here: its time has passed, a later write replaced this one, or it went to another HubSpot account.",
  "crm.log.saveFailed": "Pacenote could not save this to the call's sync log, so it is missing there.",
+ "crm.log.unreadable": "This call's sync log file could not be read. Pacenote keeps it as it is and adds no new lines to it until it can be read again.",
  "crm.log.otherPortal": "Retry sent nothing: this write was meant for a HubSpot account that this call is no longer linked to, or that is not connected now. Write it again with Update HubSpot on the call page.",
  "crm.log.autoNotice": "HubSpot Auto, {call}: {result}",
  "int.connect": "Connect",

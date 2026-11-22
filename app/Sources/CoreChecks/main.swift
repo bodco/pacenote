@@ -1371,6 +1371,17 @@ func crmSync() async {
     let at2 = ApplyFake(); at2.failNote = true
     let ao2 = await CRMApply.run(plan: ap, dealId: "D1", refs: [], connector: HubSpotConnector(transport: at2, sleep: { _ in }), sync: CRMSyncSettings()) { _ in CRMCallResult(id: "C9", created: true) }
     expect(ao2.failed == "notes" && ao2.done.isEmpty && !at2.log.contains { $0.contains("/tasks") }, "apply: the first failure stops the Apply and names its own row")
+    // fix round 9: a Call relinked while Apply runs refuses after the note was written; the note keeps its line, the
+    // refused Call gets none (Relink, not Retry)
+    var apc = ap; apc.callLog = CRMCallLog(key: "k1", title: "Orbit", start: now, durationMs: 60_000, body: "b")
+    for i in apc.rows.indices { apc.rows[i].on = ["note", "call"].contains(apc.rows[i].id) }
+    if !apc.rows.contains(where: { $0.id == "call" }) { apc.rows.append(CRMUpdatePlan.Row(id: "call", title: "Call", detail: "", on: true)) }
+    let ao3 = await CRMApply.run(plan: apc, dealId: "D1", refs: [], connector: HubSpotConnector(transport: ApplyFake(), sleep: { _ in }), sync: CRMSyncSettings()) { _ in
+        throw CRMError(code: CRMPortal.mismatchCode, message: "relinked", scope: "portal")
+    }
+    let al3 = CRMSyncLog.applyEntries(plan: apc, done: ao3.done, error: nil, failed: nil, portal: "500", source: "click", sync: CRMSyncSettings(), now: now)
+    expect(ao3.failed == "calls" && ao3.done.map(\.type) == ["notes"] && al3.map(\.object) == ["notes"] && al3.allSatisfy(\.ok),
+           "apply: a note written before a relinked Call keeps its log line")
     // Retry and Undo
     expect(CRMSyncLog.canRetry(lines[2], in: lines) && !CRMSyncLog.canRetry(lines[0], in: lines), "log: a failed write can be retried")
     var later = CRMSyncEntry(at: now.addingTimeInterval(60), object: "deals", action: "update", source: "retry", hubspotId: "D1", fields: ["hs_next_step"], old: ["hs_next_step": "Old"], revision: "r")
@@ -1412,6 +1423,23 @@ func crmSync() async {
     expect(CRMSyncLog.undoable(id: w.id, stem: stem2, now: now.addingTimeInterval(60)) == nil, "log: no Undo on a click after a later write of the object")
     CRMSyncLog.append((0..<250).map { CRMSyncEntry(object: "calls", action: "create", source: "auto", hubspotId: "\($0)") }, stem: stem)
     expect(CRMSyncLog.load(path: CRMSyncLog.path(stem: stem)).count == CRMSyncLog.maxEntries, "log: capped")
+    // fix round 9: a log file that is there but cannot be decoded (a good line and an element that is not a line) or
+    // read (a folder in its place) is never replaced by the new lines alone; append and Undo say they did not save
+    let stem3 = dir + "/2026-11-22-1600-orbit"
+    let bad = Data("[{\"id\":\"keep-1\",\"object\":\"calls\",\"action\":\"create\",\"source\":\"auto\",\"hubspotId\":\"C7\",\"ok\":true}, 42]".utf8)
+    try? FileManager.default.createDirectory(atPath: (CRMSyncLog.path(stem: stem3) as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
+    FileManager.default.createFile(atPath: CRMSyncLog.path(stem: stem3), contents: bad)
+    let badAppend = CRMSyncLog.append([CRMSyncEntry(object: "notes", action: "create", source: "click", hubspotId: "N1")], stem: stem3)
+    let badUndo = CRMSyncLog.recordUndo(object: "calls", hubspotId: "C7", error: nil, source: "log", stem: stem3)
+    expect(!badAppend && !badUndo && FileManager.default.contents(atPath: CRMSyncLog.path(stem: stem3)) == bad && CRMSyncLog.unreadable(stem: stem3),
+           "log: an unreadable log keeps its bytes, append and Undo report not saved")
+    let stem4 = dir + "/2026-11-22-1700-orbit"
+    try? FileManager.default.createDirectory(atPath: CRMSyncLog.path(stem: stem4), withIntermediateDirectories: true)
+    expect(!CRMSyncLog.append([CRMSyncEntry(object: "notes", action: "create", source: "click")], stem: stem4) && CRMSyncLog.unreadable(stem: stem4),
+           "log: a log path that cannot be read is not written over")
+    let stem5 = dir + "/2026-11-22-1800-orbit"
+    expect(!CRMSyncLog.unreadable(stem: stem5) && CRMSyncLog.append([CRMSyncEntry(object: "notes", action: "create", source: "click")], stem: stem5)
+           && CRMSyncLog.load(path: CRMSyncLog.path(stem: stem5)).count == 1, "log: no file yet is an empty log, the first line is saved")
     try? FileManager.default.removeItem(atPath: dir)
     // the live check: a 403 on a probe marks its scope; a server error does not
     let sf = StatusFake()
