@@ -336,7 +336,12 @@ struct CRMUpdateView: View {
                                    qualification: qual, mapping: mapping, followUp: next.isEmpty ? nil : (next, nil),
                                    writeNote: crmCfg.writeNote, writeDeal: crmCfg.writeDeal, writeTask: crmCfg.writeTask,
                                    callLog: callLog, writeCall: crmCfg.writeCall)
-        if let l = link, !needsRelink { Task { link = await people.load(file: file, link: l, name: "") } }      // H3: reads HubSpot, writes nothing
+        if let l = link, !needsRelink {      // H3: reads HubSpot, writes nothing; another portal gets no email and the call needs Relink
+            Task {
+                link = await people.load(file: file, link: l, name: "")
+                if people.otherPortal { needsRelink = true; status = L("crm.relink.needed") }
+            }
+        }
     }
 
     func apply() {

@@ -19,13 +19,14 @@ enum CRMPeopleFlow {
     static func existingCompany(_ l: CRMLink) -> CRMCompany? { l.companyId.isEmpty ? nil : CRMCompany(id: l.companyId, name: l.companyName, domain: "") }
 
     /// The match, or the HubSpot error that stopped it (shown in the review, never swallowed). No invitees: nothing.
+    /// Only in the link's portal: on another one the error has CRMPortal.mismatchCode and nothing was looked up.
     static func match(file: String, link l: CRMLink, connector c: CRMPeopleConnector, name: String) async -> Result<CRMPeopleMatch, CRMError>? {
         let cfg = SettingsWindow.model.config.crm
         let parts = participants(file: file)
         guard !parts.isEmpty else { return nil }
         do {
-            return .success(try await CRMPeople.match(participants: parts, existing: existingCompany(l), ownDomains: CRMService.ownDomains, companyName: name,
-                                                      hasDeal: !l.dealId.isEmpty && l.dealId != "none", leads: cfg.proposeLeads, connector: c))
+            return .success(try await CRMPeople.matchInPortal(l.portalId, participants: parts, existing: existingCompany(l), ownDomains: CRMService.ownDomains, companyName: name,
+                                                              hasDeal: !l.dealId.isEmpty && l.dealId != "none", leads: cfg.proposeLeads, connector: c))
         } catch {
             return .failure((error as? CRMError) ?? CRMError(code: 0, message: error.localizedDescription))
         }
@@ -105,11 +106,15 @@ final class CRMPeopleModel: ObservableObject {
     @Published var companies: [CRMCompany] = []
     @Published var checked = false         // the search ran (so "nothing to add" can be said)
     @Published var problem = ""            // HubSpot's answer when the search, or only the lead lookup, failed
+    @Published var otherPortal = false     // the key opens another portal: nothing was looked up, the call needs Relink
 
-    /// Reads HubSpot (no writes). Contacts found by name inside the company are added to the link so the Call gets them.
+    /// Reads HubSpot (no writes), only in the link's portal. Contacts found by name inside the company are added to the
+    /// link so the Call gets them. On another portal nothing is kept and Apply adds no people.
     func load(file: String, link l: CRMLink, name: String) async -> CRMLink {
+        rows = []; found = []; company = nil; companies = []; checked = false; problem = ""; otherPortal = false
         guard let c = CRMService.shared.connector() as? CRMPeopleConnector else { return l }
         let res = await CRMPeopleFlow.match(file: file, link: l, connector: c, name: name)
+        if case .failure(let e)? = res, e.code == CRMPortal.mismatchCode { otherPortal = true; return l }
         checked = true
         guard let res else { return l }
         switch res {

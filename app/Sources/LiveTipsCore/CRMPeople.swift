@@ -136,6 +136,14 @@ public enum CRMPeople {
         }
     }
 
+    /// match, only in the portal the call is linked to: the key's portal is checked first, so on another (or an unknown)
+    /// portal no participant email is sent and no record id of that portal comes back to be stored on the link.
+    public static func matchInPortal(_ portal: String, participants: [CRMParticipant], existing: CRMCompany?, ownDomains: Set<String>, companyName: String,
+                                     hasDeal: Bool, leads: Bool, connector c: CRMPeopleConnector) async throws -> CRMPeopleMatch {
+        try await CRMPortal.verify(link: portal, connector: c)
+        return try await match(participants: participants, existing: existing, ownDomains: ownDomains, companyName: companyName, hasDeal: hasDeal, leads: leads, connector: c)
+    }
+
     /// Finds what exists and proposes what is missing. Reads only.
     /// Each participant's company comes from their own email domain. The call's company (the link's, or the one found
     /// by the PM's name for the account) stands in only on a call with one client domain, and never for a free-mail

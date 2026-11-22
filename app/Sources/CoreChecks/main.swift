@@ -812,6 +812,18 @@ func crmCalls() async {
            "people: Undo with the key on another portal sends no archive, restore or deal update")
     let un = await CRMUndo.run(ub, portal: "", connector: hp)
     expect(un.error?.code == CRMPortal.mismatchCode && pf.log.allSatisfy { $0.hasPrefix("GET /account-info") }, "people: Undo of a batch with no portal sends nothing")
+    // H3: the review's people lookup for a call of portal 500 while the key opens 777: only the portal check is sent,
+    // no participant email goes to 777 and no id of 777 comes back to be stored on the link
+    let who = [CRMParticipant(name: "Emily Clark", email: "emily.clark@orbit.example")]
+    pf.log = []
+    var lerr: CRMError?
+    do { _ = try await CRMPeople.matchInPortal("500", participants: who, existing: nil, ownDomains: [], companyName: "", hasDeal: false, leads: false, connector: hp) }
+    catch { lerr = error as? CRMError }
+    expect(lerr?.code == CRMPortal.mismatchCode && pf.log == ["GET /account-info/v3/details"], "people: the lookup with the key on another portal sends only the portal check")
+    pf.log = []
+    _ = try? await CRMPeople.matchInPortal("777", participants: who, existing: nil, ownDomains: [], companyName: "", hasDeal: false, leads: false, connector: hp)
+    expect(pf.log.first == "GET /account-info/v3/details" && pf.log.dropFirst().contains { $0.hasPrefix("POST /crm/v3/objects/contacts") },
+           "people: in the call's own portal the lookup runs after the check")
     let uo = FakeHubSpotCalls(); uo.calls["604"] = ["hs_call_title": "Orbit"]
     let uok = await CRMUndo.run([CRMUndoItem("calls", "604")], portal: "500", connector: HubSpotConnector(transport: uo, sleep: { _ in }))
     expect(uok.error == nil && uok.undone.map(\.id) == ["604"] && uo.calls["604"] == nil && uo.log.contains("DELETE /crm/v3/objects/calls/604"), "people: Undo in the same portal deletes the new Call")
