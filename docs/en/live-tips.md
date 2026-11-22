@@ -1678,7 +1678,8 @@ HubSpot account. The link also remembers its HubSpot account: after
 you change the key to another account, or for a call linked before this version, Pacenote writes nothing and Update
 HubSpot offers **Relink**. Relink takes the attendees only from the calendar event the link was made for, never from
 another meeting at about the same time; when that event is unknown or no longer in the calendar, it finds the company by
-its saved name, without contacts. **Log the call in HubSpot automatically after it
+its saved name, without contacts. Relink waits for a Call that is being written for this call, and a Call written
+for the old account never ends up in the new link. **Log the call in HubSpot automatically after it
 ends** is off by default; when on, it logs only the Call, about two and a half minutes after the call, without a
 review. Notes, deal fields and tasks stay behind Apply. The design is in `docs/specs/hubspot-crm-integration.md`.
 
@@ -1692,8 +1693,7 @@ Matching) and lets you add other Pacenote users by email with their HubSpot owne
 ends with a **Sync log**: what was written, when, by Apply, Auto or Retry, and the result. A failed line has Retry (a
 Call is written again at once; a note, deal fields or a task reopen Update HubSpot with only that row ticked). Retry
 writes only to the HubSpot account the failed write was meant for: after you connect another account or Relink the
-call, it sends nothing and says so. A Call written while you Relink the call to another account is not remembered for
-the new link, so the next write there makes its own Call. The latest write of a record has Undo for 24 hours, unless someone changed it in HubSpot after Pacenote wrote it. Neither
+call, it sends nothing and says so. The latest write of a record has Undo for 24 hours, unless someone changed it in HubSpot after Pacenote wrote it. Neither
 Undo (this one or the 8 seconds after Apply) changes anything after its time has passed, after an edit in HubSpot, or
 when the key now belongs to another HubSpot account. If the log cannot be saved, the window says so next to the
 HubSpot result. The log keeps property names and, for an updated Call or deal, the old values Undo needs; never

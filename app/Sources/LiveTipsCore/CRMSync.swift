@@ -253,19 +253,25 @@ public enum CRMSyncLog {
     /// request is sent: a key or link changed since the failure never sends the call to another portal.
     public static func retryPortal(bound: String, link: String) -> String { !bound.isEmpty && bound == link ? link : "" }
 
-    /// The portal one queued Call write was checked against: what its `load` returned when the turn came, kept so the
-    /// sync line (good or failed) names it. Never read again after the request: a relink while the request was out
-    /// would tag a failure with the new portal and let its Retry send the call there. "" when the turn never came.
+    /// A Call write's target as a Retry sees it: the portal pinned to the failed line's (`bound`), "" when the link
+    /// names another one. Applied to both the fallback and the link read at the turn; nil `bound` (Auto, Apply) leaves
+    /// the target as it is.
+    public static func retryTarget(bound: String?, _ t: CRMCallTarget) -> CRMCallTarget {
+        guard let bound else { return t }
+        var r = t; r.portalId = retryPortal(bound: bound, link: t.portalId); return r
+    }
+
+    /// The portal one queued Call write was checked against when its turn came, kept so the sync line (good or
+    /// failed) names it. Never read again after the request: a relink while the request was out would tag a failure
+    /// with the new portal and let its Retry send the call there. "" when the turn never came or the link had changed.
     public final class Attempt: @unchecked Sendable {
         private let lock = NSLock()
         private var value = "", checked = false
         public init() {}
         public var portal: String { lock.withLock { value } }
-        /// Wraps a `load` for CRMCallSync.log and records the portal its first call gives (the one checked); the
-        /// re-read after the request, to decide whether the new id is kept, does not move it.
-        public func load(_ inner: @escaping () -> (callId: String, portalId: String)) -> () -> (callId: String, portalId: String) {
-            { let r = inner(); self.lock.withLock { if !self.checked { self.value = r.portalId; self.checked = true } }; return r }
-        }
+        /// The `checked` callback of CRMCallSync.log: keeps the first portal it hears (the one the turn was checked
+        /// against); nothing read after the request moves it.
+        public func record(_ portal: String) { lock.withLock { if !checked { value = portal; checked = true } } }
     }
 
     /// Undo may change the object only when HubSpot's updatedAt now is the one its answer to our write had: any later

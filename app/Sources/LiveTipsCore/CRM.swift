@@ -95,31 +95,50 @@ public actor CRMCallQueue {
     }
 }
 
+/// H2: what a Call write needs from the call's stored link, read when its turn comes: the stored Call id, the portal
+/// and the Pacenote call id the link names, and the records to associate (ids of that portal).
+public struct CRMCallTarget: Equatable {
+    public var callId: String, portalId: String, callKey: String, associations: [CRMRef]
+    public init(callId: String = "", portalId: String, callKey: String, associations: [CRMRef] = []) {
+        self.callId = callId; self.portalId = portalId; self.callKey = callKey; self.associations = associations }
+}
+
 public enum CRMCallSync {
     /// H6: thrown when the Auto switch was turned off while the write waited for its turn; nothing was sent.
     public static let notAllowedCode = 0
 
-    /// One write of a call's Call: in turn per call key, the portal checked, the stored id read when the turn comes,
-    /// the new id stored before the turn ends. H6: `allowed` is asked when the turn comes (Auto rechecks its switch).
-    /// The new id belongs to the portal the write was checked against: it is stored only while the link still names that
-    /// portal (PB-62 fix round 6), so a Relink while the request was out never gets another portal's Call id. `save` gets
-    /// that portal too and checks it again where it writes.
-    public static func log(_ entry: CRMCallLog, connector c: CRMConnector, associations: [CRMRef], queue: CRMCallQueue = .shared,
-                           allowed: @escaping () async -> Bool = { true },
-                           load: @escaping () -> (callId: String, portalId: String),
-                           save: @escaping (_ id: String, _ portal: String) async -> Void) async throws -> CRMCallResult {
+    /// One write of a call's Call: in turn per call key (Relink of the call takes the same turns), the portal checked,
+    /// the stored id and the associations read when the turn comes. The new id is stored only if the link still names
+    /// the portal and the call key the write used when HubSpot answers (fix round 8): a link relinked to another portal
+    /// in the meantime never gets the first portal's id. fallback: the link when none is stored; a link that shows up or
+    /// goes away while HubSpot answers is a change, so nothing is stored.
+    /// H6: `allowed` is asked when the turn comes (Auto rechecks its switch); `checked` hears the portal the write is
+    /// checked against, once the link passed, so the sync line names it (never the link read after the request).
+    public static func log(_ entry: CRMCallLog, connector c: CRMConnector, queue: CRMCallQueue = .shared, fallback: CRMCallTarget,
+                           allowed: @escaping () async -> Bool = { true }, checked: @escaping (String) -> Void = { _ in },
+                           load: @escaping () -> CRMCallTarget?, save: @escaping (String) -> Void) async throws -> CRMCallResult {
         try await queue.run(entry.key) {
             guard await allowed() else { throw CRMError(code: notAllowedCode, message: "", scope: "auto") }
             let stored = load()
-            try await CRMPortal.verify(link: stored.portalId, connector: c)
-            let r = try await c.upsertCall(entry, knownId: stored.callId, associations: associations)
-            if keepsId(wrote: stored.portalId, link: load().portalId) { await save(r.id, stored.portalId) }
+            let t = stored ?? fallback
+            // the entry (participants' names) was made from the fallback link: it goes only to that link's portal
+            guard t.callKey == entry.key, t.portalId == fallback.portalId else {
+                throw CRMError(code: CRMPortal.mismatchCode, message: "This call was linked again while it was written. Try again.", scope: "portal")
+            }
+            checked(t.portalId)
+            try await CRMPortal.verify(link: t.portalId, connector: c)
+            let r = try await c.upsertCall(entry, knownId: t.callId, associations: t.associations)
+            let now = load()
+            let same = stored == nil ? now == nil : (now.map { $0.portalId == t.portalId && $0.callKey == t.callKey } ?? false)
+            if same { save(r.id) }
             return r
         }
     }
 
-    /// A Call id from a write to `wrote` may be stored on a link only while that link names the same portal.
-    public static func keepsId(wrote: String, link: String) -> Bool { CRMPortal.matches(link: link, current: wrote) }
+    /// Relink of a call takes the same turns as its Call writes, so it never runs while a write waits for HubSpot.
+    public static func relink<T>(key: String, queue: CRMCallQueue = .shared, _ op: @escaping () async -> T) async throws -> T {
+        try await queue.run(key) { await op() }
+    }
 
     /// Undo of one Apply: the portal the Apply wrote to is checked first, so a key changed in between never deletes or
     /// overwrites another portal's records with the same ids. Deal fields and updated Calls get their old values back,
@@ -471,7 +490,7 @@ public final class HubSpotConnector: CRMConnector {
                 throw error
             }
         }
-        // associations first: if one fails, the Call still has its old fields and nothing is left outside Undo
+        // associations first: if one fails, the Call still has its old fields; the ones added before it stay (outside Undo)
         for a in refs { _ = try await call("PUT", "/crm/v4/objects/calls/\(id)/associations/default/\(a.type)/\(a.id)") }
         _ = try await call("PATCH", "/crm/v3/objects/calls/\(id)", ["properties": owned(sync.mapped(.calls, log.properties))])
         return CRMCallResult(id: id, created: false, old: old)

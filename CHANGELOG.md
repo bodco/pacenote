@@ -26,7 +26,8 @@ Pacenote. Earlier versions are described in the commit messages and in
   never sent. A call's HubSpot link now remembers its HubSpot account: after the key changes to another account, or
   for a call linked before this version, nothing is written and Update HubSpot offers **Relink**. Relink takes the
   attendees only from the calendar event the link was made for, never from another meeting at about the same time
-  (it could be another customer's); without that event it finds the company by its saved name. The company, deal
+  (it could be another customer's); without that event it finds the company by its saved name. Relink waits for a
+  Call being written for the same call, and a Call written for the old account is never stored in the new link. The company, deal
   and contacts linked with Refresh in Start call now go to the recorded call started from that window, so Auto and
   Update HubSpot find them (before, the call showed "not linked"). Refresh saves the link with the preparation the call
   will use (the one you chose, else the planned one) and starts from that preparation's own link after you pick
@@ -52,8 +53,7 @@ Pacenote. Earlier versions are described in the commit messages and in
   whose fields are all set to Don't write is skipped, not blamed). If the sync log itself cannot be saved, Update
   HubSpot says so next to the HubSpot result, and for Auto a notice says so. Retry writes only to the HubSpot account
   the failed write was meant for: after you connect another account or Relink the call, even while that write was
-  still being sent, it sends nothing and says so. A Call written while you Relink the call to another account is not
-  remembered for the new link, so the next write there never updates a Call of the old account. When HubSpot does not answer a scope probe, the live check says the
+  still being sent, it sends nothing and says so. When HubSpot does not answer a scope probe, the live check says the
   check is not complete instead of showing everything as fine.
 
 ## 0.26.4 (2026-11-20)

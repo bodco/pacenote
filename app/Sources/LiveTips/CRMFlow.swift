@@ -117,24 +117,23 @@ enum CRMCallLogger {
                           body: CRMCallLog.body(summary: s.summary, nextSteps: s.nextSteps, participants: link.contactNames, link: rec.notionURL ?? "", key: link.callKey))
     }
 
-    /// H2: writes the Call through the per-call queue; the stored id and portal are read from <base>.crm.json when the
-    /// turn comes and the new id is stored before the next turn, only while the link still names the portal the write was
-    /// checked against (PB-62 fix round 6). H6: `allowed` is asked when the turn comes; a Retry's
-    /// `bound` portal (the failed line's) must still be the link's, else nothing is sent (CRMSyncLog.retryPortal).
-    /// `attempt` keeps the portal the turn was checked against, for the sync line (PB-62 fix round 4).
+    /// H2: writes the Call through the per-call queue; the stored id, portal and associations are read from
+    /// <base>.crm.json when the turn comes, and the new id is stored only if the link still names that portal and call
+    /// key when HubSpot answers (fix round 8: a Relink to another portal in between keeps its own ids).
+    /// H6: `allowed` is asked when the turn comes; a Retry's `bound` portal (the failed line's) must still be the link's,
+    /// else nothing is sent (CRMSyncLog.retryPortal). `attempt` keeps the portal the turn was checked against, for the
+    /// sync line.
     static func write(_ entry: CRMCallLog, base: String, link: CRMLink, connector c: CRMConnector,
                       allowed: @escaping () async -> Bool = { true }, bound: String? = nil,
                       attempt: CRMSyncLog.Attempt = CRMSyncLog.Attempt()) async throws -> CRMCallResult {
-        try await CRMCallSync.log(entry, connector: c, associations: refs(link), allowed: allowed,
-                                  load: attempt.load { let d = CRMLink.load(base: base) ?? link
-                                          return (d.callId, bound.map { CRMSyncLog.retryPortal(bound: $0, link: d.portalId) } ?? d.portalId) },
-                                  save: { id, portal in
-                                      // on main, where Relink saves, so the link cannot change between the check and the write
-                                      await MainActor.run {
-                                          var d = CRMLink.load(base: base) ?? link
-                                          guard CRMCallSync.keepsId(wrote: portal, link: d.portalId) else { return }    // relinked meanwhile
-                                          d.callId = id; d.save(base: base)
-                                      } })
+        try await CRMCallSync.log(entry, connector: c, fallback: CRMSyncLog.retryTarget(bound: bound, target(link)),
+                                  allowed: allowed, checked: attempt.record,
+                                  load: { CRMLink.load(base: base).map { CRMSyncLog.retryTarget(bound: bound, target($0)) } },
+                                  save: { id in var d = CRMLink.load(base: base) ?? link; d.callId = id; d.save(base: base) })
+    }
+
+    static func target(_ l: CRMLink) -> CRMCallTarget {
+        CRMCallTarget(callId: l.callId, portalId: l.portalId, callKey: l.callKey, associations: refs(l))
     }
 
     static func refs(_ l: CRMLink) -> [CRMRef] {
@@ -427,7 +426,7 @@ struct CRMUpdateView: View {
                 try await CRMPortal.verify(link: retryPortal.map { CRMSyncLog.retryPortal(bound: $0, link: l.portalId) } ?? l.portalId, connector: c)
                 let o = await CRMApply.run(plan: p, dealId: l.dealId, refs: CRMCallLogger.refs(l), connector: c, sync: SettingsWindow.model.config.crm.sync) { entry in
                     let r = try await CRMCallLogger.write(entry, base: base, link: l, connector: c, bound: retryPortal)    // in turn with Auto and Retry
-                    if link?.portalId == l.portalId { link?.callId = r.id }    // not into a link relinked meanwhile
+                    link?.callId = CRMLink.load(base: base)?.callId ?? r.id      // the id as stored, never one the write declined to store
                     return r
                 }
                 done = o.done; failed = o.failed
@@ -458,14 +457,18 @@ struct CRMUpdateView: View {
 
     /// H2: links the call again in the portal of the key in use: the company by the attendees' domains of the calendar
     /// occurrence the link was saved for (fix round 7: never the nearest meeting, it may be another customer's), else
-    /// by the linked company's name without contacts; the call key is kept, the old ids are not.
+    /// by the linked company's name without contacts; the call key is kept, the old ids are not. Fix round 8: in turn
+    /// with the call's Call writes (an Auto write waiting for HubSpot finishes first), reading the link when its turn comes.
     func relink() {
         guard let l = link else { return }
         let emails = CRMLinkCarry.relinkEmails(occurrence: l.occurrence,
                                                events: CalendarService.shared.events.map { ([$0.id] + $0.copies, $0.emails) })
         busy = true; status = ""
+        let base = base, crm = crm
         Task {
-            let (nl, e) = await crm.refresh(base: base, emails: emails, name: l.companyName, keep: l)
+            let (nl, e) = (try? await CRMCallSync.relink(key: l.callKey.isEmpty ? base : l.callKey) {
+                await crm.refresh(base: base, emails: emails, name: l.companyName, keep: CRMLink.load(base: base) ?? l)
+            }) ?? (nil, L("crm.notConnected"))
             busy = false
             if nl != nil { needsRelink = false; load(); status = L("crm.relink.done") } else { status = e }
         }

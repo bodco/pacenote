@@ -108,8 +108,10 @@ decides, the service key stays the only path.
 4. **Undo.** A new object is deleted; an updated object gets its old property values back. Associations added during a
    re-run are not removed by Undo (they are harmless and HubSpot has no history for them); the Undo failure line says
    what is left. Undo first checks that the key still belongs to the portal the Apply wrote to; after a key change
-   it sends nothing and says so, as the same ids in another portal are other records. A re-run of the Call adds the associations first and changes the fields last, so a failed association
-   leaves the Call's fields as they were and nothing changed is outside Undo.
+   it sends nothing and says so, as the same ids in another portal are other records. A re-run of the Call adds the
+   associations first and changes the fields last, so a failed association leaves the Call's fields as they were.
+   Associations added before the one that failed stay on the Call and are outside Undo, like every association a
+   re-run adds; the Apply reports the failure.
 5. **Errors are one line where the action was**, never a modal; 429 waits (Retry-After, else 1, 2, 4 s) and retries three
    times; 401 and 403 say what to fix (key, or the named scope).
 6. **No silent overwrites of the PM's own edits in HubSpot.** A re-run updates only the Pacenote-owned properties of the
@@ -159,6 +161,10 @@ is shown on the card. Behavior to keep and to define:
   (by the attendees' domains of the occurrence the link was saved for while the calendar still has it, else by the
   linked company's name). Relink never takes attendees from a meeting near the recording's start: an overlapping
   meeting can be another customer's.
+- A call's link has one writer at a time. Call writes (Auto and Apply) and Relink of the same call take turns on one
+  per-call queue, so Relink waits for a write that is waiting for HubSpot. Each write reads the link (Call id, portal,
+  associations) when its turn comes, and stores the Call id HubSpot returns only if the link still names the same
+  portal and Pacenote call id when the answer comes; otherwise the id is dropped, never put into another portal's link.
 - Several portals at once (an agency with client portals): one key per project in Settings > Projects, kept in the
   Keychain under a per-project name. Not built; decision 3.
 - Data hosting regions (US, EU) use the same base URL for the API; the region is only displayed.
@@ -249,7 +255,7 @@ Read the settings only through these calls on `CRMSettings` (`SettingsWindow.mod
 | `property(_ o:, _ specProperty:) -> String` | the HubSpot property the spec property (section 3) is written to; `""` = Don't write. Fixed properties (`CRMObject.fixed`: dedupe keys, owner, statuses) always come back unchanged. A stored target that is reserved or already used by another field resolves to the field's default |
 | `mapped(_ o:, _ props:) -> [String: Any]` | a property dictionary renamed by the mapping, Don't write dropped. Inputs that are not mappable keep their names and win: a mapped field never overwrites one of them or another mapped field. `HubSpotConnector.sync` applies it to the Call, the task and the deal fields; a new writer calls `mapped` on its properties before sending |
 | `sync.canTarget(_ o:, _ specProperty:, _ target:) -> Bool` | whether a field may be mapped to `target`: never a reserved property (`CRMSyncSettings.reserved`: the object's fixed ones, `hubspot_owner_id`, `hs_call_external_id`, `hs_object_id`, HubSpot's create and change dates, the default property of another field) or what another field already writes. The picker offers only these and `setProperty` refuses the rest |
-| `CRMCallSync.log(..., allowed:)` | the one writer of a call's Call: a queue per call id, the portal checked, the stored Call id read when the turn comes. Auto passes `allowed`, which asks `autoWrites(.calls)` again when its turn starts; off by then, nothing is sent and nothing is logged |
+| `CRMCallSync.log(..., fallback:, allowed:, checked:, load:, save:)` | the one writer of a call's Call: a queue per call id (Relink takes the same turns, `CRMCallSync.relink`), the link (`CRMCallTarget`: Call id, portal, call id, associations) read when the turn comes and required to name the portal the entry was made for, the portal checked. Auto passes `allowed`, which asks `autoWrites(.calls)` again when its turn starts; off by then, nothing is sent and nothing is logged. `checked` hears the portal the write was checked against, for the sync line |
 | `ownerId(forPacenoteUser email:, ownEmails:, owners:) -> String` | the HubSpot owner for a Pacenote user: the mapping in Sync; for the user of this Mac (one of `ownEmails`, or an empty email) the owner from Matching (`ownerId`); else the HubSpot owner with the same email; else `""` (leave `hubspot_owner_id` out, section 7) |
 | `CRMSyncLog.append(_ entries:, stem:) -> Bool` | adds lines to the call's sync log; `CRMSyncLog.recordUndo(...)` for an Undo. `false` = the file was not saved: say so next to the HubSpot result, never instead of it |
 | `CRMCallSync.undo(_ items:, portal:, connector:, check:, result:)` | the one Undo of written records: the portal first (a mismatch sends nothing), then `check` before each record (`CRMSyncLog.guardUndo`: inside the window and HubSpot's `updatedAt` equal to the write's revision), then delete, `restoreCall` or `restoreDeal` |
@@ -303,12 +309,13 @@ key. Shown at the bottom of the call's Update HubSpot window.
   makes a second Call, section 6). A note, deal fields or a task reopen Update HubSpot with only that row ticked, so
   the PM still reviews and presses Apply. Every line keeps the portal its write was meant for (a failed one too), and
   both Retry paths write only there: when the write goes out, the call's link must still name that portal and the
-  key must belong to it (`CRMSyncLog.retryPortal`, then `CRMPortal.verify`). After a reconnect or Relink to another
-  portal, or for a line without a portal, Retry sends nothing and says so; the PM writes again with Update HubSpot.
-- The Call id a write returns belongs to the portal that write was checked against. It is stored on the call's link
-  only while the link still names that portal (`CRMCallSync.keepsId`, checked in `CRMCallSync.log` after the request
-  and again on the main actor where the link is saved), so a Relink while the request was out never leaves the old
-  portal's id on the new link for the next write to trust.
+  key must belong to it (`CRMSyncLog.retryTarget` pins the portal of the entry and of the link read at the turn, then
+  `CRMPortal.verify`). After a reconnect or Relink to another portal, or for a line without a portal, Retry sends
+  nothing and says so; the PM writes again with Update HubSpot.
+- The Call id a write returns belongs to the portal that write was checked against: it is stored only while the link
+  still names that portal and call id (section 8, one writer at a time), so a Relink never leaves the old portal's id
+  on the new link for the next write to trust. A write whose link was relinked before its turn sends nothing; its
+  failed line names no portal, so it has no Retry.
 - If Auto's line cannot be saved to the log, a notice says so (Auto has no window to show it in).
 - **Undo** on the latest good write of an object, within 24 hours (`CRMSyncLog.logUndoSeconds`; Apply's own Undo stays
   8 seconds, `applyUndoSeconds`). The click reads the log from disk again and rechecks the window and that no later
