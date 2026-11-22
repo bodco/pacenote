@@ -200,21 +200,24 @@ changed, `HubSpotConnector` adds `CRMPeopleConnector`) and `app/Sources/LiveTips
 step, Auto). Checks: CoreChecks `crmPeople`, with a mocked HubSpot only.
 
 **Participants.** The invitees of the call's calendar event (the PM left out): the emails, lowercased and deduped, with
-names paired by position when both lists have the same length, else the name comes from the email. The job title field
-(`jobtitle`) is wired to a stakeholder `title` on the call page's sales data, but nothing fills that field today: the
-calendar has no job titles and the stakeholder rows hold only a buying role (decider, champion), which is not a job
-title and is not written. So a proposed contact has no job title until a source exists (known gap).
+names paired by position when both lists have the same length, else the name comes from the email. The calendar has
+no job titles, so the job title (`jobtitle`) comes from the call's project: the "Team - Client" table of the project
+config (name and role, the same people list the call page uses), matched by the full name (two words at least). The
+PM's own team is never used; no match leaves the job title empty, it is never guessed. The stakeholder rows of the
+sales data hold only a buying role (decider, champion), which is not a job title and is not written.
 
-**Match, reads only.** (1) Contacts by email, five at a time. (2) The company: the one the call is linked to, else by
-the invitees' domain (never the PM's own domains or free-mail domains), else by the account's name. (3) An invitee
-whose email was not found is looked up by exact first and last name (two words at least) among the contacts of the
-matched company; a hit is the same person and is reused. Matched contacts and the company go into `<stem>.crm.json`
-(ids and names only), so the Call of H2 is associated with them.
+**Match, reads only.** (1) Contacts by email, five at a time. (2) Each invitee's company comes from their own email
+domain (never the PM's own domains or free-mail domains). The company the call is linked to, or the one found by the
+account's name, stands in only on a call with a single client domain. (3) An invitee whose email was not found is
+looked up by exact first and last name (two words at least) among all the contacts of their own company (every page,
+read once per company); a hit is the same person and is reused. Matched contacts and the company go into
+`<stem>.crm.json` (ids and names only), so the Call of H2 is associated with them.
 
 **Propose.** A company when none matched and an invitee has a client domain: the account's name, else the domain's
 first label ("orbit.example" gives "Orbit"). A contact for each unmatched external invitee with an email, with name,
 email, job title and company; a free-mail address is skipped unless the invitee has a real name (decision 4). A Lead
-per proposed contact only when "Propose a Lead" is on and the call has no open deal. Rows are unticked.
+per proposed contact, and per matched contact that has no Lead yet, only when "Propose a Lead" is on and the call has
+no open deal. Rows are unticked.
 
 **Write.** Order: company, contacts, leads, then the Call, the note and the task with the new ids. Before every create
 HubSpot is searched again (domain, email, the contact's leads), and a 409 on a contact reuses the id HubSpot names, so a

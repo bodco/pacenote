@@ -7,7 +7,7 @@ import Foundation
 public struct CRMParticipant: Equatable {
     public var name: String
     public var email: String
-    public var role: String          // the job title; no source in the app yet, so empty (the PM types it in HubSpot)
+    public var role: String          // the job title, from the project's client team table (CRMPeople.withRoles), else empty
     public init(name: String, email: String = "", role: String = "") { self.name = name; self.email = email; self.role = role }
 }
 
@@ -101,8 +101,8 @@ public enum CRMPeople {
     }
 
     /// Calendar names and emails (the PM left out) become participants. The two lists are paired by position only when
-    /// they have the same length; otherwise each email gets the name derived from it. No job title: the calendar has
-    /// none and the call page does not show one, so the role stays empty.
+    /// they have the same length; otherwise each email gets the name derived from it. The calendar has no job title:
+    /// the role comes from the project (withRoles).
     public static func participants(names: [String], emails: [String]) -> [CRMParticipant] {
         var out: [CRMParticipant] = [], seen = Set<String>()
         let paired = names.count == emails.count
@@ -115,6 +115,22 @@ public enum CRMPeople {
             for n in names where !n.isEmpty && !out.contains(where: { nameKey($0.name) == nameKey(n) }) { out.append(CRMParticipant(name: n)) }
         }
         return out
+    }
+
+    /// The role of each participant from the project's people ("Team - Client" in the project config, the same list
+    /// the call page names the other side from), matched by the full name. Only the client side: the PM's own team is
+    /// never created in HubSpot. A role already set is kept; no match leaves it empty (never guessed).
+    public static func withRoles(_ parts: [CRMParticipant], people: [Project.Person]) -> [CRMParticipant] {
+        var roleOf: [String: String] = [:]
+        for p in people where p.side != "team" && !p.role.isEmpty {
+            let k = nameKey(p.name)
+            if k.split(separator: " ").count >= 2 && roleOf[k] == nil { roleOf[k] = p.role }
+        }
+        return parts.map { p in
+            var n = p
+            if n.role.isEmpty, let r = roleOf[nameKey(p.name)] { n.role = r }
+            return n
+        }
     }
 
     /// Finds what exists and proposes what is missing. Reads only.

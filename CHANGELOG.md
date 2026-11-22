@@ -32,8 +32,8 @@ Pacenote. Earlier versions are described in the commit messages and in
   them, and Undo removes them. A Call logged earlier is associated with the new people too, and if that fails the
   error is shown instead of "Updated". An existing email or domain is never duplicated. Four new switches in
   Settings > Integrations > HubSpot, all off by default, create contacts, the company or Leads automatically after
-  the call. Leads need the scopes `crm.objects.leads.read` and `crm.objects.leads.write`. The job title is left empty
-  for now: the calendar does not provide one.
+  the call. Leads need the scopes `crm.objects.leads.read` and `crm.objects.leads.write`. The job title comes
+  from the project's client team table (the calendar has none); without a match it stays empty.
 
 ## 0.26.4 (2026-11-20)
 

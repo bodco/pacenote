@@ -7,12 +7,13 @@ import LiveTipsCore
 
 @MainActor
 enum CRMPeopleFlow {
-    /// The invitees of the call from its calendar event (the PM left out). No job title: see CRMPeople.participants.
+    /// The invitees of the call from its calendar event (the PM left out), with the job title from the call's project
+    /// (its client team table), as the calendar has none.
     static func participants(file: String) -> [CRMParticipant] {
         guard let r = CallHistory.shared.records.first(where: { $0.file == file }) else { return [] }
         let key = EditLog.seriesKey(r.title)
         guard let ev = CalendarService.shared.events.first(where: { abs($0.start.timeIntervalSince(r.start)) < 1800 && EditLog.seriesKey($0.title) == key }) else { return [] }
-        return CRMPeople.participants(names: ev.attendees, emails: ev.emails)
+        return CRMPeople.withRoles(CRMPeople.participants(names: ev.attendees, emails: ev.emails), people: PyTool.project(of: file).project?.people ?? [])
     }
 
     static func existingCompany(_ l: CRMLink) -> CRMCompany? { l.companyId.isEmpty ? nil : CRMCompany(id: l.companyId, name: l.companyName, domain: "") }

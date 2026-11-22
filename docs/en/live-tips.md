@@ -1676,8 +1676,8 @@ company by its domain (not yours and not a free-mail domain such as gmail.com). 
 companies, each person is matched and created in their own company, never in another one. What it finds is reused
 and associated with the Call. What is missing shows as unticked rows, "Create the contact", "Create the company" and,
 when turned on, "Create a Lead" (with the name, email and company): nothing is created without your click. A contact
-already in HubSpot that has no Lead also gets a "Create a Lead" row. The job title stays empty: the calendar does not
-give one. Apply creates the companies and the contacts first and then the Call, so the Call is already associated
+already in HubSpot that has no Lead also gets a "Create a Lead" row. The job title comes from the project's
+"Team - Client" table, matched by the full name; the calendar has none, so without a match it stays empty. Apply creates the companies and the contacts first and then the Call, so the Call is already associated
 with them; a Call logged earlier gets the new people too, and if that fails the error is shown where Apply was. Undo
 deletes what was created. An existing email or domain is never duplicated, even when Apply runs twice. Each kind has
 its own switch in Settings > Integrations > HubSpot, all off by default: create contacts automatically, create the

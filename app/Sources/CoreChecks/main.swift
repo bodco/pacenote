@@ -911,14 +911,29 @@ final class FakeHubSpotPeople: CRMTransport {
 
 func crmPeople() async {
     let own: Set<String> = ["mycompany.example"]
-    let emily = CRMParticipant(name: "Emily Clark", email: "Emily.Clark@Orbit.example"), noah = CRMParticipant(name: "Noah Reed", email: "noah@orbit.example", role: "VP Sales")
+    // the role comes from the project config's client team table, read by the same importer the app uses
+    let card = ProjectConfigImporter.parse(markdown: """
+    - **project_slug**: orbit
+    ## Team - Internal
+    | Name | Role |
+    | Mike Doe | Account lead |
+    ## Team - Client
+    | Name | Role |
+    | Noah Reed | VP Sales |
+    | Noah | Intern |
+    """)
+    let withRoles = CRMPeople.withRoles(CRMPeople.participants(names: ["Emily Clark", "Noah Reed", "Mike Doe"],
+                                                               emails: ["Emily.Clark@Orbit.example", "noah@orbit.example", "mike@mycompany.example"]),
+                                        people: card?.people ?? [])
+    expect(withRoles.map(\.role) == ["", "VP Sales", ""], "people: the role comes from the project's client team by full name; the PM's own team and a first name alone give none")
+    let emily = withRoles[0], noah = withRoles[1]
     let me = CRMParticipant(name: "Mike Doe", email: "mike@mycompany.example"), gm = CRMParticipant(name: "Liv Hart", email: "olivia.hart@gmail.com")
     let anon = CRMParticipant(name: "Jaxon Moss", email: "jaxon.moss@gmail.com")      // free-mail and the name is only the email's own
     // participants: paired by position when the lists match, else the name comes from the email
     let ps = CRMPeople.participants(names: ["Emily Clark", "Noah Reed"], emails: ["Emily.Clark@Orbit.example", "noah@orbit.example", "noah@orbit.example"])
     expect(ps.count == 3 && ps[0].email == "emily.clark@orbit.example" && ps[0].name == "Emily Clark" && ps[1].name == "Noah" && ps[2].email.isEmpty, "people: deduped by email, lowercased, names derived when the lists do not line up")
     let pp = CRMPeople.participants(names: ["Emily Clark", "Noah Reed"], emails: ["emily.clark@orbit.example", "noah@orbit.example"])
-    // the app's only source is the calendar event (names and emails): no job title, so the role is never invented
+    // the calendar event has names and emails only: without the project's team table the role is never invented
     expect(pp.map(\.name) == ["Emily Clark", "Noah Reed"] && pp.allSatisfy { $0.role.isEmpty }, "people: lists of the same length are paired; the role stays empty without a source")
     expect(CRMPeople.splitName("Mary Ann Smith") == ("Mary Ann", "Smith") && CRMPeople.splitName("Noah").last == "" && CRMPeople.nameKey("  Zoë  Clark ") == CRMPeople.nameKey("zoe clark"), "people: names split and compare without accents")
 
