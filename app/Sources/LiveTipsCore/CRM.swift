@@ -76,6 +76,29 @@ public enum CRMPortal {
     }
 }
 
+/// H3: Undo of one Apply. The ids are of the portal Apply wrote to; when the key now opens another portal (or the
+/// portal cannot be read) nothing is sent and the whole batch is returned to keep.
+public struct CRMUndoItem: Equatable {
+    public var type: String, id: String, old: [String: String]
+    public init(_ type: String, _ id: String, _ old: [String: String] = [:]) { self.type = type; self.id = id; self.old = old }
+}
+public enum CRMUndo {
+    public static func run(_ items: [CRMUndoItem], portal: String, connector c: CRMConnector) async -> (undone: [CRMUndoItem], failed: Int, error: CRMError?) {
+        do { try await CRMPortal.verify(link: portal, connector: c) }
+        catch { return ([], 0, (error as? CRMError) ?? CRMError(code: 0, message: error.localizedDescription)) }
+        var undone: [CRMUndoItem] = [], failed = 0
+        for it in items.reversed() {
+            do {
+                if it.type == "deals" { _ = try await c.updateDeal(id: it.id, fields: it.old) }
+                else if it.type == "calls" && !it.old.isEmpty { try await c.restoreCall(id: it.id, fields: it.old) }
+                else { try await c.delete(type: it.type, id: it.id) }
+                undone.append(it)
+            } catch { failed += 1 }
+        }
+        return (undone, failed, nil)
+    }
+}
+
 /// H2: Auto and Apply of one call take turns, and each reads the stored Call id when its turn comes, so the two paths
 /// never both create a Call for the same call.
 public actor CRMCallQueue {
@@ -132,26 +155,26 @@ public enum CRMCallSync {
 
     /// Undo of one Apply: the portal the Apply wrote to is checked first, so a key changed in between never deletes or
     /// overwrites another portal's records with the same ids. Deal fields and updated Calls get their old values back,
-    /// the rest is deleted. Returns how many items failed; a mismatch throws before anything is sent.
+    /// the rest is deleted. Returns how many items failed; a mismatch throws before anything is sent. The same steps as
+    /// CRMUndo.run (H3), which also hands back what was undone.
     public static func undo(_ items: [CRMUndoItem], portal: String, connector c: CRMConnector,
                             deleted: (CRMUndoItem) -> Void = { _ in }) async throws -> Int {
-        try await CRMPortal.verify(link: portal, connector: c)
-        var failed = 0
-        for it in items.reversed() {
-            do {
-                if it.type == "deals" { _ = try await c.updateDeal(id: it.id, fields: it.old) }
-                else if it.type == "calls" && !it.old.isEmpty { try await c.restoreCall(id: it.id, fields: it.old) }
-                else { try await c.delete(type: it.type, id: it.id); deleted(it) }
-            } catch { failed += 1 }
-        }
-        return failed
+        let r = await CRMUndo.run(items, portal: portal, connector: c)
+        if let e = r.error { throw e }
+        for it in r.undone where it.type != "deals" && !(it.type == "calls" && !it.old.isEmpty) { deleted(it) }
+        return r.failed
     }
 }
 
-/// One record an Apply wrote: its type, id and the values it replaced (empty for a new record).
-public struct CRMUndoItem: Equatable {
-    public var type: String, id: String, old: [String: String]
-    public init(_ type: String, _ id: String, _ old: [String: String] = [:]) { self.type = type; self.id = id; self.old = old }
+/// H3: the call's queue key, made once and stored before any write or Relink starts, so Auto, Apply and Relink of one
+/// call always take turns under the same key (an empty key would put them in different queues).
+public enum CRMCallKey {
+    public static func ensure(_ current: String, stored: () -> String, store: (String) -> Void,
+                              make: () -> String = { UUID().uuidString.lowercased() }) -> String {
+        if !current.isEmpty { return current }
+        let s = stored(); if !s.isEmpty { return s }
+        let k = make(); store(k); return k
+    }
 }
 
 /// H2 (docs/specs/hubspot-crm-integration.md): what is logged as a Call engagement after a call. No transcript text:

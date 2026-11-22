@@ -498,6 +498,10 @@ public struct CRMSettings: Codable, Equatable {
     public var writeCall = true            // H2: the Call engagement is ticked in Update HubSpot
     public var autoLogCall = false         // H2: log the call by itself after it ends; off until the PM turns it on
     public var callDirection = "OUTBOUND"  // H2: OUTBOUND or INBOUND
+    public var proposeLeads = false        // H3: Update HubSpot also proposes a Lead (needs the leads scopes); off until the PM turns it on
+    public var autoCreateContacts = false  // H3: create the call's missing contacts after it ends, without a click (per-object switch)
+    public var autoCreateCompanies = false // H3: the same for the company
+    public var autoCreateLeads = false     // H3: the same for a Lead; only with proposeLeads
     public var qualification: [String: [String: String]] = [:]   // method -> criterion -> deal property name ("" = don't write)
     public init() {}
     public init(from decoder: Decoder) throws {
@@ -517,6 +521,10 @@ public struct CRMSettings: Codable, Equatable {
         writeCall = (try? c.decode(Bool.self, forKey: .writeCall)) ?? true
         autoLogCall = (try? c.decode(Bool.self, forKey: .autoLogCall)) ?? false
         callDirection = (try? c.decode(String.self, forKey: .callDirection)) ?? "OUTBOUND"
+        proposeLeads = (try? c.decode(Bool.self, forKey: .proposeLeads)) ?? false
+        autoCreateContacts = (try? c.decode(Bool.self, forKey: .autoCreateContacts)) ?? false
+        autoCreateCompanies = (try? c.decode(Bool.self, forKey: .autoCreateCompanies)) ?? false
+        autoCreateLeads = (try? c.decode(Bool.self, forKey: .autoCreateLeads)) ?? false
         qualification = (try? c.decode([String: [String: String]].self, forKey: .qualification)) ?? [:]
     }
 }

@@ -92,6 +92,24 @@ Pacenote. Earlier versions are described in the commit messages and in
   switch in Settings > Integrations > HubSpot, **Log the call in HubSpot automatically after it ends**, is off by
   default and logs only the Call. The HubSpot integration design is in `docs/specs/hubspot-crm-integration.md`.
 
+- **Contacts, companies and leads of the call in HubSpot (H3).** Update HubSpot matches each invitee by email, then
+  by name inside the company of their own email domain, and reuses what exists. On a call with people from several
+  companies, each person is matched and created in their own company. Missing contacts, missing companies and, if you
+  turn Leads on, a Lead are shown as unticked rows with the name, email and company filled in. A contact already in
+  HubSpot without a Lead also gets a Lead row. The invitees come only from the calendar event the call's link was
+  made for, never from another meeting at about the same time or with the same title. Apply creates them before the Call, so the Call is associated with
+  them, and Undo removes them, only in the HubSpot account Apply wrote to: if the key now opens another account, Undo
+  sends nothing and says so. The same check runs before the review looks anyone up: with the key on another account
+  no invitee email is sent there and the call asks to be relinked. If the call is relinked to another account while
+  Apply or the automatic run is making its people, they are not added to its Call or saved on its link (they stay
+  for Undo), also on a call that has not been logged in HubSpot yet. A Call logged earlier is associated with the new people too, and if that fails the
+  error is shown instead of "Updated" and the next Apply tries again. A call with people from several companies is
+  associated with every company. An existing email or domain is never duplicated. Four new switches in
+  Settings > Integrations > HubSpot, all off by default, create contacts, the company or Leads automatically after
+  the call; automatic Leads never create a contact by themselves. If HubSpot refuses the Lead lookup, the contact and
+  company rows still show with the error. Leads need the scopes `crm.objects.leads.read` and `crm.objects.leads.write`. The job title comes
+  from the project's client team table (the calendar has none); without a match it stays empty.
+
 ## 0.26.4 (2026-11-20)
 
 - **A new organization project includes the person who made it (2026-11-20):** in New project > start a new

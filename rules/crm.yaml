@@ -16,6 +16,7 @@ providers:
 connector:
   read: [testConnection, findCompany(domain, name), findContacts(emails), deals(companyId), deal(id), recentActivity(refs, limit), pipelines, properties(objectType)]
   write: [createNote(text, associations), updateDeal(id, fields), createTask(subject, due, associations)]
+  people: [findContacts(named, companyId), createCompany(name, domain), createContact(name, email, role, companyId), createLead(name, contactId, companyId), associateCall(callId, refs)]   # H3, CRMPeopleConnector
   errors: one line where the action was, never a modal
 link:
   auto: >-
@@ -45,6 +46,13 @@ write:
     direction, outcome, participants, Summary and next steps, link back; never transcript text) is logged after the
     call ends, keyed by the Pacenote call id stored in <stem>.crm.json, so a re-run updates the same Call.
     Notes, deal fields and tasks never write without a click.
+  people: >-
+    H3: invitees are matched by email, then by name inside the company; the company by domain (never the PM's own or
+    a free-mail domain). Missing contacts, the company and (opt in) Leads are rows in the review, unticked, with the
+    name, email, job title and company filled in; Apply creates them before the Call, which is associated with them.
+    Each create searches again first, so an existing email or domain is reused, never duplicated. Four switches, off
+    by default (create contacts, create the company, propose Leads, create Leads), write only their own object after
+    the call. Owners are never set. Leads need crm.objects.leads.read and crm.objects.leads.write.
   call: >-
     Call row in the review, ticked by default; associations contact 194, company 182, deal 206; dedupe by
     hs_call_external_id = pacenote:<call id>; Auto and Apply of one call take turns. <stem>.crm.json keeps the

@@ -1700,6 +1700,30 @@ for the old account never ends up in the new link. **Log the call in HubSpot aut
 ends** is off by default; when on, it logs only the Call, about two and a half minutes after the call, without a
 review. Notes, deal fields and tasks stay behind Apply. The design is in `docs/specs/hubspot-crm-integration.md`.
 
+**The people of the call in HubSpot.** Update HubSpot looks for the invitees: a contact by email first, then by name
+among the contacts of the company of that person's own email domain (the email in HubSpot may differ), and each
+company by its domain (not yours and not a free-mail domain such as gmail.com). On a call with people from several
+companies, each person is matched and created in their own company, never in another one. What it finds is reused
+and associated with the Call. What is missing shows as unticked rows, "Create the contact", "Create the company" and,
+when turned on, "Create a Lead" (with the name, email and company): nothing is created without your click. A contact
+already in HubSpot that has no Lead also gets a "Create a Lead" row. The invitees come only from the calendar event
+the link was made for, never from another meeting at about the same time or with the same title; without that event
+there are no rows. The job title comes from the project's
+"Team - Client" table, matched by the full name; the calendar has none, so without a match it stays empty. Apply creates the companies and the contacts first and then the Call, so the Call is already associated
+with them; a Call logged earlier gets the new people too, and if that fails the error is shown where Apply was and
+the next Apply (or Auto) tries again. A call with people from several companies is associated with every company.
+If HubSpot refuses the Lead lookup (no Leads scopes), the contact and company rows still show, with the error. Undo
+deletes what was created, only in the HubSpot account Apply wrote to: if the key now opens another account, Undo sends
+nothing, says so and stays available. The search checks the account first too: if the key opens another account, no
+invitee email is sent there, no rows are shown and Update HubSpot offers **Relink**. If the call is relinked to
+another account while Apply or the automatic run is making its people, they are not added to its Call or saved on
+its link, and they stay for Undo. An existing email or domain is never duplicated, even when Apply runs twice. Each kind has
+its own switch in Settings > Integrations > HubSpot, all off by default: create contacts automatically, create the
+company automatically, propose a Lead (needs the scopes `crm.objects.leads.read` and `crm.objects.leads.write` and a
+HubSpot plan with Leads) and create Leads automatically. Automatic Leads never create a contact: unless contacts are
+created automatically too, a new contact's Lead stays an unticked row in Update HubSpot. Automatic creation runs after the call ends and only for a
+call linked to HubSpot in the account of the current key. The owner of contacts and companies is never set.
+
 **What Pacenote can do.** Help > What Pacenote can do lists every feature with Try it and how often you used it
 (from the local usage log, Settings > General > Data). For the first 14 days it is also a card on Home.
 
