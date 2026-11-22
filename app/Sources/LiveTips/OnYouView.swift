@@ -104,7 +104,7 @@ struct OnYouView: View {
                 HStack(spacing: 8) {
                     Text(t.text).font(PN.Font.caption).foregroundStyle(t.isError ? PN.C.danger : PN.C.text2)
                     Spacer()
-                    if let u = t.undo { Button(L("ntask.undo")) { u(); ntasks.toast = nil }.buttonStyle(.pnTertiary) }
+                    if let u = t.undo { Button(t.actionTitle.isEmpty ? L("ntask.undo") : t.actionTitle) { u(); ntasks.toast = nil }.buttonStyle(.pnTertiary) }
                     if !t.openURL.isEmpty, let url = URL(string: t.openURL) { Button(L("ntask.open")) { NSWorkspace.shared.open(url) }.buttonStyle(.pnTertiary) }
                 }
                 .task(id: t.id) { try? await Task.sleep(nanoseconds: 8_000_000_000); if ntasks.toast?.id == t.id { ntasks.toast = nil } }
@@ -143,7 +143,7 @@ struct OnYouView: View {
                 .filter { !$0.isEmpty }.joined(separator: " · ")
             let dueS = c.due.isEmpty ? "" : (overdue ? L("reg.overdue", ["due": Register.dueText(c.due)]) : L("reg.due", ["due": Register.dueText(c.due)]))
             HStack(alignment: .top, spacing: 8) {
-                Toggle("", isOn: Binding(get: { false }, set: { _ in register.mark(c) }))
+                Toggle("", isOn: Binding(get: { false }, set: { _ in if !htasks.mark(c, "done") { register.mark(c) } }))   // PB-17: a linked item ticks its HubSpot task
                     .toggleStyle(.pnCheckbox).labelsHidden()
                     .accessibilityLabel(L("reg.markDoneA11y", ["text": c.text]))
                 VStack(alignment: .leading, spacing: 2) {
@@ -155,7 +155,7 @@ struct OnYouView: View {
                         .font(PN.Font.caption)
                 }
                 Spacer(minLength: 0)
-                RemoveButton { register.mark(c, "drop") }
+                RemoveButton { if !htasks.mark(c, "drop") { register.mark(c, "drop") } }
             }
             .padding(.vertical, 6)
             .contentShape(Rectangle())
@@ -168,7 +168,7 @@ struct OnYouView: View {
                 if htasks.ready && c.notionPage.isEmpty && c.crmTask.isEmpty { Button(L("htask.add")) { Task { await htasks.add(c) } } }
                 Divider()
                 Button(L("ntask.hideHere")) { hideHere(c.id) }
-                Button(L("ntask.remove")) { register.mark(c, "drop") }
+                Button(L("ntask.remove")) { if !htasks.mark(c, "drop") { register.mark(c, "drop") } }
             }
         case .task(let t, let c):
             let dueD = CommitmentRegister.dueDate(t.due, from: Date())

@@ -1505,6 +1505,8 @@
  "htask.removeRefused": "HubSpot залишив задачу, тож вона знову в списку: {reason}",
  "htask.undoRefused": "Нових задач, що залишились у HubSpot і лишаються пов'язаними: {n}. {reason}",
  "htask.accountChanged": "Ключ HubSpot тепер відкриває інший акаунт, тож туди нічого не записано. Список читається заново.",
+ "htask.replayRefused": "HubSpot відмовив у змінах, що чекали (кількість: {n}), тож їх повернуто: {reason}",
+ "htask.retry": "Повторити",
  "htask.deleteQ": "Видалити «{title}» у HubSpot?",
  "htask.deleteInfo": "Цю задачу створив не Pacenote. HubSpot тримає видалені задачі у своєму кошику.",
  "htask.delete": "Видалити в HubSpot",

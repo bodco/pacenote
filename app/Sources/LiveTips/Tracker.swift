@@ -423,7 +423,7 @@ struct TrackerScreen: View {
                     Toggle("", isOn: Binding(get: { r.done }, set: { on in
                         if let i = r.orgItem { Task { await org.change(i, orgProject: r.orgProject, .init(status: on ? "done" : "open")) } }
                         else if let t = htasks.tasks.first(where: { !r.crmTask.isEmpty && $0.id == r.crmTask }) { htasks.tick(t, done: on) }
-                        else if let c = r.commitment { register.mark(c) } else if let u = URL(string: r.url) { NSWorkspace.shared.open(u) } }))
+                        else if let c = r.commitment { if !htasks.mark(c, on ? "done" : "reopen") { register.mark(c) } } else if let u = URL(string: r.url) { NSWorkspace.shared.open(u) } }))
                         .toggleStyle(.pnCheckbox).labelsHidden().accessibilityLabel(L("reg.markDoneA11y", ["text": r.title]))
                         .disabled(r.orgItem.map { !$0.canEdit } ?? false)
                 } else { tile(r) }

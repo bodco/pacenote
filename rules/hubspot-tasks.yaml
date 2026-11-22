@@ -45,14 +45,20 @@ tracker: >-
 tick: >-
   PATCH hs_task_status COMPLETED at once; a toast "<title> set to Completed in HubSpot" with Undo for 8 s, which writes
   the status before the tick. A linked item gets done (Undo: reopen). When HubSpot refuses, the row comes back with
-  the reason (the item too). A tick made offline waits in the queue and is sent when HubSpot answers.
+  the reason (the item too). A tick made offline waits in the queue and is sent when HubSpot answers. Undo writes to
+  the portal of the tick; when the key opens another portal, Undo changes nothing and says so. A tick on a register
+  item linked to a task (On you, Tracker, call page, call window) goes to the saved crm_task and crm_portal, also
+  when the task is not in the lists (closed, another owner's or another queue).
 open: Double click opens the task in HubSpot (app-eu1.hubspot.com for the EU data region).
 remove: >-
   Remove takes the task out of the lists at once and deletes it in HubSpot (its recycling bin) after the 8 s Undo, so
   Undo writes nothing to HubSpot. A linked item gets drop (Undo: reopen). A task Pacenote did not make asks once in On
   you and the Tracker: Delete "<title>" in HubSpot? (the call window does not ask, as for Notion tasks). When HubSpot
   refuses, the task and the item come back and the toast says the task stayed in HubSpot, with Open. Made offline,
-  the delete waits in the queue (the task stays out of the lists). Hide here hides it only in Pacenote.
+  the delete waits in the queue (the task stays out of the lists). Hide here hides it only in Pacenote. Queue: a 4xx
+  (not 404, 408, 429) is a refusal; a 5xx, 408, 429 or no answer keeps the write queued (reported after 6 syncs).
+  A queued write HubSpot refuses at a sync is reported in a toast with Retry and stays in the error line after the
+  list is read.
 call_window: >-
   The On me tab gets a group "HubSpot <deal or company>": the open tasks associated with the call's deal, company or
   contacts (from <call>.crm.json). A call without a CRM link shows none. The tab counter counts them.

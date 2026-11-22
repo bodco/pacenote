@@ -1505,6 +1505,8 @@
  "htask.removeRefused": "HubSpot kept the task, so it is back in the list: {reason}",
  "htask.undoRefused": "{n} new HubSpot tasks stayed in HubSpot and stay linked: {reason}",
  "htask.accountChanged": "The HubSpot key now opens another account, so nothing was written there. The list is read again.",
+ "htask.replayRefused": "HubSpot refused {n} waiting changes, so they were put back: {reason}",
+ "htask.retry": "Retry",
  "htask.deleteQ": "Delete “{title}” in HubSpot?",
  "htask.deleteInfo": "Pacenote did not make this task. HubSpot keeps deleted tasks in its recycling bin.",
  "htask.delete": "Delete in HubSpot",

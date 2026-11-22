@@ -15,6 +15,7 @@ final class NotionTasks: ObservableObject {
         var undo: (() -> Void)? = nil
         var openURL = ""
         var isError = false
+        var actionTitle = ""                // PB-17: the button of `undo` when it is not Undo (Retry)
     }
 
     @Published private(set) var tasks: [NotionTask] = []

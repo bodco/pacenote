@@ -671,7 +671,8 @@ struct CallPageView: View {
         let late = !done && CommitmentRegister.isOverdue(c)
         ownerLine(HStack(alignment: .firstTextBaseline, spacing: 10) {
             if c.mine {
-                Toggle("", isOn: Binding(get: { done }, set: { register.mark(c, $0 ? "done" : "reopen") }))
+                Toggle("", isOn: Binding(get: { done }, set: { on in     // PB-17: a linked item ticks its HubSpot task
+                    if !HubSpotTasks.shared.mark(c, on ? "done" : "reopen") { register.mark(c, on ? "done" : "reopen") } }))
                     .toggleStyle(.pnCheckbox).labelsHidden().accessibilityLabel(L("reg.markDoneA11y", ["text": c.text]))
             }
             Text(c.text).font(t.homeText(16)).foregroundStyle(done ? PN.C.text3 : PN.C.text).strikethrough(done)
@@ -1087,7 +1088,8 @@ struct CallPageView: View {
                     menu: commitmentMenu(c, section),
                     onSave: { v in register.edit(c, text: v); changed(section) },
                     leading: {
-                        Toggle("", isOn: Binding(get: { c.status == "done" }, set: { register.mark(c, $0 ? "done" : "reopen") }))
+                        Toggle("", isOn: Binding(get: { c.status == "done" }, set: { on in     // PB-17: a linked item ticks its HubSpot task
+                    if !HubSpotTasks.shared.mark(c, on ? "done" : "reopen") { register.mark(c, on ? "done" : "reopen") } }))
                             .toggleStyle(.pnCheckbox).labelsHidden().accessibilityLabel(L("reg.markDoneA11y", ["text": c.text]))
                     },
                     trailing: {

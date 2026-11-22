@@ -56,6 +56,9 @@ final class HubSpotTasks: ObservableObject {
         case .removeRefused(let why, let url): n.toast = .init(text: L("htask.removeRefused", ["reason": why]), openURL: url, isError: true)
         case .undoRefused(let count, let why): n.toast = .init(text: L("htask.undoRefused", ["n": "\(count)", "reason": why]), isError: true)
         case .accountChanged: n.toast = .init(text: L("htask.accountChanged"), isError: true)
+        case .replayRefused(let count, let why, let retry):
+            n.toast = .init(text: L("htask.replayRefused", ["n": "\(count)", "reason": why]), undo: { Task { await retry() } },
+                            isError: true, actionTitle: L("htask.retry"))
         }
     }
 
@@ -116,6 +119,15 @@ final class HubSpotTasks: ObservableObject {
 
     /// rules/hubspot-tasks.yaml > remove: out of the lists at once; deleted in HubSpot after the 8 s Undo.
     func remove(_ t: CRMTask, commitment: Commitment?) { flow.remove(t, commitment: commitment) }
+
+    /// A tick ("done", "reopen") or Remove ("drop") on a register item linked to a HubSpot task, from any list: it goes
+    /// to the saved task id and portal, in the list or not. False when the item is not linked (the register handles it).
+    @discardableResult
+    func mark(_ c: Commitment, _ op: String) -> Bool {
+        guard flow.linkedTask(c) != nil else { return false }
+        if op == "drop" { flow.removeLinked(c) } else { flow.tickLinked(c, done: op == "done") }
+        return true
+    }
 
     /// rules/hubspot-tasks.yaml > remove: a task Pacenote did not make (no linked item) asks once; one from a call does not.
     func confirmRemove(_ t: CRMTask, commitment: Commitment?) {
@@ -185,11 +197,10 @@ final class HubSpotTasks: ObservableObject {
             task = tasks.first { $0.id == String(id.dropFirst(3)) }
             c = task.flatMap(linkedCommitment)
         } else if let item = Register.shared.items(in: folder).first(where: { $0.id == id }), !item.crmTask.isEmpty {
-            c = item; task = item.crmPortal == flow.portal ? tasks.first { $0.id == item.crmTask } : nil
-            if task == nil {          // the task is not in the list (closed or another owner's): the register alone
-                if op == "remove" { Register.shared.mark(item, "drop") } else { Register.shared.mark(item, done ? "done" : "reopen") }
-                return true
-            }
+            // in the list or not (closed, another owner's): the saved task id and portal
+            let o = op == "remove" ? "drop" : done ? "done" : "reopen"
+            if !mark(item, o) { Register.shared.mark(item, o) }        // a link without a portal: the register alone
+            return true
         } else { return false }
         guard let t = task else { return true }
         if op == "remove" { remove(t, commitment: c) } else { tick(t, done: done) }
