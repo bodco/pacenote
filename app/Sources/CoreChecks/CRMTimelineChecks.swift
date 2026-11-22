@@ -512,5 +512,45 @@ func crmTimeline() async {
     }
     expect(h3.r?.failed == 0 && h3.r?.kept == 0 && h3.now == "<p style=\"margin:0\">My own prep</p>" && h3.linked == ["contacts/P1"],
            "undo: HubSpot's own rewrite of the markup (strong, style, target) is not an edit; Pacenote's block goes")
+
+    // review round 9: a quote inside a link target is part of the link, never taken for its delimiter
+    let h4 = await markupEdit("101") { $0.replacingOccurrences(of: "href=\"https://notion.example/p2\"", with: "href=\"https://notion.example/p2'\"") }
+    expect(h4.r?.failed == 0 && h4.r?.kept == 1 && h4.now == h4.notes, "undo: a link changed to end in an apostrophe (double quoted) is kept and reported")
+    let h5 = await markupEdit("102") { $0.replacingOccurrences(of: "href=\"https://notion.example/p2\"", with: "href='\"https://notion.example/p2\"'") }
+    expect(h5.r?.kept == 1 && h5.now == h5.notes, "undo: a link changed to hold double quotes (single quoted) is kept and reported")
+    let h6 = await markupEdit("103") { $0.replacingOccurrences(of: "href=\"https://notion.example/p2\"", with: "href='https://notion.example/p2'") }
+    expect(h6.r?.failed == 0 && h6.r?.kept == 0 && h6.now == "<p>My own prep</p>", "undo: the same link in single quotes is not an edit")
+
+    // review round 9: a Meeting Pacenote created is read again before Undo deletes it. Unchanged: deleted and named,
+    // so its stored id goes. Notes added in HubSpot since Apply: the Meeting stays with them, only Pacenote's block
+    // goes, and Undo reports it; the stored id stays so the next Apply uses it. Edited block: nothing is changed
+    func created(_ change: ((inout String) -> Void)?) async -> (r: (failed: Int, kept: Int, deleted: [(String, String)])?, t: FakeHubSpotTimeline, id: String) {
+        let t = FakeHubSpotTimeline(); let hs = HubSpotConnector(transport: t, sleep: { _ in })
+        var m = meeting(["Ours"]); m.target = CRMMeetingLog.newTarget; m.targetPortal = "500"
+        let o = await CRMTimelineSync.log(key: key, writer: hs, connector: hs, meeting: m, email: nil, associations: refs, queue: CRMCallQueue(),
+                                          load: { CRMTimelineIds(portalId: "500") }, save: { _ in })
+        let id = o.ids.meetingId
+        if let change, var n = t.objects["meetings"]?[id]?[notesKey] { change(&n); t.objects["meetings"]![id]![notesKey] = n }
+        let r = try? await CRMUndo.run(o.undo, portal: "500", connector: hs)
+        return (r, t, id)
+    }
+    let c1 = await created(nil)
+    expect(!c1.id.isEmpty && c1.r?.failed == 0 && c1.r?.kept == 0 && c1.r?.deleted.map(\.1) == [c1.id] && c1.t.objects["meetings"]?[c1.id] == nil,
+           "undo: an unchanged new Meeting is deleted and named")
+    let c2 = await created { $0 += "<p>Added in HubSpot by Dana after Apply</p>" }
+    expect(c2.r?.failed == 0 && c2.r?.kept == 1 && c2.r?.deleted.isEmpty == true && c2.t.objects["meetings"]?[c2.id]?[notesKey] == "<p>Added in HubSpot by Dana after Apply</p>"
+           && c2.t.linked("meetings/" + c2.id) == ["deals/D1", "companies/C1", "contacts/P1"],
+           "undo: a new Meeting with notes added after Apply is kept with them, only Pacenote's block goes, and it is reported")
+    let c3 = await created { $0 = $0.replacingOccurrences(of: "Ours", with: "Ours, and Dana's correction") }
+    expect(c3.r?.kept == 1 && c3.r?.deleted.isEmpty == true && (c3.t.objects["meetings"]?[c3.id]?[notesKey] ?? "").contains("Dana's correction"),
+           "undo: a new Meeting whose Pacenote block was edited after Apply is kept as it is")
+    let c4 = await created { $0 = $0.replacingOccurrences(of: "<b>", with: "<strong>").replacingOccurrences(of: "</b>", with: "</strong>") + "<p>&nbsp;</p><br>" }
+    expect(c4.r?.failed == 0 && c4.r?.kept == 0 && c4.r?.deleted.map(\.1) == [c4.id] && c4.t.objects["meetings"]?[c4.id] == nil,
+           "undo: a new Meeting only rewritten by HubSpot (markup, empty paragraphs) is deleted")
+    let c5 = await created { _ in }
+    c5.t.objects["meetings"] = [:]
+    let c5b = try? await CRMUndo.run([("meetings", c5.id, [CRMTimeline.createdKey: "1", CRMTimeline.notesCallKey: key, CRMTimeline.notesWroteKey: "x", CRMTimeline.notesBeforeKey: ""])],
+                                     portal: "500", connector: HubSpotConnector(transport: c5.t, sleep: { _ in }))
+    expect(c5b?.failed == 0 && c5b?.deleted.map(\.1) == [c5.id], "undo: a new Meeting already deleted in HubSpot counts as deleted")
     }
 }

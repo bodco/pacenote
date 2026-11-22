@@ -140,7 +140,12 @@ decides, the service key stays the only path.
    block back in place of Pacenote's block (or removes it) and keeps all other text, also text added after Apply. If
    Pacenote's block was edited or removed in HubSpot since Apply, the notes are kept as they are and Undo says so. An
    edit is any change to the block's words, tags or link targets (href, src); only HubSpot's own rewrite of the markup
-   (`<strong>` for `<b>`, `<em>` for `<i>`, entities, spacing, `style` or `target` attributes) is not.
+   (`<strong>` for `<b>`, `<em>` for `<i>`, entities, spacing, `style` or `target` attributes) is not. A link target
+   is compared as written: only the quotes that open and close the attribute value are dropped. A Meeting Pacenote
+   created is not deleted blindly either: its record holds the block Apply wrote, and Undo reads the notes again and
+   deletes the Meeting only while they are that block and nothing else (empty tags aside). With notes added in HubSpot
+   since, the Meeting stays with them, only Pacenote's block is removed, its stored id stays, and Undo says so; with
+   the block edited, nothing is changed and Undo says so. A Meeting already deleted in HubSpot counts as undone.
    Undo runs in the call's turn (the same queue as the writes and Relink). Undo checks the portal like Apply (section 8).
 5. **Errors are one line where the action was**, never a modal; 429 waits (Retry-After, else 1, 2, 4 s) and retries three
    times; 401 and 403 say what to fix (key, or the named scope).

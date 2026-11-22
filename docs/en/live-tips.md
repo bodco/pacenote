@@ -1690,7 +1690,8 @@ associations. Both rows need Apply; there is no automatic switch for them. Undo 
 the associations Pacenote added. On a Meeting it reads the notes again and takes back only Pacenote's block, so notes
 someone added in HubSpot after Apply stay; if Pacenote's block itself was edited there since (its text or a link in
 it), it is kept as it is and
-Undo says so; if a write fails halfway, what it changed is taken back, and an association HubSpot
+Undo says so. A Meeting Pacenote created is deleted by Undo only if nobody added notes to it in HubSpot since;
+otherwise it stays with those notes, only Pacenote's block goes, and Undo says so. If a write fails halfway, what it changed is taken back, and an association HubSpot
 would not let it take back stays in Undo. The meetings offered to pick and Undo belong to the HubSpot account that
 was searched or written: after Relink to another account they are dropped, and a pick or Undo from the old account
 never writes to the new one, even when an id there is the same. Relink and Refresh wait until a write of the same

@@ -93,6 +93,14 @@ public struct CRMMeetingLog: Equatable {
     /// content (style, class, target, rel). Any other difference is an edit, so Undo keeps the notes and reports it.
     static func sameBlock(_ a: String, _ b: String) -> Bool { tokens(a) == tokens(b) }
 
+    /// A Meeting Pacenote created may be deleted by Undo only while its notes are Pacenote's block as written and
+    /// nothing else: no word, link or image around it (empty tags HubSpot adds, like <p></p>, do not count).
+    public static func onlyBlock(current: String, wrote: String, key: String) -> Bool {
+        guard let rest = unmerge(current: current, wrote: wrote, previous: "", key: key) else { return false }
+        let text = rest.replacingOccurrences(of: "<[^>]*>", with: " ", options: .regularExpression).replacingOccurrences(of: "&nbsp;", with: " ")
+        return text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !tokens(rest).contains { $0.contains("=") }
+    }
+
     static func tokens(_ s: String) -> [String] {
         func decode(_ s: String) -> String {
             var t = s
@@ -112,7 +120,10 @@ public struct CRMMeetingLog: Equatable {
             let str = String(tag)
             for m in attrs?.matches(in: str, range: NSRange(str.startIndex..., in: str)) ?? [] {
                 guard let n = Range(m.range(at: 1), in: str), let v = Range(m.range(at: 2), in: str) else { continue }
-                t += " " + str[n].lowercased() + "=" + decode(String(str[v]).trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))).trimmingCharacters(in: .whitespaces)
+                // only the one quote that opens and the one that closes the value go: a quote inside a link is part of it
+                var value = str[v]
+                if value.count >= 2, let q = value.first, q == "\"" || q == "'", value.last == q { value = value.dropFirst().dropLast() }
+                t += " " + str[n].lowercased() + "=" + decode(String(value))
             }
             out.append(t + ">")
             rest = rest[rest.index(after: gt)...]
@@ -174,7 +185,8 @@ public struct CRMEmailLog: Equatable {
 
 /// created: a new engagement (Undo deletes it). attached: not Pacenote's (HubSpot's own calendar sync, or an email
 /// logged by HubSpot or by hand): only the notes, or only the associations, were added. old: what Undo puts back,
-/// empty when nothing was changed, in which case Undo must not touch the object. pick: meetings near the call that
+/// empty when nothing was changed, in which case Undo must not touch the object; for a created Meeting, the block
+/// Apply wrote (`CRMTimeline.createdKey`), which Undo checks before it deletes. pick: meetings near the call that
 /// may be its own but are not sure to be; nothing was written and the PM picks one, or a new Meeting.
 public struct CRMTimelineResult: Equatable { public var id: String; public var created: Bool; public var attached: Bool; public var old: [String: String]; public var pick: [CRMMeetingCandidate]
     public init(id: String, created: Bool, attached: Bool = false, old: [String: String] = [:], pick: [CRMMeetingCandidate] = []) {
@@ -196,8 +208,10 @@ public protocol CRMTimelineWriter {
     func upsertMeeting(_ log: CRMMeetingLog, knownId: String, associations: [CRMRef]) async throws -> CRMTimelineResult
     /// ours: Pacenote created knownId. An email that is not ours only gets the missing associations, never new content.
     func upsertEmail(_ log: CRMEmailLog, knownId: String, ours: Bool, associations: [CRMRef]) async throws -> CRMTimelineResult
-    /// Puts the old fields back and removes the associations the write added (`CRMTimeline.addedKey` in fields).
-    func restore(type: String, id: String, fields: [String: String]) async throws
+    /// Puts the old fields back and removes the associations the write added (`CRMTimeline.addedKey` in fields). A
+    /// Meeting Pacenote created (`CRMTimeline.createdKey`) is deleted instead, while it holds only Pacenote's block.
+    /// true: the object was deleted (or was gone already), so its stored id must go.
+    @discardableResult func restore(type: String, id: String, fields: [String: String]) async throws -> Bool
 }
 
 public enum CRMTimeline {
@@ -206,6 +220,9 @@ public enum CRMTimeline {
     /// In an Undo record of a Meeting's notes: the call id, the block Pacenote wrote and the block it replaced ("" when
     /// there was none). Never the whole field: Undo puts back only Pacenote's block (`CRMMeetingLog.unmerge`).
     public static let notesCallKey = "pacenote.notes.call", notesWroteKey = "pacenote.notes.wrote", notesBeforeKey = "pacenote.notes.before"
+    /// In an Undo record of a Meeting Pacenote created: Undo reads it again and deletes it only while it holds nothing
+    /// but Pacenote's block (`CRMMeetingLog.onlyBlock`).
+    public static let createdKey = "pacenote.created"
     static func encode(_ refs: [CRMRef]) -> String { refs.map { $0.type + "/" + $0.id }.joined(separator: ",") }
     public static func decode(_ s: String) -> [CRMRef] {
         s.split(separator: ",").compactMap { p in let x = p.split(separator: "/", maxSplits: 1); return x.count == 2 ? CRMRef(String(x[0]), String(x[1])) : nil }
@@ -277,7 +294,8 @@ public enum CRMUndo {
     /// Notes and tasks are deleted, deal fields and an updated Call, Meeting or Email get their old values back.
     /// Throws the portal mismatch before any write; otherwise returns how many records failed and the (type, id) of
     /// the ones deleted (their stored ids must go too, so the next Apply makes them again). kept: Meetings whose
-    /// Pacenote notes were edited in HubSpot after Apply, so their notes were left as they are (`CRMUndoConflict`).
+    /// Pacenote notes were edited in HubSpot after Apply, or Meetings Pacenote created that got notes there since, so
+    /// those notes were left as they are (`CRMUndoConflict`).
     public static func run(_ items: [(String, String, [String: String])], portal: String, connector c: CRMConnector) async throws -> (failed: Int, kept: Int, deleted: [(String, String)]) {
         try await CRMPortal.verify(link: portal, connector: c)
         var failed = 0, kept = 0, deleted: [(String, String)] = []
@@ -285,7 +303,10 @@ public enum CRMUndo {
             do {
                 if type == "deals" { _ = try await c.updateDeal(id: id, fields: old) }
                 else if type == "calls" && !old.isEmpty { try await c.restoreCall(id: id, fields: old) }
-                else if (type == "meetings" || type == "emails") && !old.isEmpty { try await (c as? CRMTimelineWriter)?.restore(type: type, id: id, fields: old) }
+                else if (type == "meetings" || type == "emails") && !old.isEmpty {
+                    guard let w = c as? CRMTimelineWriter else { failed += 1; continue }
+                    if try await w.restore(type: type, id: id, fields: old) { deleted.append((type, id)) }
+                }
                 else { try await c.delete(type: type, id: id); deleted.append((type, id)) }
             } catch is CRMUndoConflict { kept += 1 } catch { failed += 1 }
         }
@@ -408,7 +429,9 @@ extension HubSpotConnector: CRMTimelineWriter {
             let r = try await call("POST", "/crm/v3/objects/meetings", [
                 "properties": owned(log.properties.merging([Self.meetingNotes: log.notes]) { a, _ in a }),
                 "associations": Self.assocBody(associations, Self.meetingAssoc)])
-            return CRMTimelineResult(id: (r["id"] as? String) ?? "", created: true)
+            // what Apply wrote, so Undo deletes the Meeting only while nobody added to it (`restore`)
+            return CRMTimelineResult(id: (r["id"] as? String) ?? "", created: true,
+                                     old: [CRMTimeline.createdKey: "1", CRMTimeline.notesCallKey: log.key, CRMTimeline.notesWroteKey: log.notes, CRMTimeline.notesBeforeKey: ""])
         }
         let before = cur.0[Self.meetingNotes] ?? ""
         let merged = CRMMeetingLog.merge(existing: before, notes: log.notes, key: log.key)
@@ -469,19 +492,29 @@ extension HubSpotConnector: CRMTimelineWriter {
         return CRMTimelineResult(id: id, created: false, attached: !mine, old: old)
     }
 
-    public func restore(type: String, id: String, fields: [String: String]) async throws {
+    @discardableResult public func restore(type: String, id: String, fields: [String: String]) async throws -> Bool {
         var f = fields
         let added = f.removeValue(forKey: CRMTimeline.addedKey).map(CRMTimeline.decode) ?? []
         var conflict = false
+        let created = f.removeValue(forKey: CRMTimeline.createdKey) != nil
         if let key = f.removeValue(forKey: CRMTimeline.notesCallKey) {
             // the notes as they are now: only Pacenote's block goes back, and only while nobody changed it since Apply
             let wrote = f.removeValue(forKey: CRMTimeline.notesWroteKey) ?? "", previous = f.removeValue(forKey: CRMTimeline.notesBeforeKey) ?? ""
-            let now = try await read(type, id, [Self.meetingNotes]).0[Self.meetingNotes] ?? ""
+            let now: String
+            do { now = try await read(type, id, [Self.meetingNotes]).0[Self.meetingNotes] ?? "" }
+            catch let e as CRMError where e.code == 404 && created { return true }      // deleted in HubSpot already
+            // a Meeting Pacenote created is deleted only while it holds nothing but Pacenote's block; with notes added
+            // since, it stays with them (only the block goes, below) and Undo says so
+            if created {
+                if CRMMeetingLog.onlyBlock(current: now, wrote: wrote, key: key) { try await delete(type: type, id: id); return true }
+                conflict = true
+            }
             if let back = CRMMeetingLog.unmerge(current: now, wrote: wrote, previous: previous, key: key) { f[Self.meetingNotes] = back }
             else { conflict = true }
         }
         if !f.isEmpty { _ = try await call("PATCH", "/crm/v3/objects/\(type)/\(id)", ["properties": f]) }
         for a in added { _ = try await call("DELETE", "/crm/v4/objects/\(type)/\(id)/associations/\(a.type)/\(a.id)") }
         if conflict { throw CRMUndoConflict(type: type, id: id) }
+        return false
     }
 }

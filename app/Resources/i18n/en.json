@@ -1789,7 +1789,7 @@
  "callEdit.err.noAccess": "the Notion page was not found or is not shared with your integration (in Notion: ⋯ > Connections)",
  "callEdit.err.token": "Notion did not accept the token (Settings > Integrations > Notion)",
  "crm.undoFailed": "Undo did not finish: {n} change(s) are still in {crm}, remove them there",
- "crm.undoKept": "Undone, except the Pacenote notes on {n} {crm} meeting(s): their text or links were edited after Apply, so they were kept as they are",
+ "crm.undoKept": "Undone, except {n} {crm} meeting(s) changed after Apply: notes added there and an edited Pacenote block were kept",
  "set.scanNote": "Workspaces: {ws}, new projects: {new}",
  "set.foldersInside": "Folders inside: {n}",
  "ntset.workspaceProp": "Workspace property:",
