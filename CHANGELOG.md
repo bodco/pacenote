@@ -12,7 +12,10 @@ Pacenote. Earlier versions are described in the commit messages and in
   kept in the hidden `.work/web/<host>` folder inside the call folder, which Google Drive may sync. The page budget uses
   square - and + buttons, the cost sentence has its own line, the page list no longer scrolls inside the page, and a line
   explains why more pages cannot be ticked when the budget is reached. In Quick, the summary line says how many pages
-  of the site were read, and the link field placeholder is shorter.
+  of the site were read, and the link field placeholder is shorter. Once a read is finished or cancelled,
+  the panel shows only the result: the plan controls, the page counter and the cost estimate are hidden, and a page that
+  could not be read has an x instead of a tick. Failures to plan a site are worded in your language, and the route name
+  reads as a label in the cost and privacy lines.
 - **Quick prep takes a link (2026-11-22, FB7):** the Sources line of Quick has a Link to add field, so a link no
   longer needs Expert.
 

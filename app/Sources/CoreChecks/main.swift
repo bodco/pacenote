@@ -4805,6 +4805,8 @@ func siteResearchPB37C() {
     expect(SiteResearch.cost(tokens: 20000, route: "code", window: 200_000) == .window(tokens: 20000, percent: 10), "site cost: an account route shows the window share")
     expect(SiteResearch.cost(tokens: 20000, route: "agy", window: 1_000_000) == .window(tokens: 20000, percent: 2) && SiteResearch.inputPrice(route: "codex") == nil, "site cost: no dollar figure for a subscription")
 
+    expect(SiteResearch.errorKind("the site did not answer in 30 s") == .timeout && SiteResearch.errorKind("HTTP 503") == .http("503") && SiteResearch.errorKind("no addresses found") == .other, "site error kinds: timeout, http code, other (never the raw string)")
+
     // the report of webfetch and the child sources
     let rep: [String: Any] = ["url": "https://example-company.com/",
         "sources": [["id": "w1", "type": "web_page", "uri": "https://example-company.com/", "path": "/tmp/w/home.txt", "title": "Home", "size_tokens": 800,

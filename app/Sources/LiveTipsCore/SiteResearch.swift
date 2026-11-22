@@ -269,6 +269,19 @@ public enum SiteResearch {
         return rows.contains { $0.parentURI == uri }
     }
 
+    public enum ErrorKind: Equatable { case timeout, http(String), other }
+
+    /// What an engine message says, so the panel can show its own localized text and never the English string.
+    public static func errorKind(_ raw: String) -> ErrorKind {
+        let l = raw.lowercased()
+        if let r = l.range(of: "http ") {
+            let code = l[r.upperBound...].prefix { $0.isNumber }
+            if code.count == 3 { return .http(String(code)) }
+        }
+        if l.contains("did not answer") || l.contains("timed out") || l.contains("timeout") { return .timeout }
+        return .other
+    }
+
     public static func host(_ url: String) -> String { URLComponents(string: url)?.host ?? url }
 
     /// A tick-and-reason line for a failed or empty state, as a key suffix for `sheet.ui.web.state.<key>`.

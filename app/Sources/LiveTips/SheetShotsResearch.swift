@@ -66,11 +66,10 @@ extension SheetShots {
                 let d = draft(quick ? .quick : .expert, step: 3)
                 build(d)
                 made = d
+                // the row's @State reads this when the view first renders (after make), so it is cleared in tweak, not here
                 SheetQuickView.shotOpen = quick && open ? "sources" : nil
-                let v = SheetPrepView(draft: d)
-                SheetQuickView.shotOpen = nil
-                return AnyView(v)
-            }, tweak: { made?.checking = false }, still: true)
+                return AnyView(SheetPrepView(draft: d))
+            }, tweak: { made?.checking = false; SheetQuickView.shotOpen = nil }, still: true)
         }
         // plan: the three cost lines (dollars on the API, free on this Mac, a share of the window on an account route)
         for (n, route) in [("usd", AIRoute.api), ("free", AIRoute.local), ("window", AIRoute.code)] {

@@ -154,9 +154,9 @@ struct SheetSiteResearchPanel: View {
             Text(L("sheet.ui.web.title", ["domain": SiteResearch.host(session.url)])).font(th.homeText(14, .semibold)).foregroundStyle(PN.C.text)
             switch session.phase {
             case .planning:
-                HStack(spacing: 6) { PNSpinner(size: 16); Text(L("sheet.ui.web.planning")).font(th.homeText(13)).foregroundStyle(PN.C.text2) }
+                HStack(spacing: 6) { PNSpinner(size: 16).accessibilityLabel(L("sheet.ui.web.planning")); Text(L("sheet.ui.web.planning")).font(th.homeText(13)).foregroundStyle(PN.C.text2) }
             case .failed:
-                Text(L("sheet.ui.web.planFailed", ["e": session.error])).font(th.homeText(13)).foregroundStyle(PN.C.pending).fixedSize(horizontal: false, vertical: true)
+                Text(planFailedText(session.error)).font(th.homeText(13)).foregroundStyle(PN.C.pending).fixedSize(horizontal: false, vertical: true)
                 HStack { Button(L("sheet.ui.web.retry")) { draft.researchSite(sourceID: session.sourceID) }.buttonStyle(.pnSecondary)
                          Button(L("sheet.ui.web.close"), action: onClose).buttonStyle(.pnTertiary) }
             case .ready, .reading, .finished:
@@ -169,20 +169,46 @@ struct SheetSiteResearchPanel: View {
 
     @ViewBuilder private func content(_ plan: SitePlan) -> some View {
         if plan.startStatus != "ok" {
-            Text(L("sheet.ui.web.start." + (plan.startStatus == "blocked" ? "blocked" : "error"), ["e": plan.startNote]))
+            Text(startText(plan))
                 .font(th.homeText(13)).foregroundStyle(PN.C.pending).fixedSize(horizontal: false, vertical: true)
             Button(L("sheet.ui.web.close"), action: onClose).buttonStyle(.pnTertiary)
         } else {
             pageList(plan)
-            summary(plan)
+            // after a read (finished or cancelled) the plan is spent: no counter, stepper, cost or "will be read" line
+            if session.phase != .finished { summary(plan) }
             footer(plan)
         }
     }
 
+    /// The engine's messages are English: the panel shows its own text for the kinds it knows and never the raw string.
+    private func planFailedText(_ raw: String) -> String {
+        switch SiteResearch.errorKind(raw) {
+        case .timeout: return L("sheet.ui.web.err.timeout")
+        case .http(let code): return L("sheet.ui.web.err.http", ["code": code])
+        case .other: return L("sheet.ui.web.planFailed")
+        }
+    }
+
+    private func startText(_ plan: SitePlan) -> String {
+        if plan.startStatus == "blocked" { return L("sheet.ui.web.start.blocked") }
+        if case .http(let code) = SiteResearch.errorKind(plan.startNote) { return L("sheet.ui.web.start.error", ["e": "HTTP " + code]) }
+        return L("sheet.ui.web.start.errorPlain")
+    }
+
+    /// The reason after a page's state: a number or a path only; robots.txt is already in the state text.
+    private func noteText(_ st: (state: String, note: String)) -> String {
+        if case .http(let code) = SiteResearch.errorKind(st.note) { return "HTTP " + code }
+        if st.note.hasPrefix("same text as ") { return L("sheet.ui.web.note.duplicate", ["path": String(st.note.dropFirst("same text as ".count))]) }
+        return ""
+    }
+
+    /// The state of a page once the read is over: nil while planning, reading or planning again.
+    private func settled(_ p: SitePlanPage) -> (state: String, note: String)? { session.phase == .finished ? session.pageStates[p.url] : nil }
+
     /// After a read the line of a page is what the engine reported for it (state and reason), not the plan's old reason.
     private func pageLine(_ plan: SitePlan, _ p: SitePlanPage) -> String {
         if session.phase != .ready, let st = session.pageStates[p.url] {
-            let note = st.note.isEmpty ? "" : " (" + st.note + ")"
+            let n = noteText(st), note = n.isEmpty ? "" : " (" + n + ")"
             return L("sheet.ui.web.pageState." + (st.state == "stopped" ? "stopped" : SiteResearch.stateKey(st.state))) + note
         }
         return ([p.kind == "page" ? "" : p.kind, p.whyRanked].filter { !$0.isEmpty } + [plan.reason(p).map { L("sheet.ui.web.why." + $0) }].compactMap { $0 })
@@ -194,24 +220,37 @@ struct SheetSiteResearchPanel: View {
         VStack(alignment: .leading, spacing: 0) {
             ForEach(plan.pages) { p in
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Toggle("", isOn: Binding(get: { p.ticked }, set: { _ in session.plan?.toggle(p.url) })).toggleStyle(.pnCheckbox).labelsHidden()
-                        .disabled(session.phase == .reading || !p.tickable || (!p.ticked && plan.tickedCount >= plan.budget))
-                        .accessibilityLabel(p.path)
+                    let st = settled(p)
+                    let on = st == nil ? p.ticked : st?.state == "read"
+                    if let st, st.state != "read", st.state != "stopped" {
+                        // a page that failed is not a success: a small x instead of a ticked box
+                        Image(systemName: "xmark").font(.system(size: 9, weight: .bold)).foregroundStyle(PN.C.text3).frame(width: 16, height: 16)
+                            .accessibilityElement().accessibilityLabel(L("sheet.ui.web.a11y.failed", ["path": p.path]))
+                    } else {
+                        Toggle("", isOn: Binding(get: { on }, set: { _ in session.plan?.toggle(p.url) })).toggleStyle(.pnCheckbox).labelsHidden()
+                            .disabled(session.phase == .reading || session.phase == .finished || !p.tickable || (!p.ticked && plan.tickedCount >= plan.budget))
+                            .accessibilityLabel(tickLabel(p, st))
+                    }
                     VStack(alignment: .leading, spacing: 1) {
                         Text(p.path).font(th.homeMono(12)).foregroundStyle(p.ticked ? PN.C.text : PN.C.text3).lineLimit(1).truncationMode(.middle)
                         let line = pageLine(plan, p)
                         if !line.isEmpty { Text(line).font(th.homeText(12)).foregroundStyle(PN.C.text3).lineLimit(2) }
                     }
                     Spacer(minLength: 6)
-                    if p.ticked { Text("~" + SheetLabels.tokens(p.estTokens)).font(th.homeMono(11)).foregroundStyle(PN.C.text3) }
+                    if on { Text("~" + SheetLabels.tokens(p.estTokens)).font(th.homeMono(11)).foregroundStyle(PN.C.text3) }
                 }
                 .padding(.vertical, 4)
             }
         }
     }
 
+    private func tickLabel(_ p: SitePlanPage, _ st: (state: String, note: String)?) -> String {
+        if let st { return L(st.state == "read" ? "sheet.ui.web.a11y.read" : "sheet.ui.web.a11y.off", ["path": p.path]) }
+        return p.ticked ? L("sheet.ui.web.a11y.planned", ["path": p.path, "t": SheetLabels.tokens(p.estTokens)]) : L("sheet.ui.web.a11y.off", ["path": p.path])
+    }
+
     private func summary(_ plan: SitePlan) -> some View {
-        let tokens: Int = session.report?.tokens ?? plan.tickedTokens
+        let tokens = plan.tickedTokens
         return VStack(alignment: .leading, spacing: 6) {
             // square buttons instead of the system Stepper (it draws the rounded macOS control)
             HStack(spacing: 8) {
@@ -243,8 +282,9 @@ struct SheetSiteResearchPanel: View {
         switch session.phase {
         case .reading:
             HStack(spacing: 8) {
-                PNSpinner(size: 16)
-                Text(session.cancelling ? L("sheet.ui.web.stopping") : L("sheet.ui.web.progress", ["d": "\(min(session.done + 1, session.total))", "n": "\(session.total)", "p": session.currentPath]))
+                let line = session.cancelling ? L("sheet.ui.web.stopping") : L("sheet.ui.web.progress", ["d": "\(min(session.done + 1, session.total))", "n": "\(session.total)", "p": session.currentPath])
+                PNSpinner(size: 16).accessibilityLabel(line)
+                Text(line)
                     .font(th.homeText(13)).foregroundStyle(PN.C.text2).lineLimit(1).truncationMode(.middle)
                 Spacer(minLength: 8)
                 Button(L("sheet.ui.web.cancel")) { draft.cancelResearch(sourceID: session.sourceID) }.buttonStyle(.pnSecondary).disabled(session.cancelling)
@@ -268,7 +308,7 @@ struct SheetSiteResearchPanel: View {
 
     @ViewBuilder private func result(_ r: SiteReadReport) -> some View {
         let n = r.usable.count
-        Text(L("sheet.ui.web.done", ["n": "\(n)", "t": SheetLabels.tokens(r.tokens)]) + (session.cancelling ? " " + L("sheet.ui.web.keptOnCancel") : ""))
+        Text((r.tokens > 0 ? L("sheet.ui.web.done", ["n": "\(n)", "t": SheetLabels.tokens(r.tokens)]) : L("sheet.ui.web.pagesRead", ["n": "\(n)"])) + (session.cancelling ? " " + L("sheet.ui.web.keptOnCancel") : ""))
             .font(th.homeText(13, .semibold)).foregroundStyle(PN.C.text).fixedSize(horizontal: false, vertical: true)
         let left = ["empty", "blocked", "error", "skipped", "duplicate"].compactMap { k -> String? in
             let c = r.counts[k] ?? 0
