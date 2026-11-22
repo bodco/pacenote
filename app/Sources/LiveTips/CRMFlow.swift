@@ -49,6 +49,13 @@ extension CRMService {
     /// Finds the company (attendee domains, else the name), its freshest open deal and the contacts; keeps a link the
     /// PM chose. Writes <base>.crm.md and <base>.crm.json. Returns the link or an error line.
     func refresh(base: String, emails: [String], name: String, keep: CRMLink?) async -> (CRMLink?, String) {
+        // H3: in turn with the call's people and Call writes, so a Relink never changes the portal in the middle of one
+        guard let key = keep?.callKey, !key.isEmpty else { return await relinked(base: base, emails: emails, name: name, keep: keep) }
+        do { return try await CRMCallQueue.shared.run(key) { await self.relinked(base: base, emails: emails, name: name, keep: keep) } }
+        catch { return (nil, error.localizedDescription) }
+    }
+
+    private func relinked(base: String, emails: [String], name: String, keep: CRMLink?) async -> (CRMLink?, String) {
         guard let c = connector() else { return (nil, L("crm.notConnected")) }
         do {
             var link = keep ?? CRMLink()
@@ -122,7 +129,7 @@ enum CRMCallLogger {
                                   save: { id in var d = CRMLink.load(base: base) ?? link; d.callId = id; d.save(base: base) })
     }
 
-    static func refs(_ l: CRMLink) -> [CRMRef] {
+    nonisolated static func refs(_ l: CRMLink) -> [CRMRef] {
         var r: [CRMRef] = []
         if !l.dealId.isEmpty && l.dealId != "none" { r.append(CRMRef("deals", l.dealId)) }
         if !l.companyId.isEmpty { r.append(CRMRef("companies", l.companyId)) }
@@ -362,7 +369,7 @@ struct CRMUpdateView: View {
                     var again = nl
                     if p.callLog != nil, let entry = CRMCallLogger.log(file: file, link: &again) { p.callLog = entry }     // the participants line
                 }
-                if !problem.isEmpty { throw CRMError(code: 0, message: problem) }
+                if let e = problem { throw e.scope == "portal" ? e : CRMError(code: 0, message: e.message) }    // a relink meanwhile: the window offers Relink
                 let refs = CRMCallLogger.refs(l)
                 if p.rows.first(where: { $0.id == "note" })?.on == true {
                     let id = try await c.createNote(text: p.note, associations: refs); done.append(("notes", id, [:]))
@@ -421,11 +428,11 @@ struct CRMUpdateView: View {
             }
             for it in r.undone where it.old.isEmpty {
                 if it.type == "calls" {     // the next Apply makes a new Call
-                    if var d = CRMLink.load(base: base), d.callId == it.id { d.callId = ""; d.save(base: base) }
+                    if var d = CRMLink.load(base: base), d.portalId == portal, d.callId == it.id { d.callId = ""; d.save(base: base) }
                     link?.callId = ""
                 }
                 if ["contacts", "companies", "leads"].contains(it.type) {     // H3: on disk too, without overwriting a Call id Auto stored
-                    if let d = CRMLink.load(base: base) { CRMPeopleFlow.forget(type: it.type, id: it.id, in: d).save(base: base) }
+                    if let d = CRMLink.load(base: base), d.portalId == portal { CRMPeopleFlow.forget(type: it.type, id: it.id, in: d).save(base: base) }
                     if let l = link { link = CRMPeopleFlow.forget(type: it.type, id: it.id, in: l) }
                 }
             }

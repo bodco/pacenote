@@ -31,7 +31,9 @@ Pacenote. Earlier versions are described in the commit messages and in
   HubSpot without a Lead also gets a Lead row. Apply creates them before the Call, so the Call is associated with
   them, and Undo removes them, only in the HubSpot account Apply wrote to: if the key now opens another account, Undo
   sends nothing and says so. The same check runs before the review looks anyone up: with the key on another account
-  no invitee email is sent there and the call asks to be relinked. A Call logged earlier is associated with the new people too, and if that fails the
+  no invitee email is sent there and the call asks to be relinked. If the call is relinked to another account while
+  Apply or the automatic run is making its people, they are not added to its Call or saved on its link (they stay
+  for Undo). A Call logged earlier is associated with the new people too, and if that fails the
   error is shown instead of "Updated" and the next Apply tries again. A call with people from several companies is
   associated with every company. An existing email or domain is never duplicated. Four new switches in
   Settings > Integrations > HubSpot, all off by default, create contacts, the company or Leads automatically after

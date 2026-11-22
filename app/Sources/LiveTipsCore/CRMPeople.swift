@@ -58,6 +58,12 @@ public struct CRMPeopleResult {
     public var changed: Bool { !created.isEmpty || reused > 0 }
 }
 
+/// What the call's stored link (<stem>.crm.json) holds when the write's turn comes: the Call id, the portal and the refs.
+public struct CRMStoredLink: Equatable {
+    public var callId: String, portalId: String, linked: [CRMRef]
+    public init(callId: String, portalId: String, linked: [CRMRef] = []) { self.callId = callId; self.portalId = portalId; self.linked = linked }
+}
+
 public struct CRMCreated: Equatable { public var id: String; public var created: Bool
     public init(id: String, created: Bool) { self.id = id; self.created = created } }
 
@@ -305,25 +311,31 @@ public enum CRMPeople {
     }
 
     /// The one write path of Auto and Apply: creates the chosen rows, then gives a Call logged earlier every person and
-    /// company of the call (`linked` = the people refs the link already has, `companies` = the matched ones). The
+    /// company of the call (the people refs the stored link already has, and `companies` = the matched ones). The
     /// association PUTs are idempotent and are all sent again on every run, so one that failed before (while the link
     /// kept the ids) is made by the next Apply or Auto. When the Call is written in this run its own upsert associates
     /// them, so nothing is added here. A failed association is the result's failure, never hidden; what was created
-    /// stays listed for Undo. The association takes its turn in the per-call queue of H2 and reads the stored Call id
-    /// when the turn comes.
-    public static func commit(_ chosen: [CRMProposal], company: CRMCompany?, companies: [CRMCompany] = [], found: [CRMContact], linked: [CRMRef] = [],
+    /// stays listed for Undo. The association and `save` take one turn in the per-call queue of H2 (Relink takes its
+    /// turn there too): the stored link is read when the turn comes and, when it now names another portal than
+    /// `portal` (the one checked before the creates), nothing is associated or saved and the failure has
+    /// CRMPortal.mismatchCode, so one portal's ids never reach the other's link or Call.
+    public static func commit(_ chosen: [CRMProposal], company: CRMCompany?, companies: [CRMCompany] = [], found: [CRMContact], portal: String,
                               callKey: String, callWritten: Bool, connector c: CRMPeopleConnector, queue: CRMCallQueue = .shared,
-                              callId: @escaping () -> String) async -> CRMPeopleResult {
+                              stored: @escaping () -> CRMStoredLink, save: @escaping (CRMPeopleResult) -> Void = { _ in }) async -> CRMPeopleResult {
         var r = chosen.isEmpty ? CRMPeopleResult(company: company) : await apply(chosen, company: company, connector: c)
-        guard !callWritten else { return r }
-        let people = linked.filter { $0.type == "companies" || $0.type == "contacts" }
-        let add = (people + callRefs(companies: [r.company].compactMap { $0 } + companies + r.companies, contacts: found + r.contacts))
-            .reduce(into: [CRMRef]()) { out, a in if !out.contains(a) { out.append(a) } }
-        guard !add.isEmpty else { return r }
+        let made = r
+        let own = callRefs(companies: [made.company].compactMap { $0 } + companies + made.companies, contacts: found + made.contacts)
         do {
             try await queue.run(callKey) {
-                let id = callId()
-                if !id.isEmpty { try await c.associateCall(callId: id, refs: add) }
+                let s = stored()
+                guard CRMPortal.matches(link: s.portalId, current: portal) else {
+                    throw CRMError(code: CRMPortal.mismatchCode, message: "This call was linked to another HubSpot portal meanwhile. Nothing was added to it.", scope: "portal")
+                }
+                save(made)
+                guard !callWritten, !s.callId.isEmpty else { return }
+                let add = (s.linked.filter { $0.type == "companies" || $0.type == "contacts" } + own)
+                    .reduce(into: [CRMRef]()) { out, a in if !out.contains(a) { out.append(a) } }
+                if !add.isEmpty { try await c.associateCall(callId: s.callId, refs: add) }
             }
         } catch {
             let e = (error as? CRMError) ?? CRMError(code: 0, message: error.localizedDescription)

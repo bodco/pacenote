@@ -104,7 +104,9 @@ decides, the service key stays the only path.
    what is left. H3: Undo keeps the portal of the Apply it undoes and checks it first; when the key now opens another
    portal (or the portal cannot be read) Undo sends nothing and keeps the batch. The people lookup of the review checks
    the portal the same way before its first request: on another portal no participant email is sent, no match is kept
-   for Apply and the call asks for Relink.
+   for Apply and the call asks for Relink. Relink takes its turn in the call's write queue; the people write reads and
+   saves the stored link in its own turn and, when the link now names another portal, adds nothing to the Call and
+   saves nothing on the link (what it made stays for Undo).
 5. **Errors are one line where the action was**, never a modal; 429 waits (Retry-After, else 1, 2, 4 s) and retries three
    times; 401 and 403 say what to fix (key, or the named scope).
 6. **No silent overwrites of the PM's own edits in HubSpot.** A re-run updates only the Pacenote-owned properties of the

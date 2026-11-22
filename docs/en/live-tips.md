@@ -1683,7 +1683,9 @@ the next Apply (or Auto) tries again. A call with people from several companies 
 If HubSpot refuses the Lead lookup (no Leads scopes), the contact and company rows still show, with the error. Undo
 deletes what was created, only in the HubSpot account Apply wrote to: if the key now opens another account, Undo sends
 nothing, says so and stays available. The search checks the account first too: if the key opens another account, no
-invitee email is sent there, no rows are shown and Update HubSpot offers **Relink**. An existing email or domain is never duplicated, even when Apply runs twice. Each kind has
+invitee email is sent there, no rows are shown and Update HubSpot offers **Relink**. If the call is relinked to
+another account while Apply or the automatic run is making its people, they are not added to its Call or saved on
+its link, and they stay for Undo. An existing email or domain is never duplicated, even when Apply runs twice. Each kind has
 its own switch in Settings > Integrations > HubSpot, all off by default: create contacts automatically, create the
 company automatically, propose a Lead (needs the scopes `crm.objects.leads.read` and `crm.objects.leads.write` and a
 HubSpot plan with Leads) and create Leads automatically. Automatic Leads never create a contact: unless contacts are

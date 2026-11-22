@@ -33,7 +33,7 @@ enum CRMPeopleFlow {
     }
 
     /// The link with the companies and the people the call now has (ids and names only, like the rest of <stem>.crm.json).
-    static func merge(_ l: CRMLink, company: CRMCompany?, companies: [CRMCompany] = [], contacts: [CRMContact]) -> CRMLink {
+    nonisolated static func merge(_ l: CRMLink, company: CRMCompany?, companies: [CRMCompany] = [], contacts: [CRMContact]) -> CRMLink {
         var n = l
         if let co = company, n.companyId.isEmpty { n.companyId = co.id; n.companyName = co.name }
         for co in companies where !co.id.isEmpty && co.id != n.companyId && !n.companyIds.contains(co.id) { n.companyIds.append(co.id) }
@@ -56,18 +56,24 @@ enum CRMPeopleFlow {
 
     /// Creates the chosen rows and gives a Call logged earlier all its people and companies (CRMPeople.commit, the
     /// PUTs sent again each time, so a failed one is retried), then stores them on the link on disk, keeping a Call id
-    /// another path stored meanwhile. Auto and Apply both use it.
+    /// another path stored meanwhile. Auto and Apply both use it, after checking that `l` names the key's portal. The
+    /// stored link is read and saved in the call's queue turn: when Relink moved it to another portal meanwhile, it is
+    /// left alone and the link comes back unchanged.
     static func commit(_ chosen: [CRMProposal], match m: (company: CRMCompany?, companies: [CRMCompany], found: [CRMContact]), link l: CRMLink, base: String,
                        callWritten: Bool, connector pc: CRMPeopleConnector) async -> (CRMLink, CRMPeopleResult) {
-        let linked = CRMCallLogger.refs(CRMLink.load(base: base) ?? l)
-        let r = await CRMPeople.commit(chosen, company: m.company, companies: m.companies, found: m.found, linked: linked, callKey: l.callKey,
-                                       callWritten: callWritten, connector: pc, callId: { CRMLink.load(base: base)?.callId ?? l.callId })
-        let cos = m.companies + r.companies
-        let n = merge(l, company: r.company, companies: cos, contacts: m.found + r.contacts)
-        if n != l { merge(CRMLink.load(base: base) ?? l, company: r.company, companies: cos, contacts: m.found + r.contacts).save(base: base) }
+        let r = await CRMPeople.commit(chosen, company: m.company, companies: m.companies, found: m.found, portal: l.portalId, callKey: l.callKey,
+                                       callWritten: callWritten, connector: pc,
+                                       stored: { let d = CRMLink.load(base: base) ?? l; return CRMStoredLink(callId: d.callId, portalId: d.portalId, linked: CRMCallLogger.refs(d)) },
+                                       save: { r in
+                                           let cos = m.companies + r.companies
+                                           if merge(l, company: r.company, companies: cos, contacts: m.found + r.contacts) != l {
+                                               merge(CRMLink.load(base: base) ?? l, company: r.company, companies: cos, contacts: m.found + r.contacts).save(base: base)
+                                           }
+                                       })
         let made = ["contacts", "companies", "leads"].map { t in r.created.filter { $0.type == t }.count }
         if !chosen.isEmpty { UsageLog.log("update_crm", ["fields": 0, "contacts": made[0], "companies": made[1], "leads": made[2]]) }
-        return (n, r)
+        if r.failure?.scope == "portal" { return (l, r) }       // nothing was stored: the link is another portal's now
+        return (merge(l, company: r.company, companies: m.companies + r.companies, contacts: m.found + r.contacts), r)
     }
 
     /// After the call, without a click, for the objects whose own Auto switch is on. Needs a linked call. Returns the
@@ -128,14 +134,15 @@ final class CRMPeopleModel: ObservableObject {
     }
 
     /// Creates the ticked rows (a lead with its contact) before the Call; a Call logged earlier that is not written in
-    /// this Apply gets the new and the found people. Returns the link, what to undo and an error line.
-    func apply(link l: CRMLink, connector c: CRMConnector, base: String, callWritten: Bool) async -> (CRMLink, [(String, String, [String: String])], String) {
-        guard let pc = c as? CRMPeopleConnector, checked else { return (l, [], "") }
+    /// this Apply gets the new and the found people. Returns the link, what to undo and the error (a relinked call's
+    /// has CRMPortal.mismatchCode).
+    func apply(link l: CRMLink, connector c: CRMConnector, base: String, callWritten: Bool) async -> (CRMLink, [(String, String, [String: String])], CRMError?) {
+        guard let pc = c as? CRMPeopleConnector, checked else { return (l, [], nil) }
         let ticked = CRMPeopleFlow.withCompanions(rows.filter { $0.on }.map(\.p), from: rows.map(\.p))
         let (n, r) = await CRMPeopleFlow.commit(ticked, match: (company, companies, found), link: l, base: base, callWritten: callWritten, connector: pc)
         let done = ticked.map(\.id)
         rows.removeAll { done.contains($0.id) && r.failure == nil }
-        return (n, r.created.map { ($0.type, $0.id, [:]) }, r.failure?.message ?? "")
+        return (n, r.created.map { ($0.type, $0.id, [:]) }, r.failure)
     }
 }
 

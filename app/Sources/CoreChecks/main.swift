@@ -880,10 +880,12 @@ final class FakeHubSpotPeople: CRMTransport {
     var pageSize = 500                                 // company associations per page
     var failCallPut = false                            // adding a person to a Call fails with a 500
     var failLeadsRead = false                          // the portal has no Leads scopes: reading a contact's leads is a 403
+    var onSend: ((String) -> Void)?                    // runs on each request ("POST /crm/v3/objects/contacts"), e.g. a Relink meanwhile
     func send(_ method: String, _ path: String, _ body: [String: Any]?) async throws -> (Int, [String: Any], [String: String]) {
         let clean = String(path.split(separator: "?")[0])
         let after = Int(path.components(separatedBy: "after=").dropFirst().first ?? "") ?? 0
         log.append(method + " " + clean)
+        onSend?(method + " " + clean)
         if let b = body { bodies.append(b) }
         let props = ((body?["properties"] as? [String: Any]) ?? [:]).mapValues { "\($0)" }
         let filters = ((body?["filterGroups"] as? [[String: Any]]) ?? []).compactMap { ($0["filters"] as? [[String: Any]])?.first?["value"] as? String }
@@ -1078,27 +1080,47 @@ func crmPeople() async {
     let ac = [CRMProposal(id: "contact.0", kind: .contact, name: "Mia Ross", email: "mia@orbit.example", companyId: cid)]
     let qq = CRMCallQueue()
     let found = [CRMContact(id: kid, name: "Emily Clark", email: "emily.clark@orbit.example")]
-    let rc = await CRMPeople.commit(ac, company: CRMCompany(id: cid, name: "Orbit", domain: "orbit.example"), found: found, linked: [CRMRef("companies", cid), CRMRef("deals", "D1")],
-                                    callKey: "k1", callWritten: false, connector: hs, queue: qq, callId: { "C7" })
+    // the stored link of the call (what <stem>.crm.json holds when the turn comes), in portal P1
+    func stored(_ id: String, _ linked: [CRMRef] = []) -> () -> CRMStoredLink { { CRMStoredLink(callId: id, portalId: "P1", linked: linked) } }
+    let rc = await CRMPeople.commit(ac, company: CRMCompany(id: cid, name: "Orbit", domain: "orbit.example"), found: found, portal: "P1",
+                                    callKey: "k1", callWritten: false, connector: hs, queue: qq, stored: stored("C7", [CRMRef("companies", cid), CRMRef("deals", "D1")]))
     let mia = rc.contacts.first?.id ?? ""
     expect(rc.failure == nil && Set(t.assoc["calls/C7"] ?? []) == ["companies/" + cid, "contacts/" + mia, "contacts/" + kid],
            "people: a Call logged earlier gets the company, the new and the found contacts (the PUTs are idempotent and sent again); the deal is H2's")
     let puts = t.log.filter { $0.hasPrefix("PUT /crm/v4/objects/calls/") }.count
-    _ = await CRMPeople.commit([], company: nil, found: found, callKey: "k1", callWritten: true, connector: hs, queue: qq, callId: { "C7" })
-    _ = await CRMPeople.commit([], company: nil, found: found, callKey: "k1", callWritten: false, connector: hs, queue: qq, callId: { "" })
+    _ = await CRMPeople.commit([], company: nil, found: found, portal: "P1", callKey: "k1", callWritten: true, connector: hs, queue: qq, stored: stored("C7"))
+    _ = await CRMPeople.commit([], company: nil, found: found, portal: "P1", callKey: "k1", callWritten: false, connector: hs, queue: qq, stored: stored(""))
     expect(t.log.filter { $0.hasPrefix("PUT /crm/v4/objects/calls/") }.count == puts, "people: no association when the Call is written in this run or there is no Call")
+    // the retry goes through save and stored, as on disk: the first run saves Zoe on the link although HubSpot did not
+    // attach her; the next run (nothing new to create) reads the saved refs back and sends the association again
+    var disk = CRMStoredLink(callId: "C8", portalId: "P1", linked: [CRMRef("companies", cid)])
+    let toDisk: (CRMPeopleResult) -> Void = { r in for k in r.contacts where !disk.linked.contains(CRMRef("contacts", k.id)) { disk.linked.append(CRMRef("contacts", k.id)) } }
     t.failCallPut = true
     let rf = await CRMPeople.commit([CRMProposal(id: "contact.0", kind: .contact, name: "Zoe Park", email: "zoe@orbit.example", companyId: cid)], company: nil, found: [],
-                                    callKey: "k1", callWritten: false, connector: hs, queue: qq, callId: { "C8" })
+                                    portal: "P1", callKey: "k1", callWritten: false, connector: hs, queue: qq, stored: { disk }, save: toDisk)
     t.failCallPut = false
     expect(rf.failure?.code == 500 && rf.created.map(\.type) == ["contacts"], "people: a failed Call association is reported, never a silent success, and the contact stays for Undo")
-    // the retry: the link was saved with Zoe although HubSpot did not attach her; the next run (nothing new to create)
-    // reads the saved link's refs back and sends the association again
     let zoe = rf.contacts.first?.id ?? ""
-    let savedLink = [CRMRef("companies", cid)] + rf.contacts.map { CRMRef("contacts", $0.id) }
-    expect(t.assoc["calls/C8"] == nil, "people: after the failure the Call has nobody")
-    let rr = await CRMPeople.commit([], company: nil, found: [], linked: savedLink, callKey: "k1", callWritten: false, connector: hs, queue: qq, callId: { "C8" })
-    expect(rr.failure == nil && Set(t.assoc["calls/C8"] ?? []) == ["companies/" + cid, "contacts/" + zoe], "people: a retry after a failed association attaches the people the link already lists")
+    expect(t.assoc["calls/C8"] == nil && disk.linked.contains(CRMRef("contacts", zoe)), "people: after the failure the Call has nobody and the link keeps Zoe")
+    let rr = await CRMPeople.commit([], company: nil, found: [], portal: "P1", callKey: "k1", callWritten: false, connector: hs, queue: qq, stored: { disk }, save: toDisk)
+    expect(rr.failure == nil && Set(t.assoc["calls/C8"] ?? []) == ["companies/" + cid, "contacts/" + zoe], "people: a retry after a failed association attaches the people the saved link lists")
+
+    // 7c'. Relink moves the call to another portal while the contact is being made: the stored link is read in the turn,
+    // so nothing is associated with the Call or saved on the link, and the made contact stays for Undo in its portal
+    var relinked = CRMStoredLink(callId: "C12", portalId: "P1", linked: [CRMRef("companies", cid)])
+    var savedOther = false
+    t.onSend = { req in if req == "POST /crm/v3/objects/contacts" { relinked = CRMStoredLink(callId: "", portalId: "P2", linked: [CRMRef("companies", "B-55")]) } }
+    let putsBefore = t.log.filter { $0.hasPrefix("PUT /crm/v4/objects/calls/") }.count
+    let rp = await CRMPeople.commit([CRMProposal(id: "contact.0", kind: .contact, name: "Owen Hart", email: "owen.hart@orbit.example", companyId: cid)], company: nil, found: found,
+                                    portal: "P1", callKey: "k3", callWritten: false, connector: hs, queue: qq, stored: { relinked }, save: { _ in savedOther = true })
+    t.onSend = nil
+    expect(rp.failure?.code == CRMPortal.mismatchCode && rp.failure?.scope == "portal" && rp.created.map(\.type) == ["contacts"] && !savedOther
+           && t.log.filter { $0.hasPrefix("PUT /crm/v4/objects/calls/") }.count == putsBefore && relinked.linked == [CRMRef("companies", "B-55")],
+           "people: a Relink to another portal during the write gets no association and no saved ids; the contact stays for Undo")
+    // the same with a stored Call id kept by mistake: still nothing goes to it
+    let rp2 = await CRMPeople.commit([], company: nil, found: found, portal: "P1", callKey: "k3", callWritten: false, connector: hs, queue: qq,
+                                     stored: { CRMStoredLink(callId: "C13", portalId: "P2") }, save: { _ in savedOther = true })
+    expect(rp2.failure?.code == CRMPortal.mismatchCode && t.assoc["calls/C13"] == nil && !savedOther, "people: a stored link of another portal is never written, even with a Call id")
 
     // 7d. a mixed call with two new domains and the call's company already linked: every company made in this Apply,
     // and the existing company of a third domain, go to the Call too
@@ -1108,7 +1130,7 @@ func crmPeople() async {
     expect(Set(mm?.proposals.filter { $0.kind == .company }.map(\.domain) ?? []) == ["cedar.example", "birch.example"] && mm?.companies.contains { $0.id == lumen } == true,
            "people: two new domains get two company rows; the existing Lumen company is carried for the Call")
     let rm = await CRMPeople.commit(mm?.proposals ?? [], company: mm?.company, companies: mm?.companies ?? [], found: mm?.contacts ?? [],
-                                    callKey: "k2", callWritten: false, connector: hs, queue: qq, callId: { "C11" })
+                                    portal: "P1", callKey: "k2", callWritten: false, connector: hs, queue: qq, stored: stored("C11"))
     let madeCos = rm.created.filter { $0.type == "companies" }.map { "companies/" + $0.id }
     let callCos = Set((t.assoc["calls/C11"] ?? []).filter { $0.hasPrefix("companies/") })
     expect(rm.failure == nil && madeCos.count == 2 && rm.companies.count == 2 && callCos == Set(madeCos + ["companies/" + cid, "companies/" + lumen]),
