@@ -46,7 +46,7 @@ public enum SettingsSearch {
     public static func advancedKey(_ scope: String) -> String { advancedPrefix + scope }
 
     /// The tabs of the HubSpot page, in order. The app draws its segments from these.
-    public static let hubspotGroups = ["conn", "match", "data", "qual"]
+    public static let hubspotGroups = ["conn", "match", "data", "qual", "sync"]
 
     private static func adv(_ scope: String) -> [String: String] { [advancedKey(scope): "1"] }
     private static func h(_ group: String) -> [String: String] { [hubspotGroupKey: group] }
@@ -123,6 +123,7 @@ public enum SettingsSearch {
         .init("int.hubspot.match", "integrations", h("match"), integration: "hubspot", title: "int.hubspot.matching", words: "hubspot owner company domain власник"),
         .init("int.hubspot.write", "integrations", h("data"), integration: "hubspot", title: "int.hubspot.canWrite", words: "hubspot write note deal task call auto log запис дзвінок"),
         .init("int.hubspot.qual", "integrations", h("qual"), integration: "hubspot", title: "int.hubspot.qualification", words: "hubspot bant qualification кваліфікація"),
+        .init("int.hubspot.sync", "integrations", h("sync"), integration: "hubspot", title: "int.hubspot.sync", words: "hubspot sync auto field mapping owner log retry undo scopes синхронізація поля власник журнал"),
         // Projects
         .init("pr.scan", "projects", adv("projects"), title: "set.scanWorkFolder", words: "scan add project folder workspace сканувати додати проєкт"),
         .init("pr.import", "projects", title: "set.importControlTowerConfigs", words: "control tower import configs імпорт"),

@@ -117,18 +117,28 @@ enum CRMCallLogger {
     }
 
     @MainActor static func auto(_ file: String) {
-        let cfg = SettingsWindow.model.config.crm
+        guard SettingsWindow.model.config.crm.autoWrites(.calls) else { return }
+        Task { _ = await run(file, source: "auto") }
+    }
+
+    /// Logs the Call now (Auto, or Retry in the sync log) and records the result in the call's sync log (H6).
+    /// Returns the error line, "" when written.
+    @MainActor static func run(_ file: String, source: String) async -> String {
         let base = file.hasSuffix(".md") ? String(file.dropLast(3)) : file
-        guard cfg.autoLogCall, cfg.writeCall, var l = CRMLink.load(base: base), let c = CRMService.shared.connector(),
-              let entry = log(file: file, link: &l) else { return }
-        Task {
-            do {
-                let r = try await c.upsertCall(entry, knownId: l.callId, associations: refs(l))
-                l.callId = r.id; l.save(base: base)
-                UsageLog.log("update_crm", ["fields": 0, "call": 1])
-            } catch {
-                AnalyticsTracker.shared.error("crm", Analytics.errorCode(message: (error as? CRMError)?.message ?? error.localizedDescription), provider: "hubspot")
-            }
+        guard var l = CRMLink.load(base: base), let c = CRMService.shared.connector(),
+              let entry = log(file: file, link: &l) else { return L("crm.update.noLink") }
+        do {
+            let r = try await c.upsertCall(entry, knownId: l.callId, associations: refs(l))
+            l.callId = r.id; l.save(base: base)
+            UsageLog.log("update_crm", ["fields": 0, "call": 1])
+            CRMSyncRecorder.call(r, log: entry, stem: base, source: source)
+            return ""
+        } catch {
+            let msg = (error as? CRMError)?.message ?? error.localizedDescription
+            l.save(base: base)      // keeps the new call key, so a retry updates the same Call
+            CRMSyncRecorder.failed("calls", stem: base, source: source, error: msg)
+            AnalyticsTracker.shared.error("crm", Analytics.errorCode(message: msg), provider: "hubspot")
+            return msg
         }
     }
 }
@@ -210,9 +220,9 @@ struct CRMCallRow: View {
 @MainActor
 enum CRMUpdateWindow {
     static var window: NSWindow?
-    static func show(file: String) {
+    static func show(file: String, only: Set<String>? = nil) {
         let w = window ?? NSWindow(contentViewController: NSHostingController(rootView: AnyView(EmptyView())))
-        let hc = NSHostingController(rootView: Localized { CRMUpdateView(file: file) })
+        let hc = NSHostingController(rootView: Localized { CRMUpdateView(file: file, only: only) })
         hc.sizingOptions = []      // 0.8.7.1: the window grew to 1572 pt and Apply was below the screen
         w.contentViewController = hc
         w.tabbingMode = .disallowed
@@ -227,6 +237,7 @@ enum CRMUpdateWindow {
 
 struct CRMUpdateView: View {
     let file: String
+    var only: Set<String>? = nil         // H6: Retry in the sync log ticks only the rows that failed
     @ObservedObject var crm = CRMService.shared
     @State private var plan: CRMUpdatePlan? = nil
     @State private var link: CRMLink? = nil
@@ -259,6 +270,7 @@ struct CRMUpdateView: View {
             } else {
                 Text(L("crm.update.noLink")).foregroundStyle(PN.C.text3)
             }
+            CRMSyncLogView(file: file, stem: base)       // H6: what was written, when, the result; Retry and Undo
             Spacer()
             HStack {
                 Text(status).font(PN.Font.caption).foregroundStyle(PN.C.text3).lineLimit(2)
@@ -294,6 +306,7 @@ struct CRMUpdateView: View {
                                    qualification: qual, mapping: mapping, followUp: next.isEmpty ? nil : (next, nil),
                                    writeNote: crmCfg.writeNote, writeDeal: crmCfg.writeDeal, writeTask: crmCfg.writeTask,
                                    callLog: callLog, writeCall: crmCfg.writeCall)
+        if let only, var p = plan { for i in p.rows.indices { p.rows[i].on = only.contains(p.rows[i].id) }; plan = p }
     }
 
     func apply() {
@@ -320,12 +333,14 @@ struct CRMUpdateView: View {
                     let id = try await c.createTask(subject: t.subject, due: t.due, associations: refs); done.append(("tasks", id, [:]))
                 }
                 UsageLog.log("update_crm", ["fields": fields])
-                undo = done; undoUntil = Date().addingTimeInterval(8); applied = true
+                CRMSyncRecorder.applied(plan: p, link: l, done: done, error: nil, stem: base, source: only == nil ? "click" : "retry")
+                undo = done; undoUntil = Date().addingTimeInterval(CRMSyncLog.applyUndoSeconds); applied = true
                 status = L("crm.updated", ["crm": c.providerName])
                 DispatchQueue.main.asyncAfter(deadline: .now() + 8.2) { undoUntil = nil }
             } catch {
-                undo = done; undoUntil = done.isEmpty ? nil : Date().addingTimeInterval(8)
+                undo = done; undoUntil = done.isEmpty ? nil : Date().addingTimeInterval(CRMSyncLog.applyUndoSeconds)
                 status = (error as? CRMError)?.message ?? error.localizedDescription
+                CRMSyncRecorder.applied(plan: p, link: l, done: done, error: status, stem: base, source: only == nil ? "click" : "retry")
                 AnalyticsTracker.shared.error("crm", Analytics.errorCode(message: status), provider: "hubspot")   // S5: code only
             }
             busy = false
@@ -346,7 +361,8 @@ struct CRMUpdateView: View {
                         try await c.delete(type: type, id: id)
                         if type == "calls", var l = link { l.callId = ""; l.save(base: base); link = l }   // the next Apply makes a new Call
                     }
-                } catch { failed += 1 }
+                    CRMSyncRecorder.undo(type, id, stem: base, error: nil)
+                } catch { failed += 1; CRMSyncRecorder.undo(type, id, stem: base, error: (error as? CRMError)?.message ?? error.localizedDescription) }
             }
             status = failed == 0 ? L("crm.undone") : L("crm.undoFailed", ["n": "\(failed)", "crm": c.providerName])
             if failed == 0 { applied = false }

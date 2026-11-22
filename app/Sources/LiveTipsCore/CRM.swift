@@ -138,6 +138,8 @@ public final class HubSpotConnector: CRMConnector {
     let sleep: (Double) async -> Void
     /// 0.8.7 (I6.2): the owner of the notes and tasks Pacenote writes ("" = HubSpot's default)
     public var ownerId: String
+    /// H6: the field mapping of Settings > Integrations > HubSpot > Sync (spec defaults when empty)
+    public var sync = CRMSyncSettings()
     public init(transport: CRMTransport, ownerId: String = "", sleep: @escaping (Double) async -> Void = { s in try? await Task.sleep(nanoseconds: UInt64(s * 1e9)) }) {
         self.t = transport; self.sleep = sleep; self.ownerId = ownerId
     }
@@ -294,6 +296,8 @@ public final class HubSpotConnector: CRMConnector {
     }
 
     public func updateDeal(id: String, fields: [String: String]) async throws -> [String: String] {
+        let fields = sync.mapped(.deals, fields).mapValues { "\($0)" }
+        guard !fields.isEmpty else { return [:] }
         let before = try await call("GET", "/crm/v3/objects/deals/\(id)?properties=" + fields.keys.joined(separator: ","))
         var old: [String: String] = [:]
         for k in fields.keys { old[k] = Self.p(before, k) }
@@ -303,8 +307,8 @@ public final class HubSpotConnector: CRMConnector {
 
     public func createTask(subject: String, due: Date?, associations: [CRMRef]) async throws -> String {
         let r = try await call("POST", "/crm/v3/objects/tasks", [
-            "properties": owned(["hs_task_subject": subject, "hs_task_status": "NOT_STARTED",
-                                 "hs_timestamp": ISO8601DateFormatter().string(from: due ?? Date().addingTimeInterval(86400))]),
+            "properties": owned(sync.mapped(.tasks, ["hs_task_subject": subject, "hs_task_status": "NOT_STARTED",
+                                 "hs_timestamp": ISO8601DateFormatter().string(from: due ?? Date().addingTimeInterval(86400))])),
             "associations": associations.compactMap { a in Self.taskAssoc[a.type].map { ["to": ["id": a.id], "types": [["associationCategory": "HUBSPOT_DEFINED", "associationTypeId": $0]]] } }])
         return (r["id"] as? String) ?? ""
     }
@@ -329,17 +333,17 @@ public final class HubSpotConnector: CRMConnector {
         let refs = associations.filter { Self.callAssoc[$0.type] != nil }
         if id.isEmpty {
             let r = try await call("POST", "/crm/v3/objects/calls", [
-                "properties": owned(log.properties),
+                "properties": owned(sync.mapped(.calls, log.properties)),
                 "associations": refs.map { a in ["to": ["id": a.id], "types": [["associationCategory": "HUBSPOT_DEFINED", "associationTypeId": Self.callAssoc[a.type]!]]] }])
             return CRMCallResult(id: (r["id"] as? String) ?? "", created: true)
         }
-        _ = try await call("PATCH", "/crm/v3/objects/calls/\(id)", ["properties": owned(log.properties)])
+        _ = try await call("PATCH", "/crm/v3/objects/calls/\(id)", ["properties": owned(sync.mapped(.calls, log.properties))])
         for a in refs { _ = try await call("PUT", "/crm/v4/objects/calls/\(id)/associations/default/\(a.type)/\(a.id)") }
         return CRMCallResult(id: id, created: false, old: old)
     }
 
     func readCall(_ id: String) async throws -> [String: String] {
-        let keys = Array(CRMCallLog(key: "", title: "", start: Date(), durationMs: 0, body: "").properties.keys) + (ownerId.isEmpty ? [] : ["hubspot_owner_id"])
+        let keys = Array(sync.mapped(.calls, CRMCallLog(key: "", title: "", start: Date(), durationMs: 0, body: "").properties).keys) + (ownerId.isEmpty ? [] : ["hubspot_owner_id"])
         let r = try await call("GET", "/crm/v3/objects/calls/\(id)?properties=" + keys.sorted().joined(separator: ","))
         var out: [String: String] = [:]
         for k in keys { out[k] = Self.p(r, k) }

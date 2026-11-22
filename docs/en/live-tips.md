@@ -1668,6 +1668,19 @@ second one; Undo deletes a new Call or puts the old values back. **Log the call 
 ends** is off by default; when on, it logs only the Call, about two and a half minutes after the call, without a
 review. Notes, deal fields and tasks stay behind Apply. The design is in `docs/specs/hubspot-crm-integration.md`.
 
+**Sync settings and the sync log.** Settings > Integrations > HubSpot > Sync checks the key when you open it (and with
+Check now) and lists any scope a read proves missing; write scopes show up on the first write. **Write
+automatically** has one switch per object (Calls, Tasks, Contacts and companies, Deals, Meetings), all off by default;
+Calls is the same switch as above, and the others are kept for when Pacenote writes them. Notes are never automatic.
+**Field mapping** sends each Pacenote field to HubSpot's own property by default, or to another property you choose,
+or nowhere (Don't write); ids, the owner and statuses are fixed. **Owner mapping** shows your own owner (the same as
+Matching) and lets you add other Pacenote users by email with their HubSpot owner. Each call's Update HubSpot window
+ends with a **Sync log**: what was written, when, by Apply, Auto or Retry, and the result. A failed line has Retry (a
+Call is written again at once; a note, deal fields or a task reopen Update HubSpot with only that row ticked). The
+latest write of a record has Undo for 24 hours, unless someone changed it in HubSpot after Pacenote wrote it. The log
+keeps property names and, for an updated Call or deal, the old values Undo needs; never transcript text, never the
+key.
+
 **What Pacenote can do.** Help > What Pacenote can do lists every feature with Try it and how often you used it
 (from the local usage log, Settings > General > Data). For the first 14 days it is also a card on Home.
 

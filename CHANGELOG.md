@@ -15,12 +15,21 @@ Pacenote. Earlier versions are described in the commit messages and in
   clean up partial downloads. If an Ollama pull fails, Retry resumes from the partial files Ollama saved.
   Cancelling a retry also removes partial files saved by earlier attempts for that pull.
 
+### HubSpot CRM
+
 - **The call is logged in HubSpot (H2).** Update HubSpot has a new Call row: a HubSpot Call with the title, start
   time, duration, direction, outcome, participants, the Summary and next steps, and a link back to the call,
   associated with the matched contacts, company and open deal. Applying again updates the same Call instead of
   adding a second one, and Undo removes a new Call or restores the old values. Transcript text is never sent. A new
   switch in Settings > Integrations > HubSpot, **Log the call in HubSpot automatically after it ends**, is off by
   default and logs only the Call. The HubSpot integration design is in `docs/specs/hubspot-crm-integration.md`.
+
+- **HubSpot sync settings and a sync log per call (H6).** Settings > Integrations > HubSpot has a new Sync group: a
+  live check of the key and its scopes, one Write automatically switch per object (Calls, Tasks, Contacts and
+  companies, Deals, Meetings; all off by default, Calls is the existing Auto switch), field mapping with HubSpot's own
+  properties as defaults, and owner mapping from Pacenote users to HubSpot owners. Update HubSpot now ends with the
+  call's sync log: what was written, when and the result, with Retry for a failed write and Undo of the latest write
+  for 24 hours unless the record was changed in HubSpot since.
 
 ## 0.26.4 (2026-11-20)
 
