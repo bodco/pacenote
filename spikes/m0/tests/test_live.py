@@ -17,6 +17,13 @@ def test_live_tail_picks_up_appended_lines(tmp_path):
     src = [l for l in (FIX / "demo-call.md").read_text().splitlines() if l.startswith("[")]
 
     def writer():
+        # the engine joins a running call and skips what is already there: write only after it attached (run()
+        # writes the run sidecar just before it starts tailing). A fixed head start lost the first line when the
+        # engine took longer than that to start on a busy machine.
+        attached = tmp_path / "out" / "live-call.app.run.json"
+        deadline = time.monotonic() + 30
+        while not attached.exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
         time.sleep(0.3)
         for line in src[:3]:
             now = dt.datetime.now()
