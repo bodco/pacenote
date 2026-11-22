@@ -162,10 +162,11 @@ public struct CRMSyncEntry: Codable, Equatable, Identifiable {
     public var error: String               // one line, as shown where the action was
     public var undone = false
     public var revision = ""               // HubSpot's updatedAt from the answer to this write; Undo needs it unchanged
+    public var portal = ""                 // the HubSpot portal written to; Undo needs the key's portal to be this one
     public init(at: Date = Date(), object: String, action: String, source: String, hubspotId: String = "", fields: [String] = [],
-                old: [String: String] = [:], ok: Bool = true, error: String = "", revision: String = "") {
+                old: [String: String] = [:], ok: Bool = true, error: String = "", revision: String = "", portal: String = "") {
         self.at = at; self.object = object; self.action = action; self.source = source; self.hubspotId = hubspotId
-        self.fields = fields; self.old = old; self.ok = ok; self.error = error; self.revision = revision
+        self.fields = fields; self.old = old; self.ok = ok; self.error = error; self.revision = revision; self.portal = portal
     }
     public init(from d: Decoder) throws {
         let c = try d.container(keyedBy: CodingKeys.self)
@@ -181,6 +182,7 @@ public struct CRMSyncEntry: Codable, Equatable, Identifiable {
         error = (try? c.decode(String.self, forKey: .error)) ?? ""
         undone = (try? c.decode(Bool.self, forKey: .undone)) ?? false
         revision = (try? c.decode(String.self, forKey: .revision)) ?? ""
+        portal = (try? c.decode(String.self, forKey: .portal)) ?? ""
     }
 }
 
@@ -204,23 +206,30 @@ public enum CRMSyncLog {
         return (try? coder().1.decode([CRMSyncEntry].self, from: data)) ?? []
     }
 
-    public static func save(_ entries: [CRMSyncEntry], path: String) {
-        try? FileManager.default.createDirectory(atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
-        if let d = try? coder().0.encode(Array(entries.suffix(maxEntries))) { try? d.write(to: URL(fileURLWithPath: path), options: .atomic) }
+    /// false when the log could not be written: the HubSpot write itself still happened, so callers say both.
+    @discardableResult
+    public static func save(_ entries: [CRMSyncEntry], path: String) -> Bool {
+        do {
+            try FileManager.default.createDirectory(atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
+            try coder().0.encode(Array(entries.suffix(maxEntries))).write(to: URL(fileURLWithPath: path), options: .atomic)
+            return true
+        } catch { return false }
     }
 
-    /// Appends lines to the log of the call with this stem; the only writer other branches need.
-    public static func append(_ new: [CRMSyncEntry], stem: String) {
-        guard !new.isEmpty else { return }
+    /// Appends lines to the log of the call with this stem; the only writer other branches need. false: not saved.
+    @discardableResult
+    public static func append(_ new: [CRMSyncEntry], stem: String) -> Bool {
+        guard !new.isEmpty else { return true }
         let p = path(stem: stem)
-        save(load(path: p) + new, path: p)
+        return save(load(path: p) + new, path: p)
     }
 
     /// Only the latest good write of an object can be undone (older old values would overwrite a newer write), within
     /// the log window, not twice, and only when HubSpot's revision of the write was kept (a line without one, such as
-    /// a Call found again after a create with no answer, is never undone from the log).
+    /// a Call found again after a create with no answer, is never undone from the log), and only with the portal it
+    /// was written to (Undo checks it is still the key's portal).
     public static func canUndo(_ e: CRMSyncEntry, in log: [CRMSyncEntry], now: Date) -> Bool {
-        guard e.ok, !e.undone, e.action != "undo", !e.hubspotId.isEmpty, !e.revision.isEmpty,
+        guard e.ok, !e.undone, e.action != "undo", !e.hubspotId.isEmpty, !e.revision.isEmpty, !e.portal.isEmpty,
               now.timeIntervalSince(e.at) <= logUndoSeconds else { return false }
         if e.action == "update" && e.old.isEmpty { return false }
         return !log.contains { $0.object == e.object && $0.hubspotId == e.hubspotId && $0.ok && $0.action != "undo" && $0.id != e.id && $0.at >= e.at }
@@ -250,11 +259,23 @@ public enum CRMSyncLog {
         return abs(a.timeIntervalSince(b)) < 0.001
     }
 
-    static let rowObject: [(row: String, object: String)] = [("note", "notes"), ("call", "calls"), ("deal", "deals"), ("task", "tasks")]
+    public static let expiredCode = 410, changedCode = 412
 
-    /// The lines of one Apply in Update HubSpot: one per written object (done: type, id, old values, in write order) and,
-    /// on an error, one failed line for the first ticked object that was not written.
-    public static func applyEntries(plan p: CRMUpdatePlan, dealLinked: Bool, done: [(String, String, [String: String])], error: String?,
+    /// Checked by both Undo paths (right after Apply and in the log) before an object is changed: the Undo window is
+    /// still open, and HubSpot's updatedAt is the one its answer to Pacenote's write had (nobody changed the object
+    /// since). A revision that is missing or cannot be read stops the Undo. The window is checked again after the read.
+    public static func guardUndo(type: String, id: String, revision: String, deadline: Date, connector c: CRMConnector,
+                                 now: () -> Date = Date.init) async throws {
+        let expired = CRMError(code: expiredCode, message: "The Undo window has passed.", scope: "undo")
+        let changed = CRMError(code: changedCode, message: "Changed in HubSpot after Pacenote's write.", scope: "undo")
+        guard now() < deadline else { throw expired }
+        guard let hs = c as? HubSpotConnector, unchanged(revision: revision, current: try await hs.updatedAt(type: type, id: id)) else { throw changed }
+        guard now() < deadline else { throw expired }
+    }
+
+    /// The lines of one Apply in Update HubSpot: one per written object (done, in write order) and, on an error, one
+    /// failed line for `failed`, the object whose request was being sent when it failed ("" or nil: none was).
+    public static func applyEntries(plan p: CRMUpdatePlan, done: [CRMUndoItem], error: String?, failed: String?, portal: String,
                                     source: String, sync: CRMSyncSettings, revisions: [String: String] = [:], now: Date = Date()) -> [CRMSyncEntry] {
         func fields(_ type: String, _ old: [String: String]) -> [String] {
             switch type {
@@ -267,32 +288,22 @@ public enum CRMSyncLog {
         }
         // old values mean an update (Undo restores, never deletes); deals are always updates
         var out = done.map { d in
-            CRMSyncEntry(at: now, object: d.0, action: d.0 == "deals" || !d.2.isEmpty ? "update" : "create", source: source,
-                         hubspotId: d.1, fields: fields(d.0, d.2), old: d.2, revision: revisions[d.0 + "/" + d.1] ?? "")
+            CRMSyncEntry(at: now, object: d.type, action: d.type == "deals" || !d.old.isEmpty ? "update" : "create", source: source,
+                         hubspotId: d.id, fields: fields(d.type, d.old), old: d.old, revision: revisions[d.type + "/" + d.id] ?? "", portal: portal)
         }
-        if let e = error {
-            let applicable = rowObject.filter { r in
-                guard p.rows.first(where: { $0.id == r.row })?.on == true else { return false }
-                switch r.row {
-                case "call": return p.callLog != nil
-                case "deal": return dealLinked && !p.dealFields.isEmpty
-                case "task": return p.task != nil
-                default: return true
-                }
-            }
-            // an error after every known row was written came from another writer, which logs its own failure
-            if let failed = applicable.first(where: { r in !done.contains { $0.0 == r.object } })?.object {
-                out.append(CRMSyncEntry(at: now, object: failed, action: failed == "deals" ? "update" : "create", source: source,
-                                        fields: fields(failed, [:]), ok: false, error: e))
-            }
+        // the row that was being sent, as Apply recorded it; never guessed from the plan (a skipped row is not a failure)
+        if let e = error, let f = failed, !f.isEmpty {
+            out.append(CRMSyncEntry(at: now, object: f, action: f == "deals" ? "update" : "create", source: source,
+                                    fields: fields(f, [:]), ok: false, error: e, portal: portal))
         }
         return out
     }
 
     /// The line of an Auto or Retry Call write.
-    public static func callEntry(_ r: CRMCallResult, log: CRMCallLog?, source: String, sync: CRMSyncSettings, revision: String = "", now: Date = Date()) -> CRMSyncEntry {
+    public static func callEntry(_ r: CRMCallResult, log: CRMCallLog?, source: String, sync: CRMSyncSettings, revision: String = "",
+                                 portal: String = "", now: Date = Date()) -> CRMSyncEntry {
         CRMSyncEntry(at: now, object: "calls", action: r.created ? "create" : "update", source: source, hubspotId: r.id,
-                     fields: log.map { Array(sync.mapped(.calls, $0.properties).keys).sorted() } ?? [], old: r.old, revision: revision)
+                     fields: log.map { Array(sync.mapped(.calls, $0.properties).keys).sorted() } ?? [], old: r.old, revision: revision, portal: portal)
     }
 
     /// An Undo (in Update HubSpot or in the log): an undo line, and the latest good write of that object is marked undone.
@@ -305,9 +316,46 @@ public enum CRMSyncLog {
         return all
     }
 
-    public static func recordUndo(object: String, hubspotId: String, error: String?, source: String, stem: String) {
+    @discardableResult
+    public static func recordUndo(object: String, hubspotId: String, error: String?, source: String, stem: String) -> Bool {
         let p = path(stem: stem)
-        save(withUndo(load(path: p), object: object, hubspotId: hubspotId, error: error, source: source), path: p)
+        return save(withUndo(load(path: p), object: object, hubspotId: hubspotId, error: error, source: source), path: p)
+    }
+}
+
+/// The writes of one Apply in Update HubSpot, in order: note, Call, deal fields, task. `failed` is the object whose
+/// request was out when the error came, so the sync log never blames a row that was skipped (a deal whose fields are
+/// all set to Don't write sends nothing) or one that was already written.
+public enum CRMApply {
+    public struct Outcome { public var done: [CRMUndoItem] = []; public var fields = 0; public var error: Error? = nil; public var failed: String? = nil }
+
+    public static func run(plan p: CRMUpdatePlan, dealId: String, refs: [CRMRef], connector c: CRMConnector, sync: CRMSyncSettings,
+                           call: (CRMCallLog) async throws -> CRMCallResult) async -> Outcome {
+        var out = Outcome()
+        func on(_ row: String) -> Bool { p.rows.first { $0.id == row }?.on == true }
+        var sending = ""
+        do {
+            if on("note") {
+                sending = "notes"
+                out.done.append(CRMUndoItem("notes", try await c.createNote(text: p.note, associations: refs)))
+            }
+            if on("call"), let entry = p.callLog {
+                sending = "calls"
+                let r = try await call(entry)
+                out.done.append(CRMUndoItem("calls", r.id, r.old))       // a new Call: old is empty and Undo deletes it; an update: Undo restores
+            }
+            // deal fields that the mapping sets to Don't write are not a write (no request, no log line)
+            if on("deal"), !dealId.isEmpty, dealId != "none", !sync.mapped(.deals, p.dealFields).isEmpty {
+                sending = "deals"
+                out.done.append(CRMUndoItem("deals", dealId, try await c.updateDeal(id: dealId, fields: p.dealFields)))
+                out.fields = p.dealFields.count
+            }
+            if on("task"), let t = p.task {
+                sending = "tasks"
+                out.done.append(CRMUndoItem("tasks", try await c.createTask(subject: t.subject, due: t.due, associations: refs)))
+            }
+        } catch { out.error = error; out.failed = sending }
+        return out
     }
 }
 

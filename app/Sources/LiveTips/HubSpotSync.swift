@@ -4,31 +4,49 @@ import LiveTipsCore
 // H6 (PB-62, docs/specs/hubspot-crm-integration.md section 12): Settings > Integrations > HubSpot > Sync (live check,
 // Auto per object, field mapping, owner mapping) and the call's sync log in Update HubSpot with Retry and Undo.
 
-/// Writes the call's sync log and tells open log views to reload.
+/// Writes the call's sync log and tells open log views to reload. Each returns false when the log file could not be
+/// saved, so the caller can say so next to the HubSpot result (the write in HubSpot is not undone by that).
 @MainActor
 enum CRMSyncRecorder {
     static var sync: CRMSyncSettings { SettingsWindow.model.config.crm.sync }
 
-    static func applied(plan: CRMUpdatePlan, link: CRMLink, done: [(String, String, [String: String])], error: String?, stem: String, source: String,
-                        revisions: [String: String]) {
-        let linked = !link.dealId.isEmpty && link.dealId != "none"
-        CRMSyncLog.append(CRMSyncLog.applyEntries(plan: plan, dealLinked: linked, done: done, error: error, source: source, sync: sync, revisions: revisions), stem: stem)
-        CRMSyncLogStore.shared.version += 1
+    @discardableResult
+    static func applied(plan: CRMUpdatePlan, portal: String, done: [CRMUndoItem], error: String?, failed: String?, stem: String, source: String,
+                        revisions: [String: String]) -> Bool {
+        defer { CRMSyncLogStore.shared.version += 1 }
+        return CRMSyncLog.append(CRMSyncLog.applyEntries(plan: plan, done: done, error: error, failed: failed, portal: portal, source: source,
+                                                         sync: sync, revisions: revisions), stem: stem)
     }
 
-    static func call(_ r: CRMCallResult, log: CRMCallLog, stem: String, source: String, revision: String) {
-        CRMSyncLog.append([CRMSyncLog.callEntry(r, log: log, source: source, sync: sync, revision: revision)], stem: stem)
-        CRMSyncLogStore.shared.version += 1
+    @discardableResult
+    static func call(_ r: CRMCallResult, log: CRMCallLog, stem: String, source: String, revision: String, portal: String) -> Bool {
+        defer { CRMSyncLogStore.shared.version += 1 }
+        return CRMSyncLog.append([CRMSyncLog.callEntry(r, log: log, source: source, sync: sync, revision: revision, portal: portal)], stem: stem)
     }
 
-    static func failed(_ object: String, stem: String, source: String, error: String) {
-        CRMSyncLog.append([CRMSyncEntry(object: object, action: "create", source: source, ok: false, error: error)], stem: stem)
-        CRMSyncLogStore.shared.version += 1
+    @discardableResult
+    static func failed(_ object: String, stem: String, source: String, error: String) -> Bool {
+        defer { CRMSyncLogStore.shared.version += 1 }
+        return CRMSyncLog.append([CRMSyncEntry(object: object, action: "create", source: source, ok: false, error: error)], stem: stem)
     }
 
-    static func undo(_ object: String, _ id: String, stem: String, error: String?, source: String = "click") {
-        CRMSyncLog.recordUndo(object: object, hubspotId: id, error: error, source: source, stem: stem)
-        CRMSyncLogStore.shared.version += 1
+    @discardableResult
+    static func undo(_ object: String, _ id: String, stem: String, error: String?, source: String = "click") -> Bool {
+        defer { CRMSyncLogStore.shared.version += 1 }
+        return CRMSyncLog.recordUndo(object: object, hubspotId: id, error: error, source: source, stem: stem)
+    }
+
+    /// The line shown after a write or an Undo: the HubSpot result, plus a note when the log was not saved.
+    static func status(_ result: String, saved: Bool) -> String { saved ? result : result + " " + L("crm.log.saveFailed") }
+
+    /// What an Undo error means to the PM: expired, changed in HubSpot, another portal, or HubSpot's own message.
+    static func undoError(_ error: Error) -> String {
+        switch (error as? CRMError)?.code {
+        case CRMSyncLog.expiredCode: return L("crm.log.expired")
+        case CRMSyncLog.changedCode: return L("crm.log.changed")
+        case CRMPortal.mismatchCode: return L("crm.undo.portal", ["crm": "HubSpot"])
+        default: return (error as? CRMError)?.message ?? error.localizedDescription
+        }
     }
 }
 
@@ -103,26 +121,29 @@ struct CRMSyncLogView: View {
         guard let e = CRMSyncLog.undoable(id: shown.id, stem: stem) else { line = L("crm.log.expired"); store.version += 1; return }
         guard let hs = CRMService.shared.connector() as? HubSpotConnector else { line = L("crm.notConnected"); return }
         busy = true; line = ""
+        let deadline = e.at.addingTimeInterval(CRMSyncLog.logUndoSeconds)
+        // an update gets exactly the properties written back (never through today's field mapping); a create is deleted
+        let item = CRMUndoItem(e.object, e.hubspotId, e.action == "update" ? e.old : [:])
         Task {
+            var outcome: Error? = nil
             do {
-                // never overwrite a change made in HubSpot after Pacenote's write (rule 6): the revision must be the one
-                // HubSpot gave our write; a later change, or one that cannot be read, stops the Undo
-                guard CRMSyncLog.unchanged(revision: e.revision, current: try await hs.updatedAt(type: e.object, id: e.hubspotId)) else {
-                    line = L("crm.log.changed"); busy = false; return
+                // the portal written to first, then before the change: the window, and the revision HubSpot gave our
+                // write (rule 6: a later change, or one that cannot be read, stops the Undo)
+                _ = try await CRMCallSync.undo([item], portal: e.portal, connector: hs,
+                                               check: { it in try await CRMSyncLog.guardUndo(type: it.type, id: it.id, revision: e.revision, deadline: deadline, connector: hs) },
+                                               result: { _, err in outcome = err }) { it in
+                    if it.type == "calls", var l = CRMLink.load(base: stem), l.callId == it.id { l.callId = ""; l.save(base: stem) }
                 }
-                if e.action == "update" {
-                    // exactly the properties written, never through today's field mapping
-                    if e.object == "deals" { try await hs.restoreDeal(id: e.hubspotId, fields: e.old) } else { try await hs.restoreCall(id: e.hubspotId, fields: e.old) }
-                } else {
-                    try await hs.delete(type: e.object, id: e.hubspotId)
-                    if e.object == "calls", var l = CRMLink.load(base: stem), l.callId == e.hubspotId { l.callId = ""; l.save(base: stem) }
+            } catch { outcome = error }      // another portal: nothing was sent
+            if let err = outcome {
+                let code = (err as? CRMError)?.code
+                // a refused Undo that changed nothing is not an Undo line; a failed request is
+                if code != CRMSyncLog.expiredCode && code != CRMSyncLog.changedCode && code != CRMPortal.mismatchCode {
+                    CRMSyncRecorder.undo(e.object, e.hubspotId, stem: stem, error: CRMSyncRecorder.undoError(err), source: "log")
                 }
-                CRMSyncRecorder.undo(e.object, e.hubspotId, stem: stem, error: nil, source: "log")
-                line = L("crm.undone")
-            } catch {
-                let msg = (error as? CRMError)?.message ?? error.localizedDescription
-                CRMSyncRecorder.undo(e.object, e.hubspotId, stem: stem, error: msg, source: "log")
-                line = msg
+                line = CRMSyncRecorder.undoError(err)
+            } else {
+                line = CRMSyncRecorder.status(L("crm.undone"), saved: CRMSyncRecorder.undo(e.object, e.hubspotId, stem: stem, error: nil, source: "log"))
             }
             busy = false
         }

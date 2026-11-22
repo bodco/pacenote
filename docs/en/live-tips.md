@@ -1661,10 +1661,20 @@ seconds. The transcript goes into the note only if you turn that on.
 
 **The call in HubSpot.** Update HubSpot also has a Call row, ticked by default: a HubSpot Call with the title, start
 time, duration, direction (Settings > Integrations > HubSpot, default Outbound), outcome Connected, the participants'
-names, the Summary and next steps from the call page, and a link back to the call (the Notion page when there is one),
+names, the call page's Summary, the next steps, and a link back to the call (the Notion page when there is one),
 associated with the matched contacts, the company and the open deal. No transcript text is sent. Pacenote keeps the
-call's own id with the call, so applying again, or the Auto switch, updates the same HubSpot Call and never adds a
-second one; Undo deletes a new Call or puts the old values back. **Log the call in HubSpot automatically after it
+call's own id with the call, so applying again, or the Auto switch, updates the same HubSpot Call instead of adding a
+second one. One rare case still makes a second Call: HubSpot creates the Call but its answer is lost, and you apply
+again before HubSpot's search shows the new Call; the Call text carries `Pacenote call id`, so a search in HubSpot
+finds both. The company, deal and contacts you link with Refresh in Start call go to the recorded call you start
+from that window (Refresh saves them with the preparation you chose, else the planned one). Only the link that window
+showed is used: a preparation the recorder picks by title after the call starts never brings a link, so the call
+gets exactly the company and deal the Start call row showed. A call started another way stays unlinked, and Update HubSpot says so; to link a call,
+press Refresh in Start call before you start it. When you pick another preparation in Start call, the row shows that
+preparation's own link, and Refresh starts from it. Undo deletes a new Call or puts the old values back, and does nothing if the key now belongs to another
+HubSpot account. The link also remembers its HubSpot account: after
+you change the key to another account, or for a call linked before this version, Pacenote writes nothing and Update
+HubSpot offers **Relink**. **Log the call in HubSpot automatically after it
 ends** is off by default; when on, it logs only the Call, about two and a half minutes after the call, without a
 review. Notes, deal fields and tasks stay behind Apply. The design is in `docs/specs/hubspot-crm-integration.md`.
 
@@ -1677,9 +1687,11 @@ or nowhere (Don't write); ids, the owner and statuses are fixed. **Owner mapping
 Matching) and lets you add other Pacenote users by email with their HubSpot owner. Each call's Update HubSpot window
 ends with a **Sync log**: what was written, when, by Apply, Auto or Retry, and the result. A failed line has Retry (a
 Call is written again at once; a note, deal fields or a task reopen Update HubSpot with only that row ticked). The
-latest write of a record has Undo for 24 hours, unless someone changed it in HubSpot after Pacenote wrote it. The log
-keeps property names and, for an updated Call or deal, the old values Undo needs; never transcript text, never the
-key.
+latest write of a record has Undo for 24 hours, unless someone changed it in HubSpot after Pacenote wrote it. Neither
+Undo (this one or the 8 seconds after Apply) changes anything after its time has passed, after an edit in HubSpot, or
+when the key now belongs to another HubSpot account. If the log cannot be saved, the window says so next to the
+HubSpot result. The log keeps property names and, for an updated Call or deal, the old values Undo needs; never
+transcript text, never the key.
 
 **What Pacenote can do.** Help > What Pacenote can do lists every feature with Try it and how often you used it
 (from the local usage log, Settings > General > Data). For the first 14 days it is also a card on Home.

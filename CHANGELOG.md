@@ -20,9 +20,16 @@ Pacenote. Earlier versions are described in the commit messages and in
 - **The call is logged in HubSpot (H2).** Update HubSpot has a new Call row: a HubSpot Call with the title, start
   time, duration, direction, outcome, participants, the call page's Summary, the next steps, and a link back to the
   call, associated with the matched contacts, company and open deal. Applying again, even while Auto runs, updates the
-  same Call instead of adding a second one, and Undo removes a new Call or restores the old values. Transcript text is
+  same Call instead of adding a second one, and Undo removes a new Call or restores the old values (it changes nothing
+  if the key was switched to another HubSpot account in between). A create that gets no answer is checked in HubSpot
+  three times over a few seconds before it is reported as failed. Transcript text is
   never sent. A call's HubSpot link now remembers its HubSpot account: after the key changes to another account, or
-  for a call linked before this version, nothing is written and Update HubSpot offers **Relink**. A new
+  for a call linked before this version, nothing is written and Update HubSpot offers **Relink**. The company, deal
+  and contacts linked with Refresh in Start call now go to the recorded call started from that window, so Auto and
+  Update HubSpot find them (before, the call showed "not linked"). Refresh saves the link with the preparation the call
+  will use (the one you chose, else the planned one) and starts from that preparation's own link after you pick
+  another one. A preparation the recorder picks by title after the call starts never brings a link, so two "Renewal"
+  calls of different customers never share one; a call started another way stays unlinked. A new
   switch in Settings > Integrations > HubSpot, **Log the call in HubSpot automatically after it ends**, is off by
   default and logs only the Call. The HubSpot integration design is in `docs/specs/hubspot-crm-integration.md`.
 
@@ -34,8 +41,12 @@ Pacenote. Earlier versions are described in the commit messages and in
   for 24 hours unless the record was changed in HubSpot since. Auto, Retry and Apply of the Call take turns, and Auto
   writes nothing if you turned it off while it waited. A field cannot be mapped onto the Call's dedupe id, an owner,
   a status or a property another field writes. Undo restores exactly the properties that were written and only
-  while HubSpot shows no change after Pacenote's write. When HubSpot does not answer a scope probe, the live check
-  says the check is not complete instead of showing everything as fine.
+  while HubSpot shows no change after Pacenote's write. Both Undo buttons (right after Apply and in the log) change
+  nothing once their time has passed, after an edit in HubSpot, or when the key now belongs to another HubSpot
+  account. When an Apply fails, the log names the record whose request failed, so Retry reopens that row (a deal
+  whose fields are all set to Don't write is skipped, not blamed). If the sync log itself cannot be saved, Update
+  HubSpot says so next to the HubSpot result. When HubSpot does not answer a scope probe, the live check says the
+  check is not complete instead of showing everything as fine.
 
 ## 0.26.4 (2026-11-20)
 

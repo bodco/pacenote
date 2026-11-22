@@ -11,9 +11,12 @@ Pacenote already connects to HubSpot with a service key (a private app key) kept
 
 - **Read** (before a call): `CRMConnector.findCompany` (domain, then name), `findContacts` (emails), `deals`
   (open deal updated last), `recentActivity`, `pipelines`, `properties`, `owners`. The result is the local snapshot
-  `<stem>.crm.md` and the link `<stem>.crm.json` (ids only: company, deal, contacts).
+  `<stem>.crm.md` and the link `<stem>.crm.json`: the ids of the company, deal and contacts, the company, deal and
+  participant names, and since H2 the Pacenote call id (`callKey`), the HubSpot Call id (`callId`) and the portal id
+  (`portalId`). The names stay on the Mac; they go to HubSpot only inside the Call.
 - **Write** (after a call): "Update HubSpot" on the call page. A reviewed list of checkboxes (note, deal fields,
-  follow-up task, and since H2 the Call), **Apply**, then **Undo** for 8 seconds. Nothing is written without a click.
+  follow-up task, and since H2 the Call), **Apply**, then **Undo** for 8 seconds. Every write needs that click, except
+  the Call when the PM turns on the Auto switch (off by default, section 9).
 - **Not yet**: Leads, Meetings, Emails, creating contacts and companies, OAuth, several portals.
 
 ## 2. Objects and associations
@@ -44,7 +47,7 @@ HubSpot association type ids below are HUBSPOT_DEFINED, from the object on the l
 | `hs_call_direction` | Settings > Integrations > HubSpot > Direction of logged calls (default OUTBOUND; Pacenote cannot tell in which direction a conference call went) |
 | `hs_call_status` | `COMPLETED` |
 | `hs_call_disposition` | the outcome id; `Connected` (HubSpot's built-in outcome id, `CRMCallLog.connected`, the same in every portal) because a recorded call was a conversation. No-answer outcomes are not logged by Pacenote |
-| `hs_call_body` | participants' names, Summary, Next steps, the link back to the call (the Notion page when there is one), and the line `Pacenote call id: <id>`. Never transcript text |
+| `hs_call_body` | participants' names; Summary = the call page's Summary (the meeting notes' In short and Recap); Next steps = what the PM and the other side took on (else the sales next step), never a copy of the Summary; the link back to the call (the Notion page when there is one), and the line `Pacenote call id: <id>`. Never transcript text |
 | `hs_call_external_id` | `pacenote:<Pacenote call id>`, the dedupe key |
 | `hubspot_owner_id` | the owner chosen in Matching (section 7) |
 
@@ -104,7 +107,8 @@ decides, the service key stays the only path.
    page.
 4. **Undo.** A new object is deleted; an updated object gets its old property values back. Associations added during a
    re-run are not removed by Undo (they are harmless and HubSpot has no history for them); the Undo failure line says
-   what is left. A re-run of the Call adds the associations first and changes the fields last, so a failed association
+   what is left. Undo first checks that the key still belongs to the portal the Apply wrote to; after a key change
+   it sends nothing and says so, as the same ids in another portal are other records. A re-run of the Call adds the associations first and changes the fields last, so a failed association
    leaves the Call's fields as they were and nothing changed is outside Undo.
 5. **Errors are one line where the action was**, never a modal; 429 waits (Retry-After, else 1, 2, 4 s) and retries three
    times; 401 and 403 say what to fix (key, or the named scope).
@@ -118,13 +122,17 @@ decides, the service key stays the only path.
 |---|---|---|
 | Contact | email (lowercase, trimmed) | search `email EQ`; found: use it; several: take the one on the matched company, else the oldest; never create a second contact with the same email. Creating a missing contact is a later, opt-in step (decision 4) |
 | Company | domain, then name | search `domain EQ`, then `name EQ`; free-mail domains (gmail.com, outlook.com, icloud.com, yahoo.com, hotmail.com) and the PM's own domains never match a company |
-| Call | the Pacenote call id | the id is made once and stored with the call (`<stem>.crm.json`, `callKey`) together with the HubSpot Call id (`callId`). A re-run PATCHes `callId`. If `callId` is missing, HubSpot is searched by `hs_call_external_id = pacenote:<id>`. If the stored id was deleted in HubSpot (404), the same search runs, then a new Call is created. Auto and Apply of one call take turns (a queue per call id) and each reads the stored `callId` when its turn comes. A create that gets no answer or a 5xx is checked by the same search before it is reported as failed. A second Call for one call id is never created |
+| Call | the Pacenote call id | the id is made once and stored with the call (`<stem>.crm.json`, `callKey`) together with the HubSpot Call id (`callId`). A re-run PATCHes `callId`. If `callId` is missing, HubSpot is searched by `hs_call_external_id = pacenote:<id>`. If the stored id was deleted in HubSpot (404), the same search runs, then a new Call is created. Auto and Apply of one call take turns (a queue per call id) and each reads the stored `callId` when its turn comes. A create that gets no answer or a 5xx is checked by the same search, three times over about 6 seconds (HubSpot's search lags a new record), before it is reported as failed; the next run searches first, so a Call that shows up later is updated, not made again. A second Call is possible only if the search still misses it on that next run (see the known gaps) |
 | Note, Task | none | created per Apply; the 8 second Undo and the "already applied" lock protect against a double click. No dedupe across sessions (decision 8) |
 | Deal | the PM's link | the open deal updated last, or what the PM chose in Start call; "No deal" is kept for the series |
 
 Known gap: if both `<stem>.crm.json` is lost and the Call has no `hs_call_external_id` (for example a portal that
 rejects the property), a re-run creates a second Call. Mitigation: the body carries `Pacenote call id: <id>`; a
 manual search in HubSpot finds it.
+
+Known gap: a create whose answer is lost, followed by a retry while HubSpot's search still does not show the new
+Call (longer than the 6 seconds above), makes a second Call. Auto runs once per call and Apply is a click, so this
+needs a lost answer and a fast manual retry; the body's `Pacenote call id: <id>` finds both in HubSpot.
 
 ## 7. Owner mapping
 
@@ -156,13 +164,26 @@ is shown on the card. Behavior to keep and to define:
 
 ## 9. Auto, review and Undo flow (H2)
 
-1. Start call: Refresh links company, deal and contacts (`.crm.json`).
+1. Start call: Refresh links company, deal and contacts (`.crm.json` of the preparation). Refresh saves the link with
+   the same preparation Start call copies (the one chosen by hand, else the planned one, else where Prepare will write)
+   and reads the link stored there at the moment it runs, so picking another preparation never moves the first one's
+   company and deal into it. The call request names that preparation (`crm_base`); when the recording starts the
+   link is copied from it to the call's own `<stem>.crm.json`, without `callKey` and `callId`. The preparation Prepare
+   is writing for this call when it starts (late prep) carries its link the same way. Known limit: the planned
+   preparation is found by title and occurrence time (within 3 hours of the call), so two same-title calls of
+   different customers that close together show the other one's company in the Start call row; the PM sees it there
+   before starting. A link the call already
+   has is kept. A title is not a call's identity, so the recorder's automatic pick by title (`lt prep-check
+   --adopt-prep`) never carries a link: a call started without `crm_base` (another start path) stays unlinked, and
+   its Summary never goes to another customer's records.
 2. The call ends. If Auto is on and the call is linked in the portal of the current key (section 8), Pacenote waits for the call page's notes (about 2.5 minutes),
    then logs the Call. No review in this path; the switch is the consent. The PM sees it in HubSpot and in the call's
    Update HubSpot window (Call row, ticked, and a line in the sync log, where Undo works for a day, section 12).
 3. Otherwise the PM opens Update HubSpot on the call page: the Call row is ticked by default (Settings can untick it),
    Apply writes, Undo works for 8 seconds.
-4. A re-run (Apply again later, or Auto after an edit) updates the same Call.
+4. A re-run (Apply again later) updates the same Call, keyed by the stored Call id and `hs_call_external_id`; the one
+   exception is the lost create answer in section 6 (Dedupe), which can leave a second Call. Auto runs once, when the
+   call ends; an edit of the call page afterwards reaches HubSpot only through Apply.
 
 ## 10. Decisions for the owner (with recommendations)
 
@@ -225,14 +246,16 @@ Read the settings only through these calls on `CRMSettings` (`SettingsWindow.mod
 | `sync.canTarget(_ o:, _ specProperty:, _ target:) -> Bool` | whether a field may be mapped to `target`: never a reserved property (`CRMSyncSettings.reserved`: the object's fixed ones, `hubspot_owner_id`, `hs_call_external_id`, `hs_object_id`, HubSpot's create and change dates, the default property of another field) or what another field already writes. The picker offers only these and `setProperty` refuses the rest |
 | `CRMCallSync.log(..., allowed:)` | the one writer of a call's Call: a queue per call id, the portal checked, the stored Call id read when the turn comes. Auto passes `allowed`, which asks `autoWrites(.calls)` again when its turn starts; off by then, nothing is sent and nothing is logged |
 | `ownerId(forPacenoteUser email:, ownEmails:, owners:) -> String` | the HubSpot owner for a Pacenote user: the mapping in Sync; for the user of this Mac (one of `ownEmails`, or an empty email) the owner from Matching (`ownerId`); else the HubSpot owner with the same email; else `""` (leave `hubspot_owner_id` out, section 7) |
-| `CRMSyncLog.append(_ entries:, stem:)` | adds lines to the call's sync log; `CRMSyncLog.recordUndo(...)` for an Undo |
+| `CRMSyncLog.append(_ entries:, stem:) -> Bool` | adds lines to the call's sync log; `CRMSyncLog.recordUndo(...)` for an Undo. `false` = the file was not saved: say so next to the HubSpot result, never instead of it |
+| `CRMCallSync.undo(_ items:, portal:, connector:, check:, result:)` | the one Undo of written records: the portal first (a mismatch sends nothing), then `check` before each record (`CRMSyncLog.guardUndo`: inside the window and HubSpot's `updatedAt` equal to the write's revision), then delete, `restoreCall` or `restoreDeal` |
 | `CRMScopeCheck.blocking(_ o:, missing:)` | the scopes an Auto switch needs (`CRMObject.scopes`: the reads its write path makes, then the write scopes) that the last check found missing |
 
 Rules for a branch that adds an automatic write: check `autoWrites(o)` at the moment of writing (not at start; behind
 a queue, when the turn comes), write only the objects of its own switch, map properties with `mapped`, set the owner
 with `ownerId(forPacenoteUser:)`, and append one log line per object (ok or failed, with the one-line error, and
-`revision` = HubSpot's `updatedAt` from the answer to the write, `HubSpotConnector.revision(type:id:)`, so Undo is
-possible). Transcript text is never an input.
+`revision` = HubSpot's `updatedAt` from the answer to the write, `HubSpotConnector.revision(type:id:)`, and `portal` =
+the portal the write was checked against, so Undo is possible). A failed line names the object whose request failed,
+never one that was skipped. Transcript text is never an input.
 
 ### Auto per object
 
@@ -264,8 +287,10 @@ never changed (section 7).
 
 One file per call, `<stem>.crm-log.json` next to `<stem>.crm.json`, at most 200 lines. A line: time, object
 (`calls`, `notes`, `tasks`, `deals`, `contacts`, `companies`, `meetings`), action (`create`, `update`, `undo`), source
-(`click`, `auto`, `retry`, `log`), HubSpot id, the property names written, the old values an update replaced, ok or the
-one-line error, undone, and the revision (HubSpot's `updatedAt` from the answer to the write). Property names and,
+(`click`, `auto`, `retry`, `log`), HubSpot id, the portal id, the property names written, the old values an update
+replaced, ok or the one-line error, undone, and the revision (HubSpot's `updatedAt` from the answer to the write).
+When an Apply fails, its failed line is the object whose request was out (`CRMApply.run` keeps it); a row that sent
+nothing, such as a deal whose fields are all Don't write, gets no line. Property names and,
 for an updated Call or deal, the old values Undo needs (local, next to the call); never transcript text, never the
 key. Shown at the bottom of the call's Update HubSpot window.
 
@@ -279,7 +304,12 @@ key. Shown at the bottom of the call's Update HubSpot window.
   either side, refuses and says so (rule 6). A line without a revision (for example a Call found again after a
   create with no answer) offers no Undo. A created object is deleted; an updated Call or deal gets its old values
   back on exactly the properties written (`restoreCall`, `restoreDeal`), never through today's field mapping.
-- Undo in Update HubSpot (also exact-property), Auto and Retry write log lines too.
+- Both Undo paths (Apply's 8 seconds and the log's 24 hours) go through `CRMCallSync.undo`: the key's portal must be
+  the one written to (a line without a portal, from before this check, offers no Undo), and right before each record
+  changes, the window must still be open and the revision unchanged. A refused record is left as it is and the line
+  says why; it adds no undo line to the log.
+- Undo in Update HubSpot (also exact-property), Auto and Retry write log lines too. If the log file cannot be saved,
+  the window says so next to the HubSpot result (the HubSpot write is not undone by that).
 - Apply, Auto and Retry of the Call all go through `CRMCallSync.log` (one queue per call id). The Pacenote call id is
   stored in `<stem>.crm.json` before any request, so the three paths use one key.
 - Deal fields that the mapping sets to Don't write are not a write: Apply sends nothing for them and logs no line.

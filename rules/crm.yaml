@@ -48,11 +48,13 @@ write:
     Notes never write without a click; deal fields and tasks only once their branch reads its switch.
   call: >-
     Call row in the review, ticked by default; associations contact 194, company 182, deal 206; dedupe by
-    hs_call_external_id = pacenote:<call id>. Full design: docs/specs/hubspot-crm-integration.md.
+    hs_call_external_id = pacenote:<call id>; Auto and Apply of one call take turns. <stem>.crm.json keeps the
+    portalId; no write (Apply or Auto) when it differs from the portal of the key in use or is missing: Relink first.
+    Full design: docs/specs/hubspot-crm-integration.md.
   log: >-
-    H6: <stem>.crm-log.json, one line per written object (time, object, action, source, HubSpot id, property names, old
-    values of an update, result); Retry for a failed line, Undo of the latest write within 24 hours unless the record
-    was changed in HubSpot since. Never transcript text, never the key.
+    H6: <stem>.crm-log.json, one line per written object (time, object, action, source, HubSpot id, portal, property
+    names, old values of an update, result); Retry for a failed line, Undo of the latest write within 24 hours unless
+    the record was changed in HubSpot since or the key now belongs to another portal. Never transcript text, never the key.
 mapping:
   fields: H6, per object, each spec property to another writable property or "Don't write"; ids, owner and statuses fixed
   owners: H6, a Pacenote user's email to a HubSpot owner; the user of this Mac uses the Matching owner

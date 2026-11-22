@@ -28,7 +28,7 @@ struct CRMLink: Codable, Equatable {
     }
 
     static func url(base: String) -> URL { URL(fileURLWithPath: CallLayout.sidecar(base, ".crm.json")) }
-    static func load(base: String) -> CRMLink? { (try? Data(contentsOf: url(base: base))).flatMap { try? JSONDecoder().decode(CRMLink.self, from: $0) } }
+    static func load(base: String) -> CRMLink? { CRMLinkCarry.stored(base: base).flatMap { try? JSONDecoder().decode(CRMLink.self, from: $0) } }
     func save(base: String) { if let d = try? JSONEncoder().encode(self) { try? d.write(to: Self.url(base: base), options: .atomic) } }
 }
 
@@ -145,7 +145,8 @@ enum CRMCallLogger {
 
     /// Logs the Call now (Auto, or Retry in the sync log) and records the result in the call's sync log (H6).
     /// Both go through the per-call queue with Apply; Auto asks its switch again when its turn comes.
-    /// Returns the error line, "" when written (or when Auto was turned off meanwhile and nothing was sent).
+    /// Returns the error line, "" when written (or when Auto was turned off meanwhile and nothing was sent); a written
+    /// Call whose log line could not be saved returns the result with that note.
     @MainActor static func run(_ file: String, source: String) async -> String {
         let base = file.hasSuffix(".md") ? String(file.dropLast(3)) : file
         guard var l = CRMLink.load(base: base), let c = CRMService.shared.connector(),
@@ -154,8 +155,10 @@ enum CRMCallLogger {
         do {
             let r = try await write(entry, base: base, link: l, connector: c, allowed: allowed)    // a link from another portal is not written
             UsageLog.log("update_crm", ["fields": 0, "call": 1])
-            CRMSyncRecorder.call(r, log: entry, stem: base, source: source, revision: (c as? HubSpotConnector)?.revision(type: "calls", id: r.id) ?? "")
-            return ""
+            // the portal the write was checked against: the stored link's when its turn came
+            let saved = CRMSyncRecorder.call(r, log: entry, stem: base, source: source, revision: (c as? HubSpotConnector)?.revision(type: "calls", id: r.id) ?? "",
+                                             portal: (CRMLink.load(base: base) ?? l).portalId)
+            return saved ? "" : CRMSyncRecorder.status(L("crm.updated", ["crm": c.providerName]), saved: false)
         } catch let e as CRMError where e.code == CRMCallSync.notAllowedCode && e.scope == "auto" {
             return ""       // the switch was turned off while the write waited: nothing sent, nothing logged
         } catch {
@@ -164,6 +167,25 @@ enum CRMCallLogger {
             AnalyticsTracker.shared.error("crm", Analytics.errorCode(message: msg), provider: "hubspot")
             return msg
         }
+    }
+}
+
+extension StartCallModel {
+    /// The preparation the CRM row's Refresh saves the HubSpot link with, sent with the call as crm_base: the call gets
+    /// exactly the link this window showed (fix round 5), never one found by title.
+    var crmBase: String? {
+        // the same preparation Start call copies to the call (CallEngine.adoptPrep): the one chosen by hand, else the planned one
+        if let b = CRMLinkCarry.prepBase(chosen: chosenPrepPath, planned: prepBase) { return b }
+        if let p = PrepDocWindow.path(for: self), p.hasSuffix(".brief.md") { return String(p.dropLast(".brief.md".count)) }
+        // 0.8.7.1: before Prepare, the snapshot goes where Prepare will write the brief (PrepRunner's base), so the first
+        // brief already reads it; Refresh was greyed out until a brief existed
+        guard let root = root, !root.isEmpty else { return nil }
+        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd-HHmm"
+        let day = DateFormatter(); day.dateFormat = "yyyy-MM-dd"
+        let slug = StartCallModel.slugify(effectiveTitle)
+        // the same folder PrepRunner writes the brief to (call folders)
+        return (CallLayout.folder(live: (root as NSString).appendingPathComponent("live"), date: day.string(from: callDate), slug: slug) as NSString)
+            .appendingPathComponent("prep-\(f.string(from: callDate))-\(slug)")
     }
 }
 
@@ -176,19 +198,7 @@ struct CRMCallRow: View {
     @State private var busy = false
     @State private var err = ""
 
-    var base: String? {
-        if let p = PrepDocWindow.path(for: model) { return String(p.dropLast(9)) }
-        if let b = model.prepBase { return b }
-        // 0.8.7.1: before Prepare, the snapshot goes where Prepare will write the brief (PrepRunner's base), so the first
-        // brief already reads it; Refresh was greyed out until a brief existed
-        guard let root = model.root, !root.isEmpty else { return nil }
-        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd-HHmm"
-        let day = DateFormatter(); day.dateFormat = "yyyy-MM-dd"
-        let slug = StartCallModel.slugify(model.effectiveTitle)
-        // the same folder PrepRunner writes the brief to (call folders)
-        return (CallLayout.folder(live: (root as NSString).appendingPathComponent("live"), date: day.string(from: model.callDate), slug: slug) as NSString)
-            .appendingPathComponent("prep-\(f.string(from: model.callDate))-\(slug)")
-    }
+    var base: String? { model.crmBase }
     var emails: [String] { model.calEventID.flatMap { CalendarService.shared.event($0)?.emails } ?? [] }
 
     var body: some View {
@@ -210,6 +220,8 @@ struct CRMCallRow: View {
                     .help(base == nil ? L("crm.refresh.needBase") : L("crm.refresh.help"))
             }
             .onAppear { if let b = base { link = CRMLink.load(base: b) } }
+            // fix round 5: another preparation picked: show its own link, the previous one's deals and error go
+            .onChange(of: base) { link = base.flatMap { CRMLink.load(base: $0) }; deals = []; err = "" }
         }
     }
 
@@ -226,7 +238,9 @@ struct CRMCallRow: View {
         busy = true; err = ""
         let name = model.project?.crmCompanyName.isEmpty == false ? model.project!.crmCompanyName : (model.project?.name ?? "")
         Task {
-            let (l, e) = await crm.refresh(base: b, emails: emails, name: name, keep: link)
+            // the link kept is the one saved with this base, not the one on screen (it may be another preparation's)
+            let (l, e) = await crm.refresh(base: b, emails: emails, name: name, keep: CRMLink.load(base: b))
+            guard base == b else { busy = false; return }      // the preparation changed while HubSpot answered
             link = l; err = e; busy = false
             if let co = l?.companyId, !co.isEmpty, let c = crm.connector() { deals = ((try? await c.deals(companyId: co)) ?? []).filter { $0.open } }
         }
@@ -234,7 +248,7 @@ struct CRMCallRow: View {
 
     func setDeal(_ id: String, _ name: String) {
         guard let b = base else { return }
-        var l = link ?? CRMLink(); l.dealId = id; l.dealName = name; l.save(base: b); link = l
+        var l = CRMLink.load(base: b) ?? CRMLink(); l.dealId = id; l.dealName = name; l.save(base: b); link = l
         refresh()
     }
 }
@@ -268,7 +282,9 @@ struct CRMUpdateView: View {
     @State private var stage = ""
     @State private var busy = false
     @State private var status = ""
-    @State private var undo: [(String, String, [String: String])] = []    // (type, id, old fields)
+    @State private var undo: [CRMUndoItem] = []
+    @State private var undoPortal = ""     // H2: the portal the Apply wrote to; Undo checks it before any change
+    @State private var undoRevisions: [String: String] = [:]    // H6: "type/id" -> updatedAt of this Apply's write
     @State private var undoUntil: Date? = nil
     @State private var applied = false     // 0.8.7.1: a second Apply wrote the note and the task twice
     @State private var needsRelink = false // H2: the link is from another portal, or from before the portal was kept
@@ -341,42 +357,38 @@ struct CRMUpdateView: View {
         if !stage.isEmpty { p.dealFields["dealstage"] = stage }
         busy = true; status = L("crm.writing")
         Task {
-            var done: [(String, String, [String: String])] = []
-            var fields = 0
-            // H6: HubSpot's updatedAt of each object as Pacenote wrote it, for Undo from the sync log
+            var done: [CRMUndoItem] = []
+            var failed: String? = nil      // H6: the object whose request was out when the error came
+            // H6: HubSpot's updatedAt of each object as Pacenote wrote it, for both Undo paths
             func revisions() -> [String: String] {
-                Dictionary(done.map { ($0.0 + "/" + $0.1, (c as? HubSpotConnector)?.revision(type: $0.0, id: $0.1) ?? "") }, uniquingKeysWith: { a, _ in a })
+                Dictionary(done.map { ($0.type + "/" + $0.id, (c as? HubSpotConnector)?.revision(type: $0.type, id: $0.id) ?? "") }, uniquingKeysWith: { a, _ in a })
             }
+            let source = only == nil ? "click" : "retry"
             do {
                 try await CRMPortal.verify(link: l.portalId, connector: c)     // H2: nothing goes to another portal's ids
-                let refs = CRMCallLogger.refs(l)
-                if p.rows.first(where: { $0.id == "note" })?.on == true {
-                    let id = try await c.createNote(text: p.note, associations: refs); done.append(("notes", id, [:]))
-                }
-                if p.rows.first(where: { $0.id == "call" })?.on == true, let entry = p.callLog {
+                let o = await CRMApply.run(plan: p, dealId: l.dealId, refs: CRMCallLogger.refs(l), connector: c, sync: SettingsWindow.model.config.crm.sync) { entry in
                     let r = try await CRMCallLogger.write(entry, base: base, link: l, connector: c)    // in turn with Auto and Retry
-                    done.append(("calls", r.id, r.old))       // a new Call: old is empty and Undo deletes it; an update: Undo restores
                     link?.callId = r.id
+                    return r
                 }
-                // H6: deal fields that the mapping sets to Don't write are not a write (no request, no log line)
-                if p.rows.first(where: { $0.id == "deal" })?.on == true, !l.dealId.isEmpty, l.dealId != "none",
-                   !SettingsWindow.model.config.crm.mapped(.deals, p.dealFields).isEmpty {
-                    let old = try await c.updateDeal(id: l.dealId, fields: p.dealFields); done.append(("deals", l.dealId, old)); fields = p.dealFields.count
-                }
-                if p.rows.first(where: { $0.id == "task" })?.on == true, let t = p.task {
-                    let id = try await c.createTask(subject: t.subject, due: t.due, associations: refs); done.append(("tasks", id, [:]))
-                }
-                UsageLog.log("update_crm", ["fields": fields])
-                CRMSyncRecorder.applied(plan: p, link: l, done: done, error: nil, stem: base, source: only == nil ? "click" : "retry", revisions: revisions())
-                undo = done; undoUntil = Date().addingTimeInterval(CRMSyncLog.applyUndoSeconds); applied = true
-                status = L("crm.updated", ["crm": c.providerName])
-                DispatchQueue.main.asyncAfter(deadline: .now() + 8.2) { undoUntil = nil }
+                done = o.done; failed = o.failed
+                if let e = o.error { throw e }
+                UsageLog.log("update_crm", ["fields": o.fields])
+                let revs = revisions()
+                let saved = CRMSyncRecorder.applied(plan: p, portal: l.portalId, done: done, error: nil, failed: nil, stem: base, source: source, revisions: revs)
+                undo = done; undoPortal = l.portalId; undoRevisions = revs
+                undoUntil = Date().addingTimeInterval(CRMSyncLog.applyUndoSeconds); applied = true
+                status = CRMSyncRecorder.status(L("crm.updated", ["crm": c.providerName]), saved: saved)
+                DispatchQueue.main.asyncAfter(deadline: .now() + CRMSyncLog.applyUndoSeconds + 0.2) { undoUntil = nil }
             } catch {
-                undo = done; undoUntil = done.isEmpty ? nil : Date().addingTimeInterval(CRMSyncLog.applyUndoSeconds)
+                let revs = revisions()
+                undo = done; undoPortal = l.portalId; undoRevisions = revs
+                undoUntil = done.isEmpty ? nil : Date().addingTimeInterval(CRMSyncLog.applyUndoSeconds)
                 needsRelink = (error as? CRMError)?.code == CRMPortal.mismatchCode
                 status = needsRelink ? L("crm.relink.needed") : ((error as? CRMError)?.message ?? error.localizedDescription)
                 if !needsRelink {     // a portal mismatch wrote nothing; Relink, not Retry, is the way on
-                    CRMSyncRecorder.applied(plan: p, link: l, done: done, error: status, stem: base, source: only == nil ? "click" : "retry", revisions: revisions())
+                    let saved = CRMSyncRecorder.applied(plan: p, portal: l.portalId, done: done, error: status, failed: failed, stem: base, source: source, revisions: revs)
+                    status = CRMSyncRecorder.status(status, saved: saved)
                 }
                 AnalyticsTracker.shared.error("crm", Analytics.errorCode(message: status), provider: "hubspot")   // S5: code only
             }
@@ -398,28 +410,38 @@ struct CRMUpdateView: View {
         }
     }
 
-    /// Undo: notes and tasks are deleted, deal fields get their old values back.
+    /// Undo: notes, tasks and new Calls are deleted, deal fields and updated Calls get their old values back; nothing
+    /// is sent when the key now belongs to another portal than the one the Apply wrote to. H6: each object is changed
+    /// only inside the Undo window and while HubSpot still has the revision of this Apply's write (rule 6).
     func runUndo() {
-        guard let c = crm.connector() else { return }
-        let items = undo; undo = []; undoUntil = nil
+        guard let c = crm.connector(), let deadline = undoUntil, deadline > Date() else { undo = []; undoUntil = nil; return }
+        let items = undo, portal = undoPortal, revs = undoRevisions
+        undo = []; undoUntil = nil
         Task {
-            var failed = 0      // 0.8.7.1: a failed undo is said, not hidden behind "Undone"
-            for (type, id, old) in items.reversed() {
-                do {
-                    if type == "deals" { try await c.restoreDeal(id: id, fields: old) }      // H6: the properties written, not today's mapping
-                    else if type == "calls" && !old.isEmpty { try await c.restoreCall(id: id, fields: old) }
-                    else {
-                        try await c.delete(type: type, id: id)
-                        if type == "calls" {     // the next Apply makes a new Call
-                            if var d = CRMLink.load(base: base), d.callId == id { d.callId = ""; d.save(base: base) }
-                            link?.callId = ""
-                        }
-                    }
-                    CRMSyncRecorder.undo(type, id, stem: base, error: nil)
-                } catch { failed += 1; CRMSyncRecorder.undo(type, id, stem: base, error: (error as? CRMError)?.message ?? error.localizedDescription) }
+            do {
+                var refused: Error? = nil      // left as it is: window passed or changed in HubSpot (no log line)
+                var saved = true
+                let failed = try await CRMCallSync.undo(items, portal: portal, connector: c,
+                                                        check: { it in try await CRMSyncLog.guardUndo(type: it.type, id: it.id, revision: revs[it.type + "/" + it.id] ?? "",
+                                                                                                      deadline: deadline, connector: c) },
+                                                        result: { it, err in
+                    let code = (err as? CRMError)?.code
+                    if code == CRMSyncLog.expiredCode || code == CRMSyncLog.changedCode { refused = refused ?? err; return }
+                    saved = CRMSyncRecorder.undo(it.type, it.id, stem: base, error: err.map { CRMSyncRecorder.undoError($0) }) && saved
+                }) { it in
+                    guard it.type == "calls" else { return }       // the next Apply makes a new Call
+                    if var d = CRMLink.load(base: base), d.callId == it.id { d.callId = ""; d.save(base: base) }
+                    link?.callId = ""
+                }
+                let line = failed == 0 ? L("crm.undone")
+                    : refused.map { CRMSyncRecorder.undoError($0) + (failed > 1 ? " " + L("crm.undoFailed", ["n": "\(failed)", "crm": c.providerName]) : "") }
+                    ?? L("crm.undoFailed", ["n": "\(failed)", "crm": c.providerName])     // 0.8.7.1: said, not hidden
+                status = CRMSyncRecorder.status(line, saved: saved)
+                if failed == 0 { applied = false }
+            } catch {
+                let mismatch = (error as? CRMError)?.code == CRMPortal.mismatchCode
+                status = mismatch ? L("crm.undo.portal", ["crm": c.providerName]) : ((error as? CRMError)?.message ?? error.localizedDescription)
             }
-            status = failed == 0 ? L("crm.undone") : L("crm.undoFailed", ["n": "\(failed)", "crm": c.providerName])
-            if failed == 0 { applied = false }
         }
     }
 }
