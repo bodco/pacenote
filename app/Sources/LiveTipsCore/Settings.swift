@@ -499,6 +499,7 @@ public struct CRMSettings: Codable, Equatable {
     public var autoLogCall = false         // H2: log the call by itself after it ends; off until the PM turns it on
     public var callDirection = "OUTBOUND"  // H2: OUTBOUND or INBOUND
     public var qualification: [String: [String: String]] = [:]   // method -> criterion -> deal property name ("" = don't write)
+    public var tasks = CRMTasksSettings()  // PB-17 (rules/hubspot-tasks.yaml): the PM's HubSpot tasks, off by default
     public init() {}
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -518,6 +519,7 @@ public struct CRMSettings: Codable, Equatable {
         autoLogCall = (try? c.decode(Bool.self, forKey: .autoLogCall)) ?? false
         callDirection = (try? c.decode(String.self, forKey: .callDirection)) ?? "OUTBOUND"
         qualification = (try? c.decode([String: [String: String]].self, forKey: .qualification)) ?? [:]
+        tasks = (try? c.decode(CRMTasksSettings.self, forKey: .tasks)) ?? CRMTasksSettings()
     }
 }
 

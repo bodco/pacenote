@@ -1081,7 +1081,7 @@ struct CallPageView: View {
         // 0.8.7 (J4): only the due date is red when overdue, never the owner
         // 0.8.8: an item sent to the Notion tasks (by a click or the automatic add) says so
         // 0.25 (R2 tail, board CT row 3): the due date in its own column on the right, red only when late
-        EditableRow(text: c.text, sub: c.mine && !c.notionPage.isEmpty ? L("call.page.inNotionTasks") : "", subColor: PN.C.text3,
+        EditableRow(text: c.text, sub: !c.mine ? "" : !c.notionPage.isEmpty ? L("call.page.inNotionTasks") : !c.crmTask.isEmpty ? L("call.page.inHubSpotTasks") : "", subColor: PN.C.text3,
                     subTail: "", done: c.status == "done",
                     copy: (c.mine ? "" : c.owner + ": ") + c.text + (c.due.isEmpty ? "" : " (" + Register.dueText(c.due) + ")"),
                     menu: commitmentMenu(c, section),
@@ -1107,8 +1107,11 @@ struct CallPageView: View {
         m.append(PageRowAction(title: L("callEdit.changeOwner"), prompt: .text(title: L("callEdit.changeOwner"), value: c.mine ? "" : c.owner, placeholder: L("callEdit.ownerPh")),
                                run: { v in register.edit(c, owner: v.isEmpty ? "me" : v); changed(section) }))
         m.append(PageRowAction(title: L("callEdit.setDue"), prompt: .date(value: c.due), run: { v in register.edit(c, due: v); changed(section) }))
-        if c.mine && c.notionPage.isEmpty && NotionTasks.shared.settings.ready {     // 0.8.6 (D5)
+        if c.mine && c.notionPage.isEmpty && c.crmTask.isEmpty && NotionTasks.shared.settings.ready {     // 0.8.6 (D5)
             m.append(PageRowAction(title: L("ntask.addToNotion"), run: { _ in Task { await NotionTasks.shared.add(c) } }))
+        }
+        if c.mine && c.notionPage.isEmpty && c.crmTask.isEmpty && HubSpotTasks.shared.ready {           // PB-17
+            m.append(PageRowAction(title: L("htask.add"), run: { _ in Task { await HubSpotTasks.shared.add(c) } }))
         }
         m.append(.separator)
         m.append(PageRowAction(title: L("callEdit.delete"), destructive: true, run: { _ in register.mark(c, "drop"); changed(section) }))

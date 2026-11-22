@@ -753,7 +753,9 @@ final class PrompterController: NSObject, NSWindowDelegate, WKScriptMessageHandl
         let target = Self.callTarget()
         let payload: [String: Any] = MainActor.assumeIsolated {
             NotionTasks.shared.keepFresh()
-            return NotionTasks.shared.callPayload(folder: folder, target: target, callFile: file)
+            var p = NotionTasks.shared.callPayload(folder: folder, target: target, callFile: file)
+            HubSpotTasks.shared.merge(into: &p, callFile: file)       // PB-17: the HubSpot group
+            return p
         }
         guard let d = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]), let js = String(data: d, encoding: .utf8),
               js != onYouSent else { return }
@@ -1024,7 +1026,11 @@ extension PrompterController {
             let folder = CallLayout.liveFolder(of: transcriptPath)
             let done = d["done"] as? Bool ?? true
             let op = act == "onme-remove" ? "remove" : "tick"
-            MainActor.assumeIsolated { NotionTasks.shared.callAction(id: id, folder: folder, op: op, done: done) }
+            MainActor.assumeIsolated {
+                if !HubSpotTasks.shared.callAction(id: id, folder: folder, op: op, done: done) {   // PB-17
+                    NotionTasks.shared.callAction(id: id, folder: folder, op: op, done: done)
+                }
+            }
             onYouSent = ""
         case "name-speaker":
             let sid = d["speakerId"] as? String ?? "", name = d["name"] as? String ?? "", side = d["side"] as? String ?? ""

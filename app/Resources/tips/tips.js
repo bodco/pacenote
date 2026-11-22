@@ -51,6 +51,7 @@
       typeName: 'Type a name', more: 'More:', samePerson: 'Same person as…', notNow: 'Not now', lastSaid: 'Last said:',
       mine: 'Mine', mineTip: 'Put this on me', addOnMe: 'Add to On me', fromThisCall: 'From this call', openBefore: 'Open before the call',
       notionGroup: (o) => `Notion · ${o.p}`, removeItem: 'Remove', removeTip: 'Remove from On you and move to the Notion trash', fromACall: 'from a call',
+      hubspotGroup: (o) => o.p ? `HubSpot · ${o.p}` : 'HubSpot', removeTipHS: 'Remove from On you and delete the task in HubSpot',
       onThem: (o) => `on ${o.w}`, notionRemoved: 'Notion page was removed', waitingOthers: (n) => `Waiting on others · ${n}`, waitingHint: 'What others promised: tick when it is done, Mine to take it over.', theyDid: 'Done by them', home: 'Home (⌘0)',
       legend: 'Client in purple, team in blue', following: 'Following live', jump: 'Jump to latest',
       ariaMic: 'Mute microphone', ariaPause: 'Pause listening', ariaProactive: 'Proactive tips',
@@ -142,6 +143,7 @@
       typeName: 'Введіть імʼя', more: 'Ще:', samePerson: 'Та сама людина, що…', notNow: 'Не зараз', lastSaid: 'Останнє:',
       mine: 'Моє', mineTip: 'Записати на мене', addOnMe: 'Додати в На мені', fromThisCall: 'З цього дзвінка', openBefore: 'Відкриті до дзвінка',
       notionGroup: (o) => `Notion · ${o.p}`, removeItem: 'Прибрати', removeTip: 'Прибрати з На вас і перенести в кошик Notion', fromACall: 'з дзвінка',
+      hubspotGroup: (o) => o.p ? `HubSpot · ${o.p}` : 'HubSpot', removeTipHS: 'Прибрати з На вас і видалити задачу в HubSpot',
       onThem: (o) => `на ${o.w}`, notionRemoved: 'Сторінку в Notion видалено', waitingOthers: (n) => `Чекаю від інших · ${n}`, waitingHint: 'Що обіцяли інші: постав галочку, коли зроблено, Моє, щоб узяти на себе.', theyDid: 'Зроблено ними', home: 'Home (⌘0)',
       legend: 'Клієнт фіолетовим, команда синім', following: 'Слідкую наживо', jump: 'До останнього',
       ariaMic: 'Вимкнути мікрофон', ariaPause: 'Пауза прослуховування', ariaProactive: 'Проактивні підказки',
@@ -207,7 +209,7 @@
     keys: { help: '⌃⌥H', pause: '⌃⌥P', mute: '⌃⌥M', present: '⌃⌥S', prev: '⌃⌥←', next: '⌃⌥→', add30: '⌃⌥=' },
     rec: { state: 'off', kind: 'video', elapsed: 0, source: '', note: '' },
     pres: { slide: null, slideRx: 0, timeline: null, moveAsk: null, follow: null }, thumbs: {}, syncA: null, extra: {}, after: null, sys: null, meetEnd: null, notice: null, ask: null, rosterSide: {}, roster: [], knownNames: [], knownSrc: {}, tipsLang: null,
-    openItems: [], notionItems: [], notionProject: '', minePending: [], mineN: 0, spkPrompt: 15,
+    openItems: [], notionItems: [], notionProject: '', hubspotItems: [], hubspotProject: '', minePending: [], mineN: 0, spkPrompt: 15,
     ui: { spkOpen: null, spkCard: null, spkSnooze: {}, spkCollapsed: PREFS.spk_collapsed !== '0',   // 0.10.0: collapsed by default, remembered
           lineWho: {}, lineDel: {}, delArm: null, openPts: {}, heroMin: {}, paneTab: 'transcript', sheet: null, menuOpen: false, heroOverride: null, follow: true, editing: null, rateOpen: null, briefEdit: false,
           present: { index: 0, running: false, stepStart: 0 }, presentForced: null }
@@ -1288,15 +1290,17 @@
       // 0.8.6 (D4): items of the register opened before this call and the PM's Notion tasks of this call's project
       const ext = (o) => {
         // 2026-11-03 (owner): items on others sit in their own group by person (no "on X" line), and can be ticked
-        const sub = [o.badge === 'N' && o.fromCall ? t.fromACall : '', o.status || '', o.due || '', o.note === 'removed' ? t.notionRemoved : ''].filter(Boolean).join(' · ');
+        const sub = [(o.badge === 'N' || o.badge === 'HS') && o.fromCall ? t.fromACall : '', o.status || '', o.due || '', o.note === 'removed' ? t.notionRemoved : ''].filter(Boolean).join(' · ');
+        const rmTip = o.badge === 'HS' ? t.removeTipHS : t.removeTip;
         return `<div class="onme-item ext${o.mine === false ? ' theirs' : ''}" data-id="${esc(o.id)}"><label${o.mine === false ? ` title="${esc(t.theyDid)}"` : ''}><input type="checkbox" data-act="ext-toggle" data-id="${esc(o.id)}" ${o.done ? 'checked' : ''}><span><span class="badge-src">${esc(o.badge || 'CALL')}</span> <span class="${o.done ? 'struck' : ''}">${esc(o.text)}</span>${sub ? `<br><span class="meta">${esc(sub)}</span>` : ''}</span></label>
-          <span class="hover-acts">${o.mine === false ? `<button class="ghost" type="button" data-act="ext-mine" data-id="${esc(o.id)}">${esc(t.mine)}</button>` : ''}<button class="ghost" type="button" data-act="ext-remove" data-id="${esc(o.id)}" title="${esc(t.removeTip)}" aria-label="${esc(t.removeTip)}">${TRASH}</button></span></div>`;
+          <span class="hover-acts">${o.mine === false ? `<button class="ghost" type="button" data-act="ext-mine" data-id="${esc(o.id)}">${esc(t.mine)}</button>` : ''}<button class="ghost" type="button" data-act="ext-remove" data-id="${esc(o.id)}" title="${esc(rmTip)}" aria-label="${esc(rmTip)}">${TRASH}</button></span></div>`;
       };
       const pend = S.minePending.filter((p) => !S.onMe.some((o) => o.from === p.tag)).map((p) => ({ id: 'p:' + p.tag, text: p.text, due: '', done: false }));
       const here = S.onMe.concat(pend);
       const open = S.openItems || [], theirs = open.filter((o) => o.mine === false);
       const groups = [[t.fromThisCall, here.map(item)], [t.openBefore, open.filter((o) => o.mine !== false).map(ext)]];
       if ((S.notionItems || []).length) groups.push([t.notionGroup({ p: S.notionProject || '' }), S.notionItems.map(ext)]);
+      if ((S.hubspotItems || []).length) groups.push([t.hubspotGroup({ p: S.hubspotProject || '' }), S.hubspotItems.map(ext)]);   // PB-17
       body = groups.filter(([, rows]) => rows.length).map(([h, rows]) => `<h4 class="grp">${esc(h)}</h4>${rows.join('')}`).join('');
       // 2026-11-03 (owner): "On me · 11" listed other people's promises among mine. They are a separate, folded group
       // by person: useful at a stand-up, never counted as mine.
@@ -1346,7 +1350,7 @@
   function openOnMeCount() {
     const pend = S.minePending.filter((p) => !S.onMe.some((o) => o.from === p.tag)).length;
     return S.onMe.filter((o) => !o.done).length + pend + (S.openItems || []).filter((o) => !o.done && o.mine !== false).length
-      + (S.notionItems || []).filter((o) => !o.done).length;
+      + (S.notionItems || []).filter((o) => !o.done).length + (S.hubspotItems || []).filter((o) => !o.done).length;
   }
   const TRASH = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M2.5 4h11M6 4V2.5h4V4M4 4l.7 9.5h6.6L12 4"/></svg>';
   function mine(text, fromId, fromText) {
@@ -1727,7 +1731,7 @@
       }
       case 'line-mine': { const l = S.transcript[+b.dataset.i]; if (l) mine(l.text, '', ''); return; }
       case 'ext-mine': { const o = (S.openItems || []).find((x) => x.id === b.dataset.id); if (o) mine(o.text, o.id, o.text); return; }
-      case 'ext-remove': post('onme-remove', { id: b.dataset.id }); S.openItems = (S.openItems || []).filter((x) => x.id !== b.dataset.id); S.notionItems = (S.notionItems || []).filter((x) => x.id !== b.dataset.id); render(); return;
+      case 'ext-remove': post('onme-remove', { id: b.dataset.id }); S.openItems = (S.openItems || []).filter((x) => x.id !== b.dataset.id); S.notionItems = (S.notionItems || []).filter((x) => x.id !== b.dataset.id); S.hubspotItems = (S.hubspotItems || []).filter((x) => x.id !== b.dataset.id); render(); return;
       case 'spk-side': {
         const sid = b.dataset.sid, side = b.dataset.side, sp = S.speakers[sid] || {};
         S.speakers[sid] = Object.assign({}, sp, { side });
@@ -1840,7 +1844,7 @@
     const el = e.target;
     if (el.dataset && el.dataset.act === 'ext-toggle') {
       const id = el.dataset.id, done = el.checked;
-      for (const k of ['openItems', 'notionItems']) S[k] = (S[k] || []).map((x) => x.id === id ? Object.assign({}, x, { done }) : x);
+      for (const k of ['openItems', 'notionItems', 'hubspotItems']) S[k] = (S[k] || []).map((x) => x.id === id ? Object.assign({}, x, { done }) : x);
       post('ext-tick', { id, done }); render();
     } else if (el.classList && el.classList.contains('spk-same') && el.value) {
       post('setting', { key: 'speaker_merge', value: el.dataset.sid + '|' + el.value });
@@ -1970,7 +1974,8 @@
     /** 0.8.5: {meeting: 'uk', current: 'uk'}: the tips language and the meeting's. */
     /** 0.8.6 (D4): open register items of this project from earlier calls and the PM's Notion tasks:
      *  [{id, text, due, done, mine, owner, badge: 'CALL'|'N', status, fromCall, note}]; project = the group's name. */
-    setOnYou(d) { S.openItems = (d && d.open) || []; S.notionItems = (d && d.notion) || []; S.notionProject = (d && d.project) || ''; render(); },
+    setOnYou(d) { S.openItems = (d && d.open) || []; S.notionItems = (d && d.notion) || []; S.notionProject = (d && d.project) || '';
+      S.hubspotItems = (d && d.hubspot) || []; S.hubspotProject = (d && d.hubspotProject) || ''; render(); },
     /** 0.10.1 (A3): {name, show, label, change}: the call's project line under the header. */
     setProject(p) { S.proj = p || null; render(); },
     setSpeakerPrompt(sec) { S.spkPrompt = +sec || 15; render(); },

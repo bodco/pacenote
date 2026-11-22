@@ -22,6 +22,7 @@ public struct Commitment: Equatable, Identifiable {
     public var from = ""                // 0.8.6: the id this item replaces ("Mine" on an "on them" item)
     public var notionPage = ""          // 0.8.6 (op link): the Notion task this item is
     public var notionNote = ""          // "removed" when the linked page was removed in Notion
+    public var crmTask = ""             // PB-17 (op crm_link): the HubSpot task this item is
 
     public var mine: Bool { owner.isEmpty || owner.lowercased() == "me" }
     public var createdDate: Date? { CommitmentRegister.iso(created) }
@@ -103,6 +104,8 @@ public enum CommitmentRegister {
                 if let v = e["due"] as? String { it.due = v }
             case "link": it.notionPage = s(e, "notion_page"); it.notionNote = ""
             case "unlink": it.notionPage = ""; it.notionNote = (s(e, "reason").isEmpty || s(e, "reason") == "removed") ? "removed" : ""
+            case "crm_link": it.crmTask = s(e, "crm_task"); it.notionNote = ""
+            case "crm_unlink": it.crmTask = ""; it.notionNote = (s(e, "reason").isEmpty || s(e, "reason") == "removed") ? "crmRemoved" : ""
             default: break
             }
             items[it.id] = it
@@ -149,11 +152,12 @@ public enum CommitmentRegister {
     }
 
     public static func mark(folder: String, id: String, op: String = "done", source: String = "manual", call: String = "",
-                            notionPage: String = "") {
+                            notionPage: String = "", crmTask: String = "") {
         var e: [String: Any] = ["op": op, "id": id, "at": nowISO()]
         if op == "done" { e["source"] = source; if !call.isEmpty { e["call"] = (call as NSString).lastPathComponent } }
         if op == "link" { e["notion_page"] = notionPage }
-        if op == "unlink" { e["reason"] = ["removed", "undo"].contains(source) ? source : "removed" }
+        if op == "crm_link" { e["crm_task"] = crmTask }
+        if op == "unlink" || op == "crm_unlink" { e["reason"] = ["removed", "undo"].contains(source) ? source : "removed" }
         append(folder: folder, [e])
     }
 

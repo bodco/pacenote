@@ -262,7 +262,7 @@ final class NotionTasks: ObservableObject {
     @discardableResult
     func add(_ c: Commitment, quote: String = "", silent: Bool = false) async -> String? {
         let s = settings
-        guard s.ready, c.mine, c.notionPage.isEmpty, let tok = token else { return nil }
+        guard s.ready, c.mine, c.notionPage.isEmpty, c.crmTask.isEmpty, let tok = token else { return nil }
         guard let pv = projectValues(slug: c.project) else {
             mapNotice = Register.shared.projectName(c)
             return nil
@@ -302,10 +302,10 @@ final class NotionTasks: ObservableObject {
     /// rules/notion-tasks.yaml > after_call: every open item owned by me of this call goes to Notion, once.
     func afterCall(file: String) {
         let s = settings
-        guard s.ready, s.autoAdd, token != nil else { return }
+        guard s.ready, s.autoAdd, token != nil, HubSpotTasks.shared.destination != "hubspot" else { return }   // PB-17
         let folder = CallLayout.liveFolder(of: file)
         let key = CommitmentRegister.callKey(file)
-        let items = CommitmentRegister.load(folder: folder).filter { $0.mine && $0.status == "open" && $0.notionPage.isEmpty && CommitmentRegister.callKey($0.call) == key }
+        let items = CommitmentRegister.load(folder: folder).filter { $0.mine && $0.status == "open" && $0.notionPage.isEmpty && $0.crmTask.isEmpty && CommitmentRegister.callKey($0.call) == key }
         guard !items.isEmpty else { return }
         Task {
             var added: [String] = []
