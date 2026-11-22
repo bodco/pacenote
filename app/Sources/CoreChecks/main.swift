@@ -4805,5 +4805,121 @@ func ollamaCleanupRechecksLatePartials() async throws {
     expect(!fm.fileExists(atPath: partial.path), "cancel removes a partial created after the first scan")
 }
 try await ollamaCleanupRechecksLatePartials()
+
+/// PB-32 S1 (FB2, D56, rules/output_language.yaml): the output language resolver gives the same answers as the Python one
+/// on the shared fixture table (Fixtures/output_language_cases.json); the per-call sidecar.
+func outputLanguageS1() {
+    let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        .deletingLastPathComponent().appendingPathComponent("Fixtures/output_language_cases.json")
+    guard let data = try? Data(contentsOf: url), let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+        expect(false, "outlang: fixture table not found"); return
+    }
+    func rows(_ k: String) -> [[String: Any]] { (root[k] as? [[String: Any]]) ?? [] }
+    func str(_ v: Any?) -> String? { v as? String }
+    func list(_ v: Any?) -> [String] { (v as? [Any])?.compactMap { $0 as? String } ?? [] }
+    expect(rows("resolve").count >= 10 && rows("adapter").count >= 10, "outlang: the table is read")
+    for c in rows("resolve") {
+        let i = c["input"] as? [String: Any] ?? [:]
+        expect(CallLanguage.resolve(explicit: str(i["explicit"]), dominant: str(i["dominant"]), startLangs: list(i["start_langs"]),
+                                    clientLanguage: str(i["client_language"]) ?? "", settings: str(i["settings"]) ?? "") == str(c["expect"]),
+               "outlang resolve: \(c["name"] ?? "")")
+    }
+    for c in rows("hint") { expect(CallLanguage.hint(fromClientLanguage: str(c["text"])) == str(c["expect"]), "outlang hint: \(c["text"] ?? "")") }
+    for c in rows("adapter") {
+        let sp = CallLanguage.spoken(transcript: str(c["transcript"]) ?? "", meta: c["meta"] as? [String: Any])
+        expect(sp.dominant == str(c["dominant"]) && sp.languages() == list(c["languages"]), "outlang adapter: \(c["name"] ?? "")")
+    }
+    for c in rows("toggle") {
+        let sp = CallLanguage.spoken(transcript: str(c["transcript"]) ?? "", meta: c["meta"] as? [String: Any])
+        expect(CallLanguage.toggleLanguages(sp, startLangs: list(c["start_langs"]), afterCall: (c["after_call"] as? Bool) ?? true) == list(c["expect"]),
+               "outlang toggle: \(c["name"] ?? "")")
+    }
+    for c in rows("stale") {
+        let w = (c["artifacts"] as? [String: String]) ?? [:]
+        expect(CallLanguage.staleArtifacts(w, outputLanguage: str(c["output"])) == list(c["expect"]), "outlang stale: \(c["artifacts"] ?? "")")
+    }
+    expect(CallLanguage.name("uk") == "Ukrainian" && CallLanguage.name("sv") == "sv" && CallLanguage.name(nil) == "English", "outlang: names")
+    expect(!CallLanguage.isMulti(["uk"]) && CallLanguage.isMulti(["uk", "en"]), "outlang: one language shows no control")
+
+    // the sidecar: absent = nothing chosen, round trip in .work/, a half-written file is nothing
+    let base = NSTemporaryDirectory() + "outlang-\(UUID().uuidString)"
+    let dir = base + "/live/2026-11-21-sync"
+    try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(atPath: base) }
+    let t = dir + "/2026-11-21-1000-sync.app.md"
+    expect(CallLanguage.readSidecar(transcript: t) == CallLanguage.Sidecar(), "outlang sidecar: absent")
+    CallLanguage.writeSidecar(transcript: t, artifact: "notes", writtenIn: "uk")
+    CallLanguage.writeSidecar(transcript: t, outputLanguage: "EN")
+    CallLanguage.writeSidecar(transcript: t, outputLanguage: "auto", artifact: "nope", writtenIn: "uk")
+    let s = CallLanguage.readSidecar(transcript: t)
+    expect(s == CallLanguage.Sidecar(outputLanguage: "en", setBy: "user", artifacts: ["notes": "uk"]), "outlang sidecar: round trip keeps fields")
+    expect(CallLanguage.sidecarPath(transcript: t).hasSuffix("/.work/2026-11-21-1000-sync.app.outlang.json"), "outlang sidecar: in .work")
+    expect(CallLanguage.outputLanguage(transcript: t, text: "", meta: ["dominant_language": "uk"]) == "en", "outlang: the explicit choice wins")
+    CallLanguage.writeSidecar(transcript: t, artifact: "followup", writtenIn: "uk", followUpUsesClientLanguage: true)
+    CallLanguage.writeSidecar(transcript: t, outputLanguage: "fr")
+    let clientDraft = CallLanguage.readSidecar(transcript: t)
+    expect(clientDraft.artifacts["followup"] == "uk" && clientDraft.staleArtifacts == ["notes"],
+           "outlang sidecar: client-language follow-up remains current")
+    CallLanguage.writeSidecar(transcript: t, artifact: "followup", writtenIn: "uk")
+    expect(CallLanguage.readSidecar(transcript: t).staleArtifacts == ["notes", "followup"],
+           "outlang sidecar: a normal follow-up can become stale again")
+    try? "{".write(toFile: CallLanguage.sidecarPath(transcript: t), atomically: true, encoding: .utf8)
+    expect(CallLanguage.readSidecar(transcript: t) == CallLanguage.Sidecar(), "outlang sidecar: half-written is nothing")
+
+    // the recorder's real layout: <project>/video/<stem>.recording.json (".app" stripped), one result for the menu and the default
+    let dir2 = base + "/live/2026-11-22-mixed"
+    try? FileManager.default.createDirectory(atPath: dir2, withIntermediateDirectories: true)
+    try? FileManager.default.createDirectory(atPath: base + "/video", withIntermediateDirectories: true)
+    let t2 = dir2 + "/2026-11-22-1000-mixed.app.md"
+    let tagsEn = "# Live transcript: Mixed\n" + (0..<6).map { "[10:00:0\($0)] Me (en): line\n" }.joined()      // every tag says English
+    try? tagsEn.write(toFile: t2, atomically: true, encoding: .utf8)
+    try? #"{"dominant_language": "uk", "languages": {"uk": 0.6, "en": 0.4}}"#.write(toFile: base + "/video/2026-11-22-1000-mixed.recording.json", atomically: true, encoding: .utf8)
+    expect(RecordingFiles.metaPath(transcript: t2) == base + "/video/2026-11-22-1000-mixed.recording.json", "outlang meta: the recorder's path")
+    let sp2 = CallLanguage.spoken(forCall: t2, text: tagsEn)
+    expect(sp2.dominant == "uk" && CallLanguage.toggleLanguages(sp2) == ["uk", "en"], "outlang meta: the menu follows the metadata, not the tags")
+    expect(CallLanguage.outputLanguage(transcript: t2, text: tagsEn) == "uk", "outlang meta: the default follows the same metadata")
+    expect(CallLanguage.outputLanguage(transcript: dir2 + "/2026-11-22-1000-mixed.app.named.md", text: tagsEn) == "uk", "outlang meta: .named.md is the same call")
+    expect(CallLanguage.promptLine("en").contains("in English") && !CallLanguage.promptLine("en").contains("in Ukrainian"), "outlang prep prompt: names the resolved language")
+    expect(CallLanguage.promptLine("uk-UA").contains("in Ukrainian") && CallLanguage.promptLine("xx").contains("in xx"), "outlang prep prompt: codes without a name stay as the code")
+    expect(CallLanguage.spoken(forCall: dir2 + "/2026-11-22-1000-other.app.md", text: tagsEn).dominant == "en", "outlang meta: a call without metadata reads its tags")
+
+    // round 6: the file the recorder writes (call_layout.save_spoken; pytest makes it with the recorder's copy and compares it
+    // to this fixture) is read by the Swift reader, and the app's RecordingMeta saves keep its language fields
+    let recFixture = url.deletingLastPathComponent().appendingPathComponent("recording_meta_languages.json").path
+    let mp3 = RecordingFiles.metaPath(transcript: t2)
+    try? FileManager.default.removeItem(atPath: mp3)
+    try? FileManager.default.copyItem(atPath: recFixture, toPath: mp3)
+    let sp3 = CallLanguage.spoken(forCall: t2, text: tagsEn)
+    expect(sp3.dominant == "uk" && CallLanguage.toggleLanguages(sp3) == ["uk", "en"], "outlang recorder meta: seconds of speech beat the wrong tags")
+    let rm = RecordingMeta.load(mp3)
+    expect(rm?.dominantLanguage == "uk" && rm?.languages?["uk"] == 1260.5 && rm?.parts.count == 1, "outlang recorder meta: RecordingMeta reads the fields")
+    RecordingMeta.update(mp3) { $0.parts[0].driveID = "drive-1" }                   // an app save after the recorder's write
+    let raw = FileManager.default.contents(atPath: mp3).flatMap { (try? JSONSerialization.jsonObject(with: $0)) as? [String: Any] }
+    expect((raw?["languages"] as? [String: Any])?.count == 2 && raw?["dominant_language"] as? String == "uk"
+           && RecordingMeta.load(mp3)?.parts.first?.driveID == "drive-1", "outlang recorder meta: an app save keeps the language fields")
+    expect(CallLanguage.outputLanguage(transcript: t2, text: tagsEn) == "uk", "outlang recorder meta: the default after an app save")
+
+    // round 6: a call that starts during Regenerate stops it for good, even after the call has ended
+    var gate = RegenerateGate()
+    gate.enter("a.md")
+    expect(gate.mayContinue("a.md", recording: false) && !gate.mayContinue("a.md", recording: true), "outlang gate: a recording blocks the next step")
+    expect(gate.callStarts() == ["a.md"] && !gate.mayContinue("a.md", recording: false), "outlang gate: a call start stops the running Regenerate")
+    gate.leave("a.md")
+    expect(gate.callStarts().isEmpty && gate == RegenerateGate(), "outlang gate: released when the job ends; a later call start stops nothing")
+    gate.enter("a.md")
+    expect(gate.mayContinue("a.md", recording: false), "outlang gate: a new Regenerate is not stopped by an old call start")
+
+    // the follow-up Write rules the tips window uses: an emptied draft with a remembered language is written again, text is kept
+    expect(CallLanguage.followUpHasDraft(language: "uk", subject: "", body: "") && !CallLanguage.followUpHasDraft(language: nil, subject: "", body: ""),
+           "outlang follow-up: a remembered language is a draft")
+    expect(CallLanguage.tipsWriteReplacesDraft(body: "") && !CallLanguage.tipsWriteReplacesDraft(body: "Hi Emily"), "outlang follow-up: tips Write replaces only an empty body")
+    let emptied = CallLanguage.tipsWriteReplacesDraft(body: "")
+    expect(CallLanguage.followUpMayWrite(busy: false, hasDraft: CallLanguage.followUpHasDraft(language: "uk", subject: "", body: ""), replacingDraft: emptied),
+           "outlang follow-up: empty body with a remembered language can be written again")
+    expect(!CallLanguage.followUpMayWrite(busy: false, hasDraft: true, replacingDraft: CallLanguage.tipsWriteReplacesDraft(body: "Hi Emily")),
+           "outlang follow-up: a populated draft is preserved")
+    expect(!CallLanguage.followUpMayWrite(busy: true, hasDraft: false, replacingDraft: true), "outlang follow-up: never while one runs")
+}
+outputLanguageS1()
 print("core checks: \(passed) passed, \(failures) failed")
 exit(failures == 0 ? 0 : 1)

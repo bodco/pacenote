@@ -1,7 +1,7 @@
 """Follow-up email draft after a call (Pacenote 0.8, F6, idea 04; rules/followup.yaml). Prints JSON
 {"subject", "body", "lang"}; nothing is sent: the app shows it to edit, copy or open in Mail.
 
-  python -m livetips_m0.followup --md <transcript> [--lang en] [--model claude-sonnet-...]
+  python -m livetips_m0.followup --md <transcript> [--lang auto] [--model claude-sonnet-...]
 """
 import argparse
 import json
@@ -10,11 +10,16 @@ from . import call_layout
 
 import yaml
 
-from . import callinfo
+from . import call_language, callinfo
 from .oneshot import ask_json, emit
 from .rules import DEFAULT_RULES
 
-LANGS = {"en": "English", "uk": "Ukrainian", "es": "Spanish", "de": "German", "fr": "French", "pl": "Polish"}
+def resolve_language(md: Path, lang: str) -> str:
+    explicit = call_language.normalize(lang)
+    if explicit:
+        return explicit
+    text = md.read_text(encoding="utf-8", errors="replace")
+    return call_language.output_language(md, text)
 
 
 def rules() -> dict:
@@ -72,9 +77,10 @@ def picture_lines(sit: dict) -> list:
             ["Open: " + a.get("what", "") for a in sit.get("asks") or [] if a.get("type") != "update"])
 
 
-def draft(md: Path, lang: str = "en", model: str = "claude-sonnet-5-5", provider=None, lessons: str = "") -> dict:
+def draft(md: Path, lang: str = "auto", model: str = "claude-sonnet-5-5", provider=None, lessons: str = "") -> dict:
+    lang = resolve_language(md, lang)
     r = rules()
-    system = r.get("model_prompt", "Write a short follow-up email after a work call.").format(LANG=LANGS.get(lang, "English"))
+    system = r.get("model_prompt", "Write a short follow-up email after a work call.").format(LANG=call_language.language_name(lang))
     if lessons.strip():                       # 0.8.5 (rules/learning.yaml): the PM's recurring corrections
         system += "\n\n" + lessons.strip()
     obj, usd = ask_json(system, build_user(md), model, 1500, provider)
@@ -83,10 +89,11 @@ def draft(md: Path, lang: str = "en", model: str = "claude-sonnet-5-5", provider
     return {"subject": str(obj.get("subject") or "").replace(chr(0x2014), "-").strip(), "body": body, "lang": lang, "cost_usd": usd}
 
 
-def revise(md: Path, current: dict, instruction: str, lang: str = "en", model: str = "claude-sonnet-5-5", provider=None) -> dict:
+def revise(md: Path, current: dict, instruction: str, lang: str = "auto", model: str = "claude-sonnet-5-5", provider=None) -> dict:
     """0.8.5: the PM's instruction applied to the current draft (rules/followup.yaml > revise)."""
+    lang = resolve_language(md, lang)
     r = rules()
-    system = r.get("revise_prompt", "Revise the email as the PM asks.").format(LANG=LANGS.get(lang, "English"))
+    system = r.get("revise_prompt", "Revise the email as the PM asks.").format(LANG=call_language.language_name(lang))
     user = "CURRENT DRAFT:\nSubject: {}\n\n{}\n\nTHE PM'S INSTRUCTION: {}\n\n{}".format(
         current.get("subject", ""), current.get("body", ""), instruction, build_user(md))
     obj, usd = ask_json(system, user, model, 1500, provider)
@@ -98,7 +105,7 @@ def revise(md: Path, current: dict, instruction: str, lang: str = "en", model: s
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--md", required=True, type=Path)
-    ap.add_argument("--lang", default="en")
+    ap.add_argument("--lang", default="auto")
     ap.add_argument("--model", default="claude-sonnet-5-5")
     ap.add_argument("--lessons", type=Path, help="a text file with the PM's recurring corrections (rules/learning.yaml)")
     ap.add_argument("--draft", type=Path, help="JSON {subject, body}: the draft to revise")

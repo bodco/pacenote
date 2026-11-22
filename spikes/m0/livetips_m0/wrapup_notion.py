@@ -26,7 +26,7 @@ import urllib.request
 import uuid
 from pathlib import Path
 
-from . import call_layout
+from . import call_language, call_layout
 
 NOTION = "https://api.notion.com/v1"
 NOTION_VERSION = "2025-09-03"
@@ -79,7 +79,7 @@ def _head_value(head, prefixes, default=""):
 
 
 def header_info(md: Path) -> dict:
-    """Title, start and timezone from the transcript header and the recorder's state."""
+    """Title, start and timezone from the transcript header and the recorder's state (the language: call_language)."""
     head = md.read_text(encoding="utf-8").splitlines()[:12]
     title = next((l[len("# Live transcript:"):].strip() for l in head if l.startswith("# Live transcript:")), md.stem)
     start = _head_value(head, ("- Початок:", "- Start:"))
@@ -88,10 +88,7 @@ def header_info(md: Path) -> dict:
     except ValueError:
         t0 = dt.datetime.fromtimestamp(md.stat().st_ctime).astimezone()
     tz = os.environ.get("LT_TIMEZONE") or "Europe/Kiev"
-    # 2026-10-26 (owner): the page is written in the call's language ("- Мови: Я = en, дозволені = en").
-    langs = next((l.split("=")[-1].strip() for l in head if l.startswith("- Мови:") or l.startswith("- Languages:")), "uk")
-    lang = "en" if langs.split("+")[0].strip() == "en" else "uk"
-    return {"title": title, "start": t0, "tz": "Europe/Kiev" if tz in ("Europe/Kyiv", "Europe/Uzhgorod") else tz, "lang": lang}
+    return {"title": title, "start": t0, "tz": "Europe/Kiev" if tz in ("Europe/Kyiv", "Europe/Uzhgorod") else tz}
 
 
 TXT = {
@@ -203,7 +200,7 @@ def claude_wrapup(transcript: str, brief: str, model: str, lang: str = "uk", pro
     from .routing import provider_from_env
     prov = provider or provider_from_env("after", timeout=180.0)
     user = (f"PREP BRIEF (may be empty):\n{brief[:14000]}\n\n" if brief else "") + f"TRANSCRIPT:\n{transcript[:120000]}"
-    c = prov.complete(model=model, system=[{"text": SYSTEM.replace("{LANG}", TXT[lang]["write"])}], user=user,
+    c = prov.complete(model=model, system=[{"text": SYSTEM.replace("{LANG}", call_language.language_name(lang))}], user=user,
                       max_tokens=2500, cache_ttl=None)
     if c.error:
         raise RuntimeError("summary request failed: " + str(c.error)[:200])
@@ -538,6 +535,12 @@ def link_values(props: dict, ids: dict, project_name: str, workspace_value: str,
     return out
 
 
+def page_id_of(ref: str) -> str:
+    """The 32 hex characters of a Notion page id or url (dashes allowed), or ""."""
+    m = re.findall(r"[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}", ref or "")
+    return m[-1].replace("-", "").lower() if m else ""
+
+
 def find_page(ds: str, start: dt.datetime, date_prop: str | None = "Date") -> dict | None:
     if not date_prop:
         return None
@@ -558,9 +561,17 @@ def find_page(ds: str, start: dt.datetime, date_prop: str | None = "Date") -> di
     return sorted(pages, key=gap)[0]
 
 
-def append(page_id: str, blocks: list) -> None:
+def append(page_id: str, blocks: list) -> list | None:
+    """Append the blocks; the ids Notion returned for them, or None when a response did not list them."""
+    ids = []
     for i in range(0, len(blocks), 90):
-        notion("PATCH", f"/blocks/{page_id}/children", {"children": blocks[i:i + 90]})
+        r = notion("PATCH", f"/blocks/{page_id}/children", {"children": blocks[i:i + 90]}) or {}
+        got = [b.get("id") for b in r.get("results") or []]
+        if len(got) != len(blocks[i:i + 90]) or not all(got):
+            ids = None
+        elif ids is not None:
+            ids += got
+    return ids
 
 
 def parse_args(argv=None):
@@ -575,6 +586,7 @@ def parse_args(argv=None):
     ap.add_argument("--when", default="", help="ISO date and time of the meeting set in Start call (title date)")
     ap.add_argument("--wait-notes", type=int, default=0,
                     help="0.9.5.2: seconds to wait for the call notes' Meeting notes being written (the app starts both)")
+    ap.add_argument("--page", default="", help="PB-32 S6: the call's existing Notion page (id or url): rewrite its generated Summary in place, never look up by date, never create, never upload the transcript")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--find-only", action="store_true", help="only look up this meeting's page in Notion")
     return ap.parse_args(argv)
@@ -692,11 +704,178 @@ def write_to_page(page: dict, sc, ids, a, w, blocks, plain, info, lang) -> dict:
         notion("PATCH", f"/pages/{page['id']}", {"properties": upd})
     hhmm = dt.datetime.now().strftime("%H:%M")
     head = [] if blocks and blocks[0].get("type") == "paragraph" else [para(w.get("summary", ""))]   # Meeting notes start with TL;DR
-    append(page["id"], [h(2, TXT[lang]["append"].format(hhmm=hhmm))] + head + blocks
-           + [h(3, TXT[lang]["tr_app"])])
+    got = append(page["id"], [h(2, TXT[lang]["append"].format(hhmm=hhmm))] + head + blocks
+                 + [h(3, TXT[lang]["tr_app"])])
+    _record_first_write(a.md, page["id"], got or [])      # only the ids Notion returned for these writes; none returned: nothing is archived later
     transcript_page(page["id"], TXT[lang]["tr_app"] + " · " + info["title"], plain)
     add_footer(page["id"], lang)
     return {"ok": True, "url": page.get("url"), "page_id": page.get("id")}
+
+
+def _children(page_id: str) -> list:
+    """All top-level blocks of a page, in order."""
+    out, cursor = [], None
+    while True:
+        r = notion("GET", f"/blocks/{page_id}/children?page_size=100" + (f"&start_cursor={cursor}" if cursor else "")) or {}
+        out += r.get("results", [])
+        cursor = r.get("next_cursor")
+        if not r.get("has_more") or not cursor:
+            return out
+
+
+def _plain(block: dict) -> str:
+    body = block.get(block.get("type"), {}) or {}
+    return "".join((t.get("text") or {}).get("content", "") or t.get("plain_text", "") for t in body.get("rich_text", []))
+
+
+def _generated_section(children: list):
+    """The last section Pacenote wrote: (index of its heading, index of the first block after its body). The body ends at
+    the transcript heading or sub-page, the footer divider or the end of the page; None when there is none."""
+    starts = {T["summary"] for T in TXT.values()}
+    append_rx = re.compile("^(?:" + "|".join(re.escape(T["append"]).replace(re.escape("{hhmm}"), r"\d\d:\d\d")
+                                              for T in TXT.values()) + ")$")
+    ends = {T["transcript"] for T in TXT.values()} | {T["tr_app"] for T in TXT.values()}
+    head = None
+    for i, b in enumerate(children):
+        if b.get("type") == "heading_2" and (_plain(b) in starts or append_rx.match(_plain(b))):
+            head = i
+    if head is None:
+        return None
+    end = len(children)
+    for j in range(head + 1, len(children)):
+        b = children[j]
+        if b.get("type") in ("child_page", "divider") or (b.get("type") in ("heading_2", "heading_3") and _plain(b) in ends):
+            end = j
+            break
+    return head, end
+
+
+def _owned_path(md: Path) -> Path:
+    return call_layout.sidecar_of(call_language._named_to_md(md), ".notion-blocks.json")
+
+
+def read_owned(md: Path, page_id: str):
+    """The ids of the blocks Pacenote wrote on this page; None when nothing was recorded (a page of an older version)."""
+    try:
+        d = json.loads(_owned_path(md).read_text("utf-8"))
+        return set(d["ids"]) if d.get("page_id") == page_id else None
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def read_legacy(md: Path, page_id: str) -> set:
+    """The ids of old blocks an earlier Regenerate left in place on a page of an older version (they cannot be told from
+    the PM's): the page stays out of date while any of them is still there."""
+    try:
+        d = json.loads(_owned_path(md).read_text("utf-8"))
+        return set(d.get("legacy") or ()) if d.get("page_id") == page_id else set()
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return set()
+
+
+def set_owned(md: Path, page_id: str, ids, legacy=()) -> None:
+    """Remember exactly these block ids as Pacenote's (the ones Notion returned for its own writes) and the unresolved
+    legacy ids. Atomic (a temp file and a rename); raises OSError when the record cannot be written."""
+    p = _owned_path(md)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    body = {"page_id": page_id, "ids": list(ids)}
+    if legacy:
+        body["legacy"] = sorted(legacy)
+    tmp = p.with_name(p.name + ".tmp")
+    tmp.write_text(json.dumps(body), "utf-8")
+    os.replace(tmp, p)
+
+
+def _record_first_write(md: Path, page_id: str, ids) -> None:
+    """The first wrap-up: a record that cannot be saved is dropped, so a later Regenerate treats the page as one without
+    a record (keeps and reports the old blocks) instead of trusting stale ids. The wrap-up itself does not fail."""
+    try:
+        set_owned(md, page_id, ids)
+    except OSError as e:
+        print(f"wrapup_notion: block record not saved: {e}", file=sys.stderr)
+        try:
+            _owned_path(md).unlink()
+        except OSError:
+            pass
+
+
+def _record_or_undo(md: Path, page_id: str, ids, legacy, written: list) -> None:
+    """Regenerate: record the ids, or archive the blocks this run wrote and fail. Blocks that are on the page but not in
+    the record would be taken for the PM's by the next run and stay as a second copy."""
+    try:
+        set_owned(md, page_id, ids, legacy)
+    except OSError as e:
+        left = 0
+        for bid in written:
+            try:
+                notion("DELETE", f"/blocks/{bid}")
+            except Exception:  # noqa: BLE001
+                left += 1
+        raise RuntimeError(f"the record of Pacenote's Notion blocks could not be saved ({e}); "
+                           + (f"{left} new blocks could not be removed again" if left else "the new text was removed again")) from e
+
+
+def regenerate_page(page: dict, sc, ids, a, w, blocks, lang) -> dict:
+    """Regenerate (--page): the generated Summary section of the call's own page and its Summary property are replaced in
+    place. Blocks outside the section (the PM's own, the transcript sub-page, the footer) stay; the transcript is never
+    uploaded again. New blocks go in first, the old ones are archived after, so a failure in between leaves text, not a hole."""
+    pid = page["id"]
+    upd = link_props(sc, ids, page.get("properties", {}), a.project_name, getattr(a, "workspace_value", ""))
+    if sc["summary"]:
+        upd[sc["summary"]] = {"rich_text": rt(w.get("summary", ""))}
+    if upd:
+        notion("PATCH", f"/pages/{pid}", {"properties": upd})
+    children = _children(pid)
+    sec = _generated_section(children)
+    head = [] if blocks and blocks[0].get("type") == "paragraph" else [para(w.get("summary", ""))]
+    new = head + blocks
+    present = {b.get("id") for b in children}
+    owned = read_owned(a.md, pid)
+    # Old blocks of a page without a record (an older version) cannot be told from the PM's: they stay, their ids are kept
+    # apart from Pacenote's, and the page is out of date until every one of them is gone (also on the next Regenerate).
+    legacy = read_legacy(a.md, pid) & present
+    if sec is None:             # the section was removed by hand: write it again, still without a transcript
+        out = {"ok": True, "url": page.get("url"), "page_id": pid}
+        items, written = [h(2, TXT[lang]["summary"])] + new, []
+        for k in range(0, len(items), 90):
+            r = notion("PATCH", f"/blocks/{pid}/children", {"children": items[k:k + 90]}) or {}
+            written += [b.get("id") for b in r.get("results") or [] if b.get("id")]
+            _record_or_undo(a.md, pid, written, legacy, written)
+        if legacy:
+            out["legacy_blocks"] = len(legacy)
+        return out
+    i, end = sec
+    start = children[i]
+    # Only the blocks Pacenote recorded are archived. Anything else inside the section is the PM's and stays; a page with no
+    # record keeps every old block, the new text goes in above it, and the caller is told.
+    # Blocks the PM added next to a recorded section are preserved and are not a reason to call the page out of date.
+    old = [b for b in children[i + 1:end] if owned is not None and b["id"] in owned]
+    if owned is None:
+        legacy |= {b["id"] for b in children[i + 1:end]}
+    label = TXT[lang]["append"].format(hhmm=dt.datetime.now().strftime("%H:%M")) if start.get("type") == "heading_2" and \
+        _plain(start) not in {T["summary"] for T in TXT.values()} else TXT[lang]["summary"]
+    notion("PATCH", f"/blocks/{start['id']}", {"heading_2": {"rich_text": rt(label)}})
+    chunks = [new[k:k + 90] for k in range(0, len(new), 90)]
+    written = []                            # ids Notion returned for our own writes: a block the PM adds meanwhile is not among them
+    keep = set(owned or ())                 # the old ids stay recorded until the cleanup below is complete
+    for chunk in reversed(chunks):          # each chunk goes right after the heading, so the last one inserted ends up first
+        r = notion("PATCH", f"/blocks/{pid}/children", {"children": chunk, "after": start["id"]}) or {}
+        written += [b.get("id") for b in r.get("results") or [] if b.get("id")]
+        # recorded as each batch succeeds: a failure later cannot leave an untracked copy; a record that cannot be saved
+        # takes this run's blocks off the page again and fails the run
+        _record_or_undo(a.md, pid, keep | {start["id"]} | set(written), legacy, written)
+    for b in old:
+        notion("DELETE", f"/blocks/{b['id']}")      # a failure here keeps old and new ids recorded; the next run archives both and writes once
+    set_owned(a.md, pid, [start["id"]] + written, legacy)   # cleanup done: only the current section is ours (a failure leaves the superset above: safe, the run fails)
+    if end < len(children):     # the transcript heading follows the page language too
+        tb = children[end]
+        if tb.get("type") in ("heading_2", "heading_3") and _plain(tb) in {T["transcript"] for T in TXT.values()} | {T["tr_app"] for T in TXT.values()}:
+            key = "tr_app" if tb["type"] == "heading_3" or _plain(tb) in {T["tr_app"] for T in TXT.values()} else "transcript"
+            notion("PATCH", f"/blocks/{tb['id']}", {tb["type"]: {"rich_text": rt(TXT[lang][key])}})
+    out = {"ok": True, "url": page.get("url"), "page_id": pid}
+    if legacy:
+        out["legacy_blocks"] = len(legacy)      # unverified old blocks left in place: the page is not fully in the new language
+    return out
 
 
 def create_page(sc, ids, a, w, blocks, plain, info, lang) -> dict:
@@ -705,11 +884,10 @@ def create_page(sc, ids, a, w, blocks, plain, info, lang) -> dict:
     props = new_page_props(sc, name, info["start"], w.get("summary", ""))
     props.update(link_props(sc, ids, {}, a.project_name, getattr(a, "workspace_value", "")))
     p = notion("POST", "/pages", {"parent": {"type": "data_source_id", "data_source_id": ids["meetings_db"]},
-                                  "properties": props,
-                                  "children": ([h(2, TXT[lang]["summary"])] + blocks + [h(2, TXT[lang]["transcript"])])[:90]})
-    rest = ([h(2, TXT[lang]["summary"])] + blocks + [h(2, TXT[lang]["transcript"])])[90:]
-    if rest:      # 0.9.5.2: Notion takes at most 100 blocks with a new page; the Meeting notes can be longer
-        append(p["id"], rest)
+                                  "properties": props})
+    # The blocks go in by append (also past Notion's 100 with a new page) because only append reports their ids.
+    got = append(p["id"], [h(2, TXT[lang]["summary"])] + blocks + [h(2, TXT[lang]["transcript"])])
+    _record_first_write(a.md, p["id"], got or [])
     transcript_page(p["id"], TXT[lang]["transcript"] + " · " + name, plain)
     add_footer(p["id"], lang)
     return {"ok": True, "url": p.get("url"), "created": True, "page_id": p.get("id")}
@@ -724,9 +902,16 @@ def run(a, res: dict) -> int:
         return 0
     stats, plain, brief = call_material(a)
     info = call_info(a)
-    lang = info.get("lang", "uk")
-    w = claude_wrapup(plain, brief, a.model, lang)
+    # PB-32 (FB2, D56): the page text is in the call's output language; static labels exist for en and uk, other
+    # languages get English labels (rules/output_language.yaml).
+    out_lang = call_language.output_language(a.md.parent / a.md.name.replace(".named.md", ".md"),
+                                             a.md.read_text(encoding="utf-8", errors="replace"))
+    lang = out_lang if out_lang in TXT else "en"
     m = wait_meeting(a.md, a.wait_notes)       # 0.9.5.2: the Meeting notes of the call notes
+    if a.page and m and m.get("tldr"):          # Regenerate keeps the page title: the fresh notes already supply body and Summary, no model request
+        w = {}
+    else:
+        w = claude_wrapup(plain, brief, a.model, out_lang)
     if m:
         blocks = meeting_blocks(m, a.md, stats, bool(brief), lang)
         w["summary"] = m.get("tldr") or w.get("summary", "")
@@ -738,11 +923,25 @@ def run(a, res: dict) -> int:
         return 0
     res["cost_usd"] = w.get("_cost")
     charge(w.get("_cost"))
-    page = find_page(ids["meetings_db"], info["start"], sc["date"])
-    if page:
+    if a.page:      # Regenerate: the page of this call, found by id; a missing page is an error, not a second page
+        pid = page_id_of(a.page)
+        if not pid:
+            raise RuntimeError("--page is not a Notion page id or url")
+        page = notion("GET", f"/pages/{pid}")
+        if not page.get("id"):
+            raise RuntimeError("the call's Notion page was not found")
+        res.update(regenerate_page(page, sc, ids, a, w, blocks, lang))
+        res["created"] = False
+    elif (page := find_page(ids["meetings_db"], info["start"], sc["date"])):
         res.update(write_to_page(page, sc, ids, a, w, blocks, plain, info, lang))
     else:
         res.update(create_page(sc, ids, a, w, blocks, plain, info, lang))
+    if res.get("legacy_blocks"):    # part of the page is still in the old language: it stays "out of date"
+        return None
+    try:
+        call_language.write_sidecar(a.md.parent / a.md.name.replace(".named.md", ".md"), artifact="notion", written_in=out_lang)
+    except Exception:  # noqa: BLE001  the page is written; the language note is optional
+        pass
     return None
 
 

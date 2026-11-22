@@ -85,6 +85,48 @@ def live_folder(file) -> Path:
     return d.parent if is_call_folder(d) else d
 
 
+def recording_meta(transcript) -> Path:
+    """<project>/video/<stem>.recording.json, the call's metadata (RecordingFiles.metaPath in Swift): <stem> is the
+    transcript's name without ".named", ".md" and ".app"."""
+    t = str(transcript)
+    t = t[:-len(".named.md")] + ".md" if t.endswith(".named.md") else t
+    name = os.path.basename(t)
+    stem = name[:-3] if name.endswith(".md") else name
+    stem = stem[:-4] if stem.endswith(".app") else stem
+    return live_folder(t).parent / "video" / (stem + ".recording.json")
+
+
+def save_spoken(transcript, secs: dict, dominant=None) -> Path:
+    """PB-30/PB-32 (D56): keep what the recorder heard in the call's metadata, where both output-language readers look:
+    `languages` = seconds of speech per language (LangShare.secs), `dominant_language` = the language spoken most. The
+    recorder calls it when the recording ends and again after the end-of-call transcript correction. Every other field
+    (the app's recording parts) is kept; one flock with the app's RecordingMeta.update; atomic; raises OSError."""
+    import fcntl
+    import json
+    p = recording_meta(transcript)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with open(str(p) + ".lock", "a") as lk:
+        fcntl.flock(lk, fcntl.LOCK_EX)
+        try:
+            d = json.loads(p.read_text("utf-8"))
+        except (OSError, ValueError):
+            d = None
+        if not isinstance(d, dict):
+            d = {}
+        for k, v in (("schema", 1), ("title", ""), ("project", ""), ("parts", [])):     # the fields the app requires
+            d.setdefault(k, v)
+        d["languages"] = {str(k): round(float(v), 1) for k, v in sorted((secs or {}).items())
+                          if isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0}
+        if dominant:
+            d["dominant_language"] = str(dominant)
+        else:
+            d.pop("dominant_language", None)
+        tmp = p.with_name(p.name + ".tmp")
+        tmp.write_text(json.dumps(d, ensure_ascii=False, indent=2, sort_keys=True), "utf-8")
+        os.replace(tmp, p)
+    return p
+
+
 def files(live) -> list[Path]:
     """Visible call files of a live folder in both layouts (flat first, then the top of each call folder)."""
     live, out = Path(live), []

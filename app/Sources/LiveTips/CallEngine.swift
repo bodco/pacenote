@@ -163,6 +163,7 @@ final class CallEngine {
         if let first = problems().first { return first }
         verifyCore()
         if let err = ensureAudioHelper() { return err }
+        MainActor.assumeIsolated { OutputLanguageModel.stopForCall() }     // PB-32: a call never overlaps Regenerate (its model requests and notes run)
         LocalAIService.shared.apply(start: true)            // core config: semantic on/off, engine URL; 0.26.3: wake the engine
         if config.localAI.enabled { _ = LocalAIService.shared.waitReady(timeout: 6) }
         callContext = (request["context"] as? String) ?? ""
@@ -353,10 +354,21 @@ final class CallEngine {
     }
 
     /// 0.8.5 (rules/meeting.yaml > tips_language): tips and cards in the meeting's main language, not the window's.
+    /// PB-32 (D56): with no language chosen in Start call the resolver decides; the interface language (`ui`, kept so
+    /// callers do not change) is never an input.
     nonisolated static func tipsLang(_ req: [String: Any], ui: String) -> String {
         if let m = req["me_lang"] as? String, ["uk", "en"].contains(m) { return m }
         if let l = (req["langs"] as? [String])?.first, ["uk", "en"].contains(l) { return l }
-        return ui == "uk" ? "uk" : "en"
+        let r = CallLanguage.resolve()
+        return ["uk", "en"].contains(r) ? r : "en"
+    }
+
+    /// PB-32 S5 (D56, owner answer 3A): the languages the tips window may switch between. Only a mixed call (two or
+    /// more of uk/en chosen in Start call) has a switch; a one-language call has none, whatever the interface language is.
+    nonisolated static func tipsLangs(_ req: [String: Any]) -> [String] {
+        var out: [String] = []
+        for l in (req["langs"] as? [String]) ?? [] where ["uk", "en"].contains(l) && !out.contains(l) { out.append(l) }
+        return out.count >= 2 ? out : []
     }
 
     func startSidecar(file: String, status: EngineStatus, fromStart: Bool = true) {
@@ -557,14 +569,14 @@ final class CallEngine {
     /// again from <stem>.named.md over the old ones (callnotes --rewrite, which also moves this call's untouched register
     /// items to the new names). The PM's edits on the call page live in the tips file and still win (CallLists). Then the
     /// call's Notion page gets its Decisions, Action items, Open questions and Risks again (CallPageSync), and the server
-    /// copy the changed notes. On the "After the call" way; the cost goes to SpendDays and the call's history.
-    @MainActor func rewriteCallNotes(file: String, done: @escaping @MainActor (String?) -> Void) {
+    /// copy the changed notes. `done` gets the error (nil when the notes are written) and the steps that failed (a meeting-notes failure keeps the notes). On the "After the call" way; the cost goes to SpendDays and the call's history.
+    @MainActor func rewriteCallNotes(file: String, syncNotion: Bool = true, done: @escaping @MainActor (String?, [String]) -> Void) {
         let c = config
         guard AIRoute.canRun(job: "after", config: c), !c.engine.sidecarPython.isEmpty, !c.engine.sidecarDir.isEmpty else {
-            done(L("page.mn.noRoute")); return
+            done(L("page.mn.noRoute"), []); return
         }
         let notes = CallNotes.path(file)
-        guard !Self.notesInWork.contains(notes) else { done(L("transcript.spk.rewriteBusy")); return }
+        guard !Self.notesInWork.contains(notes) else { done(L("transcript.spk.rewriteBusy"), []); return }
         let cfg = PyTool.project(of: file).project?.config
         let p = Process()
         p.executableURL = URL(fileURLWithPath: c.engine.sidecarPython)
@@ -589,6 +601,7 @@ final class CallEngine {
             let ms = Int(Date().timeIntervalSince(t0) * 1000)
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
+                    Self.notesRewriteProcs[file] = nil
                     if let usd = d["cost_usd"] as? Double, usd > 0 {
                         SpendDays.add(usd)
                         CallHistory.shared.addCost(file: file, usd)
@@ -597,19 +610,29 @@ final class CallEngine {
                     guard ok else {
                         AnalyticsTracker.shared.error("ai", proc.terminationReason == .uncaughtSignal ? "crashed" : "other", provider: prov, fallbackTo: nil)
                         AppLog.app("notes: rewrite failed call=\(AppLog.stem(file))")
-                        done((d["error"] as? String).map { L("transcript.spk.rewriteFailed", ["error": String($0.prefix(200))]) } ?? L("page.mn.failed"))
+                        done((d["error"] as? String).map { L("transcript.spk.rewriteFailed", ["error": String($0.prefix(200))]) } ?? L("page.mn.failed"), [])
                         return
                     }
                     AppLog.app("notes: rewritten call=\(AppLog.stem(file))")
-                    let sync = CallPageSync.of(file)
-                    for s in ["decisions", "open", "risks", "actions"] { sync.changed(s) }   // no Notion page: nothing happens
+                    if syncNotion {      // Regenerate writes the page itself: this heading-based sync would archive the PM's own blocks under Decisions
+                        let sync = CallPageSync.of(file)
+                        for s in ["decisions", "open", "risks", "actions"] { sync.changed(s) }   // no Notion page: nothing happens
+                    }
                     CallSyncService.shared.sync(file)
-                    done(nil)
+                    done(nil, d["failed_steps"] as? [String] ?? [])
                 }
             }
         }
         Self.notesInWork.insert(notes)
-        do { try p.run() } catch { Self.notesInWork.remove(notes); done(error.localizedDescription) }
+        do { try p.run(); Self.notesRewriteProcs[file] = p } catch { Self.notesInWork.remove(notes); done(error.localizedDescription, []) }
+    }
+
+    /// PB-32: the notes rewrites running now, by call file (main thread only), so a call start can stop Regenerate's.
+    @MainActor private static var notesRewriteProcs: [String: Process] = [:]
+
+    /// Stop the notes rewrite of this call (its `done` gets a failure); nothing when none runs.
+    @MainActor func cancelNotesRewrite(file: String) {
+        if let p = Self.notesRewriteProcs[file], p.isRunning { p.terminate() }
     }
 
     /// `lines`: the real transcript lines when known (the call just ended); a call under NotionGate.minLines gets no page.

@@ -18,6 +18,8 @@ final class NotesRewrite: ObservableObject {
     let file: String
     @Published private(set) var running = false
     @Published private(set) var failed: String? = nil
+    /// Steps of the run that failed while the notes themselves were written (for now: "meeting_notes").
+    @Published private(set) var failedSteps: [String] = []
     init(file: String) { self.file = file }
 
     /// The PM changed the speakers after the notes were written (speakers.json edited_at newer than <stem>.notes.md).
@@ -28,13 +30,15 @@ final class NotesRewrite: ObservableObject {
         return CallSpeakers.notesStale(editedAt: CallSpeakers.editedAt(snapshot: snap), notesWritten: notes)
     }
 
-    func start() {
+    /// `syncNotion: false` leaves the call's Notion page to the caller (Regenerate rewrites it itself).
+    func start(syncNotion: Bool = true) {
         guard !running else { return }
-        running = true; failed = nil
-        CallEngine.shared.rewriteCallNotes(file: file) { [weak self] err in
+        running = true; failed = nil; failedSteps = []
+        CallEngine.shared.rewriteCallNotes(file: file, syncNotion: syncNotion) { [weak self] err, steps in
             guard let self else { return }
             self.running = false
             self.failed = err
+            self.failedSteps = steps
             if err == nil { NotificationCenter.default.post(name: Self.finished, object: self.file) }
         }
     }

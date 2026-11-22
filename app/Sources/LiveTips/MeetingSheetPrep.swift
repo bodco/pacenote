@@ -721,14 +721,18 @@ struct SheetMeetingStep: View {
                 SheetPeopleView(draft: draft, head: false)      // 0.14.0 (D1)
             }
             HStack(alignment: .top, spacing: 28) {
-                labeled(L("sheet.ui.s1.language")) {
-                    PrepMenuField(value: L(draft.language == "uk" ? "sheet.ui.lang.uk" : "sheet.ui.lang.en")) {
-                        Button(L("sheet.ui.lang.en")) { draft.language = "en" }
-                        Button(L("sheet.ui.lang.uk")) { draft.language = "uk" }
+                // PB-32 (FB2, D56): the Sheet is in the call language; the control exists only for a call with 2 or 3 languages
+                if draft.isMultiLanguage {
+                    labeled(L("sheet.ui.s1.language")) {
+                        PrepMenuField(value: outLangName(draft.language)) {
+                            ForEach(draft.callLanguages, id: \.self) { c in
+                                Button(outLangName(c)) { draft.outputLanguage = c }
+                            }
+                        }
+                        .accessibilityLabel(L("sheet.ui.s1.language"))
                     }
-                    .accessibilityLabel(L("sheet.ui.s1.language"))
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
                 labeled(L("sheet.ui.s1.remind")) {
                     PrepMenuField(value: remindName(draft.remind)) {
                         ForEach([30, 60, 0] + ([0, 30, 60].contains(draft.remind) ? [] : [draft.remind]), id: \.self) { n in
@@ -740,6 +744,10 @@ struct SheetMeetingStep: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
+    }
+
+    private func outLangName(_ code: String) -> String {
+        code == "uk" ? L("sheet.ui.lang.uk") : code == "en" ? L("sheet.ui.lang.en") : CallLanguage.name(code)
     }
 
     private func remindName(_ n: Int) -> String {

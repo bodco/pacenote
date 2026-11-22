@@ -280,7 +280,7 @@ final class SheetRunner: ObservableObject {
             "meeting": meeting,
             "participants": ["ours": me.isEmpty ? [] : [["name": me]], "theirs": theirs],
             "preset": Self.preset(callType: r.callType, audience: r.audience, sales: r.salesMethod != nil, title: r.title, earlier: earlier),
-            "language": L10n.lang, "languages": r.languages, "route": j.route, "model": model,
+            "language": PrepRunner.outputLanguage(r.languages), "languages": r.languages, "route": j.route, "model": model,
             "project": ["slug": r.slug, "root": r.root, "config": r.config],
             "call_type": r.callType, "audience": r.audience, "context": r.context,
             "sources": sources, "folders": [String](), "options": ["folder_days": SheetPrefs.storedFolderDays],

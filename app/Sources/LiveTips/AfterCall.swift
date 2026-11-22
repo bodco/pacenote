@@ -22,25 +22,49 @@ final class FollowUpModel: ObservableObject {
     @Published var busy = false
     @Published var error = ""
     @Published var instructions: [String] = []
-    private var lastWritten = ""                     // the text as Pacenote wrote it, to log the PM's hand edits
+    private var answeredLanguageOffer = false
+    private var preferredLanguage: String?
+    private var draftLanguage: String?
+    private var lastWritten: String?                     // the text as Pacenote wrote it, to log the PM's hand edits
     var onChange: (() -> Void)?
 
     init(file: String) { self.file = file }
 
     var title: String { CallPageView.title(file) }
     var project: String { CallHistory.shared.records.first { $0.file == file }?.project ?? "" }
-    var lang: String { FollowUpWindow.language(of: file) }
+    private var draftText: String { subject + "\n" + body }
+
+    var hasDraft: Bool { CallLanguage.followUpHasDraft(language: draftLanguage, subject: subject, body: body) }
+
+    var languageOffer: String? {
+        guard !busy, !hasDraft, !answeredLanguageOffer,
+              let client = PyTool.project(of: file).project?.clientLanguage,
+              let code = CallLanguage.hint(fromClientLanguage: client),
+              code != FollowUpWindow.language(of: file) else { return nil }
+        return code
+    }
+
+    func answerLanguageOffer(_ language: String?) {
+        guard languageOffer != nil else { return }
+        answeredLanguageOffer = true
+        preferredLanguage = language
+        write()
+    }
 
     /// The PM's recurring follow-up corrections (rules/learning.yaml > standing).
     static func lessons() -> String {
         Learning.prompt(Learning.standing(EditLog.all(), kinds: ["followup_instruction", "followup_edit"]))
     }
 
-    func write() {
+    func write(replacingDraft: Bool = false) {
+        guard CallLanguage.followUpMayWrite(busy: busy, hasDraft: hasDraft, replacingDraft: replacingDraft) else { return }
+        logHandEdits()
+        let target = preferredLanguage ?? FollowUpWindow.language(of: file)
+        let usesClientLanguage = preferredLanguage != nil
         UsageLog.log("followup_written")
         busy = true; error = ""; onChange?()
         let c = AppConfig.load(from: AppPaths.config)
-        var args = ["--md", file, "--lang", lang, "--model", c.models.tip]
+        var args = ["--md", file, "--lang", target, "--model", c.models.tip]
         let tmp = (NSTemporaryDirectory() as NSString).appendingPathComponent("pacenote-lessons-\(UUID().uuidString).txt")
         let l = Self.lessons()
         if !l.isEmpty, (try? l.write(toFile: tmp, atomically: true, encoding: .utf8)) != nil { args += ["--lessons", tmp] }
@@ -49,7 +73,10 @@ final class FollowUpModel: ObservableObject {
             guard let self = self else { return }
             self.busy = false
             if (r["ok"] as? Bool) == true {
-                self.subject = r["subject"] as? String ?? ""; self.body = r["body"] as? String ?? ""; self.lastWritten = self.body
+                self.draftLanguage = r["lang"] as? String ?? target
+                CallLanguage.writeSidecar(transcript: self.file, artifact: "followup", writtenIn: self.draftLanguage,
+                                          followUpUsesClientLanguage: usesClientLanguage)
+                self.subject = r["subject"] as? String ?? ""; self.body = r["body"] as? String ?? ""; self.lastWritten = self.draftText
             } else { self.error = L("followup.failed", ["err": r["error"] as? String ?? ""]) }
             self.onChange?()
         }
@@ -58,7 +85,7 @@ final class FollowUpModel: ObservableObject {
     /// "Drop the pricing line": the instruction is applied to the current text and logged.
     func revise(_ instruction: String) {
         let i = instruction.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !i.isEmpty, !body.isEmpty else { return }
+        guard !busy, !i.isEmpty, !body.isEmpty else { return }
         logHandEdits()
         EditLog.add(kind: "followup_instruction", title: title, project: project, file: file, fields: ["text": i])
         instructions.append(i)
@@ -66,12 +93,12 @@ final class FollowUpModel: ObservableObject {
         let c = AppConfig.load(from: AppPaths.config)
         let tmp = (NSTemporaryDirectory() as NSString).appendingPathComponent("pacenote-draft-\(UUID().uuidString).json")
         if let d = try? JSONSerialization.data(withJSONObject: ["subject": subject, "body": body]) { try? d.write(to: URL(fileURLWithPath: tmp)) }
-        PyTool.run("followup", ["--md", file, "--lang", lang, "--model", c.models.tip, "--draft", tmp, "--instruction", i]) { [weak self] r in
+        PyTool.run("followup", ["--md", file, "--lang", draftLanguage ?? preferredLanguage ?? FollowUpWindow.language(of: file), "--model", c.models.tip, "--draft", tmp, "--instruction", i]) { [weak self] r in
             try? FileManager.default.removeItem(atPath: tmp)
             guard let self = self else { return }
             self.busy = false
             if (r["ok"] as? Bool) == true {
-                self.subject = r["subject"] as? String ?? self.subject; self.body = r["body"] as? String ?? self.body; self.lastWritten = self.body
+                self.subject = r["subject"] as? String ?? self.subject; self.body = r["body"] as? String ?? self.body; self.lastWritten = self.draftText
             } else { self.error = L("followup.failed", ["err": r["error"] as? String ?? ""]) }
             self.onChange?()
         }
@@ -79,15 +106,15 @@ final class FollowUpModel: ObservableObject {
 
     /// The PM changed the text by hand: only the lines removed and added go to the log (as for the brief).
     func logHandEdits() {
-        guard !lastWritten.isEmpty, body != lastWritten else { return }
+        guard let lastWritten, draftText != lastWritten else { return }
         let a = lastWritten.components(separatedBy: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
-        let b = body.components(separatedBy: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        let b = draftText.components(separatedBy: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
         let removed = a.filter { !Set(b).contains($0) }.prefix(20).map { String($0.prefix(300)) }
         let added = b.filter { !Set(a).contains($0) }.prefix(20).map { String($0.prefix(300)) }
         if !removed.isEmpty || !added.isEmpty {
             EditLog.add(kind: "followup_edit", title: title, project: project, file: file, fields: ["removed": Array(removed), "added": Array(added)])
         }
-        lastWritten = body
+        self.lastWritten = draftText
     }
 
     func copy() {
@@ -175,7 +202,7 @@ extension PrompterController {
         if let b = d["body"] as? String { fu.body = b }
         if let s = d["subject"] as? String { fu.subject = s }
         switch d["item"] as? String ?? "" {
-        case "write": fu.write()
+        case "write": fu.write(replacingDraft: CallLanguage.tipsWriteReplacesDraft(body: fu.body))   // a cleared draft with a remembered language must not make Write a no-op
         case "revise": fu.revise(d["instruction"] as? String ?? "")
         case "edited": fu.logHandEdits()
         case "copy": fu.copy()

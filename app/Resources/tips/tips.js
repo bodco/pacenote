@@ -553,7 +553,7 @@
       <button class="btn1" type="button" data-act="after" data-item="followup">${esc(t.followup)}</button>
       <button class="ghost" type="button" data-act="after" data-item="callpage">${esc(t.callPage)}</button>`; }
 
-    // 0.8.5 (owner): tips follow the meeting's language; a switch when it differs from the interface language.
+    // 0.8.5 (owner): tips follow the meeting's language; PB-32 S5: a switch only for a mixed call (two or more call languages).
     renderLangSwitch();
 
     // 0.8.5 (P8): a recording problem replaces the tips area: red strip, the state, the levels, one action.
@@ -1087,13 +1087,15 @@
   function reportPresenting() { const p = presenting() && S.steps.length > 0; if (p !== lastPresenting) { lastPresenting = p; post('presenting', { on: p }); } }
   window.addEventListener('resize', () => { if (DK.isSplit) dkShowCard(DK.idx); });
 
+  function nextTipsLang(tl) { const l = tl.langs, i = l.indexOf(tl.current || tl.meeting); return l[(i + 1) % l.length]; }
+
   function renderLangSwitch() {
     let b = $('langBtn');
-    const tl = S.tipsLang, show = !!(tl && tl.meeting && tl.meeting !== S.lang);
+    const tl = S.tipsLang, show = !!(tl && tl.meeting && tl.langs.length >= 2);
     if (!b) { b = document.createElement('button'); b.id = 'langBtn'; b.type = 'button'; b.className = 'langbtn'; b.dataset.act = 'tips-lang'; const more = $('moreBtn'); more.parentNode.insertBefore(b, more); }
     b.hidden = !show;
     if (!show) return;
-    const cur = tl.current || tl.meeting, other = cur === 'uk' ? 'en' : 'uk', name = (l) => l === 'uk' ? 'УК' : 'EN';
+    const cur = tl.current || tl.meeting, other = nextTipsLang(tl), name = (l) => l === 'uk' ? 'УК' : 'EN';
     b.textContent = name(cur);
     b.title = T().tipsIn({ l: name(cur), o: name(other) });
     b.setAttribute('aria-label', b.title);
@@ -1799,8 +1801,8 @@
       case 'stop-follow': S.syncA = null; post('stop-follow'); render(); return;
       case 'attach-deck': post('attach-deck'); return;
       case 'tips-lang': {
-        const tl = S.tipsLang; if (!tl) return;
-        const cur = tl.current || tl.meeting; tl.current = cur === 'uk' ? 'en' : 'uk';
+        const tl = S.tipsLang; if (!tl || tl.langs.length < 2) return;
+        tl.current = nextTipsLang(tl);
         post('setting', { key: 'tips_lang', value: tl.current }); render(); return;
       }
       case 'ask-b': answerAsk(b.dataset.b); return;
@@ -1967,14 +1969,14 @@
     setMeetEnd(m) { S.meetEnd = m && m.left != null ? { left: +m.left } : null; render(); },
     /** 0.8.5 (P7): the after-call screen: outcome, series, the follow-up draft. */
     setAfter(a) { S.after = a || null; render(); },
-    /** 0.8.5: {meeting: 'uk', current: 'uk'}: the tips language and the meeting's. */
+    /** {meeting: 'uk', langs: ['uk','en'], current: 'uk'}: the tips language, the call's languages (the switch shows for two or more). */
     /** 0.8.6 (D4): open register items of this project from earlier calls and the PM's Notion tasks:
      *  [{id, text, due, done, mine, owner, badge: 'CALL'|'N', status, fromCall, note}]; project = the group's name. */
     setOnYou(d) { S.openItems = (d && d.open) || []; S.notionItems = (d && d.notion) || []; S.notionProject = (d && d.project) || ''; render(); },
     /** 0.10.1 (A3): {name, show, label, change}: the call's project line under the header. */
     setProject(p) { S.proj = p || null; render(); },
     setSpeakerPrompt(sec) { S.spkPrompt = +sec || 15; render(); },
-    setTipsLang(t) { S.tipsLang = t && t.meeting ? { meeting: t.meeting, current: t.current || t.meeting } : null; render(); },
+    setTipsLang(t) { S.tipsLang = t && t.meeting ? { meeting: t.meeting, langs: Array.isArray(t.langs) ? t.langs : [], current: t.current || t.meeting } : null; render(); },
     help() { post('help'); },
     rename(title) { if (feed) feed.rename(title); },
     _state: S, _feed: feed

@@ -1329,8 +1329,19 @@ The skill and the app follow the same rules, in `rules/agenda.yaml`, `rules/comm
   close, Copy), open questions, the agenda (discussed, raised, not raised) and the risks. From there: the follow-up
   email, the transcript, the series and, in the menu, Notion and Finder. The tips window shows the same two actions
   when the call has ended.
-- **Follow-up email.** A draft in the client's language (the project config's client language, English otherwise):
-  thanks, decisions, next steps for both sides, open questions. Edit it, then Copy or Open in Mail. Nothing is sent.
+- **Output language.** A call with two or three languages (each at least 10% of the call) shows an Output language
+  menu and **Regenerate** under the status lines. The default is the dominant language of the call. Choosing another
+  only remembers it for this call; nothing is rewritten until you press Regenerate, which writes the notes, Summary,
+  Recap and an existing follow-up draft again in that language and rewrites the Summary, Recap and meeting notes on the
+  Notion page in place (blocks outside the Pacenote section and the transcript page stay; the transcript is not uploaded again); a step that fails is named so you can press Regenerate again; it asks first for a call over one hour. A line shows the language each text was written in and marks the ones out of date; a follow-up chosen in the
+  client’s language is not marked. The transcript never changes. A one-language call shows no control. Regenerate does
+  not start while a call is recording, and a call you start during Regenerate stops it: what was not written again
+  stays out of date, press Regenerate after the call. On a Notion page written by an older version the old blocks stay
+  next to the new text and the page stays out of date until you delete them.
+- **Follow-up email.** The draft uses the call's output language. If the project's client language differs,
+  the Follow-up tab and inspector offer it before the first draft. Choosing the client’s language keeps the
+  follow-up current even if you change the call’s output language. Write again asks before replacing your draft.
+  The draft includes thanks, decisions, next steps for both sides and open questions. Edit it, then Copy or Open in Mail. Nothing is sent.
 - **Call memory.** Home > Search calls (Command-F): choose the project, ask in plain words ("what did we agree about
   the export?"). The answer is 1-2 sentences, a quote and "Jump to 12:34", which opens the transcript at that moment.
   Only the chosen project's transcripts are read (its local index, or a word search when there is none).
@@ -2063,7 +2074,7 @@ People need something else: short notes they can read in a minute and send on. S
 - **Copy** copies the notes with their headings and lists (Markdown as text and the same as rich text), so a paste
   into Notion, Google Docs, Word, Mail or Slack keeps them. **Export** opens the export (below).
 
-The notes are written in the call's language, with the people and terms of the project config to fix garbled names.
+The notes (and the Summary, Recap and the Notion meeting page) are written in the call's output language: your choice for the call, else the dominant language of the call, never the interface language. A language without app labels (for example Polish) gets text in it with English headings. They use the people and terms of the project config to fix garbled names.
 They are one more request after the full notes, on the "After the call" way (about $0.05 to $0.10 a call with
 Sonnet; free on this Mac), and are kept as the `## Meeting notes` section at the top of `<call>.notes.md`
 (rules/notes.yaml, schema 2). A call held before 0.9.5.2 shows **Make meeting notes** (one request, about $0.05 to $0.10; a call
@@ -2218,6 +2229,10 @@ a set of blocks (who they are, the company, signals, fit, the contact, qualifica
 the call, best outcome, red lines, structure and roles, and more), and every fact in it says where it comes from. It
 replaces the brief: every call type except Transcript is prepared this way, and the tips during the call are built
 from the sheet. A brief made before 0.10.0 stays readable on its call's page, marked "Prepared before Meeting Sheet".
+
+**Language.** The sheet and the brief are written in the call language: the first language chosen in Start call, not
+the interface language. There is no language field for a one-language call. For a call with two or three languages,
+step 1 shows **Output language** with those languages; the choice applies to this call only.
 
 The upcoming call's page has the tabs **Setup**, **Meeting Sheet**, **Readiness**, **Sources**, **Versions**,
 **Tasks** and **Earlier**. The header shows the readiness pill and the buttons for the state: Get ready and Start

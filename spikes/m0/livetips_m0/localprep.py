@@ -20,7 +20,7 @@ import urllib.request
 from pathlib import Path
 from typing import List, Optional
 
-from . import call_layout
+from . import call_language, call_layout
 
 PACK_CHARS = 120_000          # about 35-40K tokens: what a 26-35B model on a 32 GB Mac can hold with room to answer
 NUM_CTX = 65_536
@@ -179,6 +179,12 @@ Write in {BRIEF_LANG}, quotes and ready phrases in {CALL_LANG}. No long dashes. 
 
 LANGS = {"uk": "Ukrainian", "en": "English", "es": "Spanish", "de": "German", "pl": "Polish", "ru": "Russian"}
 
+
+def lang_name(code) -> str:
+    """'uk' -> 'Ukrainian'; a code the resolver has a name for (it, pt, nl...) gets it; any other is written as the code."""
+    c = call_language.normalize(code) or "en"
+    return LANGS.get(c) or call_language.language_name(c)
+
 NOTES_SYS = """You read one transcript of an earlier work call and write notes for the project manager (the PM) who
 prepares the next call of the same meeting. Only what the transcript says; never invent. Speaker labels can be wrong
 and names garbled. Write in {BRIEF_LANG}, no long dashes. Exactly these parts:
@@ -196,8 +202,8 @@ files). Never invent facts, names, numbers or dates; when something is unknown o
 and go on with the most likely reading. Never give the PM homework before the call ("confirm", "verify", "check
 whether"): the PM has only this brief and the call itself, no place to look things up (2026-11-12, owner). A gap that
 matters for the call's goal becomes a question to ask on the call, in the checklist or the speech; a gap that does
-not matter is left out. Newer facts win. Write the brief in the language the project config asks for the brief, else in {BRIEF_LANG}; quotes and ready
-phrases in the call language ({CALL_LANG}).
+not matter is left out. Newer facts win. Write the brief in {BRIEF_LANG}: this is the language resolved for this call and it overrides any language the
+project config or any other material asks for; quotes and ready phrases in the call language ({CALL_LANG}).
 No long dashes. Be concrete and detailed (1500-2500 words): dates, numbers, ticket keys, who said what.
 
 Start with exactly this first line: {HEAD}
@@ -358,11 +364,10 @@ def main(argv=None) -> int:
 
     try:
         call_codes = r.get("languages") or ["uk"]
-        call_lang = LANGS.get(call_codes[0], call_codes[0])
-        brief_lang = LANGS.get(r.get("brief_lang") or "uk", "Ukrainian")
-        if r.get("config") and re.search(r"бриф українською|brief in ukrainian", read_text(r["config"], 60_000), re.I):
-            brief_lang = "Ukrainian"                   # the project config decides the brief language
-        langs = ", ".join(LANGS.get(c, c) for c in call_codes)
+        call_lang = lang_name(call_codes[0])
+        # PB-32 (FB2, D56): the brief is in the call language the app resolved (brief_lang), never the interface language
+        brief_lang = lang_name(r.get("brief_lang") or call_codes[0])
+        langs = ", ".join(lang_name(c) for c in call_codes)
         head = f'# Live Brief: {r["title"]} (prep, {r.get("when", "")}, local model {model})'
         call = (f'Call: "{r["title"]}", {r.get("when", "")}. Project: {r.get("project_name", "")}. Audience: '
                 f'{r.get("audience", "auto")}. Meeting type: {r.get("call_type", "auto")}. Call languages: {langs}.')

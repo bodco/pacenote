@@ -207,9 +207,11 @@ final class PrompterController: NSObject, NSWindowDelegate, WKScriptMessageHandl
                 lastStatus = s
                 push("window.setStatus(" + s + ")")
                 if let f = d["file"] as? String, !f.isEmpty, f != transcriptPath {
-                    // 0.8.5 (rules/meeting.yaml > tips_language): the window learns the meeting's language for its switch.
+                    // PB-32 S5 (rules/meeting.yaml > tips_language): the window learns the meeting's language and, for a mixed call, the languages to switch between.
                     let meeting: String = MainActor.assumeIsolated { CallEngine.tipsLang(CallEngine.shared.callRequest, ui: AppConfig.load(from: AppPaths.config).uiLanguage) }
-                    push("window.LiveTips && LiveTips.setTipsLang({meeting: '\(meeting)'})")
+                    let langs: [String] = MainActor.assumeIsolated { CallEngine.tipsLangs(CallEngine.shared.callRequest) }
+                    let langsJS = "[" + langs.map { "'\($0)'" }.joined(separator: ",") + "]"
+                    push("window.LiveTips && LiveTips.setTipsLang({meeting: '\(meeting)', langs: \(langsJS)})")
                     transcriptPath = f
                     transcript = TailReader(path: f)
                     speakersMtime = nil

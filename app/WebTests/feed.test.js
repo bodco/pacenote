@@ -698,5 +698,13 @@ test('0.25: a quiet risk and a decision conflict reach the card, a quiet Done? d
   assert.strictEqual(p.total, 5); assert.strictEqual(p.card.id, 'd');
 });
 
+test('PB-32 S5: the tips language switch needs a mixed call, never the interface language', () => {
+  const src = require('fs').readFileSync(path.join(__dirname, '../Resources/tips/tips.js'), 'utf8');
+  const body = src.slice(src.indexOf('function renderLangSwitch'), src.indexOf('function renderMeetEnd'));
+  assert.ok(/tl\.langs\.length >= 2/.test(body), 'shown only for two or more call languages');
+  assert.ok(!/S\.lang/.test(body.split('const cur')[0]), 'the interface language is not an input');
+  assert.ok(/langs: Array\.isArray\(t\.langs\)/.test(src), 'setTipsLang carries the call languages');
+});
+
 console.log(`feed tests: ${passed} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);

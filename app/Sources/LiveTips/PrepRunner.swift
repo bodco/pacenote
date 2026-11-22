@@ -241,6 +241,13 @@ final class PrepRunner: ObservableObject {
         return c.filter(has).max { newest($0) < newest($1) }
     }
 
+    /// PB-32 (FB2, D56): the language of a brief or Sheet is the call language (the first language of Start call, else the
+    /// transcription language of Settings, else English), never the interface language.
+    static func outputLanguage(_ callLanguages: [String], explicit: String? = nil) -> String {
+        let own = AppConfig.load(from: AppPaths.config).callLanguage.split(separator: "+").first.map(String.init) ?? ""
+        return CallLanguage.resolve(explicit: explicit, startLangs: callLanguages, settings: own)
+    }
+
     struct Request {
         var title: String
         var date: Date
@@ -278,7 +285,7 @@ final class PrepRunner: ObservableObject {
         let crmLine = !CRMService.shared.connected ? "" : "## From CRM: " + (FileManager.default.fileExists(atPath: CallLayout.sidecar(base, ".crm.md")) ? "Read \(CallLayout.sidecar(base, ".crm.md")) (a CRM snapshot; say how old it is from its Taken line)." : "There is no CRM snapshot.") + "\n"
         return """
 
-        SALES CALL (method: \(m), see rules/sales.yaml in the skill for its criteria). Add these sections to the brief, in this order:
+        SALES CALL (method: \(m), see rules/sales.yaml in the skill for its criteria). \(CallLanguage.promptLine(outputLanguage(r.languages))) Add these sections to the brief, in this order:
         ## Company: \(web ? "what they do, size, news of the last 90 days, with links. Use WebSearch and WebFetch ONLY with the company's name or domain (\(r.company.isEmpty ? r.projectName : r.company)); never put anything from the project files, the context or people's names into a search. End the section with the line: \"Searched the web for: \(r.company.isEmpty ? r.projectName : r.company). Nothing from your files was sent.\"" : "from the project files only (web search is off in Settings > AI).")
         \(crmLine)## Where we are: what is known and unknown for each criterion of the method, from earlier calls of this series\(crmLine.isEmpty ? "" : " and the CRM"), who said what. Also the stakeholders (name, role, stance) and the open steps of the mutual action plan (owner, date) of those calls: read their <stem>.sales.json files next to the transcripts in the live folder (the PM's edits on the call page are in them).
         ## Likely objections: 3 to 5, each with a short answer; use <project>/pacenote/answer-cards.md when it has a match.
@@ -404,7 +411,7 @@ final class PrepRunner: ObservableObject {
 
         Call: "\(r.title)", \(h.string(from: r.date)). Project: \(r.projectName) (slug \(r.slug)). Project folder: \(r.root). \
         Project config: \(r.config.isEmpty ? "none" : r.config). Audience: \(r.audience). Meeting type: \(r.callType)\
-        \(r.callType == "interview" ? ", role " + r.hiringRole : ""). Call languages: \(r.languages.joined(separator: "+")).
+        \(r.callType == "interview" ? ", role " + r.hiringRole : ""). Call languages: \(r.languages.joined(separator: "+")). \(CallLanguage.promptLine(Self.outputLanguage(r.languages)))
 
         Before choosing questions, reconcile THIS call's participants, their roles, goal and named source document with the latest PM context. A repeated title does not imply the same interviewee. Explicit current corrections override older calls and saved instructions. If sources conflict and no current correction resolves them, put a prominent "Needs confirmation" section before the checklist; state both alternatives and do not silently reuse either interviewee's questions. Start with a "Live essentials" section: the goal, interviewee and role, primary document, 3-5 key facts/red lines and unresolved confirmations. Keep that section below 180 words; preserve the detailed brief below it.
 
@@ -472,8 +479,8 @@ final class PrepRunner: ObservableObject {
         Refresh an existing Live Tips preparation (the live-tips skill's sweep.md, section "Refresh"). Work with local \
         files only: no Notion or Jira APIs, no MCP tools, no web, no subagents.
 
-        Call: "\(r.title)", \(h.string(from: r.date)). Project: \(r.projectName) (slug \(r.slug)). Project folder: \(r.root).
-        The brief: \(CallLayout.sidecar(base, ".brief.md")) (the PM's original is \(CallLayout.sidecar(base, ".brief.orig.md")) when it exists: lines that differ are the \
+        Call: "\(r.title)", \(h.string(from: r.date)). Project: \(r.projectName) (slug \(r.slug)). Project folder: \(r.root). \(CallLanguage.promptLine(Self.outputLanguage(r.languages)))
+        The brief:\(CallLayout.sidecar(base, ".brief.md")) (the PM's original is \(CallLayout.sidecar(base, ".brief.orig.md")) when it exists: lines that differ are the \
         PM's edits and stay). Facts: \(CallLayout.sidecar(base, ".facts.json")), cards: \(CallLayout.sidecar(base, ".cards.json")).
         Files changed since the brief was made (newest first; read only these, fully):
         \(r.changed.isEmpty ? "(none: the brief is only old; check the project's Current State in the local Notion mirror \(notion.joined(separator: ", ")) and the newest call in \(live))" : r.changed.map { "- " + $0 }.joined(separator: "\n"))
@@ -606,7 +613,7 @@ final class PrepRunner: ObservableObject {
             "config": r.config, "audience": r.audience, "call_type": r.callType, "languages": r.languages, "context": r.context,
             "files": r.folders.filter { !StartCallModel.isDir($0) }, "folders": r.folders.filter { StartCallModel.isDir($0) },
             "live": live, "notion": notion, "skill": skill, "base": base, "lt": [c.engine.python, lt], "model": runModel,
-            "url": Self.ollamaURL, "use_project_folder": r.useProjectFolder, "brief_lang": L10n.lang,
+            "url": Self.ollamaURL, "use_project_folder": r.useProjectFolder, "brief_lang": Self.outputLanguage(r.languages),
             "openai_model": c.ai.openaiPrep, "gemini_model": c.ai.geminiPrep]
         if r.deck?.info != nil, FileManager.default.fileExists(atPath: CallLayout.sidecar(base, ".deck.json")) {
             req["deck"] = CallLayout.sidecar(base, ".deck.json")
@@ -635,7 +642,7 @@ final class PrepRunner: ObservableObject {
             if let pa = pa, paVerify {
                 let req = PrepAgent.verifyRequest(pa, base: base, root: r.root, extra: extraDirs, lt: [c.engine.python, lt], claude: exe,
                                                   route: route, stateDir: stateDir, python: c.engine.sidecarPython,
-                                                  engineDir: c.engine.sidecarDir, lang: L10n.lang)
+                                                  engineDir: c.engine.sidecarDir, lang: Self.outputLanguage(r.languages))
                 let reqPath = (stateDir as NSString).appendingPathComponent("prepverify-request.json")
                 if let d = try? JSONSerialization.data(withJSONObject: req) { try? d.write(to: URL(fileURLWithPath: reqPath)) }
                 digestEnv["LT_VERIFY"] = reqPath

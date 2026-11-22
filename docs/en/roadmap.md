@@ -27,7 +27,7 @@ Updated: 20 November 2026. Visual version: https://pacenote.bodco.pm/roadmap/
 
 ### Now
 
-- **Your call's language, everywhere.** The transcript keeps the language people actually speak, and the brief, tips, notes and follow-up follow the language of the call. Switch it from the tips window.
+- **Your call's language, everywhere.** The transcript keeps the language people actually speak, and the brief, tips, notes and follow-up follow the language of the call. A call with two or three languages gets an Output language menu and Regenerate on the call page.
 - **Better briefs and tips.** Every call is reviewed after it ends: which tips helped, which were noise, what was missed. The prompts change from that.
 
 ### Next

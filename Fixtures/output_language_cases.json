@@ -1,0 +1,497 @@
+{
+ "_about": "Shared by tests/test_call_language.py and CoreChecks (rules/output_language.yaml, PB-32 S1). Transcripts are invented; tags give the lines' languages.",
+ "resolve": [
+  {
+   "name": "explicit wins over everything",
+   "input": {
+    "explicit": "en",
+    "dominant": "uk",
+    "start_langs": [
+     "uk"
+    ],
+    "client_language": "Ukrainian",
+    "settings": "uk"
+   },
+   "expect": "en"
+  },
+  {
+   "name": "dominant wins over start call",
+   "input": {
+    "dominant": "uk",
+    "start_langs": [
+     "en",
+     "uk"
+    ],
+    "client_language": "English",
+    "settings": "en"
+   },
+   "expect": "uk"
+  },
+  {
+   "name": "first start call language",
+   "input": {
+    "start_langs": [
+     "uk",
+     "en"
+    ],
+    "client_language": "English",
+    "settings": "en"
+   },
+   "expect": "uk"
+  },
+  {
+   "name": "client_language hint",
+   "input": {
+    "client_language": "Ukrainian (formal)",
+    "settings": "en"
+   },
+   "expect": "uk"
+  },
+  {
+   "name": "client_language hint, Spanish",
+   "input": {
+    "client_language": "Spanish"
+   },
+   "expect": "es"
+  },
+  {
+   "name": "settings",
+   "input": {
+    "settings": "pl"
+   },
+   "expect": "pl"
+  },
+  {
+   "name": "default en",
+   "input": {},
+   "expect": "en"
+  },
+  {
+   "name": "unknown client_language falls through to settings",
+   "input": {
+    "client_language": "Klingon",
+    "settings": "de"
+   },
+   "expect": "de"
+  },
+  {
+   "name": "invalid explicit is ignored",
+   "input": {
+    "explicit": "auto",
+    "dominant": "uk"
+   },
+   "expect": "uk"
+  },
+  {
+   "name": "region and case are normalized",
+   "input": {
+    "explicit": "UK-ua"
+   },
+   "expect": "uk"
+  },
+  {
+   "name": "long names are not codes",
+   "input": {
+    "explicit": "Ukrainian"
+   },
+   "expect": "en"
+  },
+  {
+   "name": "null dominant uses start call",
+   "input": {
+    "dominant": null,
+    "start_langs": [
+     "en"
+    ],
+    "client_language": "Ukrainian"
+   },
+   "expect": "en"
+  },
+  {
+   "name": "empty dominant uses client hint",
+   "input": {
+    "dominant": "",
+    "client_language": "Ukrainian"
+   },
+   "expect": "uk"
+  },
+  {
+   "name": "start call skips junk",
+   "input": {
+    "start_langs": [
+     "auto",
+     "uk"
+    ]
+   },
+   "expect": "uk"
+  },
+  {
+   "name": "language beyond en/uk",
+   "input": {
+    "dominant": "fr",
+    "client_language": "English"
+   },
+   "expect": "fr"
+  },
+  {
+   "name": "client_language says English, call was Ukrainian",
+   "input": {
+    "dominant": "uk",
+    "client_language": "English"
+   },
+   "expect": "uk"
+  }
+ ],
+ "hint": [
+  {
+   "text": "English",
+   "expect": "en"
+  },
+  {
+   "text": "Ukrainian",
+   "expect": "uk"
+  },
+  {
+   "text": "Українська",
+   "expect": "uk"
+  },
+  {
+   "text": "Spanish",
+   "expect": "es"
+  },
+  {
+   "text": "Deutsch",
+   "expect": "de"
+  },
+  {
+   "text": "French",
+   "expect": "fr"
+  },
+  {
+   "text": "Polish",
+   "expect": "pl"
+  },
+  {
+   "text": "pl",
+   "expect": "pl"
+  },
+  {
+   "text": "",
+   "expect": null
+  },
+  {
+   "text": "Klingon",
+   "expect": null
+  }
+ ],
+ "adapter": [
+  {
+   "name": "wrong tags are the majority (old rule)",
+   "transcript": "# Live transcript: Sync\n- Languages: Я = en, allowed = en\n[13:00:00] Я (en): text\n[13:01:00] Mike (en): text\n[13:02:00] Я (en): text\n[13:03:00] Mike (uk): text\n",
+   "meta": null,
+   "dominant": "en",
+   "languages": [
+    "en",
+    "uk"
+   ]
+  },
+  {
+   "name": "meta dominant wins over the tags",
+   "transcript": "# Live transcript: Sync\n- Languages: Я = en, allowed = en\n[13:00:00] Я (en): text\n[13:01:00] Mike (en): text\n[13:02:00] Я (en): text\n[13:03:00] Mike (uk): text\n",
+   "meta": {
+    "dominant_language": "uk"
+   },
+   "dominant": "uk",
+   "languages": [
+    "uk",
+    "en"
+   ]
+  },
+  {
+   "name": "meta dominant and shares",
+   "transcript": "",
+   "meta": {
+    "dominant_language": "uk",
+    "languages": {
+     "uk": 0.71,
+     "en": 0.29
+    }
+   },
+   "dominant": "uk",
+   "languages": [
+    "uk",
+    "en"
+   ]
+  },
+  {
+   "name": "meta equal shares, no dominant: the first code alphabetically in both runtimes",
+   "transcript": "",
+   "meta": {
+    "languages": {
+     "uk": 0.5,
+     "en": 0.5
+    }
+   },
+   "dominant": "en",
+   "languages": [
+    "en",
+    "uk"
+   ]
+  },
+  {
+   "name": "meta in seconds of speech as the recorder's LangShare keeps them, wrong line tags",
+   "transcript": "[13:00:00] Я (en): a\n[13:01:00] Mike (en): b\n[13:02:00] Я (en): c\n",
+   "meta": {
+    "languages": {
+     "en": 310.2,
+     "uk": 1260.5
+    }
+   },
+   "dominant": "uk",
+   "languages": [
+    "uk",
+    "en"
+   ]
+  },
+  {
+   "name": "meta in seconds: a language under 10 percent of the speech is not spoken",
+   "transcript": "",
+   "meta": {
+    "languages": {
+     "en": 40,
+     "uk": 960
+    }
+   },
+   "dominant": "uk",
+   "languages": [
+    "uk"
+   ]
+  },
+  {
+   "name": "meta share under 10 percent is not spoken",
+   "transcript": "",
+   "meta": {
+    "dominant_language": "uk",
+    "languages": {
+     "uk": 0.93,
+     "en": 0.07
+    }
+   },
+   "dominant": "uk",
+   "languages": [
+    "uk"
+   ]
+  },
+  {
+   "name": "null dominant in meta, tags used",
+   "transcript": "# Live transcript: Sync\n- Languages: Я = en, allowed = en\n[13:00:00] Я (uk): text\n[13:01:00] Mike (uk): text\n[13:02:00] Я (en): text\n",
+   "meta": {
+    "dominant_language": null
+   },
+   "dominant": "uk",
+   "languages": [
+    "uk",
+    "en"
+   ]
+  },
+  {
+   "name": "tie goes to the first seen tag",
+   "transcript": "# Live transcript: Sync\n- Languages: Я = en, allowed = en\n[13:00:00] Я (en): text\n[13:01:00] Mike (uk): text\n[13:02:00] Я (en): text\n[13:03:00] Mike (uk): text\n",
+   "meta": null,
+   "dominant": "en",
+   "languages": [
+    "en",
+    "uk"
+   ]
+  },
+  {
+   "name": "exactly 10 percent counts",
+   "transcript": "# Live transcript: Sync\n- Languages: Я = en, allowed = en\n[13:00:00] Я (uk): text\n[13:01:00] Mike (uk): text\n[13:02:00] Я (uk): text\n[13:03:00] Mike (uk): text\n[13:04:00] Я (uk): text\n[13:05:00] Mike (uk): text\n[13:06:00] Я (uk): text\n[13:07:00] Mike (uk): text\n[13:08:00] Я (uk): text\n[13:09:00] Mike (en): text\n",
+   "meta": null,
+   "dominant": "uk",
+   "languages": [
+    "uk",
+    "en"
+   ]
+  },
+  {
+   "name": "three languages",
+   "transcript": "# Live transcript: Sync\n- Languages: Я = en, allowed = en\n[13:00:00] Я (uk): text\n[13:01:00] Mike (uk): text\n[13:02:00] Я (uk): text\n[13:03:00] Mike (uk): text\n[13:04:00] Я (uk): text\n[13:05:00] Mike (en): text\n[13:06:00] Я (en): text\n[13:07:00] Mike (en): text\n[13:08:00] Я (pl): text\n[13:09:00] Mike (pl): text\n",
+   "meta": null,
+   "dominant": "uk",
+   "languages": [
+    "uk",
+    "en",
+    "pl"
+   ]
+  },
+  {
+   "name": "no tags: header language",
+   "transcript": "- Languages: Я = en, allowed = en\n",
+   "meta": null,
+   "dominant": "en",
+   "languages": [
+    "en"
+   ]
+  },
+  {
+   "name": "no tags, no header: nothing",
+   "transcript": "nothing",
+   "meta": null,
+   "dominant": null,
+   "languages": []
+  },
+  {
+   "name": "meta list of languages",
+   "transcript": "",
+   "meta": {
+    "dominant_language": "en",
+    "languages": [
+     "en",
+     "uk"
+    ]
+   },
+   "dominant": "en",
+   "languages": [
+    "en",
+    "uk"
+   ]
+  },
+  {
+   "name": "junk meta is ignored",
+   "transcript": "# Live transcript: Sync\n- Languages: Я = en, allowed = en\n[13:00:00] Я (uk): text\n",
+   "meta": {
+    "dominant_language": "Ukrainian",
+    "languages": {
+     "xx-yy": "a",
+     "en": -1
+    }
+   },
+   "dominant": "uk",
+   "languages": [
+    "uk"
+   ]
+  }
+ ],
+ "toggle": [
+  {
+   "name": "after the call, two spoken",
+   "transcript": "# Live transcript: Sync\n- Languages: Я = en, allowed = en\n[13:00:00] Я (uk): text\n[13:01:00] Mike (uk): text\n[13:02:00] Я (uk): text\n[13:03:00] Mike (uk): text\n[13:04:00] Я (uk): text\n[13:05:00] Mike (uk): text\n[13:06:00] Я (uk): text\n[13:07:00] Mike (en): text\n[13:08:00] Я (en): text\n[13:09:00] Mike (en): text\n",
+   "meta": null,
+   "start_langs": [
+    "en"
+   ],
+   "after_call": true,
+   "expect": [
+    "uk",
+    "en"
+   ]
+  },
+  {
+   "name": "after the call, one spoken, start call had two",
+   "transcript": "# Live transcript: Sync\n- Languages: Я = en, allowed = en\n[13:00:00] Я (uk): text\n[13:01:00] Mike (uk): text\n[13:02:00] Я (uk): text\n[13:03:00] Mike (uk): text\n[13:04:00] Я (uk): text\n[13:05:00] Mike (uk): text\n[13:06:00] Я (uk): text\n[13:07:00] Mike (uk): text\n[13:08:00] Я (uk): text\n[13:09:00] Mike (uk): text\n",
+   "meta": null,
+   "start_langs": [
+    "uk",
+    "en"
+   ],
+   "after_call": true,
+   "expect": [
+    "uk"
+   ]
+  },
+  {
+   "name": "before the call, start call languages",
+   "transcript": "",
+   "meta": null,
+   "start_langs": [
+    "uk",
+    "en",
+    "pl",
+    "de"
+   ],
+   "after_call": false,
+   "expect": [
+    "uk",
+    "en",
+    "pl"
+   ]
+  },
+  {
+   "name": "before the call, one language",
+   "transcript": "",
+   "meta": null,
+   "start_langs": [
+    "en"
+   ],
+   "after_call": false,
+   "expect": [
+    "en"
+   ]
+  },
+  {
+   "name": "after the call without a transcript falls back to start call",
+   "transcript": "",
+   "meta": null,
+   "start_langs": [
+    "uk",
+    "en"
+   ],
+   "after_call": true,
+   "expect": [
+    "uk",
+    "en"
+   ]
+  },
+  {
+   "name": "dominant from meta is listed first",
+   "transcript": "# Live transcript: Sync\n- Languages: Я = en, allowed = en\n[13:00:00] Я (en): text\n[13:01:00] Mike (en): text\n[13:02:00] Я (en): text\n[13:03:00] Mike (en): text\n[13:04:00] Я (en): text\n[13:05:00] Mike (en): text\n[13:06:00] Я (uk): text\n[13:07:00] Mike (uk): text\n[13:08:00] Я (uk): text\n[13:09:00] Mike (uk): text\n",
+   "meta": {
+    "dominant_language": "uk"
+   },
+   "start_langs": [],
+   "after_call": true,
+   "expect": [
+    "uk",
+    "en"
+   ]
+  }
+ ],
+ "stale": [
+  {
+   "artifacts": {
+    "notes": "uk",
+    "followup": "en",
+    "notion": "uk"
+   },
+   "output": "uk",
+   "expect": [
+    "followup"
+   ]
+  },
+  {
+   "artifacts": {
+    "notes": "uk"
+   },
+   "output": "uk",
+   "expect": []
+  },
+  {
+   "artifacts": {
+    "sheet": "en",
+    "notes": "uk",
+    "meeting_notes": "uk"
+   },
+   "output": "en",
+   "expect": [
+    "notes",
+    "meeting_notes"
+   ]
+  },
+  {
+   "artifacts": {},
+   "output": "en",
+   "expect": []
+  }
+ ]
+}

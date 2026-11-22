@@ -1,0 +1,67 @@
+# One output language (PB-32, FB2, owner decision D56, answers of 21.11.2026): the language of everything a call writes
+# (brief, prep, Meeting Sheet, tips, notes, Summary, Recap, follow-up, Notion page, the email with materials).
+# The Python resolver (spikes/m0/livetips_m0/call_language.py) and the Swift one (LiveTipsCore/CallLanguage.swift)
+# implement this file; both are checked against it and against Fixtures/output_language_cases.json.
+schema_version: 1
+order:                                 # the first one that gives a language wins
+  - explicit                           # the PM's choice for this call (the toggle), the per-call sidecar; per call only (answer 4A)
+  - dominant                           # after the call: the recorder's dominant language, else the line-tag majority (adapter)
+  - start_call                         # before the call: the first language chosen in Start call
+  - client_language                    # the project's client_language, a hint only
+  - settings                           # Settings > Transcription language
+  - default                            # en
+default: en
+never_read: the interface language (L10n.lang / uiLanguage)   # it decides menus, buttons and dates only
+code: two letters, lower case (ISO 639-1); "uk-UA" -> "uk"; "auto" and empty are not a language
+spoken_min_share: 0.10                 # a language counts as spoken from 10% of the call (answer 1A); the toggle lists only those
+max_languages: 3                       # the toggle lists at most 3 (Start call allows 3)
+multi_language: two or more languages above spoken_min_share after the call; two or more chosen in Start call before it
+toggle_visible: only for a multi-language call (a one-language call shows no language control)
+regenerate:                            # answer 2C: everything text (notes, Summary, Recap, follow-up, Notion text); asks first for a call over 1 h
+  scope: all text
+  ask_over_minutes: 60
+follow_up_client_language: ask once "Write in English instead?" when client_language differs from the output language (answer 5C)
+tips_switch: removed for one-language calls, kept for multi-language calls (answer 3A)
+telemetry: none (answer 7A)
+labels: text in the output language, fixed English headings and labels for languages without static strings (answer 8A)
+adapter:                               # the one place that reads the recorder (PB-30); everything else asks the resolver
+  per_call_fields: [dominant_language, languages]   # optional, in the call's metadata; PB-30 (not merged when this was written) writes neither
+  fallback: >-
+    majority of the transcript line tags "[hh:mm:ss] Name (xx):" (same value as livetips_m0.callnotes.call_lang),
+    else the header "- Languages: Я = xx"
+  shares: lines per tag over all tagged lines
+  meta_file: <project>/video/<stem>.recording.json   # the recorder's file (RecordingFiles.metaPath); <stem> without ".app" and ".md"
+  tie: no dominant field and equal shares -> a dict picks the first code alphabetically, a list the first listed (Python and Swift alike)
+sidecar:
+  file: <stem>.outlang.json            # next to the transcript, in the call folder's .work/ (CallLayout rules)
+  fields:
+    output_language: ISO 639-1 code, absent = not chosen
+    set_by: user
+    artifacts: {notes: xx, meeting_notes: xx, followup: xx, notion: xx, sheet: xx}   # the language each was written in
+  stale: an artifact is out of date when its language differs from the output language; an unknown artifact is not stale
+  tolerance: absent, empty, half-written or unreadable file = nothing chosen, nothing written; never an error
+client_language_hints:                 # free text of the project's client_language, matched on its start (lower case)
+  ukrain: uk
+  україн: uk
+  english: en
+  англій: en
+  spanish: es
+  español: es
+  german: de
+  deutsch: de
+  french: fr
+  polish: pl
+  polsk: pl
+names:                                 # language name given to a model ("Write in Ukrainian"); any other code is written as its code
+  uk: Ukrainian
+  en: English
+  pl: Polish
+  de: German
+  es: Spanish
+  fr: French
+  it: Italian
+  pt: Portuguese
+  nl: Dutch
+  cs: Czech
+  sk: Slovak
+  hu: Hungarian
