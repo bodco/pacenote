@@ -49,7 +49,8 @@ tick: >-
   the portal of the tick; when the key opens another portal, Undo changes nothing and says so. A tick on a register
   item linked to a task (On you, Tracker, call page, call window) goes to the saved crm_task and crm_portal, also
   when the task is not in the lists (closed, another owner's or another queue). A tick made while an earlier one of
-  the task waits in the queue goes into the queue after it, so HubSpot gets them in order. Queued ticks HubSpot
+  the task waits in the queue goes into the queue after it, so HubSpot gets them in order: a write is never sent while
+  an earlier write of the same task is still queued (HubSpot busy) or being sent. Queued ticks HubSpot
   refuses at a sync give the row and the item what HubSpot last took (the state before the first refused one; a done
   item keeps its done date and source), unless the item changed since (dropped); Retry ticks them again.
 open: Double click opens the task in HubSpot (app-eu1.hubspot.com for the EU data region).
@@ -71,7 +72,11 @@ link: >-
   creates a task: hs_task_subject = the text (250 characters), NOT_STARTED, hs_timestamp = the item's due or the
   default, type, priority and queue from the settings, the owner, hs_task_body = "From the call <title>, <date>" and
   the link to the call page. Associations: contact 204, company 192, deal 216 from the call's CRM link. The register
-  gets op crm_link with crm_task. An item is linked to Notion or HubSpot, never both.
+  gets op crm_link with crm_task. An item is linked to Notion or HubSpot, never both. The call's CRM link keeps the
+  portal its ids were found in (<call>.crm.json portal); when it is another portal than the key opens now, or a link
+  from before the portal was kept, nothing is created or linked (no twin either) and the PM is asked to press Refresh
+  on the call's HubSpot line, which finds the company, deal and contacts again in the current portal. The after-call
+  add says this once per call. The call window's HubSpot group uses a call link of the current portal only.
 both_ways: >-
   A tick here completes the task there. A linked item whose task is closed in HubSpot gets done with source hubspot at
   the next sync; reopened there, reopen (only when HubSpot closed it). A task deleted in HubSpot (404): the item keeps

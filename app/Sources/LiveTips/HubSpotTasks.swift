@@ -56,6 +56,7 @@ final class HubSpotTasks: ObservableObject {
         case .removeRefused(let why, let url): n.toast = .init(text: L("htask.removeRefused", ["reason": why]), openURL: url, isError: true)
         case .undoRefused(let count, let why): n.toast = .init(text: L("htask.undoRefused", ["n": "\(count)", "reason": why]), isError: true)
         case .accountChanged: n.toast = .init(text: L("htask.accountChanged"), isError: true)
+        case .relinkCall: n.toast = .init(text: L("htask.relinkCall"), isError: true)
         case .replayRefused(let count, let why, let retry):
             n.toast = .init(text: L("htask.replayRefused", ["n": "\(count)", "reason": why]), undo: { Task { await retry() } },
                             isError: true, actionTitle: L("htask.retry"))
@@ -95,10 +96,12 @@ final class HubSpotTasks: ObservableObject {
 
     func linkedCommitment(_ t: CRMTask) -> Commitment? { flow.linkedCommitment(t) }
 
-    /// The CRM link (deal, company, contacts) of the call a commitment or a transcript belongs to.
-    static func refs(callFile: String) -> [CRMRef] {
+    /// The CRM link (deal, company, contacts) of the call a commitment or a transcript belongs to, with the portal the
+    /// link was made in ("" for a link from before the portal was kept).
+    static func refs(callFile: String) -> (refs: [CRMRef], portal: String) {
         let base = callFile.hasSuffix(".md") ? String(callFile.dropLast(3)) : callFile
-        return CRMLink.load(base: base).map(CRMCallLogger.refs) ?? []
+        let link = CRMLink.load(base: base)
+        return (link.map(CRMCallLogger.refs) ?? [], link?.portal ?? "")
     }
 
     /// The Tracker's rows (the Tracker shows every task; the owner filter there works on "me").
@@ -140,21 +143,21 @@ final class HubSpotTasks: ObservableObject {
 
     /// The new task of a commitment: the settings' type, priority, queue and due date, and the call's title, date and
     /// link back (never transcript text); associated with the call's deal, company and contacts.
-    private func draft(_ c: Commitment) -> (properties: [String: Any], refs: [CRMRef]) {
+    private func draft(_ c: Commitment) -> (properties: [String: Any], refs: [CRMRef], portal: String) {
         let file = Register.shared.transcript(c) ?? ""
         let rec = CallHistory.shared.records.first { $0.file == file }
         let when = c.createdDate.map { DateFormatter.localizedString(from: $0, dateStyle: .medium, timeStyle: .none) } ?? ""
         let body = CRMTasks.body(callTitle: Register.shared.callTitle(c) ?? TrackerModel.callTitle(c), date: when, link: rec?.notionURL ?? "")
         let due = CommitmentRegister.dueDate(c.due, from: c.createdDate ?? Date())
         let s = settings
-        return (CRMTasks.newTask(s, title: c.text, due: CRMTasks.dueDate(due, defaultDays: s.dueDays), body: body),
-                file.isEmpty ? [] : Self.refs(callFile: file))
+        let link = file.isEmpty ? (refs: [], portal: "") : Self.refs(callFile: file)
+        return (CRMTasks.newTask(s, title: c.text, due: CRMTasks.dueDate(due, defaultDays: s.dueDays), body: body), link.refs, link.portal)
     }
 
     /// "Add to HubSpot tasks" on a commitment (owner me), from On you and the call page.
     func add(_ c: Commitment) async {
         let d = draft(c)
-        await flow.add(c, properties: d.properties, refs: d.refs)
+        await flow.add(c, properties: d.properties, refs: d.refs, linkPortal: d.portal)
     }
 
     /// rules/hubspot-tasks.yaml > after_call: with the switch on, every open item owned by me of this call becomes a
@@ -174,7 +177,7 @@ final class HubSpotTasks: ObservableObject {
         startTimer()
         if flow.stale() && !flow.busy { refresh() }
         let base = callFile.hasSuffix(".md") ? String(callFile.dropLast(3)) : callFile
-        let link = CRMLink.load(base: base)
+        let link = CRMLink.load(base: base).flatMap { !$0.portal.isEmpty && $0.portal == flow.portal ? $0 : nil }   // ids of this portal only
         let ts = CRMTasks.forCall(shown, refs: link.map(CRMCallLogger.refs) ?? []).prefix(30)
         let ids = Set(ts.map(\.id))
         let linkedIds = Set(Register.shared.items(in: CallLayout.liveFolder(of: callFile)).filter { ids.contains($0.crmTask) }.map(\.id))

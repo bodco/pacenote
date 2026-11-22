@@ -11,6 +11,7 @@ final class FakeHubSpotTasks: CRMTransport {
     var portalId = "111"                               // the account the key opens
     var fail: [String: Int] = [:]                      // "METHOD path" -> the HTTP code HubSpot answers
     var offline: Set<String> = []                      // "METHOD path" (or "*") with no answer at all
+    var failIf: ((String, [String: Any]?) -> Int?)?    // a code for some requests only (by their body)
     private let lock = NSLock()
     func send(_ method: String, _ path: String, _ body: [String: Any]?) async throws -> (Int, [String: Any], [String: String]) {
         await Task.yield()                             // two requests in flight interleave, as on the network
@@ -21,7 +22,7 @@ final class FakeHubSpotTasks: CRMTransport {
         let req = method + " " + path.split(separator: "?")[0]
         if offline.contains(req) || offline.contains("*") { throw URLError(.notConnectedToInternet) }
         log.append(req)
-        if let code = fail[req] { return (code, ["message": "HTTP \(code) from the fake"], [:]) }
+        if let code = fail[req] ?? failIf?(req, body) { return (code, ["message": "HTTP \(code) from the fake"], [:]) }
         if path == "/account-info/v3/details" { return (200, ["portalId": portalId, "dataHostingLocation": "na1"], [:]) }
         if path.hasPrefix("/crm/v3/owners") { return (200, ["results": [["id": "9", "firstName": "Emily", "lastName": "Clark"]]], [:]) }
         if let b = body { bodies.append(b) }

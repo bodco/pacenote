@@ -18,6 +18,7 @@ public final class CRMTaskFlow {
         case undoRefused(Int, reason: String)       // N new tasks stayed in HubSpot and stay linked
         case accountChanged                        // the key now opens another portal: nothing was written
         case replayRefused(Int, reason: String, retry: () async -> Void)   // queued writes HubSpot refused at the next sync
+        case relinkCall                            // the call's CRM link is of another (or an unknown) account: nothing was written
     }
     public enum Outcome: Equatable { case sent, queued, refused(String), changed }
 
@@ -36,6 +37,7 @@ public final class CRMTaskFlow {
     private var adding: Set<String> = []            // folder|id of commitments being added now
     private var sending: Set<String> = []           // keys of queued writes being sent now
     private var linkCursor = 0                      // where the next sync goes on reading linked tasks
+    private var relinkNeeded = false                // a silent add met a call link of another account
     public static let linkReads = 80
 
     let cachePath: String
@@ -169,6 +171,11 @@ public final class CRMTaskFlow {
             // as the queue has it now: dropped by bind, or carrying the state of a refused write before it
             guard let key = b["key"], let e = pending.first(where: { $0["key"] == key }) else { continue }
             guard let id = e["task"], e["portal"] == portal else { finish(key); settle(e, ok: false); out[key] = .changed; continue }
+            // an earlier write of the task still waits (busy HubSpot) or is being sent: this one goes after it, so a
+            // retried older write never lands over a newer one
+            if let i = pending.firstIndex(where: { $0["key"] == key }), pending[..<i].contains(where: { $0["task"] == id }) {
+                out[key] = .queued; continue
+            }
             sending.insert(key)
             do {
                 if e["op"] == "delete" { try await hs.delete(type: "tasks", id: id) } else { try await hs.setTaskStatus(id: id, e["status"] ?? "") }
@@ -520,9 +527,11 @@ public final class CRMTaskFlow {
     /// "Add to HubSpot tasks" on an item owned by me: a task with `properties`, associated with `refs` (the call's
     /// deal, company and contacts), then crm_link with the portal. One add per item at a time; the register file is
     /// read again before the task is made. An open task with the same words on the call's deal or company (or contact)
-    /// is linked instead, after a fresh read of its associations.
+    /// is linked instead, after a fresh read of its associations. `linkPortal` is the portal the call's CRM link was
+    /// made in: refs of another portal, or of a link that does not say, are never sent (the PM refreshes the link).
     @discardableResult
-    public func add(_ c: Commitment, properties: [String: Any], refs: [CRMRef], silent: Bool = false) async -> Added? {
+    public func add(_ c: Commitment, properties: [String: Any], refs: [CRMRef], linkPortal: String,
+                    silent: Bool = false) async -> Added? {
         guard ready, c.mine, c.notionPage.isEmpty, c.crmTask.isEmpty, let hs = connector() else { return nil }
         let key = c.folder + "|" + c.id
         guard adding.insert(key).inserted else { return nil }
@@ -534,6 +543,10 @@ public final class CRMTaskFlow {
         do {
             try await bind(hs)
             guard unlinked() != nil else { return nil }
+            guard refs.isEmpty || (!linkPortal.isEmpty && linkPortal == portal) else {   // before the twin and the create
+                if silent { relinkNeeded = true } else { notify(.relinkCall) }
+                return nil
+            }
             if let cand = CRMTasks.twin(shown, text: c.text, refs: refs),
                let fresh = try await hs.taskWithAssociations(id: cand.id),
                CRMTasks.twin([fresh], text: c.text, refs: refs) != nil {
@@ -567,16 +580,18 @@ public final class CRMTaskFlow {
     /// by me of the call in `folder` becomes a task, once; one toast with Undo for the new ones. Switch off: nothing
     /// is read from or written to HubSpot.
     public func afterCall(file: String, folder: String, destination: String?,
-                          draft: (Commitment) -> (properties: [String: Any], refs: [CRMRef])) async {
+                          draft: (Commitment) -> (properties: [String: Any], refs: [CRMRef], portal: String)) async {
         guard ready, settings().autoAdd, destination == "hubspot" else { return }
         let key = CommitmentRegister.callKey(file)
         let list = CommitmentRegister.load(folder: folder).filter {
             $0.mine && $0.status == "open" && $0.notionPage.isEmpty && $0.crmTask.isEmpty && CommitmentRegister.callKey($0.call) == key }
         var made: [String] = []
+        relinkNeeded = false
         for c in list {
             let d = draft(c)
-            if let r = await add(c, properties: d.properties, refs: d.refs, silent: true), r.created { made.append(r.id) }   // linked twins are not undone
+            if let r = await add(c, properties: d.properties, refs: d.refs, linkPortal: d.portal, silent: true), r.created { made.append(r.id) }   // linked twins are not undone
         }
+        if relinkNeeded { relinkNeeded = false; notify(.relinkCall) }            // once for the call
         guard !made.isEmpty else { return }
         let at = portal
         notify(.added(made.count, undo: { [weak self] in Task { await self?.undoAdds(made, folder: folder, at: at) } }))

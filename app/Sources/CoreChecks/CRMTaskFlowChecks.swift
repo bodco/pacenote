@@ -39,25 +39,25 @@ func crmTaskFlowChecks() async {
     let a = CommitmentRegister.add(folder: folder, text: "Share the security review", project: "orbit", title: "Orbit", call: call) ?? ""
     let ca = item(a)!
     let before = creates()
-    async let r1 = flow.add(ca, properties: props(ca.text), refs: [CRMRef("deals", "D1")])
-    async let r2 = flow.add(ca, properties: props(ca.text), refs: [CRMRef("deals", "D1")])
+    async let r1 = flow.add(ca, properties: props(ca.text), refs: [CRMRef("deals", "D1")], linkPortal: "111")
+    async let r2 = flow.add(ca, properties: props(ca.text), refs: [CRMRef("deals", "D1")], linkPortal: "111")
     let (x1, x2) = await (r1, r2)
     expect(creates() - before == 1 && [x1, x2].compactMap { $0 }.count == 1, "hflow: overlapping adds create one task")
     expect(item(a)?.crmTask == (x1 ?? x2)?.id && item(a)?.crmPortal == "111", "hflow: the link keeps the task and its portal")
-    let stale = await flow.add(ca, properties: props(ca.text), refs: [CRMRef("deals", "D1")])
+    let stale = await flow.add(ca, properties: props(ca.text), refs: [CRMRef("deals", "D1")], linkPortal: "111")
     expect(stale == nil && creates() - before == 1, "hflow: the register is read again before a create")
 
     // 2. a contact-only call never reuses a similar task of another contact; the same contact is linked
     let b = CommitmentRegister.add(folder: folder, text: "Send pricing sheet", project: "orbit", title: "Orbit", call: call) ?? ""
-    let made = await flow.add(item(b)!, properties: props("Send pricing sheet"), refs: [CRMRef("contacts", "P1")])
+    let made = await flow.add(item(b)!, properties: props("Send pricing sheet"), refs: [CRMRef("contacts", "P1")], linkPortal: "111")
     expect(made?.created == true && made?.id != "1", "hflow: a twin on another contact is not linked")
     let b2 = CommitmentRegister.add(folder: folder, text: "Send the pricing sheet today", project: "orbit", title: "Orbit", call: "2026-11-21-1000-orbit.md") ?? ""
-    let linked = await flow.add(item(b2)!, properties: props("Send the pricing sheet today"), refs: [CRMRef("contacts", "P9")])
+    let linked = await flow.add(item(b2)!, properties: props("Send the pricing sheet today"), refs: [CRMRef("contacts", "P9")], linkPortal: "111")
     expect(linked == CRMTaskFlow.Added(id: "1", created: false), "hflow: a twin on the same contact is linked")
     // the cache says deal D1, a fresh read says the task left the deal: a new task
     hs.assoc["2"] = []
     let b3 = CommitmentRegister.add(folder: folder, text: "Book the venue for the offsite", project: "orbit", title: "Orbit", call: call) ?? ""
-    let fresh = await flow.add(item(b3)!, properties: props("Book the venue for the offsite"), refs: [CRMRef("deals", "D1")])
+    let fresh = await flow.add(item(b3)!, properties: props("Book the venue for the offsite"), refs: [CRMRef("deals", "D1")], linkPortal: "111")
     expect(fresh?.created == true && fresh?.id != "2", "hflow: a twin is checked on a fresh read of its associations")
     hs.assoc["2"] = ["deals:D1"]
 
@@ -88,7 +88,7 @@ func crmTaskFlowChecks() async {
 
     // 4. Remove that HubSpot refuses gives the task and the item back; Undo writes nothing
     let r = CommitmentRegister.add(folder: folder, text: "Draft the rollout plan", project: "orbit", title: "Orbit", call: call) ?? ""
-    let rt = await flow.add(item(r)!, properties: props("Draft the rollout plan"), refs: [CRMRef("deals", "D1")])
+    let rt = await flow.add(item(r)!, properties: props("Draft the rollout plan"), refs: [CRMRef("deals", "D1")], linkPortal: "111")
     let task = flow.tasks.first { $0.id == rt?.id }!
     hs.fail["DELETE /crm/v3/objects/tasks/" + task.id] = 403
     await flow.remove(task, commitment: flow.linkedCommitment(task))?.value
@@ -105,7 +105,7 @@ func crmTaskFlowChecks() async {
     expect(hs.tasks[task.id] == nil && flow.pending.isEmpty, "hflow: the queued delete is sent at the next sync")
     box.slow = true
     let u = CommitmentRegister.add(folder: folder, text: "Send the meeting notes", project: "orbit", title: "Orbit", call: call) ?? ""
-    let ut = await flow.add(item(u)!, properties: props("Send the meeting notes"), refs: [CRMRef("deals", "D1")])
+    let ut = await flow.add(item(u)!, properties: props("Send the meeting notes"), refs: [CRMRef("deals", "D1")], linkPortal: "111")
     let utask = flow.tasks.first { $0.id == ut?.id }!
     let job = flow.remove(utask, commitment: flow.linkedCommitment(utask))
     if case .removed(let undo)? = box.notes.last { undo() }
@@ -119,7 +119,7 @@ func crmTaskFlowChecks() async {
     let p1 = CommitmentRegister.add(folder: folder, text: "Send the contract draft", project: "orbit", title: "Orbit", call: call2) ?? ""
     let p2 = CommitmentRegister.add(folder: folder, text: "Introduce Michael Johnson to support", project: "orbit", title: "Orbit", call: call2) ?? ""
     let p3 = CommitmentRegister.add(folder: folder, text: "Check the invoice address", project: "orbit", title: "Orbit", call: call2) ?? ""
-    let draft = { (c: Commitment) in (properties: props(c.text), refs: [CRMRef("deals", "D1")]) }
+    let draft = { (c: Commitment) in (properties: props(c.text), refs: [CRMRef("deals", "D1")], portal: "111") }
     hs.log = []
     await flow.afterCall(file: call2, folder: folder, destination: "hubspot", draft: draft)
     expect(hs.log.isEmpty && item(p1)?.crmTask == "", "hflow: auto add off sends no request at all")
@@ -143,7 +143,7 @@ func crmTaskFlowChecks() async {
 
     // 6. a refused tick gives the item back
     let k = CommitmentRegister.add(folder: folder, text: "Confirm the pilot dates", project: "orbit", title: "Orbit", call: call) ?? ""
-    let kt = await flow.add(item(k)!, properties: props("Confirm the pilot dates"), refs: [CRMRef("deals", "D1")])
+    let kt = await flow.add(item(k)!, properties: props("Confirm the pilot dates"), refs: [CRMRef("deals", "D1")], linkPortal: "111")
     let ktask = flow.tasks.first { $0.id == kt?.id }!
     hs.fail["PATCH /crm/v3/objects/tasks/" + ktask.id] = 400
     await flow.tick(ktask)?.value
@@ -153,11 +153,11 @@ func crmTaskFlowChecks() async {
     // fix round 2
     // 7. a task deleted in HubSpot (404) unlinks its item, which can be added again
     let g = CommitmentRegister.add(folder: folder, text: "Send the onboarding checklist", project: "orbit", title: "Orbit", call: call) ?? ""
-    let gt = await flow.add(item(g)!, properties: props("Send the onboarding checklist"), refs: [CRMRef("deals", "D1")])
+    let gt = await flow.add(item(g)!, properties: props("Send the onboarding checklist"), refs: [CRMRef("deals", "D1")], linkPortal: "111")
     hs.tasks[gt?.id ?? ""] = nil
     await flow.sync()
     expect(item(g)?.crmTask == "" && item(g)?.status == "open", "hflow: a task deleted in HubSpot unlinks its item")
-    let gAgain = await flow.add(item(g)!, properties: props("Send the onboarding checklist"), refs: [CRMRef("deals", "D1")])
+    let gAgain = await flow.add(item(g)!, properties: props("Send the onboarding checklist"), refs: [CRMRef("deals", "D1")], linkPortal: "111")
     expect(gAgain?.created == true, "hflow: an item whose task was deleted in HubSpot can be added again")
 
     // 8. Undo of a tick goes to the portal of the tick or nowhere
@@ -180,7 +180,7 @@ func crmTaskFlowChecks() async {
 
     // 9. an item linked to a task outside the lists (another owner's) still ticks and removes it in HubSpot
     let o = CommitmentRegister.add(folder: folder, text: "Call Sarah Miller about the renewal", project: "orbit", title: "Orbit", call: call) ?? ""
-    let ot = await flow.add(item(o)!, properties: props("Call Sarah Miller about the renewal"), refs: [CRMRef("deals", "D1")])
+    let ot = await flow.add(item(o)!, properties: props("Call Sarah Miller about the renewal"), refs: [CRMRef("deals", "D1")], linkPortal: "111")
     let oid = ot?.id ?? ""
     hs.tasks[oid]?["hubspot_owner_id"] = "5"
     await flow.sync()
@@ -197,7 +197,7 @@ func crmTaskFlowChecks() async {
     await flow.removeLinked(item(o)!)?.value
     expect(hs.tasks[oid] == nil && item(o)?.status == "dropped", "hflow: Remove on a linked item outside the list deletes the task")
     let o2 = CommitmentRegister.add(folder: folder, text: "Share the case study", project: "orbit", title: "Orbit", call: call) ?? ""
-    let o2t = await flow.add(item(o2)!, properties: props("Share the case study"), refs: [CRMRef("deals", "D1")])
+    let o2t = await flow.add(item(o2)!, properties: props("Share the case study"), refs: [CRMRef("deals", "D1")], linkPortal: "111")
     hs.fail["PATCH /crm/v3/objects/tasks/" + (o2t?.id ?? "")] = 403
     await flow.tickLinked(item(o2)!, done: true)?.value
     expect(item(o2)?.status == "open" && box.notes.contains { if case .refused = $0 { return true }; return false },
@@ -206,7 +206,7 @@ func crmTaskFlowChecks() async {
 
     // 10. a busy HubSpot (5xx) keeps the delete queued; a refusal at replay is reported with Retry and kept in the error line
     let q = CommitmentRegister.add(folder: folder, text: "Send the revised quote", project: "orbit", title: "Orbit", call: call) ?? ""
-    let qt = await flow.add(item(q)!, properties: props("Send the revised quote"), refs: [CRMRef("deals", "D1")])
+    let qt = await flow.add(item(q)!, properties: props("Send the revised quote"), refs: [CRMRef("deals", "D1")], linkPortal: "111")
     let qid = qt?.id ?? ""
     let qtask = flow.tasks.first { $0.id == qid }!
     hs.fail["DELETE /crm/v3/objects/tasks/" + qid] = 503
@@ -232,7 +232,7 @@ func crmTaskFlowChecks() async {
     // fix round 3
     // 11. a task completed here and then deleted in HubSpot unlinks its item, which stays done
     let d = CommitmentRegister.add(folder: folder, text: "Send the signed order form", project: "orbit", title: "Orbit", call: call) ?? ""
-    let dt = await flow.add(item(d)!, properties: props("Send the signed order form"), refs: [CRMRef("deals", "D1")])
+    let dt = await flow.add(item(d)!, properties: props("Send the signed order form"), refs: [CRMRef("deals", "D1")], linkPortal: "111")
     await flow.tickLinked(item(d)!, done: true)?.value
     hs.tasks[dt?.id ?? ""] = nil
     await flow.sync()
@@ -241,7 +241,7 @@ func crmTaskFlowChecks() async {
 
     // 12. a queued delete refused at replay is reported with Retry even when the list read fails
     let l = CommitmentRegister.add(folder: folder, text: "Send the training schedule", project: "orbit", title: "Orbit", call: call) ?? ""
-    let lt = await flow.add(item(l)!, properties: props("Send the training schedule"), refs: [CRMRef("deals", "D1")])
+    let lt = await flow.add(item(l)!, properties: props("Send the training schedule"), refs: [CRMRef("deals", "D1")], linkPortal: "111")
     let lid = lt?.id ?? ""
     let ltask = flow.tasks.first { $0.id == lid }!
     hs.fail["DELETE /crm/v3/objects/tasks/" + lid] = 503
@@ -260,7 +260,7 @@ func crmTaskFlowChecks() async {
 
     // 13. a queued tick HubSpot refuses at replay gives the item back; Retry ticks it again; a newer change stays
     let s = CommitmentRegister.add(folder: folder, text: "Send the API keys checklist", project: "orbit", title: "Orbit", call: call) ?? ""
-    let st = await flow.add(item(s)!, properties: props("Send the API keys checklist"), refs: [CRMRef("deals", "D1")])
+    let st = await flow.add(item(s)!, properties: props("Send the API keys checklist"), refs: [CRMRef("deals", "D1")], linkPortal: "111")
     let sid = st?.id ?? ""
     hs.fail["PATCH /crm/v3/objects/tasks/" + sid] = 503
     await flow.tickLinked(item(s)!, done: true)?.value
@@ -276,7 +276,7 @@ func crmTaskFlowChecks() async {
     await sretry?()
     expect(item(s)?.status == "done" && hs.tasks[sid]?["hs_task_status"] == "COMPLETED", "hflow: Retry of a refused tick ticks it again")
     let s2 = CommitmentRegister.add(folder: folder, text: "Send the data export", project: "orbit", title: "Orbit", call: call) ?? ""
-    let s2t = await flow.add(item(s2)!, properties: props("Send the data export"), refs: [CRMRef("deals", "D1")])
+    let s2t = await flow.add(item(s2)!, properties: props("Send the data export"), refs: [CRMRef("deals", "D1")], linkPortal: "111")
     let s2id = s2t?.id ?? ""
     hs.fail["PATCH /crm/v3/objects/tasks/" + s2id] = 503
     await flow.tickLinked(item(s2)!, done: true)?.value
@@ -289,7 +289,7 @@ func crmTaskFlowChecks() async {
     // fix round 4
     // 14. a tick and a reopen both queued and both refused at replay: the item and the row stay as HubSpot has them
     let w = CommitmentRegister.add(folder: folder, text: "Send the renewal terms", project: "orbit", title: "Orbit", call: call) ?? ""
-    let wt = await flow.add(item(w)!, properties: props("Send the renewal terms"), refs: [CRMRef("deals", "D1")])
+    let wt = await flow.add(item(w)!, properties: props("Send the renewal terms"), refs: [CRMRef("deals", "D1")], linkPortal: "111")
     let wid = wt?.id ?? ""
     hs.fail["PATCH /crm/v3/objects/tasks/" + wid] = 503
     await flow.tickLinked(item(w)!, done: true)?.value
@@ -322,7 +322,7 @@ func crmTaskFlowChecks() async {
 
     // 15. Delete of a completed item (call page): Undo and a refusal give it back completed, with its date
     let v = CommitmentRegister.add(folder: folder, text: "Send the launch checklist", project: "orbit", title: "Orbit", call: call) ?? ""
-    let vt = await flow.add(item(v)!, properties: props("Send the launch checklist"), refs: [CRMRef("deals", "D1")])
+    let vt = await flow.add(item(v)!, properties: props("Send the launch checklist"), refs: [CRMRef("deals", "D1")], linkPortal: "111")
     let vid = vt?.id ?? ""
     await flow.tickLinked(item(v)!, done: true)?.value
     let vDone = item(v)!
@@ -354,7 +354,7 @@ func crmTaskFlowChecks() async {
     }
     expect(CommitmentRegister.load(folder: folder).filter { $0.crmTask.hasPrefix("x") }.count == 89, "hflow: 89 more linked items")
     let z = CommitmentRegister.add(folder: folder, text: "Send the final invoice", project: "orbit", title: "Orbit", call: call) ?? ""
-    let zt = await flow.add(item(z)!, properties: props("Send the final invoice"), refs: [CRMRef("deals", "D1")])
+    let zt = await flow.add(item(z)!, properties: props("Send the final invoice"), refs: [CRMRef("deals", "D1")], linkPortal: "111")
     await flow.tickLinked(item(z)!, done: true)?.value
     hs.tasks[zt?.id ?? ""] = nil
     var reads: [Int] = []
@@ -365,6 +365,46 @@ func crmTaskFlowChecks() async {
     }
     expect(reads.allSatisfy { $0 <= CRMTaskFlow.linkReads } && item(z)?.crmTask == "" && item(z)?.status == "done",
            "hflow: links past the first 80 are read at the next sync (\(reads))")
+
+    // fix round 4, second review
+    // 17. a completion HubSpot is busy for stays queued; a reopen after it that HubSpot would take waits behind it
+    let m = CommitmentRegister.add(folder: folder, text: "Send the pilot report", project: "orbit", title: "Orbit", call: call) ?? ""
+    let mt = await flow.add(item(m)!, properties: props("Send the pilot report"), refs: [CRMRef("deals", "D1")], linkPortal: "111")
+    let mid = mt?.id ?? ""
+    hs.failIf = { req, body in
+        req == "PATCH /crm/v3/objects/tasks/" + mid
+            && ((body?["properties"] as? [String: Any])?["hs_task_status"] as? String) == "COMPLETED" ? 503 : nil
+    }
+    await flow.tickLinked(item(m)!, done: true)?.value
+    await flow.tickLinked(item(m)!, done: false)?.value
+    expect(hs.tasks[mid]?["hs_task_status"] == "NOT_STARTED" && flow.pending.filter { $0["task"] == mid }.count == 2,
+           "hflow: a reopen after a busy completion is not sent before it")
+    hs.failIf = nil
+    await flow.sync()
+    expect(flow.pending.isEmpty && hs.tasks[mid]?["hs_task_status"] == "NOT_STARTED" && item(m)?.status == "open",
+           "hflow: the older completion never lands over the newer reopen")
+
+    // 18. a call link of another portal, or one that does not say which, adds nothing (and links no twin)
+    let n1 = CommitmentRegister.add(folder: folder, text: "Send the pricing sheet", project: "orbit", title: "Orbit", call: "2026-11-23-1000-orbit.md") ?? ""
+    let createsBefore = creates()
+    box.notes = []
+    let other = await flow.add(item(n1)!, properties: props("Send the pricing sheet"), refs: [CRMRef("contacts", "P9")], linkPortal: "222")
+    let unknown = await flow.add(item(n1)!, properties: props("Send the pricing sheet"), refs: [CRMRef("contacts", "P9")], linkPortal: "")
+    let relinks = { box.notes.filter { if case .relinkCall = $0 { return true }; return false }.count }
+    expect(other == nil && unknown == nil && creates() == createsBefore && item(n1)?.crmTask == "" && relinks() == 2,
+           "hflow: a call link of another or an unknown portal adds and links nothing and asks to refresh it")
+    let noLink = await flow.add(item(n1)!, properties: props("Send the pricing sheet"), refs: [], linkPortal: "")
+    expect(noLink?.created == true && creates() == createsBefore + 1, "hflow: a call without a CRM link still makes a task, with no associations")
+    let call3 = "2026-11-24-1000-orbit.md"
+    for t in ["Send the security answers", "Book the follow-up call"] {
+        _ = CommitmentRegister.add(folder: folder, text: t, project: "orbit", title: "Orbit", call: call3)
+    }
+    box.notes = []
+    let createsAuto = creates()
+    await flow.afterCall(file: call3, folder: folder, destination: "hubspot",
+                         draft: { c in (properties: props(c.text), refs: [CRMRef("deals", "D1")], portal: "222") })
+    expect(creates() == createsAuto && relinks() == 1 && !box.notes.contains { if case .added = $0 { return true }; return false },
+           "hflow: the after-call add on a link of another portal makes nothing and says so once")
 
     // the cache keeps the portal; a queued write without one is never sent
     let again = makeFlow()
