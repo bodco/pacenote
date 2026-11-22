@@ -243,14 +243,24 @@ const jsErrors = (b, s) => s.posts.filter((m) => m.action === 'jserror').map((m)
       await pick('en'); await sleep(100);
       await b.evaluate(`window.setStatus({ state: 'recording', call_lang: 'en', me_lang: 'en', langs: ['en'] }); true`); await sleep(200);
       assert.strictEqual((await posted()).filter((x) => x.indexOf('tips_lang=') === 0).pop(), 'tips_lang=en', 'the last tips request is English');
-      await b.evaluate(`window.addItems([{ t: '10:00:00', kind: 'ack', key: 'tips_lang', value: 'uk' }, { t: '10:00:01', kind: 'ack', key: 'tips_lang', value: 'en' }]); document.getElementById('toast').textContent = ''; true`); await sleep(300);
+      await b.evaluate(`window.addItems([{ t: '10:00:00', kind: 'ack', key: 'tips_lang', value: 'uk' }, { t: '10:00:01', kind: 'ack', key: 'tips_lang', value: 'en' }]); true`); await sleep(300);
       assert.ok(!/Ukrainian|українськ/i.test(await b.evaluate(`document.getElementById('toast').textContent`)), 'no toast for the superseded switch');
       await b.evaluate(`document.getElementById('langBtn').click(); true`); await sleep(100);
     });
+    await openQ(1100, '?call_lang=en');
+    await test('a quick reversal before the recorder answers waits its turn and is not confirmed by the old echo', async () => {
+      const pick = (v) => b.evaluate(`document.getElementById('langBtn').click(); document.querySelector('#langMenu [data-v="${v}"]').click(); true`);
+      await pick('uk'); await pick('en'); await sleep(200);
+      assert.deepStrictEqual((await posted()).filter((x) => x.indexOf('call_lang=') === 0), ['call_lang=uk'], 'the second write is held back');
+      await b.evaluate(`window.setStatus({ state: 'recording', call_lang: 'uk', me_lang: 'uk', langs: ['uk'] }); true`); await sleep(400);
+      assert.ok((await posted()).includes('call_lang=en'), 'the held pick goes out after the first answer');
+    });
     await openQ(1100, '?call_lang=uk+en');
-    await test('a standalone Tips in pick that is never acknowledged is dropped after 4 s with a retry message', async () => {
+    await test('a standalone Tips in pick that is never acknowledged is dropped after 4 s with a retry message and the radio reverts', async () => {
       await b.evaluate(`document.getElementById('langBtn').click(); document.querySelector('#langMenu [data-l="en"]').click(); true`); await sleep(4500);
       assert.ok(/did not\. Try again|Try again/.test(await b.evaluate(`document.getElementById('toast').textContent`)));
+      await b.evaluate(`document.getElementById('langBtn').click(); true`); await sleep(100);
+      assert.notStrictEqual(await b.evaluate(`document.querySelector('#langMenu [data-l="en"]').getAttribute('aria-checked')`), 'true', 'the unanswered pick is not shown as selected');
     });
     await openQ(1100, '?state=ready&call_lang=uk+en');
     await test('Ready: the language chip is hidden', async () => {

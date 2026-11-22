@@ -1129,13 +1129,17 @@
     });
   }
   /** The tips language the app last asked for: an unanswered pick counts, so a quick second switch compares against it. */
+  const tipsConfirmed = () => (S.tipsLang && S.tipsLang.current) || '';
   const tipsWanted = () => (S.ui.tipsPending && S.ui.tipsPending.l) || (S.tipsLang && S.tipsLang.current) || '';
   function langShown() {
     consumeAck();
     const cl = callLangNow(), p = S.ui.langPending;
     if (p && !p.demo && sameLangs(p.langs, cl.langs) && p.main === cl.main) {
       S.ui.langPending = null;
-      if (p.tips && tipsWanted() !== p.tips) { S.ui.comboWait = { names: langNames(p.langs), tips: p.tips, at: Date.now() }; tipsLangSet(p.tips); }   // tips follow only once the recorder confirmed; the toast waits for the tips ack
+      if (p.tips && tipsConfirmed() !== p.tips) {   // tips follow only once the recorder confirmed; the toast waits for the matching tips ack
+        S.ui.comboWait = { names: langNames(p.langs), tips: p.tips, at: Date.now() };
+        if (!(S.ui.tipsPending && S.ui.tipsPending.l === p.tips)) tipsLangSet(p.tips);
+      }
       else showToast({ text: T().cl.ok(langNames(p.langs), p.tips ? langNames([p.tips]) : ''), kind: 'ok', at: Date.now() });
     }
     else if (p && Date.now() - p.at > 4000) { S.ui.langPending = null; showToast({ text: T().cl.fail, kind: 'warn', at: Date.now() }); }
@@ -1145,6 +1149,7 @@
     const tp = S.ui.tipsPending;
     if (tp && Date.now() - tp.at > 4000) { S.ui.tipsPending = null; if (!w) showToast({ text: T().cl.tipsFail, kind: 'warn', at: Date.now() }); }   // no ack: drop the pick and say so
     const q = S.ui.langPending;
+    if (!q && S.ui.langQueued) { const v = S.ui.langQueued; S.ui.langQueued = null; setTimeout(() => guard('langQueued', () => pickLang(v, true)), 0); }   // a pick made while one was unanswered goes out now
     return q ? { langs: q.langs, main: q.main, pending: true, cands: cl.cands } : { langs: cl.langs, main: cl.main, pending: false, cands: cl.cands };
   }
   const langCode = (l) => l.langs.length >= 3 ? l.main.toUpperCase() + '+' + (l.langs.length - 1) : l.langs.map((c) => c.toUpperCase()).join('+');
@@ -1187,6 +1192,7 @@
     if (m.dataset.html !== html) { m.innerHTML = html; m.dataset.html = html; }
     const r = $('langBtn').getBoundingClientRect();
     m.style.top = Math.round(r.bottom + 6) + 'px';
+    m.style.maxHeight = Math.max(80, window.innerHeight - Math.round(r.bottom + 6) - 8) + 'px';   // short windows: the menu scrolls instead of clipping Tips in and More languages
     m.style.left = Math.max(8, Math.min(Math.round(r.left), window.innerWidth - m.offsetWidth - 8)) + 'px';
   }
   /** A tips language pick shows at once, but the native acknowledgement (setTipsLang) decides; after 4 s an unanswered pick goes back. */
@@ -1195,16 +1201,24 @@
     post('setting', { key: 'tips_lang', value: c });
     setTimeout(render, 4100);
   }
-  function pickLang(v) {
+  function pickLang(v, fromQueue) {
     const langs = v.split('+'), main = langs[0], cl = callLangNow();
     S.ui.langMenu = false;
     if (!validCallLangs(langs)) { showToast({ text: T().cl.fail, kind: 'warn', at: Date.now() }); render(); return; }
-    if (!(sameLangs(langs, cl.langs) && main === cl.main && !S.ui.langPending)) {
+    if (S.ui.langPending && !S.ui.langPending.demo && !fromQueue) {   // the recorder has not answered yet: a second write could be confirmed by the old echo, so it waits its turn
+      S.ui.langQueued = v; render(); const b = $('langBtn'); if (b && !b.hidden) b.focus(); return;
+    }
+    const same = sameLangs(langs, cl.langs) && main === cl.main && !S.ui.langPending;
+    if (same && langs.length === 1 && (main === 'uk' || main === 'en') && tipsConfirmed() !== main && !S.ui.tipsPending) {   // reselecting the current language retries a tips switch that failed
+      S.ui.comboWait = { names: langNames(langs), tips: main, at: Date.now() };
+      tipsLangSet(main);
+    }
+    if (!same) {
       S.ui.langPending = { value: v, langs, main, at: Date.now() };
       S.ui.comboWait = null;   // a superseded switch must not toast when its late tips ack arrives
       post('setting', { key: 'call_lang', value: v });
       // tips follow the main language of a one-language call; a mixed call keeps its tips language
-      if (langs.length === 1 && (main === 'uk' || main === 'en') && tipsWanted() !== main) S.ui.langPending.tips = main;
+      if (langs.length === 1 && (main === 'uk' || main === 'en') && tipsConfirmed() !== main) S.ui.langPending.tips = main;
       setTimeout(render, 4100);
     }
     render(); const b = $('langBtn'); if (b && !b.hidden) b.focus();
