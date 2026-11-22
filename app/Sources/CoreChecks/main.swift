@@ -678,6 +678,7 @@ final class FakeHubSpotCalls: CRMTransport {
     var createDelay: UInt64 = 0     // ns a create takes, so two writers can overlap
     var createThenFail = false      // the Call is made but the answer is a 502 (an ambiguous create)
     var failPut = false             // adding an association fails with a 500
+    var searchLag = 0               // searches that miss a new Call, as HubSpot's index lags a create
     let lock = NSLock()             // the race checks send from two tasks at once; unguarded state crashed the gate
     func send(_ method: String, _ path: String, _ body: [String: Any]?) async throws -> (Int, [String: Any], [String: String]) {
         // the delay is waited before the lock, never inside it
@@ -691,6 +692,7 @@ final class FakeHubSpotCalls: CRMTransport {
         if path == "/account-info/v3/details" { return (200, ["portalId": portal], [:]) }
         if method == "POST" && path == "/crm/v3/objects/calls/search" {
             let want = ((((body?["filterGroups"] as? [[String: Any]])?.first?["filters"]) as? [[String: Any]])?.first?["value"] as? String) ?? ""
+            if searchLag > 0 { searchLag -= 1; return (200, ["results": []], [:]) }
             let hit = calls.first { $0.value["hs_call_external_id"] == want }
             return (200, ["results": hit.map { [["id": $0.key]] } ?? []], [:])
         }
@@ -820,6 +822,37 @@ func crmCalls() async {
     amb.createThenFail = false
     let rb2 = try? await hb.upsertCall(entry(["b"]), knownId: "", associations: [])
     expect(rb?.id != nil && rb?.id == amb.calls.keys.first && amb.calls.count == 1 && rb2?.id == rb?.id, "calls: an ambiguous create is reconciled, never a second Call")
+    // the same, while search still misses the new Call: asked again after a wait, still one Call
+    let lag = FakeHubSpotCalls(); lag.createThenFail = true; lag.searchLag = 3     // the search before the create, then two after it
+    final class Waits { var s: [Double] = [] }
+    let waits = Waits()
+    let hl = HubSpotConnector(transport: lag, sleep: { waits.s.append($0) })
+    let rl = try? await hl.upsertCall(entry(["a"]), knownId: "", associations: [])
+    expect(rl?.id != nil && rl?.id == lag.calls.keys.first && lag.calls.count == 1 && waits.s == [2, 4], "calls: an ambiguous create waits for search, never a second Call")
+    let gone = FakeHubSpotCalls(); gone.createThenFail = true; gone.searchLag = 5
+    let hg = HubSpotConnector(transport: gone, sleep: { _ in })
+    let rg = try? await hg.upsertCall(entry(["a"]), knownId: "", associations: [])
+    gone.createThenFail = false; gone.searchLag = 0
+    let rg2 = try? await hg.upsertCall(entry(["a"]), knownId: "", associations: [])
+    expect(rg == nil && gone.calls.count == 1 && rg2?.id == gone.calls.keys.first && rg2?.created == false,
+           "calls: search still behind reports a failure; the next run finds the Call")
+    // Undo checks the portal the Apply wrote to: after the key moves to another portal nothing is deleted or restored
+    let up = FakeHubSpotCalls()
+    let hu = HubSpotConnector(transport: up, sleep: { _ in })
+    let made1 = try? await hu.upsertCall(entry(["one"]), knownId: "", associations: [])
+    let upd = try? await hu.upsertCall(entry(["two"]), knownId: made1?.id ?? "", associations: [])
+    up.portal = 777
+    let sent = up.log.count
+    var uerr: CRMError? = nil
+    let items = [CRMUndoItem("calls", made1?.id ?? ""), CRMUndoItem("calls", upd?.id ?? "", upd?.old ?? [:]), CRMUndoItem("deals", "D1", ["dealstage": "a"])]
+    do { _ = try await CRMCallSync.undo(items, portal: "500", connector: hu) } catch { uerr = error as? CRMError }
+    expect(uerr?.code == CRMPortal.mismatchCode && up.calls.count == 1 && (up.calls[made1?.id ?? ""]?["hs_call_body"] ?? "").contains("two")
+           && up.log.dropFirst(sent).allSatisfy { $0.hasPrefix("GET /account-info") }, "calls: Undo after a portal switch changes nothing")
+    up.portal = 500
+    final class Deleted { var ids: [String] = [] }
+    let deleted = Deleted()
+    let uf = try? await CRMCallSync.undo([CRMUndoItem("calls", made1?.id ?? "")], portal: "500", connector: hu) { deleted.ids.append($0.id) }
+    expect(uf == 0 && up.calls.isEmpty && deleted.ids == [made1?.id ?? "-"], "calls: Undo in the same portal deletes the new Call")
     // a 4xx create is a real failure and is not reconciled
     let rejected = try? await HubSpotConnector(transport: FakeBadCreate(), sleep: { _ in }).upsertCall(entry(["a"]), knownId: "", associations: [])
     expect(rejected == nil, "calls: a rejected create fails")

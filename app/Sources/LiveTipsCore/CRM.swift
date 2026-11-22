@@ -106,6 +106,29 @@ public enum CRMCallSync {
             return r
         }
     }
+
+    /// Undo of one Apply: the portal the Apply wrote to is checked first, so a key changed in between never deletes or
+    /// overwrites another portal's records with the same ids. Deal fields and updated Calls get their old values back,
+    /// the rest is deleted. Returns how many items failed; a mismatch throws before anything is sent.
+    public static func undo(_ items: [CRMUndoItem], portal: String, connector c: CRMConnector,
+                            deleted: (CRMUndoItem) -> Void = { _ in }) async throws -> Int {
+        try await CRMPortal.verify(link: portal, connector: c)
+        var failed = 0
+        for it in items.reversed() {
+            do {
+                if it.type == "deals" { _ = try await c.updateDeal(id: it.id, fields: it.old) }
+                else if it.type == "calls" && !it.old.isEmpty { try await c.restoreCall(id: it.id, fields: it.old) }
+                else { try await c.delete(type: it.type, id: it.id); deleted(it) }
+            } catch { failed += 1 }
+        }
+        return failed
+    }
+}
+
+/// One record an Apply wrote: its type, id and the values it replaced (empty for a new record).
+public struct CRMUndoItem: Equatable {
+    public var type: String, id: String, old: [String: String]
+    public init(_ type: String, _ id: String, _ old: [String: String] = [:]) { self.type = type; self.id = id; self.old = old }
 }
 
 /// H2 (docs/specs/hubspot-crm-integration.md): what is logged as a Call engagement after a call. No transcript text:
@@ -376,6 +399,7 @@ public final class HubSpotConnector: CRMConnector {
     public func delete(type: String, id: String) async throws { _ = try await call("DELETE", "/crm/v3/objects/\(type)/\(id)") }
 
     static let callAssoc: [String: Int] = ["deals": 206, "companies": 182, "contacts": 194]      // call -> object (HUBSPOT_DEFINED)
+    static let reconcileWaits: [Double] = [0, 2, 4]      // seconds before each search after an ambiguous create
 
     /// H2: known id (kept with the call) first, then the external id (the Pacenote call id) in HubSpot, else a new Call.
     public func upsertCall(_ log: CRMCallLog, knownId: String, associations: [CRMRef]) async throws -> CRMCallResult {
@@ -393,9 +417,14 @@ public final class HubSpotConnector: CRMConnector {
                     "associations": refs.map { a in ["to": ["id": a.id], "types": [["associationCategory": "HUBSPOT_DEFINED", "associationTypeId": Self.callAssoc[a.type]!]]] }])
                 return CRMCallResult(id: (r["id"] as? String) ?? "", created: true)
             } catch {
-                // no answer, or a 5xx: HubSpot may have made the Call anyway, so look for it before reporting a failure
+                // no answer, or a 5xx: HubSpot may have made the Call anyway, so look for it before reporting a failure.
+                // Search lags a new record by a few seconds, so it is asked again before giving up; a later run's
+                // search by the Pacenote call id still finds a Call that showed up after that.
                 if let ce = error as? CRMError, ce.code >= 400 && ce.code < 500 { throw error }
-                if let found = try? await findCall(log.key) { return CRMCallResult(id: found, created: true) }
+                for (i, wait) in Self.reconcileWaits.enumerated() {
+                    if i > 0 { await sleep(wait) }
+                    if let found = try? await findCall(log.key) { return CRMCallResult(id: found, created: true) }
+                }
                 throw error
             }
         }

@@ -18,7 +18,9 @@ Pacenote. Earlier versions are described in the commit messages and in
 - **The call is logged in HubSpot (H2).** Update HubSpot has a new Call row: a HubSpot Call with the title, start
   time, duration, direction, outcome, participants, the call page's Summary, the next steps, and a link back to the
   call, associated with the matched contacts, company and open deal. Applying again, even while Auto runs, updates the
-  same Call instead of adding a second one, and Undo removes a new Call or restores the old values. Transcript text is
+  same Call instead of adding a second one, and Undo removes a new Call or restores the old values (it changes nothing
+  if the key was switched to another HubSpot account in between). A create that gets no answer is checked in HubSpot
+  three times over a few seconds before it is reported as failed. Transcript text is
   never sent. A call's HubSpot link now remembers its HubSpot account: after the key changes to another account, or
   for a call linked before this version, nothing is written and Update HubSpot offers **Relink**. A new
   switch in Settings > Integrations > HubSpot, **Log the call in HubSpot automatically after it ends**, is off by

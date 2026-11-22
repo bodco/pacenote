@@ -253,7 +253,8 @@ struct CRMUpdateView: View {
     @State private var stage = ""
     @State private var busy = false
     @State private var status = ""
-    @State private var undo: [(String, String, [String: String])] = []    // (type, id, old fields)
+    @State private var undo: [CRMUndoItem] = []
+    @State private var undoPortal = ""     // H2: the portal the Apply wrote to; Undo checks it before any change
     @State private var undoUntil: Date? = nil
     @State private var applied = false     // 0.8.7.1: a second Apply wrote the note and the task twice
     @State private var needsRelink = false // H2: the link is from another portal, or from before the portal was kept
@@ -324,31 +325,31 @@ struct CRMUpdateView: View {
         if !stage.isEmpty { p.dealFields["dealstage"] = stage }
         busy = true; status = L("crm.writing")
         Task {
-            var done: [(String, String, [String: String])] = []
+            var done: [CRMUndoItem] = []
             var fields = 0
             do {
                 try await CRMPortal.verify(link: l.portalId, connector: c)     // H2: nothing goes to another portal's ids
                 let refs = CRMCallLogger.refs(l)
                 if p.rows.first(where: { $0.id == "note" })?.on == true {
-                    let id = try await c.createNote(text: p.note, associations: refs); done.append(("notes", id, [:]))
+                    let id = try await c.createNote(text: p.note, associations: refs); done.append(CRMUndoItem("notes", id))
                 }
                 if p.rows.first(where: { $0.id == "call" })?.on == true, let entry = p.callLog {
                     let r = try await CRMCallLogger.write(entry, base: base, link: l, connector: c)    // in turn with Auto
-                    done.append(("calls", r.id, r.old))       // a new Call: old is empty and Undo deletes it; an update: Undo restores
+                    done.append(CRMUndoItem("calls", r.id, r.old))       // a new Call: old is empty and Undo deletes it; an update: Undo restores
                     link?.callId = r.id
                 }
                 if p.rows.first(where: { $0.id == "deal" })?.on == true, !l.dealId.isEmpty, l.dealId != "none", !p.dealFields.isEmpty {
-                    let old = try await c.updateDeal(id: l.dealId, fields: p.dealFields); done.append(("deals", l.dealId, old)); fields = p.dealFields.count
+                    let old = try await c.updateDeal(id: l.dealId, fields: p.dealFields); done.append(CRMUndoItem("deals", l.dealId, old)); fields = p.dealFields.count
                 }
                 if p.rows.first(where: { $0.id == "task" })?.on == true, let t = p.task {
-                    let id = try await c.createTask(subject: t.subject, due: t.due, associations: refs); done.append(("tasks", id, [:]))
+                    let id = try await c.createTask(subject: t.subject, due: t.due, associations: refs); done.append(CRMUndoItem("tasks", id))
                 }
                 UsageLog.log("update_crm", ["fields": fields])
-                undo = done; undoUntil = Date().addingTimeInterval(8); applied = true
+                undo = done; undoPortal = l.portalId; undoUntil = Date().addingTimeInterval(8); applied = true
                 status = L("crm.updated", ["crm": c.providerName])
                 DispatchQueue.main.asyncAfter(deadline: .now() + 8.2) { undoUntil = nil }
             } catch {
-                undo = done; undoUntil = done.isEmpty ? nil : Date().addingTimeInterval(8)
+                undo = done; undoPortal = l.portalId; undoUntil = done.isEmpty ? nil : Date().addingTimeInterval(8)
                 needsRelink = (error as? CRMError)?.code == CRMPortal.mismatchCode
                 status = needsRelink ? L("crm.relink.needed") : ((error as? CRMError)?.message ?? error.localizedDescription)
                 AnalyticsTracker.shared.error("crm", Analytics.errorCode(message: status), provider: "hubspot")   // S5: code only
@@ -371,27 +372,25 @@ struct CRMUpdateView: View {
         }
     }
 
-    /// Undo: notes and tasks are deleted, deal fields get their old values back.
+    /// Undo: notes, tasks and new Calls are deleted, deal fields and updated Calls get their old values back; nothing
+    /// is sent when the key now belongs to another portal than the one the Apply wrote to.
     func runUndo() {
         guard let c = crm.connector() else { return }
-        let items = undo; undo = []; undoUntil = nil
+        let items = undo, portal = undoPortal
+        undo = []; undoUntil = nil
         Task {
-            var failed = 0      // 0.8.7.1: a failed undo is said, not hidden behind "Undone"
-            for (type, id, old) in items.reversed() {
-                do {
-                    if type == "deals" { _ = try await c.updateDeal(id: id, fields: old) }
-                    else if type == "calls" && !old.isEmpty { try await c.restoreCall(id: id, fields: old) }
-                    else {
-                        try await c.delete(type: type, id: id)
-                        if type == "calls" {     // the next Apply makes a new Call
-                            if var d = CRMLink.load(base: base), d.callId == id { d.callId = ""; d.save(base: base) }
-                            link?.callId = ""
-                        }
-                    }
-                } catch { failed += 1 }
+            do {
+                let failed = try await CRMCallSync.undo(items, portal: portal, connector: c) { it in
+                    guard it.type == "calls" else { return }       // the next Apply makes a new Call
+                    if var d = CRMLink.load(base: base), d.callId == it.id { d.callId = ""; d.save(base: base) }
+                    link?.callId = ""
+                }
+                status = failed == 0 ? L("crm.undone") : L("crm.undoFailed", ["n": "\(failed)", "crm": c.providerName])   // 0.8.7.1: said, not hidden
+                if failed == 0 { applied = false }
+            } catch {
+                let mismatch = (error as? CRMError)?.code == CRMPortal.mismatchCode
+                status = mismatch ? L("crm.undo.portal", ["crm": c.providerName]) : ((error as? CRMError)?.message ?? error.localizedDescription)
             }
-            status = failed == 0 ? L("crm.undone") : L("crm.undoFailed", ["n": "\(failed)", "crm": c.providerName])
-            if failed == 0 { applied = false }
         }
     }
 }

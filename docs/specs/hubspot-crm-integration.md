@@ -11,9 +11,12 @@ Pacenote already connects to HubSpot with a service key (a private app key) kept
 
 - **Read** (before a call): `CRMConnector.findCompany` (domain, then name), `findContacts` (emails), `deals`
   (open deal updated last), `recentActivity`, `pipelines`, `properties`, `owners`. The result is the local snapshot
-  `<stem>.crm.md` and the link `<stem>.crm.json` (ids only: company, deal, contacts).
+  `<stem>.crm.md` and the link `<stem>.crm.json`: the ids of the company, deal and contacts, the company, deal and
+  participant names, and since H2 the Pacenote call id (`callKey`), the HubSpot Call id (`callId`) and the portal id
+  (`portalId`). The names stay on the Mac; they go to HubSpot only inside the Call.
 - **Write** (after a call): "Update HubSpot" on the call page. A reviewed list of checkboxes (note, deal fields,
-  follow-up task, and since H2 the Call), **Apply**, then **Undo** for 8 seconds. Nothing is written without a click.
+  follow-up task, and since H2 the Call), **Apply**, then **Undo** for 8 seconds. Every write needs that click, except
+  the Call when the PM turns on the Auto switch (off by default, section 9).
 - **Not yet**: Leads, Meetings, Emails, creating contacts and companies, OAuth, several portals.
 
 ## 2. Objects and associations
@@ -103,7 +106,8 @@ decides, the service key stays the only path.
    page.
 4. **Undo.** A new object is deleted; an updated object gets its old property values back. Associations added during a
    re-run are not removed by Undo (they are harmless and HubSpot has no history for them); the Undo failure line says
-   what is left. A re-run of the Call adds the associations first and changes the fields last, so a failed association
+   what is left. Undo first checks that the key still belongs to the portal the Apply wrote to; after a key change
+   it sends nothing and says so, as the same ids in another portal are other records. A re-run of the Call adds the associations first and changes the fields last, so a failed association
    leaves the Call's fields as they were and nothing changed is outside Undo.
 5. **Errors are one line where the action was**, never a modal; 429 waits (Retry-After, else 1, 2, 4 s) and retries three
    times; 401 and 403 say what to fix (key, or the named scope).
@@ -117,13 +121,17 @@ decides, the service key stays the only path.
 |---|---|---|
 | Contact | email (lowercase, trimmed) | search `email EQ`; found: use it; several: take the one on the matched company, else the oldest; never create a second contact with the same email. Creating a missing contact is a later, opt-in step (decision 4) |
 | Company | domain, then name | search `domain EQ`, then `name EQ`; free-mail domains (gmail.com, outlook.com, icloud.com, yahoo.com, hotmail.com) and the PM's own domains never match a company |
-| Call | the Pacenote call id | the id is made once and stored with the call (`<stem>.crm.json`, `callKey`) together with the HubSpot Call id (`callId`). A re-run PATCHes `callId`. If `callId` is missing, HubSpot is searched by `hs_call_external_id = pacenote:<id>`. If the stored id was deleted in HubSpot (404), the same search runs, then a new Call is created. Auto and Apply of one call take turns (a queue per call id) and each reads the stored `callId` when its turn comes. A create that gets no answer or a 5xx is checked by the same search before it is reported as failed. A second Call for one call id is never created |
+| Call | the Pacenote call id | the id is made once and stored with the call (`<stem>.crm.json`, `callKey`) together with the HubSpot Call id (`callId`). A re-run PATCHes `callId`. If `callId` is missing, HubSpot is searched by `hs_call_external_id = pacenote:<id>`. If the stored id was deleted in HubSpot (404), the same search runs, then a new Call is created. Auto and Apply of one call take turns (a queue per call id) and each reads the stored `callId` when its turn comes. A create that gets no answer or a 5xx is checked by the same search, three times over about 6 seconds (HubSpot's search lags a new record), before it is reported as failed; the next run searches first, so a Call that shows up later is updated, not made again. A second Call is possible only if the search still misses it on that next run (see the known gaps) |
 | Note, Task | none | created per Apply; the 8 second Undo and the "already applied" lock protect against a double click. No dedupe across sessions (decision 8) |
 | Deal | the PM's link | the open deal updated last, or what the PM chose in Start call; "No deal" is kept for the series |
 
 Known gap: if both `<stem>.crm.json` is lost and the Call has no `hs_call_external_id` (for example a portal that
 rejects the property), a re-run creates a second Call. Mitigation: the body carries `Pacenote call id: <id>`; a
 manual search in HubSpot finds it.
+
+Known gap: a create whose answer is lost, followed by a retry while HubSpot's search still does not show the new
+Call (longer than the 6 seconds above), makes a second Call. Auto runs once per call and Apply is a click, so this
+needs a lost answer and a fast manual retry; the body's `Pacenote call id: <id>` finds both in HubSpot.
 
 ## 7. Owner mapping
 

@@ -1664,7 +1664,8 @@ time, duration, direction (Settings > Integrations > HubSpot, default Outbound),
 names, the call page's Summary, the next steps, and a link back to the call (the Notion page when there is one),
 associated with the matched contacts, the company and the open deal. No transcript text is sent. Pacenote keeps the
 call's own id with the call, so applying again, or the Auto switch, updates the same HubSpot Call and never adds a
-second one; Undo deletes a new Call or puts the old values back. The link also remembers its HubSpot account: after
+second one; Undo deletes a new Call or puts the old values back, and does nothing if the key now belongs to another
+HubSpot account. The link also remembers its HubSpot account: after
 you change the key to another account, or for a call linked before this version, Pacenote writes nothing and Update
 HubSpot offers **Relink**. **Log the call in HubSpot automatically after it
 ends** is off by default; when on, it logs only the Call, about two and a half minutes after the call, without a
