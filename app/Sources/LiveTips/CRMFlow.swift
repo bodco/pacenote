@@ -261,6 +261,7 @@ struct CRMUpdateView: View {
     @State private var undoUntil: Date? = nil
     @State private var meetingLog: CRMMeetingLog? = nil      // H5 (CRMTimelineFlow.swift)
     @State private var emailLog: CRMEmailLog? = nil
+    @State private var meetingPick: [CRMMeetingCandidate] = []   // H5: HubSpot Meetings near the call, not sure to be its own
     @State private var applied = false     // 0.8.7.1: a second Apply wrote the note and the task twice
     @State private var needsRelink = false // H2: the link is from another portal, or from before the portal was kept
 
@@ -285,6 +286,16 @@ struct CRMUpdateView: View {
                 TextField(L("crm.stage"), text: $stage, prompt: Text(L("crm.stage.prompt"))).help(L("crm.stage.help"))
             } else {
                 Text(L("crm.update.noLink")).foregroundStyle(PN.C.text3)
+            }
+            if !meetingPick.isEmpty {       // H5: the PM says which Meeting gets the notes; nothing was written to one yet
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(L("crm.meeting.pick")).font(PN.Font.caption).foregroundStyle(PN.C.text3).fixedSize(horizontal: false, vertical: true)
+                    ForEach(meetingPick.prefix(3), id: \.id) { m in
+                        Button(L("crm.meeting.attach", ["title": m.title.isEmpty ? L("crm.meeting.untitled") : m.title, "time": CallPageView.fmt("jmm").string(from: m.start)])) { pickMeeting(m.id) }
+                            .buttonStyle(.pnSecondary).disabled(busy)
+                    }
+                    Button(L("crm.meeting.new")) { pickMeeting(CRMMeetingLog.newTarget) }.buttonStyle(.pnSecondary).disabled(busy)
+                }
             }
             Spacer()
             HStack {
@@ -353,7 +364,7 @@ struct CRMUpdateView: View {
                     // H5: in turn with Auto, with the stored ids read from <base>.crm.json when the turn comes
                     let t = await CRMTimelineLogger.apply(w, connector: c, meeting: meetingLog, email: emailLog, base: base, link: link ?? l, refs: refs) { id in p.rows.first(where: { $0.id == id })?.on == true }
                     done += t.undo; link?.meetingId = t.link.meetingId; link?.emailId = t.link.emailId; link?.emailOurs = t.link.emailOurs
-                    if t.ambiguous { extra = " " + L("crm.meeting.ambiguous") }
+                    meetingPick = t.pick        // the pick block below says what is waiting
                     if let e = t.error { throw e }
                 }
                 if p.rows.first(where: { $0.id == "deal" })?.on == true, !l.dealId.isEmpty, l.dealId != "none", !p.dealFields.isEmpty {
@@ -365,12 +376,34 @@ struct CRMUpdateView: View {
                 UsageLog.log("update_crm", ["fields": fields])
                 undo = done; undoUntil = Date().addingTimeInterval(8); applied = true
                 status = L("crm.updated", ["crm": c.providerName]) + extra
-                DispatchQueue.main.asyncAfter(deadline: .now() + 8.2) { undoUntil = nil }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 8.2) { if let u = undoUntil, u <= Date() { undoUntil = nil } }
             } catch {
                 undo = done; undoUntil = done.isEmpty ? nil : Date().addingTimeInterval(8)
                 needsRelink = (error as? CRMError)?.code == CRMPortal.mismatchCode
                 status = needsRelink ? L("crm.relink.needed") : ((error as? CRMError)?.message ?? error.localizedDescription)
                 AnalyticsTracker.shared.error("crm", Analytics.errorCode(message: status), provider: "hubspot")   // S5: code only
+            }
+            busy = false
+        }
+    }
+
+    /// H5: the PM's pick of the Meeting (an id, or a new one): only the Meeting row is written, in turn with the other
+    /// writes of the call, and its Undo joins the one still open (or opens a new one).
+    func pickMeeting(_ target: String) {
+        guard var m = meetingLog, let l = link, let c = crm.connector(), let w = c as? CRMTimelineWriter else { return }
+        m.target = target
+        busy = true; status = L("crm.writing")
+        Task {
+            let t = await CRMTimelineLogger.apply(w, connector: c, meeting: m, email: nil, base: base, link: l, refs: CRMCallLogger.refs(l)) { $0 == "meeting" }
+            if (undoUntil ?? .distantPast) <= Date() { undo = [] }
+            undo += t.undo; link?.meetingId = t.link.meetingId; meetingPick = t.pick
+            if let e = t.error {
+                needsRelink = (e as? CRMError)?.code == CRMPortal.mismatchCode
+                status = needsRelink ? L("crm.relink.needed") : ((e as? CRMError)?.message ?? e.localizedDescription)
+            } else { status = L("crm.updated", ["crm": c.providerName]) }
+            if !t.undo.isEmpty {
+                undoUntil = Date().addingTimeInterval(8)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 8.2) { if let u = undoUntil, u <= Date() { undoUntil = nil } }
             }
             busy = false
         }

@@ -12,11 +12,21 @@ public struct CRMMeetingLog: Equatable {
     public var start: Date
     public var end: Date
     public var notes: String            // Summary, Decisions, Next steps, link back; see `notes(...)`
+    /// The calendar event the call held, when the calendar still has it: a synced Meeting carries its title and start.
+    public var eventTitle: String = ""
+    public var eventStart: Date? = nil
+    /// The PM's pick after Update HubSpot asked (`CRMTimelineResult.pick`): a Meeting id to add the notes to, or
+    /// `newTarget` for a new Meeting. Empty: HubSpot is searched.
+    public var target: String = ""
+    public static let newTarget = "new"
     /// How far apart two starts may be and still be the same meeting (calendar sync and the call start differ by minutes).
     public static let tolerance: TimeInterval = 15 * 60
+    /// A synced Meeting starts when the invite does; within this it is the calendar event's own start.
+    public static let sameStart: TimeInterval = 60
 
-    public init(key: String, title: String, start: Date, end: Date, notes: String) {
+    public init(key: String, title: String, start: Date, end: Date, notes: String, eventTitle: String = "", eventStart: Date? = nil) {
         self.key = key; self.title = title; self.start = start; self.end = max(end, start); self.notes = notes
+        self.eventTitle = eventTitle; self.eventStart = eventStart
     }
 
     /// Pacenote's block in the notes field starts and ends with a line that names the call id, so a re-run finds its
@@ -86,21 +96,38 @@ public struct CRMEmailLog: Equatable {
         if let h = headers { p["hs_email_headers"] = h }
         return p
     }
-    /// The same email in HubSpot's own logging: its text holds the start of the draft (signature and quotes may follow).
-    static func sameText(_ theirs: String, _ ours: String) -> Bool {
+    /// The same email in HubSpot's own logging: its text holds the start of the draft (a signature may follow). The
+    /// quoted history of a reply does not count: only the text above the first quoted line is compared.
+    public static func sameText(_ theirs: String, _ ours: String) -> Bool {
         func norm(_ s: String) -> String { s.lowercased().split(whereSeparator: { $0.isWhitespace }).joined(separator: " ") }
         let o = String(norm(ours).prefix(200))
-        return !o.isEmpty && norm(theirs).contains(o)
+        return !o.isEmpty && norm(unquoted(theirs)).contains(o)
+    }
+    static func unquoted(_ s: String) -> String {
+        let lines = s.components(separatedBy: "\n")
+        let cut = lines.firstIndex { l in
+            let t = l.trimmingCharacters(in: .whitespaces)
+            return t.hasPrefix(">") || t.hasSuffix("wrote:") || t.hasPrefix("-----Original Message") || t.hasPrefix("________________")
+        }
+        return lines[..<(cut ?? lines.count)].joined(separator: "\n")
     }
 }
 
 /// created: a new engagement (Undo deletes it). attached: not Pacenote's (HubSpot's own calendar sync, or an email
 /// logged by HubSpot or by hand): only the notes, or only the associations, were added. old: what Undo puts back,
-/// empty when nothing was changed, in which case Undo must not touch the object. ambiguous: several meetings matched,
-/// so none was guessed and a new one was made.
-public struct CRMTimelineResult: Equatable { public var id: String; public var created: Bool; public var attached: Bool; public var old: [String: String]; public var ambiguous: Bool
-    public init(id: String, created: Bool, attached: Bool = false, old: [String: String] = [:], ambiguous: Bool = false) {
-        self.id = id; self.created = created; self.attached = attached; self.old = old; self.ambiguous = ambiguous } }
+/// empty when nothing was changed, in which case Undo must not touch the object. pick: meetings near the call that
+/// may be its own but are not sure to be; nothing was written and the PM picks one, or a new Meeting.
+public struct CRMTimelineResult: Equatable { public var id: String; public var created: Bool; public var attached: Bool; public var old: [String: String]; public var pick: [CRMMeetingCandidate]
+    public init(id: String, created: Bool, attached: Bool = false, old: [String: String] = [:], pick: [CRMMeetingCandidate] = []) {
+        self.id = id; self.created = created; self.attached = attached; self.old = old; self.pick = pick } }
+
+/// A HubSpot Meeting near the call that may be the call's own, shown to the PM to pick.
+public struct CRMMeetingCandidate: Equatable { public var id: String; public var title: String; public var start: Date
+    public init(id: String, title: String, start: Date) { self.id = id; self.title = title; self.start = start } }
+
+/// A write failed and taking its associations off again failed too: `fields` (`CRMTimeline.addedKey`) names the ones
+/// still on the object, so Undo can take them off later. `error` is the first failure.
+public struct CRMTimelineLeftover: Error { public var type: String; public var id: String; public var fields: [String: String]; public var error: Error }
 
 public protocol CRMTimelineWriter {
     func upsertMeeting(_ log: CRMMeetingLog, knownId: String, associations: [CRMRef]) async throws -> CRMTimelineResult
@@ -130,7 +157,7 @@ public struct CRMTimelineIds: Equatable {
 /// stored ids and the portal are read when the turn comes, each new id is stored as soon as it is known, and what was
 /// written before a failure is returned for Undo.
 public enum CRMTimelineSync {
-    public struct Outcome { public var undo: [(String, String, [String: String])] = []; public var ids: CRMTimelineIds; public var ambiguous = false; public var error: Error? }
+    public struct Outcome { public var undo: [(String, String, [String: String])] = []; public var ids: CRMTimelineIds; public var pick: [CRMMeetingCandidate] = []; public var error: Error? }
 
     public static func log(key: String, writer w: CRMTimelineWriter, connector c: CRMConnector, meeting: CRMMeetingLog?, email: CRMEmailLog?,
                            associations: [CRMRef], queue: CRMCallQueue = .shared,
@@ -145,8 +172,10 @@ public enum CRMTimelineSync {
                 try await CRMPortal.verify(link: ids.portalId, connector: c)
                 if let m = meeting {
                     let r = try await w.upsertMeeting(m, knownId: ids.meetingId, associations: associations)
-                    ids.meetingId = r.id; save(ids); box.out.ids = ids; box.out.ambiguous = r.ambiguous
-                    if r.created || !r.old.isEmpty { box.out.undo.append(("meetings", r.id, r.old)) }
+                    if r.pick.isEmpty {
+                        ids.meetingId = r.id; save(ids); box.out.ids = ids
+                        if r.created || !r.old.isEmpty { box.out.undo.append(("meetings", r.id, r.old)) }
+                    } else { box.out.pick = r.pick }        // nothing written yet; the Email row still goes
                 }
                 if let e = email {
                     let r = try await w.upsertEmail(e, knownId: ids.emailId, ours: ids.emailOurs, associations: associations)
@@ -154,6 +183,8 @@ public enum CRMTimelineSync {
                     if r.created || !r.old.isEmpty { box.out.undo.append(("emails", r.id, r.old)) }
                 }
             }
+        } catch let l as CRMTimelineLeftover {
+            box.out.undo.append((l.type, l.id, l.fields)); box.out.error = l.error
         } catch { box.out.error = error }
         return box.out
     }
@@ -176,12 +207,21 @@ extension HubSpotConnector: CRMTimelineWriter {
                 _ = try await call("PUT", "/crm/v4/objects/\(type)/\(id)/associations/default/\(a.type)/\(a.id)")
                 added.append(a)
             }
-        } catch { await dissociate(type, id, added); throw error }
+        } catch { try await rollBack(type, id, added, error) }
         return added
     }
 
-    private func dissociate(_ type: String, _ id: String, _ refs: [CRMRef]) async {
-        for a in refs { _ = try? await call("DELETE", "/crm/v4/objects/\(type)/\(id)/associations/\(a.type)/\(a.id)") }
+    /// Takes the associations just added off again and throws `error`; the ones that could not be taken off go with
+    /// it (`CRMTimelineLeftover`), so they stay in Undo.
+    private func rollBack(_ type: String, _ id: String, _ added: [CRMRef], _ error: Error) async throws -> Never {
+        var left: [CRMRef] = []
+        for a in added {
+            do { _ = try await call("DELETE", "/crm/v4/objects/\(type)/\(id)/associations/\(a.type)/\(a.id)") }
+            catch let e as CRMError where e.code == 404 {}       // already gone
+            catch { left.append(a) }
+        }
+        if left.isEmpty { throw error }
+        throw CRMTimelineLeftover(type: type, id: id, fields: [CRMTimeline.addedKey: CRMTimeline.encode(left)], error: error)
     }
 
     /// The contacts of the call: a Meeting or an Email is only taken as this call's when it is on one of them (a shared
@@ -208,33 +248,40 @@ extension HubSpotConnector: CRMTimelineWriter {
         return (out, have)
     }
 
-    enum Match: Equatable { case none, one(String), several }
+    enum Match: Equatable { case none, one(String), several, pick([CRMMeetingCandidate]) }
 
     /// HubSpot's own Meeting of this call (its calendar sync, or ours from a run whose id was lost): on one of the
     /// call's contacts, starting within 15 minutes. Ours (our block in the notes) wins; a meeting holding another call's
-    /// block is never it. More than one left: the one with the call's title, else no guess.
+    /// block is never it. Of the rest a meeting is sure only when it has the call's or the calendar event's title, or
+    /// starts with the calendar event (within a minute); exactly one sure one is used. Otherwise the ones left go to
+    /// the PM to pick, and nothing is written until then.
     func findMeeting(_ log: CRMMeetingLog, _ refs: [CRMRef]) async throws -> Match {
         let lo = Int((log.start.timeIntervalSince1970 - CRMMeetingLog.tolerance) * 1000), hi = Int((log.start.timeIntervalSince1970 + CRMMeetingLog.tolerance) * 1000)
         let groups = contactFilters(refs, [["propertyName": "hs_timestamp", "operator": "GTE", "value": String(lo)],
                                            ["propertyName": "hs_timestamp", "operator": "LTE", "value": String(hi)]])
         guard !groups.isEmpty else { return .none }
-        let r = try await call("POST", "/crm/v3/objects/meetings/search", ["filterGroups": groups, "properties": ["hs_timestamp", "hs_meeting_title", Self.meetingNotes], "limit": 20])
+        let r = try await call("POST", "/crm/v3/objects/meetings/search", ["filterGroups": groups, "properties": ["hs_timestamp", "hs_meeting_title", "hs_meeting_start_time", Self.meetingNotes], "limit": 20])
         var seen = Set<String>()
-        let hits = ((r["results"] as? [[String: Any]]) ?? []).compactMap { h -> (id: String, title: String, notes: String)? in
+        let hits = ((r["results"] as? [[String: Any]]) ?? []).compactMap { h -> (c: CRMMeetingCandidate, notes: String)? in
             guard let id = h["id"] as? String, seen.insert(id).inserted else { return nil }
-            return (id, Self.p(h, "hs_meeting_title"), Self.p(h, Self.meetingNotes))
+            let ts = Self.time(Self.p(h, "hs_timestamp"), or: log.start)
+            return (CRMMeetingCandidate(id: id, title: Self.p(h, "hs_meeting_title"), start: Self.time(Self.p(h, "hs_meeting_start_time"), or: ts)), Self.p(h, Self.meetingNotes))
         }
-        if let ours = hits.first(where: { $0.notes.contains(CRMMeetingLog.startMark(log.key)) }) { return .one(ours.id) }
-        let free = hits.filter { !$0.notes.contains(CRMMeetingLog.anyStart) }
-        if free.count == 1 { return .one(free[0].id) }
+        if let ours = hits.first(where: { $0.notes.contains(CRMMeetingLog.startMark(log.key)) }) { return .one(ours.c.id) }
+        let free = hits.filter { !$0.notes.contains(CRMMeetingLog.anyStart) }.map(\.c)
         if free.isEmpty { return .none }
-        func norm(_ s: String) -> String { s.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) }
-        let titled = free.filter { norm($0.title) == norm(log.title) }
-        return titled.count == 1 ? .one(titled[0].id) : .several
+        func norm(_ s: String) -> String { s.lowercased().split(whereSeparator: { $0.isWhitespace }).joined(separator: " ") }
+        let titles = Set([log.title, log.eventTitle].map(norm).filter { !$0.isEmpty })
+        let sure = free.filter { m in
+            titles.contains(norm(m.title)) || (log.eventStart.map { abs($0.timeIntervalSince(m.start)) <= CRMMeetingLog.sameStart } ?? false)
+        }
+        if sure.count == 1 { return .one(sure[0].id) }
+        return .pick((sure.isEmpty ? free : sure).sorted { abs($0.start.timeIntervalSince(log.start)) < abs($1.start.timeIntervalSince(log.start)) })
     }
 
-    /// The known id (kept with the call) first; else HubSpot's own Meeting of this call (`findMeeting`): the notes go
-    /// into it. Else a new one. Associations are added before the notes change; a failure leaves nothing changed.
+    /// The known id (kept with the call) first; else the PM's pick (`log.target`); else HubSpot's own Meeting of this
+    /// call when it is sure (`findMeeting`): the notes go into it. Not sure: nothing is written and the candidates come
+    /// back in `pick`. Else a new one. Associations are added before the notes change; a failure leaves nothing changed.
     public func upsertMeeting(_ log: CRMMeetingLog, knownId: String, associations: [CRMRef]) async throws -> CRMTimelineResult {
         let keys = [Self.meetingNotes, "hs_meeting_title", "hs_meeting_start_time", "hs_meeting_end_time", "hs_meeting_outcome"]
         var id = knownId
@@ -242,26 +289,29 @@ extension HubSpotConnector: CRMTimelineWriter {
         if !id.isEmpty {
             do { cur = try await read("meetings", id, keys) } catch let e as CRMError where e.code == 404 { id = "" }
         }
-        var attached = false, ambiguous = false
-        if id.isEmpty {
-            switch try await findMeeting(log, associations) {
-            case .one(let found): id = found; attached = true; cur = try await read("meetings", id, keys)
-            case .several: ambiguous = true
-            case .none: break
+        var attached = false
+        if id.isEmpty && log.target != CRMMeetingLog.newTarget {
+            if !log.target.isEmpty { id = log.target; attached = true; cur = try await read("meetings", id, keys) }
+            else {
+                switch try await findMeeting(log, associations) {
+                case .one(let found): id = found; attached = true; cur = try await read("meetings", id, keys)
+                case .pick(let c): return CRMTimelineResult(id: "", created: false, pick: c)
+                case .several, .none: break
+                }
             }
         }
         if id.isEmpty {
             let r = try await call("POST", "/crm/v3/objects/meetings", [
                 "properties": owned(log.properties.merging([Self.meetingNotes: log.notes]) { a, _ in a }),
                 "associations": Self.assocBody(associations, Self.meetingAssoc)])
-            return CRMTimelineResult(id: (r["id"] as? String) ?? "", created: true, ambiguous: ambiguous)
+            return CRMTimelineResult(id: (r["id"] as? String) ?? "", created: true)
         }
         let before = cur.0[Self.meetingNotes] ?? ""
         let merged = CRMMeetingLog.merge(existing: before, notes: log.notes, key: log.key)
         let added = try await associateMissing("meetings", id, associations, Self.meetingAssoc, have: cur.1)
         if merged != before {
             do { _ = try await call("PATCH", "/crm/v3/objects/meetings/\(id)", ["properties": [Self.meetingNotes: merged]]) }
-            catch { await dissociate("meetings", id, added); throw error }
+            catch { try await rollBack("meetings", id, added, error) }
         }
         var old: [String: String] = merged != before ? [Self.meetingNotes: before] : [:]
         if !added.isEmpty { old[CRMTimeline.addedKey] = CRMTimeline.encode(added) }
@@ -293,7 +343,7 @@ extension HubSpotConnector: CRMTimelineWriter {
             mine = false
             switch try await findEmail(log, associations) {
             case .one(let found): id = found; cur = try await read("emails", id, keys)
-            case .several: return CRMTimelineResult(id: "", created: false, attached: true)     // logged already; nothing to write
+            case .several, .pick: return CRMTimelineResult(id: "", created: false, attached: true)     // logged already; nothing to write
             case .none:
                 let r = try await call("POST", "/crm/v3/objects/emails", ["properties": owned(log.properties), "associations": Self.assocBody(associations, Self.emailAssoc)])
                 return CRMTimelineResult(id: (r["id"] as? String) ?? "", created: true)
@@ -303,7 +353,7 @@ extension HubSpotConnector: CRMTimelineWriter {
         var old: [String: String] = [:]
         if mine {
             do { _ = try await call("PATCH", "/crm/v3/objects/emails/\(id)", ["properties": owned(log.properties)]) }
-            catch { await dissociate("emails", id, added); throw error }
+            catch { try await rollBack("emails", id, added, error) }
             old = cur.0
         }
         if !added.isEmpty { old[CRMTimeline.addedKey] = CRMTimeline.encode(added) }

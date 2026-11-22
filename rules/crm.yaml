@@ -53,8 +53,9 @@ write:
   meeting: >-
     H5: Meeting row, ticked by default, never automatic. The call page's Summary, Decisions and Next steps go to
     hs_internal_meeting_notes; associations contact 200, company 188, deal 212. A meeting on one of the call's contacts
-    within 15 minutes of the start (HubSpot's calendar sync) is used instead of a new one only when it is the only one,
-    or the only one with the call's title; otherwise a new Meeting, never a guess. Only Pacenote's block for this call
+    within 15 minutes of the start (HubSpot's calendar sync) is used instead of a new one only when it is sure: the
+    only one with the call's or the calendar event's title, or starting with the calendar event. Otherwise nothing is
+    written to a meeting and the PM picks one of those nearby or a new Meeting, never a guess. Only Pacenote's block for this call
     (bounded by start and end lines naming the call id) is written, and a re-run replaces just that block. Never
     transcript text. Writes take turns with the Call of the same call.
   email: >-

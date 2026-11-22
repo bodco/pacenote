@@ -1675,16 +1675,19 @@ page's Summary, Decisions and Next steps, with the link back, go into HubSpot as
 and end, outcome Completed, associated with the matched contacts, the company and the open deal. If HubSpot's own
 calendar sync already made that meeting (on one of the call's contacts, a start within 15 minutes), Pacenote does not
 add a second one: the notes are added to that meeting's internal notes, below your own text, and the meeting's title
-and invite stay as they are. A meeting that only shares the company or the deal is never used, and when two meetings
-fit and only one has the call's title, that one is used; otherwise Pacenote makes its own Meeting rather than guess and
-says so. Pacenote's block starts and ends with a line that names the call, so applying again replaces only that block
+and invite stay as they are. A meeting that only shares the company or the deal is never used. Pacenote is sure of a
+meeting only when it has the call's title or the calendar event's title, or starts with the calendar event; when no
+meeting or more than one is sure, nothing is added to any meeting and Update HubSpot lists the meetings near that time
+with "Add the notes to ..." for each and "Make a new Meeting instead", so the notes never land in another call's
+meeting without your pick. Pacenote's block starts and ends with a line that names the call, so applying again replaces only that block
 and keeps everything around it. The **Email** row appears once the call's follow-up draft has been written in this
 session of the app (the draft is not saved to a file) and is never ticked for you: Pacenote does not send mail, so tick
 it after you sent the email yourself, and HubSpot gets an email engagement with the subject and text as you edited them
 (not an email sent through HubSpot), associated the same way. If HubSpot already logged that email (one of the call's
-contacts, the same subject and the same text, in the last day), Pacenote never changes it and only adds the missing
+contacts, the same subject and the same text above any quoted reply, in the last day), Pacenote never changes it and only adds the missing
 associations. Both rows need Apply; there is no automatic switch for them. Undo works for 8 seconds and also removes
-the associations Pacenote added; if a write fails halfway, what it changed is taken back. No transcript text is sent.
+the associations Pacenote added; if a write fails halfway, what it changed is taken back, and an association HubSpot
+would not let it take back stays in Undo. No transcript text is sent.
 
 **What Pacenote can do.** Help > What Pacenote can do lists every feature with Try it and how often you used it
 (from the local usage log, Settings > General > Data). For the first 14 days it is also a card on Home.

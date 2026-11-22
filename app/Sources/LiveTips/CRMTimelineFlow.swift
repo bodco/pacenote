@@ -27,8 +27,13 @@ enum CRMTimelineLogger {
         let next = (sales["next_step"] as? String) ?? ((sales["next_step"] as? [String: Any])?["what"] as? String) ?? ""
         let s = CRMCallLog.sections(tldr: m?.tldr ?? "", recap: m?.recap ?? [], onMe: o.onMe, theirs: o.theirs.map { $0.who + ": " + $0.what }, salesNext: next)
         let end = rec.end ?? rec.start.addingTimeInterval((rec.minutes ?? 0) * 60)
+        // the calendar event the call held, while the calendar still has it (as in relink): its title and start make
+        // a synced Meeting sure; without them a nearby Meeting is only offered to pick
+        let ev = CalendarService.shared.events.filter { abs($0.start.timeIntervalSince(rec.start)) < CRMMeetingLog.tolerance }
+            .min { abs($0.start.timeIntervalSince(rec.start)) < abs($1.start.timeIntervalSince(rec.start)) }
         return CRMMeetingLog(key: link.callKey, title: CallPageView.title(file), start: rec.start, end: end,
-                             notes: CRMMeetingLog.notes(summary: s.summary, decisions: o.decisions, nextSteps: s.nextSteps, link: rec.notionURL ?? "", key: link.callKey))
+                             notes: CRMMeetingLog.notes(summary: s.summary, decisions: o.decisions, nextSteps: s.nextSteps, link: rec.notionURL ?? "", key: link.callKey),
+                             eventTitle: ev?.title ?? "", eventStart: ev?.start)
     }
 
     /// Only once a follow-up draft was written in this session (the draft is not saved to a file): the subject and text as edited.
@@ -41,16 +46,17 @@ enum CRMTimelineLogger {
 
     /// One Apply step for the two rows, in turn with the Call writes of this call (Auto included): the ids are read
     /// from <base>.crm.json when the turn comes and each new one is stored there at once, so neither path loses the
-    /// other's ids. Returns what Undo needs, the ids now stored, and what was written before a failure.
+    /// other's ids. Returns what Undo needs, the ids now stored, what was written before a failure, and the Meetings
+    /// to pick from when HubSpot's own one is not sure (nothing was written to a Meeting then).
     static func apply(_ w: CRMTimelineWriter, connector c: CRMConnector, meeting: CRMMeetingLog?, email: CRMEmailLog?, base: String, link: CRMLink,
-                      refs: [CRMRef], on: (String) -> Bool) async -> (undo: [(String, String, [String: String])], link: CRMLink, ambiguous: Bool, error: Error?) {
+                      refs: [CRMRef], on: (String) -> Bool) async -> (undo: [(String, String, [String: String])], link: CRMLink, pick: [CRMMeetingCandidate], error: Error?) {
         var e = on("email") ? email : nil
         e?.sent = Date()
         let o = await CRMTimelineSync.log(key: link.callKey, writer: w, connector: c, meeting: on("meeting") ? meeting : nil, email: e, associations: refs,
             load: { ids(CRMLink.load(base: base) ?? link) },
             save: { i in var d = CRMLink.load(base: base) ?? link; d.meetingId = i.meetingId; d.emailId = i.emailId; d.emailOurs = i.emailOurs; d.save(base: base) })
         var l = link; l.meetingId = o.ids.meetingId; l.emailId = o.ids.emailId; l.emailOurs = o.ids.emailOurs
-        return (o.undo, l, o.ambiguous, o.error)
+        return (o.undo, l, o.pick, o.error)
     }
 
     nonisolated static func ids(_ l: CRMLink) -> CRMTimelineIds {

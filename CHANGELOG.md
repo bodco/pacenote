@@ -27,13 +27,14 @@ Pacenote. Earlier versions are described in the commit messages and in
 - **Meetings and follow-up emails on the HubSpot timeline (H5).** Update HubSpot has two more rows. **Meeting**
   (ticked by default) adds the call page's Summary, Decisions and Next steps to a HubSpot Meeting associated with the
   matched contacts, company and deal. If HubSpot's own calendar sync already created that meeting (on one of the
-  call's contacts, within 15 minutes), the notes are added to it instead of making a second one; when two meetings
-  fit and the title does not decide, Pacenote makes its own Meeting rather than guess. Applying again replaces only
+  call's contacts, within 15 minutes, with the call's or the calendar event's title or the event's start), the notes
+  are added to it instead of making a second one; when Pacenote is not sure which meeting it is, nothing is written to
+  a meeting and Update HubSpot asks you to pick one or make a new Meeting. Applying again replaces only
   Pacenote's block for this call and keeps any text around it. **Email** appears once the follow-up draft has been
   written in the app, is never ticked for you, and records the email you sent as a HubSpot email engagement (Pacenote
   still sends no mail); an email HubSpot already logged is never changed, it only gets the missing associations. No
   automatic switch for either, Undo also removes the associations Pacenote added, a failed write leaves nothing half
-  done, and transcript text is never sent.
+  done (an association HubSpot would not let it take back stays in Undo), and transcript text is never sent.
 
 ## 0.26.4 (2026-11-20)
 

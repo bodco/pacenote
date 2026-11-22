@@ -11,6 +11,7 @@ final class FakeHubSpotTimeline: CRMTransport {
     var portal = 500
     var failPut = 0          // the n-th association PUT from now fails with a 500 (0: none)
     var failPatch = false    // a PATCH of an object fails with a 500
+    var failDelete: Set<String> = []   // association DELETEs ("kind/id") that fail with a 500
     static let kinds = ["212": "deals", "188": "companies", "200": "contacts", "210": "deals", "186": "companies", "198": "contacts"]
     /// "kind/id" of everything the object is associated with, however it was added.
     func linked(_ key: String) -> Set<String> {
@@ -61,6 +62,7 @@ final class FakeHubSpotTimeline: CRMTransport {
         }
         if method == "DELETE", parts.count == 8 {         // an association
             let key = parts[3] + "/" + parts[4], gone = parts[6] + "/" + parts[7]
+            if failDelete.contains(gone) { return (500, ["message": "delete failed"], [:]) }
             assoc[key] = (assoc[key] ?? []).filter { a in
                 let x = a.split(separator: "#").map(String.init)
                 return (x.count == 2 ? (Self.kinds[x[1]] ?? "?") + "/" + x[0] : a) != gone
@@ -134,7 +136,25 @@ func crmTimeline() async {
                                      "hs_timestamp": hubspotTime(start.addingTimeInterval(-300))]
     ts.objects["meetings"]!["78"] = ["hs_meeting_title": "A day later", "hs_timestamp": hubspotTime(start.addingTimeInterval(86400))]
     ts.assoc["meetings/77"] = ["P1#200"]; ts.assoc["meetings/78"] = ["P1#200"]
-    let m4 = try? await hss.upsertMeeting(meeting(["Synced"]), knownId: "", associations: refs)
+    // review round 2, #3: alone in the window but with another title and no calendar event: not sure, so nothing is
+    // written and it is offered to pick
+    let m4q = try? await hss.upsertMeeting(meeting(["Synced"]), knownId: "", associations: refs)
+    expect(m4q?.id == "" && m4q?.pick.map(\.id) == ["77"] && m4q?.pick.first?.title == "Orbit renewal sync" && ts.objects["meetings"]?["77"]?[notesKey] == "<p>My own prep</p>"
+           && !ts.log.contains { $0.hasPrefix("PUT ") || $0.hasPrefix("PATCH ") || $0 == "POST /crm/v3/objects/meetings" }, "meetings: a nearby meeting with another title is offered, nothing is written")
+    var sure = meeting(["Synced"]); sure.eventTitle = "Orbit Renewal  sync"
+    let m4s = try? await hss.upsertMeeting(sure, knownId: "", associations: [CRMRef("contacts", "P1")])
+    expect(m4s?.id == "77" && m4s?.pick.isEmpty == true, "meetings: the calendar event's title makes the synced meeting sure")
+    if let id = m4s?.id, let old = m4s?.old { try? await hss.restore(type: "meetings", id: id, fields: old) }
+    var atStart = meeting(["Synced"]); atStart.eventStart = start.addingTimeInterval(-300)
+    ts.objects["meetings"]!["77"]!["hs_meeting_start_time"] = hubspotTime(start.addingTimeInterval(-290))
+    let m4t = try? await hss.upsertMeeting(atStart, knownId: "", associations: [CRMRef("contacts", "P1")])
+    expect(m4t?.id == "77" && m4t?.pick.isEmpty == true, "meetings: starting with the calendar event makes the synced meeting sure")
+    if let id = m4t?.id, let old = m4t?.old { try? await hss.restore(type: "meetings", id: id, fields: old) }
+    expect(ts.objects["meetings"]?["77"]?[notesKey] == "<p>My own prep</p>", "meetings: undo of the sure matches puts the notes back")
+    ts.log = []
+    var picked = meeting(["Synced"]); picked.target = "77"       // the PM picked it
+    let m4 = try? await hss.upsertMeeting(picked, knownId: "", associations: refs)
+    expect(!ts.log.contains("POST /crm/v3/objects/meetings/search"), "meetings: the PM's pick is used without a search")
     let p4 = ts.objects["meetings"]?["77"] ?? [:]
     expect(m4?.id == "77" && m4?.created == false && m4?.attached == true && ts.objects["meetings"]?.count == 2, "meetings: a synced meeting is used, not duplicated")
     expect(!ts.log.contains("POST /crm/v3/objects/meetings") && p4["hs_meeting_title"] == "Orbit renewal sync" && p4["hs_meeting_body"] == "Invite text of the PM", "meetings: no POST; the synced title and invite text stay")
@@ -162,10 +182,14 @@ func crmTimeline() async {
         ta.assoc["meetings/" + id] = ["P1#200"]
     }
     let ma = try? await hsa.upsertMeeting(meeting(["Ours"]), knownId: "", associations: refs)
-    expect(ma?.created == true && ma?.ambiguous == true && ta.objects["meetings"]?["81"]?[notesKey] == "<p>81 private</p>" && ta.objects["meetings"]?["82"]?[notesKey] == "<p>82 private</p>",
-           "meetings: two meetings at the time with no decisive title: none is guessed, a new one is made")
+    expect(ma?.created == false && Set(ma?.pick.map(\.id) ?? []) == ["81", "82"] && ta.objects["meetings"]?.count == 2
+           && ta.objects["meetings"]?["81"]?[notesKey] == "<p>81 private</p>" && ta.objects["meetings"]?["82"]?[notesKey] == "<p>82 private</p>",
+           "meetings: two meetings at the time with no decisive title: none is guessed, both are offered, nothing is made")
+    var fresh = meeting(["Ours"]); fresh.target = CRMMeetingLog.newTarget
+    let mn = try? await hsa.upsertMeeting(fresh, knownId: "", associations: refs)
+    expect(mn?.created == true && ta.objects["meetings"]?.count == 3 && ta.objects["meetings"]?["81"]?[notesKey] == "<p>81 private</p>", "meetings: the PM's \"new Meeting\" makes one and touches no other")
+    ta.objects["meetings"]![mn?.id ?? ""] = nil
     ta.objects["meetings"]!["82"]!["hs_meeting_title"] = "Orbit renewal"
-    ta.objects["meetings"]![ma?.id ?? ""] = nil
     let mt = try? await hsa.upsertMeeting(meeting(["Ours"]), knownId: "", associations: refs)
     expect(mt?.id == "82" && ta.objects["meetings"]?["81"]?[notesKey] == "<p>81 private</p>", "meetings: of two at the time, the one with the call's title is used")
     let tk = FakeHubSpotTimeline(); let hsk = HubSpotConnector(transport: tk, sleep: { _ in })
@@ -200,6 +224,33 @@ func crmTimeline() async {
     tf.failPatch = true
     let mp = try? await hsf.upsertMeeting(meeting(["Ours"]), knownId: "90", associations: refs)
     expect(mp == nil && tf.objects["meetings"]?["90"]?[notesKey] == "<p>Mine</p>" && tf.linked("meetings/90") == ["contacts/P1"], "meetings: a failed notes update takes off the associations it added")
+    // review round 2, #6: the rollback DELETE fails too: the association left on the meeting comes back for Undo
+    tf.failPatch = false; tf.failPut = 2; tf.failDelete = ["deals/D1"]
+    do { _ = try await hsf.upsertMeeting(meeting(["Ours"]), knownId: "90", associations: refs); expect(false, "meetings: a failed rollback still throws") }
+    catch let l as CRMTimelineLeftover {
+        expect(l.type == "meetings" && l.id == "90" && CRMTimeline.decode(l.fields[CRMTimeline.addedKey] ?? "") == [CRMRef("deals", "D1")] && (l.error as? CRMError)?.code == 500,
+               "meetings: the association a failed rollback left is returned with the first error")
+        tf.failDelete = []
+        try? await hsf.restore(type: "meetings", id: l.id, fields: l.fields)
+        expect(tf.linked("meetings/90") == ["contacts/P1"] && tf.objects["meetings"]?["90"]?[notesKey] == "<p>Mine</p>", "meetings: Undo of the leftover takes it off")
+    } catch { expect(false, "meetings: a failed rollback names what it left") }
+    tf.failPatch = true; tf.failDelete = ["companies/C1"]
+    do { _ = try await hsf.upsertMeeting(meeting(["Ours"]), knownId: "90", associations: refs); expect(false, "meetings: a failed notes update with a failed rollback throws") }
+    catch let l as CRMTimelineLeftover {
+        expect(CRMTimeline.decode(l.fields[CRMTimeline.addedKey] ?? "") == [CRMRef("companies", "C1")] && tf.linked("meetings/90") == ["contacts/P1", "companies/C1"],
+               "meetings: after a failed notes update, only the association that could not be taken off is returned")
+        tf.failDelete = []; tf.failPatch = false
+        try? await hsf.restore(type: "meetings", id: l.id, fields: l.fields)
+        expect(tf.linked("meetings/90") == ["contacts/P1"], "meetings: Undo takes the leftover off")
+    } catch { expect(false, "meetings: a failed notes update names what it left") }
+    // and through the queue: the leftover is an Undo record, the error is the first failure
+    let tg = FakeHubSpotTimeline(); let hsg = HubSpotConnector(transport: tg, sleep: { _ in })
+    tg.objects["meetings"]!["91"] = ["hs_meeting_title": "Orbit renewal", "hs_timestamp": hubspotTime(start)]
+    tg.assoc["meetings/91"] = ["P1#200"]; tg.failPut = 2; tg.failDelete = ["deals/D1"]
+    let og = await CRMTimelineSync.log(key: key, writer: hsg, connector: hsg, meeting: meeting(["Ours"]), email: nil, associations: refs, queue: CRMCallQueue(),
+                                       load: { CRMTimelineIds(portalId: "500") }, save: { _ in })
+    expect((og.error as? CRMError)?.code == 500 && og.undo.count == 1 && og.undo.first?.0 == "meetings" && og.undo.first?.1 == "91"
+           && og.undo.first?.2[CRMTimeline.addedKey] == "deals/D1", "timeline: an association a failed rollback left stays in Undo")
 
     // Email: new with associations and the properties of a sent email
     let te = FakeHubSpotTimeline(); let hse = HubSpotConnector(transport: te, ownerId: "9", sleep: { _ in })
@@ -241,6 +292,9 @@ func crmTimeline() async {
     tx.assoc["emails/62"] = ["C1#186", "P1#198"]
     let e5 = try? await hsx.upsertEmail(mail, knownId: "", ours: false, associations: refs)
     expect(e5?.created == true && tx.objects["emails"]?["62"]?["hs_email_text"] == "A different message", "emails: the same subject with another text is not claimed")
+    // a reply that quotes the draft is not the draft
+    let quoted = "Thanks, see you Tuesday.\n\nOn Tue, Marcus Reed wrote:\n> Hi Dana,\n>\n> Thanks for today.\n>\n> Marcus"
+    expect(!CRMEmailLog.sameText(quoted, mail.text) && CRMEmailLog.sameText("Hi Dana,\nThanks for today.\nMarcus\n-- \nNorthwind", mail.text), "emails: quoted history does not match, the draft with a signature does")
     // a failed association on a logged email takes off the ones just added
     let ty = FakeHubSpotTimeline(); let hsy = HubSpotConnector(transport: ty, sleep: { _ in })
     ty.objects["emails"]!["63"] = ["hs_email_subject": "Next steps for Orbit", "hs_email_text": mail.text, "hs_timestamp": hubspotTime(start)]
