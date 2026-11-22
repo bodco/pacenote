@@ -47,6 +47,8 @@ write:
     Notes, deal fields and tasks never write without a click.
   call: >-
     Call row in the review, ticked by default; associations contact 194, company 182, deal 206; dedupe by
-    hs_call_external_id = pacenote:<call id>. Full design: docs/specs/hubspot-crm-integration.md.
+    hs_call_external_id = pacenote:<call id>; Auto and Apply of one call take turns. <stem>.crm.json keeps the
+    portalId; no write (Apply or Auto) when it differs from the portal of the key in use or is missing: Relink first.
+    Full design: docs/specs/hubspot-crm-integration.md.
 mapping:
   qualification: for each criterion of the method, a deal property chosen by name in Settings > Integrations > HubSpot, or "Don't write"

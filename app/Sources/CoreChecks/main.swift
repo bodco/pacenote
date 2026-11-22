@@ -674,24 +674,32 @@ final class FakeHubSpotCalls: CRMTransport {
     var log: [String] = []
     var bodies: [[String: Any]] = []
     var next = 100
+    var portal = 500                // the portal of the key, from account-info
+    var createDelay: UInt64 = 0     // ns a create takes, so two writers can overlap
+    var createThenFail = false      // the Call is made but the answer is a 502 (an ambiguous create)
+    var failPut = false             // adding an association fails with a 500
     func send(_ method: String, _ path: String, _ body: [String: Any]?) async throws -> (Int, [String: Any], [String: String]) {
         log.append(method + " " + path.split(separator: "?")[0])
         if let b = body { bodies.append(b) }
         let props = { (b: [String: Any]?) -> [String: String] in ((b?["properties"] as? [String: Any]) ?? [:]).mapValues { "\($0)" } }
+        if path == "/account-info/v3/details" { return (200, ["portalId": portal], [:]) }
         if method == "POST" && path == "/crm/v3/objects/calls/search" {
             let want = ((((body?["filterGroups"] as? [[String: Any]])?.first?["filters"]) as? [[String: Any]])?.first?["value"] as? String) ?? ""
             let hit = calls.first { $0.value["hs_call_external_id"] == want }
             return (200, ["results": hit.map { [["id": $0.key]] } ?? []], [:])
         }
         if method == "POST" && path == "/crm/v3/objects/calls" {
+            if createDelay > 0 { try? await Task.sleep(nanoseconds: createDelay) }
             next += 1; let id = "\(next)"
             calls[id] = props(body)
             assoc[id] = ((body?["associations"] as? [[String: Any]]) ?? []).map { a in
                 "\((a["to"] as! [String: Any])["id"]!)#\(((a["types"] as! [[String: Any]])[0])["associationTypeId"]!)" }
+            if createThenFail { return (502, ["message": "Bad gateway"], [:]) }
             return (200, ["id": id], [:])
         }
         let id = String(path.split(separator: "?")[0].split(separator: "/")[4])
         if path.hasPrefix("/crm/v4/objects/calls/") && method == "PUT" {
+            if failPut { return (500, ["message": "association failed"], [:]) }
             assoc[id, default: []].append(String(path.split(separator: "/").suffix(2).joined(separator: "/"))); return (200, [:], [:])
         }
         guard calls[id] != nil else { return (404, ["message": "not found"], [:]) }
@@ -757,6 +765,76 @@ func crmCalls() async {
     let old = try? JSONDecoder().decode(CRMSettings.self, from: Data("{\"provider\":\"hubspot\"}".utf8))
     expect(old?.autoLogCall == false && old?.writeCall == true && old?.callDirection == "OUTBOUND" && CRMSettings().autoLogCall == false, "calls: Auto is off by default")
     expect(CRMCallLog(key: "k", title: "t", start: start, durationMs: -5, direction: "sideways", body: "").direction == "OUTBOUND", "calls: direction and duration are clamped")
+
+    // Auto and Apply overlap on one call: without the queue the fake makes two Calls, through it one
+    final class Stored { var id = ""; var portal = "500" }
+    let race = FakeHubSpotCalls(); race.createDelay = 50_000_000
+    let hr = HubSpotConnector(transport: race, sleep: { _ in })
+    let ea = entry(["a"])
+    async let x1 = try? hr.upsertCall(ea, knownId: "", associations: [])
+    async let x2 = try? hr.upsertCall(ea, knownId: "", associations: [])
+    _ = await (x1, x2)
+    expect(race.calls.count == 2, "calls: the fake shows the double create when two writers overlap")
+    let race2 = FakeHubSpotCalls(); race2.createDelay = 50_000_000
+    let hq = HubSpotConnector(transport: race2, sleep: { _ in })
+    let st = Stored(), q = CRMCallQueue()
+    func sync() async -> CRMCallResult? {
+        try? await CRMCallSync.log(ea, connector: hq, associations: [], queue: q,
+                                   load: { (st.id, st.portal) }, save: { st.id = $0 })
+    }
+    async let y1 = sync()
+    async let y2 = sync()
+    let (z1, z2) = await (y1, y2)
+    expect(race2.calls.count == 1 && z1?.id == z2?.id && st.id == z1?.id && Set([z1?.created, z2?.created]) == [true, false],
+           "calls: Auto and Apply at the same time make one Call; the second updates it")
+    // the link's portal must be the key's portal; another or an unknown one writes nothing
+    let pf = FakeHubSpotCalls(); pf.portal = 777
+    let hp = HubSpotConnector(transport: pf, sleep: { _ in })
+    var perr: CRMError? = nil
+    do { _ = try await CRMCallSync.log(entry(["a"]), connector: hp, associations: [], queue: q, load: { ("101", "500") }, save: { _ in }) }
+    catch { perr = error as? CRMError }
+    expect(perr?.code == CRMPortal.mismatchCode && pf.calls.isEmpty && !pf.log.contains { !$0.hasPrefix("GET /account-info") }, "calls: a link from another portal writes nothing")
+    perr = nil
+    do { _ = try await CRMCallSync.log(entry(["a"]), connector: hp, associations: [], queue: q, load: { ("", "") }, save: { _ in }) }
+    catch { perr = error as? CRMError }
+    expect(perr?.code == CRMPortal.mismatchCode && pf.calls.isEmpty, "calls: a link with no portal needs Relink")
+    expect(CRMPortal.matches(link: "777", current: "777") && !CRMPortal.matches(link: "", current: ""), "calls: portal match")
+    // an association fails on a re-run: the Call keeps its old fields (no PATCH), so nothing is left outside Undo
+    let af = FakeHubSpotCalls()
+    let ha = HubSpotConnector(transport: af, sleep: { _ in })
+    let made = try? await ha.upsertCall(entry(["Old summary"]), knownId: "", associations: [])
+    af.failPut = true
+    var aerr: Error? = nil
+    do { _ = try await ha.upsertCall(entry(["New summary"]), knownId: made?.id ?? "", associations: refs) } catch { aerr = error }
+    expect(aerr != nil && (af.calls[made?.id ?? ""]?["hs_call_body"] ?? "").contains("Old summary") && !af.log.contains { $0.hasPrefix("PATCH") },
+           "calls: a failed association leaves the Call's fields unchanged")
+    // an ambiguous create (the Call is made, the answer is a 502): found by the Pacenote call id, not made again
+    let amb = FakeHubSpotCalls(); amb.createThenFail = true
+    let hb = HubSpotConnector(transport: amb, sleep: { _ in })
+    let rb = try? await hb.upsertCall(entry(["a"]), knownId: "", associations: [])
+    amb.createThenFail = false
+    let rb2 = try? await hb.upsertCall(entry(["b"]), knownId: "", associations: [])
+    expect(rb?.id != nil && rb?.id == amb.calls.keys.first && amb.calls.count == 1 && rb2?.id == rb?.id, "calls: an ambiguous create is reconciled, never a second Call")
+    // a 4xx create is a real failure and is not reconciled
+    let rejected = try? await HubSpotConnector(transport: FakeBadCreate(), sleep: { _ in }).upsertCall(entry(["a"]), knownId: "", associations: [])
+    expect(rejected == nil, "calls: a rejected create fails")
+    // Summary is the notes' In short and Recap, next steps are what people took on; distinct texts stay distinct
+    let sec = CRMCallLog.sections(tldr: "**Budget** approved for Q3.", recap: ["Legal reviewed the terms"], onMe: ["Send the demo link"],
+                                  theirs: ["Emily Clark: share the security review"], salesNext: "Book the pilot")
+    expect(sec.summary == ["Budget approved for Q3.", "Legal reviewed the terms"] && sec.nextSteps == ["Send the demo link", "Emily Clark: share the security review"],
+           "calls: Summary from the notes, next steps from the commitments")
+    let body = CRMCallLog.body(summary: sec.summary, nextSteps: sec.nextSteps, participants: [], link: "", key: "k")
+    expect(body.contains("<b>Summary</b></p><ul><li>Budget approved") && body.components(separatedBy: "Send the demo link").count == 2,
+           "calls: next steps are not repeated as the Summary")
+    expect(CRMCallLog.sections(tldr: "", recap: [], onMe: [], theirs: [], salesNext: "Book the pilot").nextSteps == ["Book the pilot"], "calls: the sales next step when nobody took anything on")
+}
+
+/// H2: a create HubSpot rejects (400): never reconciled by search.
+final class FakeBadCreate: CRMTransport {
+    func send(_ method: String, _ path: String, _ body: [String: Any]?) async throws -> (Int, [String: Any], [String: String]) {
+        if path == "/crm/v3/objects/calls/search" { return (200, ["results": []], [:]) }
+        return (400, ["message": "Property values were not valid"], [:])
+    }
 }
 
 final class BodyFake: CRMTransport {

@@ -44,7 +44,7 @@ HubSpot association type ids below are HUBSPOT_DEFINED, from the object on the l
 | `hs_call_direction` | Settings > Integrations > HubSpot > Direction of logged calls (default OUTBOUND; Pacenote cannot tell in which direction a conference call went) |
 | `hs_call_status` | `COMPLETED` |
 | `hs_call_disposition` | the outcome id; `Connected` (HubSpot's built-in outcome id, `CRMCallLog.connected`, the same in every portal) because a recorded call was a conversation. No-answer outcomes are not logged by Pacenote |
-| `hs_call_body` | participants' names, Summary, Next steps, the link back to the call (the Notion page when there is one), and the line `Pacenote call id: <id>`. Never transcript text |
+| `hs_call_body` | participants' names; Summary = the call page's Summary (the meeting notes' In short and Recap); Next steps = what the PM and the other side took on (else the sales next step), never a copy of the Summary; the link back to the call (the Notion page when there is one), and the line `Pacenote call id: <id>`. Never transcript text |
 | `hs_call_external_id` | `pacenote:<Pacenote call id>`, the dedupe key |
 | `hubspot_owner_id` | the owner chosen in Matching (section 7) |
 
@@ -95,12 +95,16 @@ decides, the service key stays the only path.
    installation. Auto writes only the Call. Notes, deal fields and tasks stay behind a click. Every other automatic
    write needs its own switch, also off by default.
 2. **Transcript text is never sent** to the Call, the Task, the Deal or any field. The note may carry it only when the
-   PM turns on "Add the transcript to the CRM note" (off by default, per click shown as a row "Attach the transcript").
+   PM turns on "Add the transcript to the CRM note" (off by default). Today (built in 0.8.7) the setting puts the
+   transcript into the note when the Update HubSpot window opens; the "Attach the transcript" row only shows that, and
+   unticking it does not take the transcript out of the note. Privacy follow-up: make the row the per-Apply consent
+   (the note gets the transcript only when the row is ticked at Apply).
 3. **Texts come from the call page as the PM edited it.** Pacenote never writes a text the PM could not see on the call
    page.
 4. **Undo.** A new object is deleted; an updated object gets its old property values back. Associations added during a
    re-run are not removed by Undo (they are harmless and HubSpot has no history for them); the Undo failure line says
-   what is left.
+   what is left. A re-run of the Call adds the associations first and changes the fields last, so a failed association
+   leaves the Call's fields as they were and nothing changed is outside Undo.
 5. **Errors are one line where the action was**, never a modal; 429 waits (Retry-After, else 1, 2, 4 s) and retries three
    times; 401 and 403 say what to fix (key, or the named scope).
 6. **No silent overwrites of the PM's own edits in HubSpot.** A re-run updates only the Pacenote-owned properties of the
@@ -113,7 +117,7 @@ decides, the service key stays the only path.
 |---|---|---|
 | Contact | email (lowercase, trimmed) | search `email EQ`; found: use it; several: take the one on the matched company, else the oldest; never create a second contact with the same email. Creating a missing contact is a later, opt-in step (decision 4) |
 | Company | domain, then name | search `domain EQ`, then `name EQ`; free-mail domains (gmail.com, outlook.com, icloud.com, yahoo.com, hotmail.com) and the PM's own domains never match a company |
-| Call | the Pacenote call id | the id is made once and stored with the call (`<stem>.crm.json`, `callKey`) together with the HubSpot Call id (`callId`). A re-run PATCHes `callId`. If `callId` is missing, HubSpot is searched by `hs_call_external_id = pacenote:<id>`. If the stored id was deleted in HubSpot (404), the same search runs, then a new Call is created. A second Call for one call id is never created |
+| Call | the Pacenote call id | the id is made once and stored with the call (`<stem>.crm.json`, `callKey`) together with the HubSpot Call id (`callId`). A re-run PATCHes `callId`. If `callId` is missing, HubSpot is searched by `hs_call_external_id = pacenote:<id>`. If the stored id was deleted in HubSpot (404), the same search runs, then a new Call is created. Auto and Apply of one call take turns (a queue per call id) and each reads the stored `callId` when its turn comes. A create that gets no answer or a 5xx is checked by the same search before it is reported as failed. A second Call for one call id is never created |
 | Note, Task | none | created per Apply; the 8 second Undo and the "already applied" lock protect against a double click. No dedupe across sessions (decision 8) |
 | Deal | the PM's link | the open deal updated last, or what the PM chose in Start call; "No deal" is kept for the series |
 
@@ -138,10 +142,12 @@ written as `hubspot_owner_id` on notes, tasks and (H2) Calls. Rules:
 Today: one service key means one portal; the portal's name (from account-info, else "HubSpot <portalId> (<region>)")
 is shown on the card. Behavior to keep and to define:
 
-- A key belongs to exactly one portal. Changing the key switches the portal; links in `<stem>.crm.json` of old calls
-  keep their ids, which do not exist in the new portal, so Refresh reports "not linked" and the update plan is empty
-  rather than writing to wrong ids. (To add: `portalId` in the link, and refuse to write when it differs from the
-  connected portal.)
+- A key belongs to exactly one portal. Changing the key switches the portal. Each link in `<stem>.crm.json` keeps the
+  `portalId` it was made in (built in H2). Before every write (Apply and Auto) Pacenote asks account-info for the
+  portal of the key in use; when the link names another portal, or none (links made before H2), nothing is written:
+  Auto skips the call and Update HubSpot says so and offers **Relink**. Relink and Refresh drop the old ids, keep the
+  Pacenote call id, and find the company, deal and contacts again in the current portal (by the attendees' domains
+  while the calendar still has the event, else by the linked company's name).
 - Several portals at once (an agency with client portals): one key per project in Settings > Projects, kept in the
   Keychain under a per-project name. Not built; decision 3.
 - Data hosting regions (US, EU) use the same base URL for the API; the region is only displayed.
@@ -150,7 +156,7 @@ is shown on the card. Behavior to keep and to define:
 ## 9. Auto, review and Undo flow (H2)
 
 1. Start call: Refresh links company, deal and contacts (`.crm.json`).
-2. The call ends. If Auto is on and the call is linked, Pacenote waits for the call page's notes (about 2.5 minutes),
+2. The call ends. If Auto is on and the call is linked in the portal of the current key (section 8), Pacenote waits for the call page's notes (about 2.5 minutes),
    then logs the Call. No review and no Undo in this path; the switch is the consent. The PM sees it in HubSpot and in
    the call's Update HubSpot window (Call row, ticked).
 3. Otherwise the PM opens Update HubSpot on the call page: the Call row is ticked by default (Settings can untick it),
@@ -164,8 +170,8 @@ is shown on the card. Behavior to keep and to define:
    paying HubSpot users.*
 2. **Direction of logged calls.** Pacenote cannot tell inbound from outbound. *Recommend: a Settings choice with
    Outbound as the default (built).*
-3. **Several portals.** *Recommend: not now; add `portalId` to the link and refuse writes on a mismatch (cheap
-   protection), per-project keys only when an agency user asks.*
+3. **Several portals.** *Recommend: not now; `portalId` in the link and no writes on a mismatch are built (H2),
+   per-project keys only when an agency user asks.*
 4. **Create missing contacts and companies?** *Recommend: yes, but only as an unticked row in Update HubSpot, never in
    Auto, and only for external participants of the call (not the PM's own domains or free-mail addresses without a
    name).*
@@ -186,6 +192,10 @@ is shown on the card. Behavior to keep and to define:
 
 - Auto has no place to show an error (rule 5 says "where the action was"). A failed Auto log is recorded only as an analytics error code; the Call is then logged by Update HubSpot. Auto does nothing for a call that has no CRM link or no history record 150 seconds after the call ended.
 - The link back is the Notion page; a call without a Notion page has only the `Pacenote call id` line in the Call.
+- HubSpot search is not instant after a create: a create that timed out may not be found at once, and the next run
+  (Apply or Auto) finds it by the Pacenote call id.
+- Relink of an old call finds contacts only while the calendar still holds the event (3 hours back); otherwise it
+  links the company by name and the deal, without contacts.
 
 - A live portal check of the Call create, update and association calls, and of `hs_call_external_id` in search. The
   H2 tests use a mocked HubSpot API only and never call the real one.
