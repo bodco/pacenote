@@ -209,6 +209,24 @@ const jsErrors = (b, s) => s.posts.filter((m) => m.action === 'jserror').map((m)
       await b.evaluate(`document.querySelector('#langMenu [data-l="en"]').click(); true`); await sleep(100);
       assert.ok((await posted()).includes('tips_lang=en'));
     });
+    await openQ(1100, '?call_lang=uk+en');
+    await test('a single-language pick keeps the mixed row of the Start Call set and changes tips only after the recorder confirms', async () => {
+      await b.evaluate(`document.getElementById('langBtn').click(); document.querySelector('#langMenu [data-v="uk"]').click(); true`); await sleep(150);
+      await b.evaluate(`window.setStatus({ state: 'recording', call_lang: 'uk', me_lang: 'uk', langs: ['uk'] }); true`); await sleep(200);
+      assert.ok(!(await posted()).some((x) => x === 'tips_lang=en'), 'no tips change before the echo');
+      await b.evaluate(`document.getElementById('langBtn').click(); true`); await sleep(150);
+      const rows = await b.evaluate(`Array.from(document.querySelectorAll('#langMenu [role=menuitemradio]')).map((x) => x.dataset.v)`);
+      assert.ok(rows.includes('en') && rows.includes('uk+en'), rows.join());
+    });
+    await test('a failed single-language pick never changes the tips language', async () => {
+      await openQ(1100, '?call_lang=uk+en');
+      await b.evaluate(`document.getElementById('langBtn').click(); document.querySelector('#langMenu [data-v="en"]').click(); true`); await sleep(4400);
+      assert.ok(!(await posted()).some((x) => x.indexOf('tips_lang') === 0), await posted());
+    });
+    await openQ(1100, '?state=ready&call_lang=uk+en');
+    await test('Ready: the language chip is hidden', async () => {
+      assert.strictEqual(await b.evaluate(`document.getElementById('langBtn').hidden`), true);
+    });
     await openQ(600, '?mode=card');
     await test('compact card: a transcript icon before Expand and no language chip', async () => {
       const order = await b.evaluate(`Array.from(document.querySelectorAll('.tc-bar [data-act]')).map((x) => x.dataset.act)`);

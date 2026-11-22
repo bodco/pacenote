@@ -1112,12 +1112,16 @@
     const main = st.me_lang || seed.main || langs[0] || '';
     if (!langs.length && main) langs = [main];
     if (main && langs.indexOf(main) > 0) { langs.splice(langs.indexOf(main), 1); langs.unshift(main); }
-    return { langs, main, cands: seed.cands };
+    if (seed.langs.length > 1 || !S.startLangs) S.startLangs = seed.langs.length ? seed.langs.slice() : (S.startLangs || []);   // the Start Call set outlives the recorder's echo
+    return { langs, main, cands: S.startLangs.concat(seed.cands) };
   }
   /** The chip shows a switch at once; the status echo confirms it, or after 4 s it goes back. */
   function langShown() {
     const cl = callLangNow(), p = S.ui.langPending;
-    if (p && !p.demo && sameLangs(p.langs, cl.langs) && p.main === cl.main) S.ui.langPending = null;
+    if (p && !p.demo && sameLangs(p.langs, cl.langs) && p.main === cl.main) {
+      S.ui.langPending = null;
+      if (p.tips && !(S.tipsLang && S.tipsLang.current === p.tips)) tipsLangSet(p.tips);   // tips follow only once the recorder confirmed
+    }
     else if (p && Date.now() - p.at > 4000) { S.ui.langPending = null; showToast({ text: T().cl.fail, kind: 'warn', at: Date.now() }); }
     const q = S.ui.langPending;
     return q ? { langs: q.langs, main: q.main, pending: true, cands: cl.cands } : { langs: cl.langs, main: cl.main, pending: false, cands: cl.cands };
@@ -1126,13 +1130,14 @@
   /** The rows of the menu: one per language (at most 3, the current main first) and, from two languages on, a mixed row. */
   function langRows(l) {
     const cands = [l.main].concat(l.langs, l.cands || []).filter((c, i, a) => c && a.indexOf(c) === i).slice(0, 3);
-    const mixed = l.langs.length >= 2 ? l.langs.slice() : (cands.length >= 2 ? [l.main, cands.find((c) => c !== l.main)] : []);
+    const start = (S.startLangs || []).slice(), mixed = l.langs.length >= 2 ? l.langs.slice() : (start.length >= 2 ? [l.main].concat(start.filter((c) => c !== l.main)) : (cands.length >= 2 ? [l.main, cands.find((c) => c !== l.main)] : []));
     return { singles: cands, mixed };
   }
   function renderLangSwitch() {
     const b = $('langBtn'), l = langShown(), t = T().cl, off = !!(S.sys && S.sys.kind === 'notRecording');
-    b.hidden = !l.main;
-    if (!l.main) { S.ui.langMenu = false; renderLangMenu(); return; }
+    const idle = S.call.state === 'ready' || S.call.state === 'ended';
+    b.hidden = !l.main || idle;
+    if (!l.main || idle) { S.ui.langMenu = false; renderLangMenu(); return; }
     const names = langNames(l.langs), mixed = l.langs.length >= 2;
     b.innerHTML = `<span class="lc">${esc(langCode(l))}</span><span class="car" aria-hidden="true">▾</span>`;
     b.classList.toggle('pending', l.pending);
@@ -1154,7 +1159,7 @@
     let html = `<div class="mh" role="presentation">${esc(t.head)}</div>` + rows.singles.map((c) => row(c, capFirst(langName(c)))).join('');
     if (rows.mixed.length >= 2) html += row(rows.mixed.join('+'), `${langNames(rows.mixed)} (${t.mixed})`);
     if (l.langs.length >= 2) {
-      const tl = S.tipsLang, tips = l.langs.filter((c) => c === 'uk' || c === 'en'), curTips = (tl && tl.current) || l.main;
+      const tl = S.tipsLang, tips = l.langs.filter((c) => c === 'uk' || c === 'en'), curTips = (S.ui.tipsPending && Date.now() - S.ui.tipsPending.at < 4000 ? S.ui.tipsPending.l : (tl && tl.current)) || l.main;
       if (tips.length >= 2) html += `<div class="sep"></div><div class="tipsin" role="radiogroup" aria-label="${esc(t.tipsIn)}"><span>${esc(t.tipsIn)}</span>` + tips.map((c) => `<button type="button" role="radio" aria-checked="${curTips === c}" data-act="tips-lang-set" data-l="${c}">${c.toUpperCase()}</button>`).join('') + '</div>';
     }
     html += `<div class="sep"></div><button type="button" role="menuitem" data-act="lang-more"><span>${esc(t.more)}</span></button><div class="foot">${esc(t.foot)}</div>`;
@@ -1163,6 +1168,12 @@
     m.style.top = Math.round(r.bottom + 6) + 'px';
     m.style.left = Math.max(8, Math.min(Math.round(r.left), window.innerWidth - m.offsetWidth - 8)) + 'px';
   }
+  /** A tips language pick shows at once, but the native acknowledgement (setTipsLang) decides; after 4 s an unanswered pick goes back. */
+  function tipsLangSet(c) {
+    S.ui.tipsPending = { l: c, at: Date.now() };
+    post('setting', { key: 'tips_lang', value: c });
+    setTimeout(render, 4100);
+  }
   function pickLang(v) {
     const langs = v.split('+'), main = langs[0], cl = callLangNow();
     S.ui.langMenu = false;
@@ -1170,10 +1181,7 @@
       S.ui.langPending = { value: v, langs, main, at: Date.now() };
       post('setting', { key: 'call_lang', value: v });
       // tips follow the main language of a one-language call; a mixed call keeps its tips language
-      if (langs.length === 1 && (main === 'uk' || main === 'en') && !(S.tipsLang && S.tipsLang.current === main)) {
-        S.tipsLang = Object.assign({ meeting: main, langs: [] }, S.tipsLang, { current: main });
-        post('setting', { key: 'tips_lang', value: main });
-      }
+      if (langs.length === 1 && (main === 'uk' || main === 'en') && !(S.tipsLang && S.tipsLang.current === main)) S.ui.langPending.tips = main;
       showToast({ text: T().cl.ok(langNames(langs)), kind: 'ok', at: Date.now() });
       setTimeout(render, 4100);
     }
@@ -1650,7 +1658,11 @@
     S.ui.paneTab = tab; S.ui.paneOff = false; S.ui.briefEdit = false;
     if (!isWide()) {
       if ($('app').classList.contains('pm-split')) { S.ui.sheet = tab; }
-      else if (!S.ui.paneGrown) { S.ui.paneGrown = true; post('transcript', { on: true }); }
+      else if (!S.ui.paneGrown) {
+        S.ui.paneGrown = true; post('transcript', { on: true });
+        // the window may not grow (screen edge): then the transcript is the sheet, as in the split view
+        setTimeout(() => { if (S.ui.paneGrown && S.ui.paneTab === tab && !isWide()) { S.ui.paneGrown = false; post('transcript', { on: false }); S.ui.sheet = tab; render(); } }, 700);
+      }
     }
     render();
   }
@@ -1892,7 +1904,7 @@
       case 'attach-deck': post('attach-deck'); return;
       case 'lang-menu': if (b.disabled) return; S.ui.langMenu = !S.ui.langMenu; render(); if (S.ui.langMenu) { const f = $('langMenu').querySelector('[aria-checked="true"]') || $('langMenu').querySelector('button'); if (f) f.focus(); } return;
       case 'lang-set': pickLang(b.dataset.v); return;
-      case 'tips-lang-set': S.tipsLang = Object.assign({ meeting: b.dataset.l, langs: [] }, S.tipsLang, { current: b.dataset.l }); post('setting', { key: 'tips_lang', value: b.dataset.l }); render(); return;
+      case 'tips-lang-set': tipsLangSet(b.dataset.l); render(); return;
       case 'lang-more': S.ui.langMenu = false; post('menu', { item: 'settings' }); render(); return;
       case 'card-transcript': cardTranscript(); return;
       case 'ask-b': answerAsk(b.dataset.b); return;
@@ -2074,6 +2086,7 @@
     setProject(p) { S.proj = p || null; render(); },
     setSpeakerPrompt(sec) { S.spkPrompt = +sec || 15; render(); },
     setTipsLang(t) {
+      S.ui.tipsPending = null;
       S.tipsLang = t && t.meeting ? { meeting: t.meeting, langs: Array.isArray(t.langs) ? t.langs : [], current: t.current || t.meeting } : null;
       // PB-49: also what the call listens for ({call: ['uk','en'], cands: [...]}), until the recorder's status echo says it
       S.callLangSeed = t && t.meeting ? { langs: Array.isArray(t.call) ? t.call : [], main: (Array.isArray(t.call) && t.call[0]) || t.meeting, cands: Array.isArray(t.cands) ? t.cands : [] } : null;
