@@ -308,6 +308,11 @@ final class CallEngine {
     }
 
     func adoptPrep(file: String) {
+        // H2 (PB-58, fix round 5): the HubSpot link Refresh saved with the preparation this Start call window showed, for a
+        // chosen and an automatic prep alike. A call started without it (no crm_base) stays unlinked: lt never adopts a link.
+        if let crm = callRequest["crm_base"] as? String, !crm.isEmpty {
+            CRMLinkCarry.carry(from: crm, to: file.hasSuffix(".md") ? String(file.dropLast(3)) : file)
+        }
         let c = config
         let lt = (appRoot as NSString).appendingPathComponent("bin/lt")
         guard FileManager.default.fileExists(atPath: lt) else { return }
@@ -329,7 +334,6 @@ final class CallEngine {
                     try? FileManager.default.copyItem(atPath: CallLayout.sidecar(base, ext), toPath: dst)
                 }
             }
-            CRMLinkCarry.carry(from: base, to: stem)     // H2: the HubSpot link Refresh saved with this preparation
         }
         let p = Process()
         p.executableURL = URL(fileURLWithPath: c.engine.python)

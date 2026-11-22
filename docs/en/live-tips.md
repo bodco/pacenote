@@ -1666,10 +1666,12 @@ associated with the matched contacts, the company and the open deal. No transcri
 call's own id with the call, so applying again, or the Auto switch, updates the same HubSpot Call instead of adding a
 second one. One rare case still makes a second Call: HubSpot creates the Call but its answer is lost, and you apply
 again before HubSpot's search shows the new Call; the Call text carries `Pacenote call id`, so a search in HubSpot
-finds both. The company, deal and contacts you link with Refresh in Start call go with the preparation to the
-recorded call (Refresh saves them with the preparation you chose, else the planned one). A preparation Pacenote picks
-by title passes them on only when its title is exactly the call's: a "Renewal" call never takes the company and deal of
-"Acme renewal", it stays unlinked. To link it, choose its preparation in Start call and press Refresh before you start. Undo deletes a new Call or puts the old values back, and does nothing if the key now belongs to another
+finds both. The company, deal and contacts you link with Refresh in Start call go to the recorded call you start
+from that window (Refresh saves them with the preparation you chose, else the planned one). Only the link that window
+showed is used: a preparation the recorder picks by title after the call starts never brings a link, so the call
+gets exactly the company and deal the Start call row showed. A call started another way stays unlinked, and Update HubSpot says so; to link a call,
+press Refresh in Start call before you start it. When you pick another preparation in Start call, the row shows that
+preparation's own link, and Refresh starts from it. Undo deletes a new Call or puts the old values back, and does nothing if the key now belongs to another
 HubSpot account. The link also remembers its HubSpot account: after
 you change the key to another account, or for a call linked before this version, Pacenote writes nothing and Update
 HubSpot offers **Relink**. **Log the call in HubSpot automatically after it

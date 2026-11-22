@@ -896,6 +896,7 @@ final class StartCallModel: ObservableObject {
                 "scheduled_at": ISO8601DateFormatter().string(from: callDate), "mic_device": micDevice, "standby": standby,
                 "project_config": project?.config ?? "", "people": people, "people_team": peopleTeam,
                 "voices_remember": !publicCall, "prep_file": chosenPrepPath ?? "",
+                "crm_base": crmBase ?? "",       // H2 (PB-58): the HubSpot link this window showed goes with the call
                 "recording": recording,
                 "folders": folders,
                 "sales": { () -> [String: Any] in

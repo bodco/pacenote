@@ -532,7 +532,6 @@ def adopt_prep(s):
         pass
     title = call_title_slug(s)
     adopted = {}
-    bases = {}      # the first adopted prep's base (the brief, else the next file found)
     exts = (".brief.md", ".cards.json", ".facts.json", ".outline.json", ".slides.json", ".sheet.json")   # 0.10.0: + the Meeting Sheet
     def is_fresh(p):
         """Made in the last 3 h, or (QA 26.10) made earlier for a call whose time in the name is near:
@@ -559,53 +558,10 @@ def adopt_prep(s):
         src = max(cands, key=lambda p: p.stat().st_mtime)
         shutil.copy(src, sc(s, ext))
         adopted[ext] = src.name
-        bases.setdefault("prep", str(src)[: -len(ext)])
-    # H2 (PB-58): the HubSpot link Refresh saved with the preparation, only from a prep of this very call (the same
-    # title, not one containing the other): a link sends the call's Summary to those HubSpot records, so a link of
-    # another call is never taken and the call stays unlinked. From the adopted prep; with no prep adopted, the freshest
-    # link in the call's own folder (Refresh before Prepare writes it there).
-    crm = sc(s, ".crm.json")
-    if not os.path.exists(crm):
-        def same_call(p, ext):
-            return same_title(prep_core(str(p), ext), title)
-        src = ""
-        if "prep" in bases:
-            p = sc(bases["prep"], ".crm.json")
-            if os.path.exists(p) and same_call(p, ".crm.json"):
-                src = p
-        else:
-            own = Path(s).parent
-            cands = [p for d in (own, own / call_layout.WORK_DIR) for p in d.glob("prep-*.crm.json")
-                     if is_fresh(p) and same_call(p, ".crm.json")]
-            src = str(max(cands, key=lambda p: p.stat().st_mtime)) if cands else ""
-        if src and carry_crm_link(src, crm):
-            adopted[".crm.json"] = os.path.basename(src)
+    # H2 (PB-58, fix round 5): the HubSpot link (<prep>.crm.json) is never adopted here. A title is not the call's
+    # identity (two "Renewal" calls of different customers), and a link sends the call's Summary to those HubSpot
+    # records. The app carries it only from the preparation Start call used (CRMLinkCarry); otherwise the call stays unlinked.
     return adopted
-
-
-def same_title(a, b):
-    """The same call title, ignoring spaces and hyphens (title_match without the containment)."""
-    a, b = slugify(a).replace("-", ""), slugify(b).replace("-", "")
-    return bool(a) and a == b
-
-
-def carry_crm_link(src, dst):
-    """Copies a HubSpot link (<prep>.crm.json) to the call without its call key and HubSpot Call id: they belong to
-    one call, a preparation used again for another call must not update that Call (CRMLinkCarry in the app)."""
-    try:
-        link = json.load(open(src, encoding="utf-8"))
-    except (OSError, ValueError):
-        return False
-    if not isinstance(link, dict):
-        return False
-    link.pop("callKey", None)
-    link.pop("callId", None)
-    Path(dst).parent.mkdir(parents=True, exist_ok=True)
-    tmp = f"{dst}.{os.getpid()}.tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(link, f, ensure_ascii=False)
-    os.replace(tmp, dst)
-    return True
 
 
 def cmd_prep_check(args):

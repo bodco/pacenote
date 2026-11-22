@@ -28,7 +28,7 @@ struct CRMLink: Codable, Equatable {
     }
 
     static func url(base: String) -> URL { URL(fileURLWithPath: CallLayout.sidecar(base, ".crm.json")) }
-    static func load(base: String) -> CRMLink? { (try? Data(contentsOf: url(base: base))).flatMap { try? JSONDecoder().decode(CRMLink.self, from: $0) } }
+    static func load(base: String) -> CRMLink? { CRMLinkCarry.stored(base: base).flatMap { try? JSONDecoder().decode(CRMLink.self, from: $0) } }
     func save(base: String) { if let d = try? JSONEncoder().encode(self) { try? d.write(to: Self.url(base: base), options: .atomic) } }
 }
 
@@ -153,6 +153,25 @@ enum CRMCallLogger {
     }
 }
 
+extension StartCallModel {
+    /// The preparation the CRM row's Refresh saves the HubSpot link with, sent with the call as crm_base: the call gets
+    /// exactly the link this window showed (fix round 5), never one found by title.
+    var crmBase: String? {
+        // the same preparation Start call copies to the call (CallEngine.adoptPrep): the one chosen by hand, else the planned one
+        if let b = CRMLinkCarry.prepBase(chosen: chosenPrepPath, planned: prepBase) { return b }
+        if let p = PrepDocWindow.path(for: self), p.hasSuffix(".brief.md") { return String(p.dropLast(".brief.md".count)) }
+        // 0.8.7.1: before Prepare, the snapshot goes where Prepare will write the brief (PrepRunner's base), so the first
+        // brief already reads it; Refresh was greyed out until a brief existed
+        guard let root = root, !root.isEmpty else { return nil }
+        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd-HHmm"
+        let day = DateFormatter(); day.dateFormat = "yyyy-MM-dd"
+        let slug = StartCallModel.slugify(effectiveTitle)
+        // the same folder PrepRunner writes the brief to (call folders)
+        return (CallLayout.folder(live: (root as NSString).appendingPathComponent("live"), date: day.string(from: callDate), slug: slug) as NSString)
+            .appendingPathComponent("prep-\(f.string(from: callDate))-\(slug)")
+    }
+}
+
 /// G7: "CRM: Northwind · Deal: Orbit renewal" in Start call, with Refresh and a menu to change the deal or say No deal.
 struct CRMCallRow: View {
     @ObservedObject var model: StartCallModel
@@ -162,20 +181,7 @@ struct CRMCallRow: View {
     @State private var busy = false
     @State private var err = ""
 
-    var base: String? {
-        // the same preparation Start call copies to the call (CallEngine.adoptPrep): the one chosen by hand, else the planned one
-        if let b = CRMLinkCarry.prepBase(chosen: model.chosenPrepPath, planned: model.prepBase) { return b }
-        if let p = PrepDocWindow.path(for: model), p.hasSuffix(".brief.md") { return String(p.dropLast(".brief.md".count)) }
-        // 0.8.7.1: before Prepare, the snapshot goes where Prepare will write the brief (PrepRunner's base), so the first
-        // brief already reads it; Refresh was greyed out until a brief existed
-        guard let root = model.root, !root.isEmpty else { return nil }
-        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd-HHmm"
-        let day = DateFormatter(); day.dateFormat = "yyyy-MM-dd"
-        let slug = StartCallModel.slugify(model.effectiveTitle)
-        // the same folder PrepRunner writes the brief to (call folders)
-        return (CallLayout.folder(live: (root as NSString).appendingPathComponent("live"), date: day.string(from: model.callDate), slug: slug) as NSString)
-            .appendingPathComponent("prep-\(f.string(from: model.callDate))-\(slug)")
-    }
+    var base: String? { model.crmBase }
     var emails: [String] { model.calEventID.flatMap { CalendarService.shared.event($0)?.emails } ?? [] }
 
     var body: some View {
@@ -197,6 +203,8 @@ struct CRMCallRow: View {
                     .help(base == nil ? L("crm.refresh.needBase") : L("crm.refresh.help"))
             }
             .onAppear { if let b = base { link = CRMLink.load(base: b) } }
+            // fix round 5: another preparation picked: show its own link, the previous one's deals and error go
+            .onChange(of: base) { link = base.flatMap { CRMLink.load(base: $0) }; deals = []; err = "" }
         }
     }
 
@@ -213,7 +221,9 @@ struct CRMCallRow: View {
         busy = true; err = ""
         let name = model.project?.crmCompanyName.isEmpty == false ? model.project!.crmCompanyName : (model.project?.name ?? "")
         Task {
-            let (l, e) = await crm.refresh(base: b, emails: emails, name: name, keep: link)
+            // the link kept is the one saved with this base, not the one on screen (it may be another preparation's)
+            let (l, e) = await crm.refresh(base: b, emails: emails, name: name, keep: CRMLink.load(base: b))
+            guard base == b else { busy = false; return }      // the preparation changed while HubSpot answered
             link = l; err = e; busy = false
             if let co = l?.companyId, !co.isEmpty, let c = crm.connector() { deals = ((try? await c.deals(companyId: co)) ?? []).filter { $0.open } }
         }
@@ -221,7 +231,7 @@ struct CRMCallRow: View {
 
     func setDeal(_ id: String, _ name: String) {
         guard let b = base else { return }
-        var l = link ?? CRMLink(); l.dealId = id; l.dealName = name; l.save(base: b); link = l
+        var l = CRMLink.load(base: b) ?? CRMLink(); l.dealId = id; l.dealName = name; l.save(base: b); link = l
         refresh()
     }
 }

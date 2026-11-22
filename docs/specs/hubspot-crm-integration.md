@@ -163,19 +163,26 @@ is shown on the card. Behavior to keep and to define:
 
 ## 9. Auto, review and Undo flow (H2)
 
-1. Start call: Refresh links company, deal and contacts (`.crm.json` of the preparation). When the recording starts,
-   the link is copied to the call's own `<stem>.crm.json` together with the preparation's files (the chosen
-   preparation, a late one, or the automatic pick by title), without `callKey` and `callId`; a link the call already
-   has is kept. Refresh saves the link with the same preparation Start call copies (the one chosen by hand, else the
-   planned one). The automatic pick carries a link only from a preparation with exactly the call's title (not one
-   that contains it, such as "Acme renewal" for "Renewal"), else from a link alone in the call's own folder (Refresh
-   before Prepare); otherwise the call stays unlinked, so its Summary never goes to another customer's records.
+1. Start call: Refresh links company, deal and contacts (`.crm.json` of the preparation). Refresh saves the link with
+   the same preparation Start call copies (the one chosen by hand, else the planned one, else where Prepare will write)
+   and reads the link stored there at the moment it runs, so picking another preparation never moves the first one's
+   company and deal into it. The call request names that preparation (`crm_base`); when the recording starts the
+   link is copied from it to the call's own `<stem>.crm.json`, without `callKey` and `callId`. The preparation Prepare
+   is writing for this call when it starts (late prep) carries its link the same way. Known limit: the planned
+   preparation is found by title and occurrence time (within 3 hours of the call), so two same-title calls of
+   different customers that close together show the other one's company in the Start call row; the PM sees it there
+   before starting. A link the call already
+   has is kept. A title is not a call's identity, so the recorder's automatic pick by title (`lt prep-check
+   --adopt-prep`) never carries a link: a call started without `crm_base` (another start path) stays unlinked, and
+   its Summary never goes to another customer's records.
 2. The call ends. If Auto is on and the call is linked in the portal of the current key (section 8), Pacenote waits for the call page's notes (about 2.5 minutes),
    then logs the Call. No review and no Undo in this path; the switch is the consent. The PM sees it in HubSpot and in
    the call's Update HubSpot window (Call row, ticked).
 3. Otherwise the PM opens Update HubSpot on the call page: the Call row is ticked by default (Settings can untick it),
    Apply writes, Undo works for 8 seconds.
-4. A re-run (Apply again later, or Auto after an edit) updates the same Call.
+4. A re-run (Apply again later) updates the same Call, keyed by the stored Call id and `hs_call_external_id`; the one
+   exception is the lost create answer in section 6 (Dedupe), which can leave a second Call. Auto runs once, when the
+   call ends; an edit of the call page afterwards reaches HubSpot only through Apply.
 
 ## 10. Decisions for the owner (with recommendations)
 

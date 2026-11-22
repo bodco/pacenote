@@ -765,6 +765,20 @@ func crmLinkCarry() {
     let call2 = folder + "/2026-11-22-1405-orbit-renewal.app"
     expect(CRMLinkCarry.carry(from: CRMLinkCarry.prepBase(chosen: picked + ".brief.md", planned: planned)!, to: call2)
            && read(CallLayout.sidecar(call2, ".crm.json"))["companyId"] as? String == "c1", "refresh base: Start call carries the chosen prep's link")
+    // fix round 5: two preparations linked to different customers. After the PM switches from the first to the second,
+    // Refresh keeps the link stored with the second (read at Refresh time), never the first one's company and deal
+    let acme = folder + "/prep-2026-11-22-1300-acme", globex = folder + "/prep-2026-11-22-1310-globex", fresh = folder + "/prep-2026-11-22-1320-new"
+    var acmeLink = link; acmeLink["companyId"] = "acme"; acmeLink["dealId"] = "d-acme"
+    var globexLink = link; globexLink["companyId"] = "globex"; globexLink["dealId"] = "d-globex"
+    write(acmeLink, CallLayout.sidecar(acme, ".crm.json")); write(globexLink, CallLayout.sidecar(globex, ".crm.json"))
+    func stored(_ b: String) -> [String: Any] { CRMLinkCarry.stored(base: b).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:] }
+    expect(stored(acme)["companyId"] as? String == "acme", "refresh keep: the first preparation's own link")
+    let keep = stored(CRMLinkCarry.prepBase(chosen: globex + ".brief.md", planned: acme)!)
+    expect(keep["companyId"] as? String == "globex" && keep["dealId"] as? String == "d-globex", "refresh keep: after a switch, the second preparation's link, not the first one's")
+    expect(CRMLinkCarry.stored(base: fresh) == nil, "refresh keep: a preparation without a link starts empty")
+    let call3 = folder + "/2026-11-22-1312-globex.app"
+    expect(CRMLinkCarry.carry(from: globex, to: call3) && read(CallLayout.sidecar(call3, ".crm.json"))["companyId"] as? String == "globex",
+           "refresh keep: Start call carries the second preparation's customer")
     try? fm.removeItem(atPath: root)
 }
 

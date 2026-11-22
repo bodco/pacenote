@@ -2,7 +2,8 @@ import Foundation
 
 /// H2 (PB-58): Refresh in Start call saves the HubSpot link with the preparation (<prep>.crm.json). The recorded call
 /// reads it under its own stem, so the link goes with the preparation's files when the call starts; without it Auto
-/// skipped the call and Update HubSpot said "not linked".
+/// skipped the call and Update HubSpot said "not linked". Fix round 5: only from the preparation the Start call window
+/// showed the link for (request key crm_base) or a preparation made for this call; a title match never carries a link.
 public enum CRMLinkCarry {
     /// Copies <base>.crm.json to <stem>.crm.json when the call has no link yet. The call key and the HubSpot Call id are
     /// left out: they belong to one call, and a preparation used again for another call must not update that Call.
@@ -16,6 +17,12 @@ public enum CRMLinkCarry {
         guard let out = try? JSONSerialization.data(withJSONObject: obj, options: [.sortedKeys]) else { return false }
         try? fm.createDirectory(atPath: (dst as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
         return (try? out.write(to: URL(fileURLWithPath: dst), options: .atomic)) != nil
+    }
+
+    /// The link saved with this preparation, read when Refresh or a deal change runs (fix round 5): the link shown for
+    /// a preparation picked before must not be saved into the one picked now. nil when it has none.
+    public static func stored(base: String, fm: FileManager = .default) -> Data? {
+        fm.contents(atPath: CallLayout.sidecar(base, ".crm.json"))
     }
 
     /// The preparation Refresh saves the link with, picked the way Start call picks the one it copies to the call: the

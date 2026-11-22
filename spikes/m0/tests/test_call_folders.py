@@ -125,33 +125,27 @@ def test_engine_sidecars_go_to_work(tmp_path):
     assert AC.sheet_for(md) == d / ".work" / "2026-11-18-1612-pacenote-sync.app.sheet.json"
 
 
-def test_start_call_carries_the_hubspot_link(tmp_path):
-    """H2 (PB-58): Refresh saves the HubSpot link with the preparation; automatic adoption takes it to the call
-    (from the adopted prep, else a matching link alone), without the call key and the HubSpot Call id."""
+def test_automatic_adoption_never_carries_the_hubspot_link(tmp_path):
+    """H2 (PB-58, fix round 5): a title is not the call's identity, so automatic adoption takes the brief of a prep
+    with the same title but never its HubSpot link; the app carries a link only from the prep Start call used."""
     import json
     lt = _load_script("lt_cli_crm", REC / "bin/lt")
-    d = tmp_path / "proj" / "live" / "2026-11-22-orbit-renewal"
-    (d / ".work").mkdir(parents=True)
-    prep = d / "prep-2026-11-22-1500-orbit-renewal"
-    Path(str(prep) + ".brief.md").write_text("# Live Brief: Orbit renewal\n", encoding="utf-8")
-    link = {"portalId": "4711", "companyId": "c1", "dealId": "d1", "contactIds": ["p1"], "callKey": "old", "callId": "old-call"}
-    (d / ".work" / (prep.name + ".crm.json")).write_text(json.dumps(link), encoding="utf-8")
-    call = str(d / "2026-11-22-1502-orbit-renewal.app")
-    mine = d / ".work" / "2026-11-22-1502-orbit-renewal.app.crm.json"
-    got = lt.adopt_prep(call)
-    assert got[".crm.json"] == prep.name + ".crm.json" and ".brief.md" in got
-    assert json.loads(mine.read_text(encoding="utf-8")) == {"portalId": "4711", "companyId": "c1", "dealId": "d1", "contactIds": ["p1"]}
-    # the call's own link stays
-    mine.write_text(json.dumps({"callId": "c-9"}), encoding="utf-8")
-    assert ".crm.json" not in lt.adopt_prep(call)
-    assert json.loads(mine.read_text(encoding="utf-8")) == {"callId": "c-9"}
-    # Refresh before Prepare: only the link exists, it is still carried
-    other = tmp_path / "proj" / "live" / "2026-11-22-weekly-sync"
+    live = tmp_path / "proj" / "live"
+    link = {"portalId": "4711", "companyId": "other", "dealId": "d-other", "contactIds": ["p-other"]}
+    # another customer's "Renewal" appointment, in another call folder, with a link
+    other = live / "2026-11-22-renewal"
     (other / ".work").mkdir(parents=True)
-    (other / ".work" / "prep-2026-11-22-1600-weekly-sync.crm.json").write_text(json.dumps(link), encoding="utf-8")
-    assert ".crm.json" in lt.adopt_prep(str(other / "2026-11-22-1601-weekly-sync.app"))
-    # a link of another call is not taken
-    assert ".crm.json" not in lt.adopt_prep(str(other / "2026-11-22-1700-board-review.app"))
+    Path(str(other / "prep-2026-11-22-1500-renewal") + ".brief.md").write_text("# Live Brief: Renewal\n", encoding="utf-8")
+    (other / ".work" / "prep-2026-11-22-1500-renewal.crm.json").write_text(json.dumps(link), encoding="utf-8")
+    new = live / "2026-11-22-renewal-2"
+    (new / ".work").mkdir(parents=True)
+    got = lt.adopt_prep(str(new / "2026-11-22-1602-renewal.app"))
+    assert ".brief.md" in got and ".crm.json" not in got
+    assert not (new / ".work" / "2026-11-22-1602-renewal.app.crm.json").exists()
+    # a link alone in the call's own folder (Refresh before Prepare) is not taken either
+    (new / ".work" / "prep-2026-11-22-1600-renewal.crm.json").write_text(json.dumps(link), encoding="utf-8")
+    assert ".crm.json" not in lt.adopt_prep(str(new / "2026-11-22-1603-renewal.app"))
+    assert not (new / ".work" / "2026-11-22-1603-renewal.app.crm.json").exists()
 
 
 def test_hubspot_link_of_another_call_is_not_carried(tmp_path):
