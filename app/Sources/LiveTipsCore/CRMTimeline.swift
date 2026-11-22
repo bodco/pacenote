@@ -88,14 +88,36 @@ public struct CRMMeetingLog: Equatable {
         return String(current[..<r.lowerBound]) + previous + String(current[r.upperBound...])
     }
 
-    /// The words of a block, so HubSpot's rewrite of the markup (<strong> for <b>, entities, line breaks) is not an edit.
-    static func sameBlock(_ a: String, _ b: String) -> Bool {
-        func words(_ s: String) -> String {
-            var t = s.replacingOccurrences(of: "<[^>]*>", with: " ", options: .regularExpression)
+    /// Two blocks are the same when their words and their tags are, with the tags' links (href, src). Only what HubSpot
+    /// is known to rewrite is left out: <strong> for <b>, <em> for <i>, entities, spacing, and attributes that carry no
+    /// content (style, class, target, rel). Any other difference is an edit, so Undo keeps the notes and reports it.
+    static func sameBlock(_ a: String, _ b: String) -> Bool { tokens(a) == tokens(b) }
+
+    static func tokens(_ s: String) -> [String] {
+        func decode(_ s: String) -> String {
+            var t = s
             for (e, c) in [("&nbsp;", " "), ("&lt;", "<"), ("&gt;", ">"), ("&quot;", "\""), ("&#39;", "'"), ("&#x27;", "'"), ("&amp;", "&")] { t = t.replacingOccurrences(of: e, with: c) }
-            return t.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+            return t
         }
-        return words(a) == words(b)
+        func words(_ s: String) -> [String] { decode(s).split(whereSeparator: { $0.isWhitespace }).map(String.init) }
+        let alias = ["strong": "b", "em": "i"]
+        let attrs = try? NSRegularExpression(pattern: "\\b(href|src)\\s*=\\s*(\"[^\"]*\"|'[^']*'|[^\\s\"'>]+)", options: .caseInsensitive)
+        var out: [String] = [], rest = Substring(s)
+        while let lt = rest.firstIndex(of: "<"), let gt = rest[lt...].firstIndex(of: ">") {
+            out += words(String(rest[..<lt]))
+            let tag = rest[rest.index(after: lt)..<gt]
+            let closing = tag.hasPrefix("/")
+            let name = tag.drop(while: { $0 == "/" }).prefix(while: { $0.isLetter || $0.isNumber }).lowercased()
+            var t = (closing ? "</" : "<") + (alias[name] ?? name)
+            let str = String(tag)
+            for m in attrs?.matches(in: str, range: NSRange(str.startIndex..., in: str)) ?? [] {
+                guard let n = Range(m.range(at: 1), in: str), let v = Range(m.range(at: 2), in: str) else { continue }
+                t += " " + str[n].lowercased() + "=" + decode(String(str[v]).trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))).trimmingCharacters(in: .whitespaces)
+            }
+            out.append(t + ">")
+            rest = rest[rest.index(after: gt)...]
+        }
+        return out + words(String(rest))
     }
 
     var properties: [String: Any] {

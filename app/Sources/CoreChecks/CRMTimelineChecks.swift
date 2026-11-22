@@ -489,5 +489,28 @@ func crmTimeline() async {
     let r4 = try? await CRMUndo.run(u3, portal: "500", connector: hsw)
     expect(r4?.failed == 0 && r4?.kept == 0 && tw.objects["meetings"]?["97"]?[notesKey] == "<p>A</p>" + firstBlock + "<p>Z</p><p>Later</p>",
            "undo: a re-run's Undo restores the previous block in place and keeps the text added later")
+
+    // review round 8: an edit that lives in the markup (a link's destination, a word made a link) is an edit too; only
+    // HubSpot's known rewrites (<strong> for <b>, added style or target attributes) are not
+    func markupEdit(_ id: String, _ change: (String) -> String) async -> (r: (failed: Int, kept: Int, deleted: [(String, String)])?, notes: String, now: String?, linked: Set<String>) {
+        let t = FakeHubSpotTimeline(); let hs = HubSpotConnector(transport: t, sleep: { _ in })
+        synced(t, id, "<p>My own prep</p>")
+        let u = await apply(hs, id, ["Ours"])
+        let notes = change(t.objects["meetings"]![id]![notesKey]!)
+        t.objects["meetings"]![id]![notesKey] = notes
+        let r = try? await CRMUndo.run(u, portal: "500", connector: hs)
+        return (r, notes, t.objects["meetings"]?[id]?[notesKey], t.linked("meetings/" + id))
+    }
+    let h1 = await markupEdit("98") { $0.replacingOccurrences(of: "href=\"https://notion.example/p2\"", with: "href=\"https://docs.example/orbit-final\"") }
+    expect(h1.notes.contains(">https://notion.example/p2</a>") && h1.r?.failed == 0 && h1.r?.kept == 1 && h1.now == h1.notes && h1.linked == ["contacts/P1"],
+           "undo: a link destination changed in HubSpot after Apply (same label) is kept and reported")
+    let h2 = await markupEdit("99") { $0.replacingOccurrences(of: "<li>Ours</li>", with: "<li><a href=\"https://docs.example/q3\">Ours</a></li>") }
+    expect(h2.r?.kept == 1 && h2.now == h2.notes, "undo: a word made a link in HubSpot after Apply is kept and reported")
+    let h3 = await markupEdit("100") {
+        $0.replacingOccurrences(of: "<a href=", with: "<a target=\"_blank\" rel=\"noopener\" href=").replacingOccurrences(of: "<p>", with: "<p style=\"margin:0\">")
+          .replacingOccurrences(of: "<b>", with: "<strong>").replacingOccurrences(of: "</b>", with: "</strong>")
+    }
+    expect(h3.r?.failed == 0 && h3.r?.kept == 0 && h3.now == "<p style=\"margin:0\">My own prep</p>" && h3.linked == ["contacts/P1"],
+           "undo: HubSpot's own rewrite of the markup (strong, style, target) is not an edit; Pacenote's block goes")
     }
 }

@@ -138,7 +138,9 @@ decides, the service key stays the only path.
    Their Undo also removes the associations the write added. Undo of a Meeting's notes never writes back the whole
    field: its record holds only Pacenote's block before and after Apply, and Undo reads the notes again, puts the old
    block back in place of Pacenote's block (or removes it) and keeps all other text, also text added after Apply. If
-   Pacenote's block was edited or removed in HubSpot since Apply, the notes are kept as they are and Undo says so.
+   Pacenote's block was edited or removed in HubSpot since Apply, the notes are kept as they are and Undo says so. An
+   edit is any change to the block's words, tags or link targets (href, src); only HubSpot's own rewrite of the markup
+   (`<strong>` for `<b>`, `<em>` for `<i>`, entities, spacing, `style` or `target` attributes) is not.
    Undo runs in the call's turn (the same queue as the writes and Relink). Undo checks the portal like Apply (section 8).
 5. **Errors are one line where the action was**, never a modal; 429 waits (Retry-After, else 1, 2, 4 s) and retries three
    times; 401 and 403 say what to fix (key, or the named scope).

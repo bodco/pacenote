@@ -35,7 +35,8 @@ Pacenote. Earlier versions are described in the commit messages and in
   written in the app, is never ticked for you, and records the email you sent as a HubSpot email engagement (Pacenote
   still sends no mail); an email HubSpot already logged is never changed, it only gets the missing associations. No
   automatic switch for either. Undo of a Meeting takes back only Pacenote's block and keeps notes added in HubSpot
-  after Apply; if that block itself was edited in HubSpot since, it is kept as it is and Undo says so. Undo also
+  after Apply; if that block itself was edited in HubSpot since (its text or a link in it), it is kept as it is and
+  Undo says so. Undo also
   removes the associations Pacenote added, a failed write leaves nothing half done (an association HubSpot would not let it take back stays in Undo), and transcript text is never sent. The
   meetings to pick and Undo belong to the HubSpot account they came from: Relink to another account drops them, and
   they never write to a record of the new account with the same id. Relink and Refresh wait until a write of the
