@@ -7,7 +7,9 @@ there). The recorder writes the marked line at once (translated_from set). A wor
    never audio; the route settings, the auto-switch and the spend ledger are the engine's own).
 The permission is per launch: the app sets LT_TRANSLATE_ROUTE=1 in the recorder's environment only for a call that may
 use the AI; without it the command is ignored whatever config.json says, and only the local model is used.
-No route, a timeout or a bad answer: the marked line stays as it is. `submit()` never blocks; each request has a
+No route, a timeout, a bad answer or an answer that only repeats the text: the marked line stays as it is (the route and
+a failure category are logged, never the text). A model that finds the text already in the target language answers
+SAME: the line stays and no further route is asked. `submit()` never blocks; each request has a
 deadline of its own; the queue is bounded (the oldest waiting line is dropped, so it stays marked).
 """
 from __future__ import annotations
@@ -18,6 +20,7 @@ import os
 import subprocess
 import threading
 import time
+import unicodedata
 import urllib.error
 import urllib.request
 from urllib.parse import urlsplit
@@ -32,7 +35,27 @@ def prompt_for(src: str, dst: str) -> str:
     s = "the language it is in" if src == "und" else LANG_NAMES.get(src, src)
     d = LANG_NAMES.get(dst, dst)
     return (f"Translate the user's text from {s} to {d}. Keep names, numbers and product terms as they are. "
-            "Answer with the translation only, no quotes, no comments.")
+            f"Answer with the translation only, no quotes, no comments. If the text is already in {d}, answer exactly "
+            f"{SAME}.")
+
+
+SAME = "SAME"
+
+
+def _key(text: str) -> str:
+    return "".join(c for c in unicodedata.normalize("NFKD", str(text).casefold()) if c.isalnum())   # "café" = "cafe"
+
+
+def unchanged(new: str, text: str) -> bool:
+    """The answer only repeats the text: nothing was translated."""
+    return _key(new) == _key(text)
+
+
+def is_same(out: str) -> bool:
+    """The model says the text is already in the target language: "SAME", also with a comment after it. Case matters:
+    "Same" is a real one-word translation."""
+    words = str(out).strip().strip("\"'").split()
+    return bool(words) and words[0].strip(".,:;!\"'()") == SAME
 
 
 def is_loopback(url: str) -> bool:
@@ -55,7 +78,9 @@ class Translator:
     """text -> translation, or None when no route answers in time. `translate(text, src, dst)` is blocking and is
     only called from the worker thread."""
 
-    def __init__(self, cfg: dict, accept: Callable[[str, str], bool] = lambda text, dst: True):
+    def __init__(self, cfg: dict, accept: Callable[[str, str], bool] = lambda text, dst: True,
+                 log: Callable[[str], None] = lambda m: None):
+        self.log = log              # the route and a failure category only: never the text, stderr or a key
         self.accept = accept        # a local answer that fails it is not returned: the configured route is tried next
         self.timeout = float(cfg.get("translate_timeout_s", 15.0))
         self.url = str(cfg.get("ollama_url") or "http://127.0.0.1:11434").rstrip("/")
@@ -66,7 +91,8 @@ class Translator:
         self.cmd_dir = str(cfg.get("translate_dir") or "")
         # a model server that is not on this Mac gets transcript text only with the call's permission (the same flag)
         self.ollama_allowed = is_loopback(self.url) or os.environ.get("LT_TRANSLATE_ROUTE") == "1"
-        self._opener = urllib.request.build_opener(_LoopbackOnly)
+        # no proxy: one from the environment or the system settings would take the text off this Mac
+        self._opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _LoopbackOnly)
         self._up_until = 0.0
         self._up = False
 
@@ -80,7 +106,10 @@ class Translator:
             with self._opener.open(self.url + "/api/tags", timeout=min(2.0, self.timeout)) as r:
                 names = {m.get("name") for m in json.load(r).get("models", [])}
             self._up = self.model in names or f"{self.model}:latest" in names
-        except Exception:  # noqa: BLE001
+            if not self._up:
+                self.log("translate: local: model not found")
+        except Exception as e:  # noqa: BLE001
+            self.log(f"translate: local: not reachable ({type(e).__name__})")
             self._up = False
         self._up_until = time.monotonic() + 60.0
         return self._up
@@ -100,24 +129,51 @@ class Translator:
         p = subprocess.run(self.cmd, input=json.dumps({"text": text, "src": src, "dst": dst}), capture_output=True,
                            text=True, timeout=self.timeout, env=env, cwd=self.cmd_dir or None)
         if p.returncode != 0:
-            return None
+            raise RouteFailed(f"exit {p.returncode}")
         return str(json.loads(p.stdout.strip().splitlines()[-1]).get("text", "")).strip() or None
+
+    def _check(self, out: str | None, text: str, dst: str) -> str:
+        """-> "ok", "same" (the model says the text is already in the target language) or why the answer is not used."""
+        if not out:
+            return "empty answer"
+        if is_same(out):
+            return "same"
+        if unchanged(out, text):
+            return "answer repeats the text"
+        if not self.accept(out, dst):
+            return "answer not in the target language"
+        return "ok"
 
     def translate(self, text: str, src: str, dst: str) -> str | None:
         if self._ollama_up():
             try:
                 out = self._ollama(text, src, dst)
-                if out and self.accept(out, dst):
+                why = self._check(out, text, dst)
+                if why == "ok":
                     return out
-            except Exception:  # noqa: BLE001
+                if why == "same":
+                    self.log(f"translate: local: already {dst}, kept")
+                    return None
+                self.log(f"translate: local: {why}")
+            except Exception as e:  # noqa: BLE001
+                self.log(f"translate: local: {type(e).__name__}")
                 self._up_until = time.monotonic() + 60.0
                 self._up = False
         if self.cmd:
             try:
-                return self._route(text, src, dst)
-            except Exception:  # noqa: BLE001
+                out = self._route(text, src, dst)
+            except Exception as e:  # noqa: BLE001
+                self.log(f"translate: route: {e if isinstance(e, RouteFailed) else type(e).__name__}")
                 return None
+            why = self._check(out, text, dst)
+            if why == "ok":
+                return out
+            self.log(f"translate: route: {f'already {dst}, kept' if why == 'same' else why}")
         return None
+
+
+class RouteFailed(Exception):
+    """The route command exited with an error (its stderr is not logged: it may hold the text)."""
 
 
 class TranslateWorker(threading.Thread):
@@ -155,14 +211,14 @@ class TranslateWorker(threading.Thread):
                 self.busy = True
             try:
                 new = self.translate(job["text"], job["src"], job["dst"])
-                if new and self.accept(new, job["dst"]):
+                if new and not unchanged(new, job["text"]) and self.accept(new, job["dst"]):
                     self.apply(job, new)
                     self.done += 1
                 else:
                     self.kept += 1
             except Exception as e:  # noqa: BLE001
                 self.kept += 1
-                self.log(f"translate: {e!r}")
+                self.log(f"translate: {type(e).__name__}")      # the message may hold the line's text
             finally:
                 with self.cv:
                     self.busy = False

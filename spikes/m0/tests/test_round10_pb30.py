@@ -114,13 +114,13 @@ def asr(T, logprob):
     return T.asr_segment(french(T, logprob), seg, cfg, share, {"me": "uk", "them": "uk"}, None, set())
 
 
-def test_low_confidence_foreign_text_in_the_target_script_is_translated_a_confident_one_is_only_marked(T):
+def test_foreign_text_in_the_target_script_is_translated_unsure_or_confident(T):
     res = asr(T, -1.1)
     assert res == ("Je voudrais un cafe", "en", "fr") and res.low_conf
     assert T.needs_translation(*res, res.low_conf)
-    res = asr(T, -0.3)
+    res = asr(T, -0.3)                                 # round 11: a confident French decode is translated too
     assert res == ("Je voudrais un cafe", "en", "fr") and not res.low_conf
-    assert not T.needs_translation(*res, res.low_conf)
+    assert T.needs_translation(*res, res.low_conf)
 
 
 # ---- finding 3: a model server off this Mac -------------------------------------------------------------------

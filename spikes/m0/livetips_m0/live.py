@@ -33,14 +33,18 @@ class Tail:
         self.path = path
         self.pos = 0
         self.buf = ""
+        self.ino = None
 
     def read(self):
         if not self.path.exists():
             return []
-        size = self.path.stat().st_size
-        if size < self.pos:              # truncated or replaced
+        st = self.path.stat()
+        size = st.st_size
+        # truncated, or replaced by a new file (PB-30: the recorder's end-of-call rewrite, which may also be longer)
+        if size < self.pos or (self.ino is not None and st.st_ino != self.ino):
             self.pos = 0
             self.buf = ""
+        self.ino = st.st_ino
         if size == self.pos:
             return []
         with self.path.open("r", encoding="utf-8", errors="replace") as f:
@@ -228,6 +232,8 @@ class LiveRun:
         self.seen_lines = set()
         self.row_total = {}                          # PB-30: (t, ch, text) -> "row" events read: rows the writer appended
         self.fed_rows = {}                           # PB-30: (t, ch, text) -> lines fed for it
+        self.tr_rows = {}                            # PB-30: (t, ch, translated text) -> "translated" events read
+        self.tr_seen = {}                            # PB-30: (t, ch, translated text) -> rewritten rows skipped for them
         self.last_new = self.t0 = time.monotonic()
         self.last_touch = 0.0
         self.first_written = self.last_written = None
@@ -249,6 +255,8 @@ class LiveRun:
                 if r.get("event"):                # PB-30: not a line's timing
                     if r["event"] == "translated":          # the translation replaces the line's text
                         self.translations.append((r, time.monotonic()))
+                        k = self.row_key(r.get("t"), r.get("ch"), r.get("text"))
+                        self.tr_rows[k] = self.tr_rows.get(k, 0) + 1
                     elif r["event"] == "row":               # the writer appended this row: its stable seq
                         self.rows.setdefault((r.get("t"), r.get("ch")), []).append(r)
                         k = self.row_key(r.get("t"), r.get("ch"), r.get("text"))
@@ -272,6 +280,13 @@ class LiveRun:
                 # a file read again (the recorder rewrote it) shows a row twice; the writer's row events say how many
                 # identical rows really exist, so the same speaker saying the same words twice is two lines
                 if identity in self.seen_lines and not self.row_total.get(key, 0) > self.fed_rows.get(key, 0):
+                    continue
+                # the end-of-call rewrite shows a translated row with its new text: that line was already fed (it gets
+                # the text from the "translated" event), so it is not a new one, unless the writer appended such a row
+                if (self.tr_rows.get(key, 0) > self.tr_seen.get(key, 0)
+                        and not self.row_total.get(key, 0) > self.fed_rows.get(key, 0)):
+                    self.tr_seen[key] = self.tr_seen.get(key, 0) + 1
+                    self.seen_lines.add(identity)
                     continue
                 self.seen_lines.add(identity)
                 self.fed_rows[key] = self.fed_rows.get(key, 0) + 1

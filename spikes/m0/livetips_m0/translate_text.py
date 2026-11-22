@@ -24,7 +24,8 @@ def translate(text: str, src: str, dst: str, provider=None) -> str:
         raise RuntimeError("the live tips route is not usable for text of a call: " + str(prov.preferred))
     s = "the language it is in" if src == "und" else NAMES.get(src, src)
     system = (f"Translate the user's text from {s} to {NAMES.get(dst, dst)}. Keep names, numbers and "
-              "product terms as they are. Answer with the translation only, no quotes, no comments.")
+              "product terms as they are. Answer with the translation only, no quotes, no comments. "
+              f"If the text is already in {NAMES.get(dst, dst)}, answer exactly SAME.")
     c = prov.complete(model=os.environ.get("LT_TRANSLATE_MODEL") or MODEL, system=[{"text": system}], user=text,
                       max_tokens=400, cache_ttl=None)
     if c.error:

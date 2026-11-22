@@ -508,6 +508,6 @@ def test_a_held_mic_line_is_translated_in_memory_before_it_is_written(T, tmp_pat
 def test_only_russian_or_wrong_script_lines_are_sent_to_translation(T):
     assert T.needs_translation("Это очень хорошо", "uk", "ru")
     assert T.needs_translation("I would like a coffee", "uk", "und")
-    assert not T.needs_translation("I would like a coffee please", "en", "fr")   # French speech forced into English
+    assert T.needs_translation("I would like a coffee please", "en", "fr")   # the model answers SAME when it is English
     assert not T.needs_translation("Це дуже добре", "uk", None)
     assert T.translation_ok("Це дуже добре", "uk") and not T.translation_ok("Это очень хорошо", "uk")

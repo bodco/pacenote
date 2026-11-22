@@ -388,10 +388,14 @@ def asr_segment(whisper, seg: "Segment", cfg: dict, lang_share: LangShare, last_
 
 
 def needs_translation(text: str, lang: str, translated_from: str | None, low_conf: bool = False) -> bool:
-    """PB-30 (D56): a marked line whose text is Russian, in a wrong script, or an unsure decode forced onto the main
-    language (French speech written in English, low confidence) is translated in the background. A confident forced
-    decode is only marked."""
-    return bool(translated_from) and (is_russian(text) or script_mismatch(text, lang) or low_conf)
+    """PB-30 (D56): a line marked with a non-Cyrillic language outside the set (French speech decoded in English) is
+    always translated in the background: script and confidence cannot tell French from English, so the model checks
+    the language and answers SAME when Whisper already wrote it in the target one. Any other marked line (Russian,
+    unknown source) is translated when it is Russian, in a wrong script or unsure: for those the script tells."""
+    if not translated_from:
+        return False
+    return (translated_from not in CYRILLIC_LANGS + ("und",) or is_russian(text) or script_mismatch(text, lang)
+            or low_conf)
 
 
 def translation_ok(new: str, dst: str) -> bool:
@@ -916,11 +920,12 @@ class Writer:
             label += f" [{line.sid}]"
         return f"[{hhmmss(line.t)}] {label} ({line.lang}): {line.text}"
 
-    def replace(self, line: Line, text: str) -> str | None:
+    def replace(self, line: Line, text: str, announce=None) -> str | None:
         """PB-30: a background translation replaces the line text. A line still held is changed in memory; a written
         one is rewritten in close(), so a reader that follows the file by offset never sees an earlier row change.
         -> None when the writer is closed; else the row as it was written ("" when the line is still held), read
-        under the lock, so the caller knows whether the live readers already show the line."""
+        under the lock, so the caller knows whether the live readers already show the line. `announce(old)` runs under
+        the lock for a written row: its live event is in the timing file before close() can rewrite the row."""
         with self.lock:
             if self.closed:
                 return None
@@ -928,6 +933,8 @@ class Writer:
             line.text = " ".join(text.split())      # a row is one line; a break would leave an untagged tail
             if old:
                 self.replaced.append((old, line.row_occ, self._row(line)))
+                if announce is not None:
+                    announce(old)
             return old
 
     def _rewrite(self) -> None:
@@ -5382,18 +5389,21 @@ def main() -> int:
     def apply_translation(j: dict, new: str) -> None:
         """The translation replaces the line text (the file at the end of the call); the sidecar keeps the original."""
         new = apply_dictionary(" ".join(new.split()), DICT_RULES)   # one line: a break would split the transcript row
-        shown = writer.replace(j["line"], new)   # the row already in the file (and so in the live transcript), if any
-        if not shown:                            # closed, or a held line: it goes out translated
-            return
-        try:
-            # the live readers (tips engine, transcript pane) change the row in place, keyed by the line's seq
-            with open(call_layout.sidecar_of(out, ".timing.jsonl"), "a", encoding="utf-8") as tf:
-                tf.write(json.dumps({"event": "translated", "seq": j["line"].seq, "t": j["t"], "ch": j["ch"],
-                                     "translated_from": j["src"], "original": j["text"], "text": new},
-                                    ensure_ascii=False) + "\n")
-        except OSError as e:
-            # the saved row is already queued for the translation: say that the live view will stay stale
-            log(f"translate: live event for row {j['line'].seq} not written: {type(e).__name__}")
+
+        def announce(_row: str) -> None:
+            """The row is already in the file (and so in the live transcript): the live readers (tips engine,
+            transcript pane) change it in place, keyed by the line's seq. Written under the writer's lock, so the
+            event is always before the end-of-call rewrite of the row."""
+            try:
+                with open(call_layout.sidecar_of(out, ".timing.jsonl"), "a", encoding="utf-8") as tf:
+                    tf.write(json.dumps({"event": "translated", "seq": j["line"].seq, "t": j["t"], "ch": j["ch"],
+                                         "translated_from": j["src"], "original": j["text"], "text": new},
+                                        ensure_ascii=False) + "\n")
+            except OSError as e:
+                # the saved row is already queued for the translation: say that the live view will stay stale
+                log(f"translate: live event for row {j['line'].seq} not written: {type(e).__name__}")
+
+        writer.replace(j["line"], new, announce)   # closed, or a held line: no event, it goes out translated
 
     def publish_row(line: Line) -> None:
         """The writer is about to append this row: publish its seq. Readers pair rows with seq by this event (time,
@@ -5406,7 +5416,7 @@ def main() -> int:
     line_seq = itertools.count(1)
     tr_worker = None
     if cfg.get("translate", True):
-        tr_worker = TR.TranslateWorker(TR.Translator(cfg, translation_ok).translate, apply_translation, translation_ok,
+        tr_worker = TR.TranslateWorker(TR.Translator(cfg, translation_ok, log=log).translate, apply_translation, translation_ok,
                                        maxlen=int(cfg.get("translate_queue", 16)), log=log)
         tr_worker.start()
 
