@@ -62,7 +62,9 @@ struct CRMDealSection: View {
                 }
                 ForEach(model.suggestions.indices.filter { model.suggestions[$0].kind != "stage" }, id: \.self) { i in
                     let s = model.suggestions[i]
-                    Toggle(isOn: Binding(get: { model.suggestions[i].on }, set: { model.suggestions[i].on = $0 })) {
+                    // a new pick empties the list at once; a row still on screen must not read past its end
+                    Toggle(isOn: Binding(get: { model.suggestions.indices.contains(i) ? model.suggestions[i].on : false },
+                                         set: { if model.suggestions.indices.contains(i) { model.suggestions[i].on = $0 } })) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(s.kind == "qualification" ? s.title.replacingOccurrences(of: "_", with: " ") + " (" + s.id + ")" : L("crm.deal.field." + s.kind))
                             Text(s.current.isEmpty ? s.shown : s.current + "  \u{2192}  " + s.shown).font(PN.Font.caption).foregroundStyle(PN.C.text2)
