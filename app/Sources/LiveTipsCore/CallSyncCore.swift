@@ -348,8 +348,9 @@ public enum CallSync {
 
     /// PB-37: researched website content stays on this Mac. The upload is built from an allowlist of the keys the app's
     /// sheet model knows, so refresh history (top-level `gone_facts`, a fact's `was`) and any later key never go out.
-    /// A fact that cites a page of a researched site is left out (its text may repeat the page), and so are links to it
-    /// (`conflict_with`, `superseded_by`, a readiness gap); a `web_page` source keeps only its address and state.
+    /// A fact that cites a page of a researched site is left out (its text may repeat the page), and so are the gap
+    /// facts that copy it (`about`) and links to it (`conflict_with`, `superseded_by`, a readiness gap); a `web_page`
+    /// source keeps only its address and state.
     static func syncedSheet(_ raw: [String: Any]) -> [String: Any] {
         func only(_ o: [String: Any], _ keys: Set<String>) -> [String: Any] { o.filter { keys.contains($0.key) } }
         let topKeys = Set(MeetingSheet.CodingKeys.allCases.map(\.rawValue))
@@ -368,15 +369,17 @@ public enum CallSync {
                 return w
             }
         }
-        var dropped = Set<String>()
         var blocks = ((o["blocks"] as? [[String: Any]]) ?? []).map { only($0, blockKeys) }
+        let allFacts = blocks.flatMap { ($0["facts"] as? [[String: Any]]) ?? [] }
+        let fromWeb = Set(allFacts.filter { ((($0["source_ids"] as? [String]) ?? []).contains(where: { web.contains($0) })) }
+            .compactMap { $0["id"] as? String })
+        // a readiness gap copies its fact's label and text and points back with `about` (read before the allowlist strips it)
+        func copiesWeb(_ f: [String: Any]) -> Bool { fromWeb.contains((f["about"] as? String) ?? "") }
+        let dropped = fromWeb.union(allFacts.filter(copiesWeb).compactMap { $0["id"] as? String })
         for bi in blocks.indices {
             guard let facts = blocks[bi]["facts"] as? [[String: Any]] else { continue }
             blocks[bi]["facts"] = facts.compactMap { f -> [String: Any]? in
-                if ((f["source_ids"] as? [String]) ?? []).contains(where: { web.contains($0) }) {
-                    if let id = f["id"] as? String { dropped.insert(id) }
-                    return nil
-                }
+                if ((f["source_ids"] as? [String]) ?? []).contains(where: { web.contains($0) }) || copiesWeb(f) { return nil }
                 return only(f, factKeys)
             }
         }
