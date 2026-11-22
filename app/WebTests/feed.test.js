@@ -725,5 +725,13 @@ test('PB-49: an ack keeps the key and value it applied and counts, for the windo
   assert.strictEqual(f.ack.n, 2);
 });
 
+test('PB-49: acks are kept per key, so a later ack in the same batch does not hide the tips language', () => {
+  const { f } = make();
+  f.addItems([{ t: '10:41:00', kind: 'ack', key: 'tips_lang', value: 'en' }, { t: '10:41:01', kind: 'ack', key: 'call_lang', value: 'en' }]);
+  assert.strictEqual(f.acks.tips_lang.value, 'en');
+  assert.strictEqual(f.acks.call_lang.value, 'en');
+  assert.strictEqual(f.ack.key, 'call_lang');
+});
+
 console.log(`feed tests: ${passed} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);

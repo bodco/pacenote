@@ -94,7 +94,7 @@
         autoTt: 'Slides turn by the schedule, with a beep', compTt: 'Hide the "can skip" paragraphs', swap: 'Swap the slides and tips sides',
         expand: 'Expand', collapse: 'One window', expandTt: 'Slides next to the tips: the window gets twice as wide', collapseTt: 'Back to one window: the slide on top, the tips below' },
       doneQ: 'Done?', markDone: 'Mark done', onThemKind: 'On them', closed: 'Closed',
-      noItems: 'Nothing on you yet', notMine: 'Not mine', trShow: 'Show transcript', trHide: 'Hide transcript', trAria: 'Transcript', trEmptyReady: 'The transcript appears when the call starts listening.', trEmptyLive: 'Nothing said yet.', langMarker: (n) => `Language: ${n}`, cl: { head: 'Call language', mixed: 'mixed', tipsIn: 'Tips in', more: 'More languages…', foot: 'Applies from the next phrase. This call only.', tip: (n) => `Call language: ${n}. Click to change`, tipMixed: (n) => `Call language: ${n}`, aria: (n) => `Call language: ${n}. Change`, resume: 'Applies when you resume.', off: 'Recorder is not running.', ok: (n, tips) => `${tips ? 'Call and tips language' : 'Call language'}: ${n}. Applies from the next phrase.`, fail: 'Could not change the language. Try again.' }, close: 'Close', noBriefYet: 'No brief for this call yet.',
+      noItems: 'Nothing on you yet', notMine: 'Not mine', trShow: 'Show transcript', trHide: 'Hide transcript', trAria: 'Transcript', trEmptyReady: 'The transcript appears when the call starts listening.', trEmptyLive: 'Nothing said yet.', langMarker: (n) => `Language: ${n}`, cl: { head: 'Call language', mixed: 'mixed', tipsIn: 'Tips in', more: 'More languages…', foot: 'Applies from the next phrase. This call only.', tip: (n) => `Call language: ${n}. Click to change`, tipMixed: (n) => `Call language: ${n}`, aria: (n) => `Call language: ${n}. Change`, resume: 'Applies when you resume.', off: 'Recorder is not running.', ok: (n, tips) => `${tips ? 'Call and tips language' : 'Call language'}: ${n}. Applies from the next phrase.`, fail: 'Could not change the language. Try again.', tipsFail: 'Call language changed, but the tips language did not. Try again.' }, close: 'Close', noBriefYet: 'No brief for this call yet.',
       readyStatus: 'Ready', readyTitle: 'Ready when you are', startListening: 'Start listening', openBrief: 'Open brief',
       listeningTitle: 'Listening', tipsOffTitle: 'Transcript only', tipsOffSub: 'Tips are off. The summary and the follow-up come after the call. Turn tips on in Call settings.', listeningSub: (k) => `Tips show up here when they matter. Stuck? Press ${k}.`, onDevice: 'Audio stays on this Mac',
       searched: (o) => `You searched: ${o.q}`, heardMeta: (o) => `Heard${o.who ? ' from ' + o.who : ''}, searching the project`, heardAnswer: (o) => `${o.who ? o.who + ' asked' : 'Asked'}: ${o.q}`, shorterMeta: 'Shorter', applied: 'Settings applied', prepReady: 'The brief is ready',
@@ -183,7 +183,7 @@
         slide: 'Слайд', title: 'Назва', plan: 'План', fact: 'Факт', diff: 'Різниця',
         autoTt: 'Слайди гортаються самі за розкладом, з сигналом', compTt: 'Сховати абзаци «можна пропустити»', swap: 'Поміняти місцями слайди і підказки',
         expand: 'Розгорнути', collapse: 'Одне вікно', expandTt: 'Слайди поруч із підказками: вікно стає вдвічі ширшим', collapseTt: 'Назад в одне вікно: слайд зверху, підказки внизу' },
-      noItems: 'Поки нічого на тобі', notMine: 'Не моє', trShow: 'Показати транскрипт', trHide: 'Сховати транскрипт', trAria: 'Транскрипт', trEmptyReady: 'Транскрипт з’явиться, коли дзвінок почне слухати.', trEmptyLive: 'Поки ніхто нічого не сказав.', langMarker: (n) => `Мова: ${n}`, cl: { head: 'Мова дзвінка', mixed: 'змішана', tipsIn: 'Підказки', more: 'Інші мови…', foot: 'Діє з наступної фрази. Лише для цього дзвінка.', tip: (n) => `Мова дзвінка: ${n}. Клацніть, щоб змінити`, tipMixed: (n) => `Мова дзвінка: ${n}`, aria: (n) => `Мова дзвінка: ${n}. Змінити`, resume: 'Діє, коли ви продовжите.', off: 'Запис не йде.', ok: (n, tips) => `${tips ? 'Мова дзвінка і підказок' : 'Мова дзвінка'}: ${n}. Діє з наступної фрази.`, fail: 'Не вдалося змінити мову. Спробуйте ще раз.' }, close: 'Закрити', noBriefYet: 'Брифу для цього дзвінка ще немає.',
+      noItems: 'Поки нічого на тобі', notMine: 'Не моє', trShow: 'Показати транскрипт', trHide: 'Сховати транскрипт', trAria: 'Транскрипт', trEmptyReady: 'Транскрипт з’явиться, коли дзвінок почне слухати.', trEmptyLive: 'Поки ніхто нічого не сказав.', langMarker: (n) => `Мова: ${n}`, cl: { head: 'Мова дзвінка', mixed: 'змішана', tipsIn: 'Підказки', more: 'Інші мови…', foot: 'Діє з наступної фрази. Лише для цього дзвінка.', tip: (n) => `Мова дзвінка: ${n}. Клацніть, щоб змінити`, tipMixed: (n) => `Мова дзвінка: ${n}`, aria: (n) => `Мова дзвінка: ${n}. Змінити`, resume: 'Діє, коли ви продовжите.', off: 'Запис не йде.', ok: (n, tips) => `${tips ? 'Мова дзвінка і підказок' : 'Мова дзвінка'}: ${n}. Діє з наступної фрази.`, fail: 'Не вдалося змінити мову. Спробуйте ще раз.', tipsFail: 'Мову дзвінка змінено, а мову підказок ні. Спробуйте ще раз.' }, close: 'Закрити', noBriefYet: 'Брифу для цього дзвінка ще немає.',
       readyStatus: 'Готово', readyTitle: 'Можна починати', startListening: 'Почати слухати', openBrief: 'Відкрити бриф',
       listeningTitle: 'Слухаю', tipsOffTitle: 'Лише транскрипт', tipsOffSub: 'Підказки вимкнено. Підсумок і фоллоу-ап будуть після дзвінка. Увімкнути підказки можна в налаштуваннях дзвінка.', listeningSub: (k) => `Підказки зʼявляться тут, коли будуть потрібні. Застряг? Натисни ${k}.`, onDevice: 'Аудіо лишається на цьому Mac',
       searched: (o) => `Ви шукали: ${o.q}`, heardMeta: (o) => `Почув${o.who ? ' від ' + o.who : ''}, шукаю в проєкті`, heardAnswer: (o) => `${o.who ? o.who + ' питав' : 'Питання'}: ${o.q}`, shorterMeta: 'Коротше', applied: 'Налаштування застосовано', prepReady: 'Бриф готовий',
@@ -1116,24 +1116,30 @@
     return { langs, main, cands: S.startLangs.concat(seed.cands) };
   }
   /** The chip shows a switch at once; the status echo confirms it, or after 4 s it goes back. */
-  const MAX_CALL_LANGS = 3;   // the recorder's limit (call_language.py MAX_LANGUAGES); a longer request is refused there
+  const MAX_CALL_LANGS = 5;   // the recorder's call_lang handler takes up to five codes (a Start Call set); the menu lists at most three single rows
   const validCallLangs = (l) => l.length >= 1 && l.length <= MAX_CALL_LANGS && l.every((c) => /^[a-z]{2,3}$/.test(c)) && new Set(l).size === l.length;
   /** The sidecar's ack of a setting ({kind: 'ack', key, value}): the tips language it applied is the confirmed one. */
   function consumeAck() {
-    const a = feed && feed.ack; if (!a || a.n === S.ackN) return; S.ackN = a.n;
-    if (a.key !== 'tips_lang' || !S.tipsLang) return;
-    S.tipsLang.current = String(a.value);
-    if (S.ui.tipsPending && S.ui.tipsPending.l === S.tipsLang.current) S.ui.tipsPending = null;
+    const all = (feed && feed.acks) || {}, seen = S.ackSeen || (S.ackSeen = {});
+    Object.keys(all).forEach((k) => {
+      const a = all[k]; if (seen[k] === a.n) return; seen[k] = a.n;
+      if (k !== 'tips_lang' || !S.tipsLang) return;
+      S.tipsLang.current = String(a.value);
+      if (S.ui.tipsPending && S.ui.tipsPending.l === S.tipsLang.current) S.ui.tipsPending = null;
+    });
   }
   function langShown() {
     consumeAck();
     const cl = callLangNow(), p = S.ui.langPending;
     if (p && !p.demo && sameLangs(p.langs, cl.langs) && p.main === cl.main) {
       S.ui.langPending = null;
-      showToast({ text: T().cl.ok(langNames(p.langs), p.tips ? langNames([p.tips]) : ''), kind: 'ok', at: Date.now() });
-      if (p.tips && !(S.tipsLang && S.tipsLang.current === p.tips)) tipsLangSet(p.tips);   // tips follow only once the recorder confirmed
+      if (p.tips && !(S.tipsLang && S.tipsLang.current === p.tips)) { S.ui.comboWait = { names: langNames(p.langs), tips: p.tips, at: Date.now() }; tipsLangSet(p.tips); }   // tips follow only once the recorder confirmed; the toast waits for the tips ack
+      else showToast({ text: T().cl.ok(langNames(p.langs), p.tips ? langNames([p.tips]) : ''), kind: 'ok', at: Date.now() });
     }
     else if (p && Date.now() - p.at > 4000) { S.ui.langPending = null; showToast({ text: T().cl.fail, kind: 'warn', at: Date.now() }); }
+    const w = S.ui.comboWait;
+    if (w && S.tipsLang && S.tipsLang.current === w.tips) { S.ui.comboWait = null; showToast({ text: T().cl.ok(w.names, langNames([w.tips])), kind: 'ok', at: Date.now() }); }
+    else if (w && Date.now() - w.at > 4000) { S.ui.comboWait = null; showToast({ text: T().cl.tipsFail, kind: 'warn', at: Date.now() }); }
     const q = S.ui.langPending;
     return q ? { langs: q.langs, main: q.main, pending: true, cands: cl.cands } : { langs: cl.langs, main: cl.main, pending: false, cands: cl.cands };
   }

@@ -192,6 +192,7 @@ const jsErrors = (b, s) => s.posts.filter((m) => m.action === 'jserror').map((m)
       assert.strictEqual(await b.evaluate(`document.querySelectorAll('#langMenu .tipsin button').length`), 2);
       await b.evaluate(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); true`); await sleep(100);
       assert.strictEqual(await b.evaluate(`document.getElementById('langMenu').hidden`), true, 'Esc closes the menu');
+      assert.strictEqual(await b.evaluate(`document.activeElement.id`), 'langBtn', 'focus returns to the chip');
     });
     await openQ(520, '?call_lang=uk+en');
     await test('520 px: two deliberate rows; Transcript and the chip on row 2, the exit group on row 1, no overflow', async () => {
@@ -211,9 +212,11 @@ const jsErrors = (b, s) => s.posts.filter((m) => m.action === 'jserror').map((m)
     });
     await openQ(1100, '?call_lang=uk+en');
     await test('a single-language pick keeps the mixed row of the Start Call set and changes tips only after the recorder confirms', async () => {
-      await b.evaluate(`document.getElementById('langBtn').click(); document.querySelector('#langMenu [data-v="uk"]').click(); true`); await sleep(150);
-      await b.evaluate(`window.setStatus({ state: 'recording', call_lang: 'uk', me_lang: 'uk', langs: ['uk'] }); true`); await sleep(200);
+      await b.evaluate(`document.getElementById('langBtn').click(); document.querySelector('#langMenu [data-v="en"]').click(); true`); await sleep(150);
+      assert.ok((await posted()).includes('call_lang=en'), 'call_lang sent at once');
       assert.ok(!(await posted()).some((x) => x === 'tips_lang=en'), 'no tips change before the echo');
+      await b.evaluate(`window.setStatus({ state: 'recording', call_lang: 'en', me_lang: 'en', langs: ['en'] }); true`); await sleep(200);
+      assert.ok((await posted()).includes('tips_lang=en'), 'tips follow after the echo');
       await b.evaluate(`document.getElementById('langBtn').click(); true`); await sleep(150);
       const rows = await b.evaluate(`Array.from(document.querySelectorAll('#langMenu [role=menuitemradio]')).map((x) => x.dataset.v)`);
       assert.ok(rows.includes('en') && rows.includes('uk+en'), rows.join());
