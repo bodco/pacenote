@@ -79,11 +79,16 @@ contacts) stay. Before an existing Call moves, its deal associations are read (`
 already. The Apply's Undo row (`callDeal`) keeps the removed deal, the added deal and the managed deal before the
 move; Undo takes the added deal off, associates the removed one again and stores the old managed deal, so a switch
 from D1 to D2 ends with D1 only and a deal a person had already added stays. A Call logged before `callDealId` existed
-has no managed deal, so nothing is removed for it. Known gap: when `<stem>.crm.json` lost the Call id and the Call is
-found by search, the associations are not read first, so Undo leaves the new deal on the Call and it is not stored
-as managed, so a later No deal leaves it too. If the Call write
-succeeds and removing the old deal then fails, the Apply reports the error and the new deal stays on the Call
-outside Undo; the next Apply removes the old deal again.
+has no managed deal, so nothing is removed for it. A Call found by search after `<stem>.crm.json` lost its id has no
+managed deal either; its deal associations are read before the new deal is added, as for any Call.
+
+Write order (review round 6): the deal is never part of the Call write. The Call is written first (company and
+contacts only), then the old managed deal is taken off, then the new deal is added; `callDealId` is stored after each
+step, so it always names the deal Pacenote has on the Call. A failure at any step stops there: a failed Call update
+changes no deal; a failed removal keeps the old deal managed and adds nothing; a failed add after the removal is in the
+Apply's Undo (which links the old deal again). If the add answered an error but may have reached HubSpot, Pacenote takes
+it off again; when that fails too, the new deal is stored as managed and kept in Undo, so Undo or the next No deal
+removes it. A new Call gets its deal by the same add after it is created, and its Undo deletes the whole Call.
 
 ## 4. Required scopes
 

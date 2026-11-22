@@ -12,6 +12,9 @@ final class FakeHubSpotDeals: CRMTransport {
     var d1Delay: UInt64 = 0                    // ns the read of D1 takes, so a later pick can answer first
     var failDeals = false, failStages = false  // the company's deals or the pipelines answer 500
     var failRemove = false                     // removing a Call's association answers 500
+    var failRemoveDeal = ""                    // removing only this deal from a Call answers 500
+    var failCallPatch = false                  // the update of a Call answers 500
+    var failAdd = false, addLands = false      // adding a Call's deal answers 500 (addLands: HubSpot made it anyway)
     var calls: [String: [String]] = [:]        // Call id -> "type/id" associations
     var nextCall = 700
     let lock = NSLock()
@@ -45,6 +48,7 @@ final class FakeHubSpotDeals: CRMTransport {
         if bare.hasPrefix("/crm/v3/objects/calls/") {
             let id = String(bare.split(separator: "/")[4])
             guard calls[id] != nil else { return (404, ["message": "not found"], [:]) }
+            if method == "PATCH" && failCallPatch { return (500, ["message": "HubSpot had an internal error"], [:]) }
             return (200, ["id": id, "properties": [:]], [:])
         }
         if bare.hasPrefix("/crm/v4/objects/calls/") {
@@ -55,9 +59,13 @@ final class FakeHubSpotDeals: CRMTransport {
                 let type = parts.last!
                 return (200, ["results": calls[id]!.filter { $0.hasPrefix(type + "/") }.map { ["toObjectId": String($0.dropFirst(type.count + 1))] }], [:])
             }
-            if method == "PUT" { if !calls[id]!.contains(to) { calls[id]!.append(to) }; return (200, [:], [:]) }
+            if method == "PUT" {
+                if failAdd && to.hasPrefix("deals/") && !addLands { return (500, ["message": "HubSpot had an internal error"], [:]) }
+                if !calls[id]!.contains(to) { calls[id]!.append(to) }
+                return failAdd && to.hasPrefix("deals/") ? (500, ["message": "HubSpot had an internal error"], [:]) : (200, [:], [:])
+            }
             if method == "DELETE" {
-                if failRemove { return (500, ["message": "HubSpot had an internal error"], [:]) }
+                if failRemove || (!failRemoveDeal.isEmpty && to == "deals/" + failRemoveDeal) { return (500, ["message": "HubSpot had an internal error"], [:]) }
                 guard calls[id]!.contains(to) else { return (404, ["message": "no association"], [:]) }
                 calls[id]!.removeAll { $0 == to }; return (204, [:], [:])
             }
@@ -341,20 +349,79 @@ func crmDealsRound1(sales: [String: Any], mapping: [String: String], today: Date
     t.portal = 500
     _ = await undo(m12b)
     disk.managed = "D1"
-    // review round 3: the old deal cannot be taken off after the new one was added; the error carries the move for Undo
+    // review round 3, changed in round 6: the old deal is taken off before the new one goes on, so a failed removal
+    // adds nothing; the error carries the Call write for Undo and the old deal stays the managed one
+    func writeD2() async -> (CRMCallDeal.Move?, Error?) {
+        do {
+            let m = try await CRMCallDeal.write(entry, connector: c, associations: [CRMRef("deals", "D2"), CRMRef("companies", "C1"), CRMRef("contacts", "P1")],
+                                                dealId: "D2", queue: q, load: { (disk.callId, disk.portal, disk.managed) }, save: { disk.callId = $0; disk.managed = $1 })
+            return (m, nil)
+        } catch { return (nil, error) }
+    }
+    let base = ["deals/D9", "companies/C1", "contacts/P1"]
     t.failRemove = true
-    var partial: CRMCallDeal.Partial? = nil
-    do {
-        _ = try await CRMCallDeal.write(entry, connector: c, associations: [CRMRef("deals", "D2"), CRMRef("companies", "C1"), CRMRef("contacts", "P1")],
-                                        dealId: "D2", queue: q, load: { (disk.callId, disk.portal, disk.managed) }, save: { disk.callId = $0; disk.managed = $1 })
-    } catch { partial = error as? CRMCallDeal.Partial }
+    let (_, e1) = await writeD2()
+    let partial = e1 as? CRMCallDeal.Partial
     t.failRemove = false
-    expect(partial?.move.added == "D2" && partial?.move.removed == "" && partial?.move.undoItem != nil && disk.managed == "D1"
-           && Set(t.calls[id] ?? []) == ["deals/D1", "deals/D2", "deals/D9", "companies/C1", "contacts/P1"],
-           "deals: a failed removal still reports the added deal; the old deal stays the managed one")
+    expect(partial != nil && partial?.move.added == "" && partial?.move.removed == "" && partial?.move.undoItem == nil && disk.managed == "D1"
+           && Set(t.calls[id] ?? []) == Set(base + ["deals/D1"]),
+           "deals: a failed removal of the old deal adds nothing and keeps the old deal managed")
     let up = await undo(partial?.move)
-    expect(up == 0 && Set(t.calls[id] ?? []) == ["deals/D1", "deals/D9", "companies/C1", "contacts/P1"] && disk.managed == "D1",
-           "deals: Undo after a failed removal takes the added deal off and leaves the Call as before")
+    expect(up == 0 && Set(t.calls[id] ?? []) == Set(base + ["deals/D1"]) && disk.managed == "D1", "deals: Undo after a failed removal leaves the Call as before")
+    let (r1, _) = await writeD2()
+    let r1n = await write("none")
+    expect(r1?.removed == "D1" && r1?.added == "D2" && r1n?.removed == "D2" && Set(t.calls[id] ?? []) == Set(base) && disk.managed == "",
+           "deals: a retry after a failed removal moves the call, and No deal then takes the new deal off")
+
+    // review round 6: the Call update fails after the switch was asked for. The new deal is not part of the Call write,
+    // so nothing is added; the retry adds it as Pacenote's and No deal takes it off again
+    t.calls[id] = base + ["deals/D1"]; disk.managed = "D1"
+    t.failCallPatch = true
+    let (m6, e6) = await writeD2()
+    t.failCallPatch = false
+    expect(m6 == nil && e6 != nil && Set(t.calls[id] ?? []) == Set(base + ["deals/D1"]) && disk.managed == "D1",
+           "deals: a failed Call update during a switch adds no deal and keeps the old deal managed")
+    let (r6, _) = await writeD2()
+    expect(r6?.removed == "D1" && r6?.added == "D2" && disk.managed == "D2" && Set(t.calls[id] ?? []) == Set(base + ["deals/D2"]),
+           "deals: the retry after a failed Call update adds the new deal as Pacenote's")
+    let r6n = await write("none")
+    expect(r6n?.removed == "D2" && Set(t.calls[id] ?? []) == Set(base) && disk.managed == "", "deals: No deal after that retry leaves no deal Pacenote added")
+
+    // review round 6: adding the new deal fails after the old one is off; the error carries the removal, so Undo
+    // links the old deal again; the retry finishes the switch
+    t.calls[id] = base + ["deals/D1"]; disk.managed = "D1"
+    t.failAdd = true
+    let (_, e7) = await writeD2()
+    t.failAdd = false
+    let p7 = e7 as? CRMCallDeal.Partial
+    expect(p7?.move.removed == "D1" && p7?.move.added == "" && disk.managed == "" && Set(t.calls[id] ?? []) == Set(base),
+           "deals: a failed add after the removal reports the removal and stores no managed deal")
+    let u7 = await undo(p7?.move)
+    expect(u7 == 0 && Set(t.calls[id] ?? []) == Set(base + ["deals/D1"]) && disk.managed == "D1", "deals: Undo of a failed add links the old deal again")
+    // the add of D2 reached HubSpot although it answered an error, and its clean-up fails too: D2 stays managed and in Undo
+    t.failAdd = true; t.addLands = true; t.failRemoveDeal = "D2"
+    let (_, e9) = await writeD2()
+    t.failAdd = false; t.addLands = false; t.failRemoveDeal = ""
+    let p9 = e9 as? CRMCallDeal.Partial
+    expect(p9?.move.removed == "D1" && p9?.move.added == "D2" && disk.managed == "D2" && Set(t.calls[id] ?? []) == Set(base + ["deals/D2"]),
+           "deals: an add that landed and cannot be cleaned up is kept as Pacenote's and in Undo")
+    let r9n = await write("none")
+    expect(r9n?.removed == "D2" && Set(t.calls[id] ?? []) == Set(base) && disk.managed == "", "deals: No deal then takes that deal off")
+    // a Call found by search after the stored id was lost: its deals are read first, so only a new deal is Pacenote's
+    t.calls["701"] = ["deals/D1", "companies/C1"]
+    final class Lost { var callId = ""; var managed = "D9" }
+    let lost = Lost()
+    let found = CRMCallLog(key: "k-found", title: "Orbit renewal", start: today, durationMs: 60_000, body: "<p>Summary</p>")
+    func writeFound(_ deal: String) async -> CRMCallDeal.Move? {
+        try? await CRMCallDeal.write(found, connector: c, associations: [CRMRef("deals", deal), CRMRef("companies", "C1")], dealId: deal, queue: q,
+                                     load: { (lost.callId, "500", lost.managed) }, save: { lost.callId = $0; lost.managed = $1 })
+    }
+    let f1 = await writeFound("D1")
+    expect(f1?.call.id == "701" && f1?.added == "" && f1?.removed == "" && lost.managed == "" && t.calls["701"]?.contains("deals/D9") == false,
+           "deals: a Call found by search keeps a deal it already had as not Pacenote's and removes nothing")
+    let f2 = await writeFound("D2")
+    expect(f2?.added == "D2" && f2?.removed == "" && lost.managed == "D2" && Set(t.calls["701"] ?? []) == ["deals/D1", "deals/D2", "companies/C1"],
+           "deals: a new deal on a Call found by search is Pacenote's")
     // an association that is already gone is not an error
     var gone: Error? = nil
     do { try await c.removeCallAssociation(callId: id, type: "deals", id: "D7") } catch { gone = error }

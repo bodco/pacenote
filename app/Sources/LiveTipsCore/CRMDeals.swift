@@ -400,7 +400,7 @@ public enum CRMCallDeal {
             moved ? CRMUndoItem("callDeal", call.id, ["removed": removed, "added": added, "managed": managedBefore]) : nil
         }
     }
-    /// The Call was written (and maybe a deal added), then removing the old deal failed: `move` is what was done.
+    /// The Call was written, then a step of the deal move failed: `move` is what was done, for Undo.
     public struct Partial: Error, LocalizedError {
         public var move: Move
         public var cause: Error
@@ -409,8 +409,12 @@ public enum CRMCallDeal {
 
     /// The Call write of `CRMCallSync.log` plus the deal move, in the same turn of the per-call queue. `load` gives the
     /// stored Call id, portal and managed deal when the turn comes; `save` stores the Call id and the managed deal.
-    /// Before an existing Call moves, its deal associations are read, so a deal that was already there (a person
-    /// added it in HubSpot) is not counted as added and Undo leaves it.
+    /// Review round 6: the deal association is never part of the Call write; it is made here, after the Call is
+    /// written, in this order: the Call (companies and contacts only), the old managed deal off, the new deal on.
+    /// After every step the stored managed deal is exactly the one Pacenote has on the Call, so a failure at any step
+    /// leaves nothing outside Undo and a retry picks up from there. Before the new deal is added, the Call's deal
+    /// associations are read, so a deal that was already there (a person added it in HubSpot) is not counted as added
+    /// and Undo leaves it.
     public static func write(_ entry: CRMCallLog, connector c: CRMConnector, associations: [CRMRef], dealId: String,
                              queue: CRMCallQueue = .shared,
                              load: @escaping () -> (callId: String, portalId: String, managed: String),
@@ -419,28 +423,50 @@ public enum CRMCallDeal {
             let stored = load()
             try await CRMPortal.verify(link: stored.portalId, connector: c)
             let now = target(dealId)
-            let a = c as? CRMCallAssociations
-            var before: [String]? = nil      // nil: not read, so nothing is counted as added
-            if !stored.callId.isEmpty, !now.isEmpty, now != stored.managed, let a {
-                before = try await a.callAssociations(callId: stored.callId, type: "deals")
+            guard let a = c as? CRMCallAssociations else {      // no association API: the deal goes with the Call, nothing is managed
+                let r = try await c.upsertCall(entry, knownId: stored.callId, associations: associations)
+                save(r.id, stored.managed)
+                return Move(call: r, managedBefore: stored.managed)
             }
-            let r = try await c.upsertCall(entry, knownId: stored.callId, associations: associations)
-            save(r.id, stored.managed)
+            let r = try await c.upsertCall(entry, knownId: stored.callId, associations: associations.filter { $0.type != "deals" })
             var m = Move(call: r, managedBefore: stored.managed)
-            guard !r.created else { save(r.id, now); return m }     // a new Call is deleted whole by its own Undo row
-            if r.id == stored.callId, let before, !before.contains(now) { m.added = now }
-            if !stored.managed.isEmpty, stored.managed != now, let a {
-                do { try await a.removeCallAssociation(callId: r.id, type: "deals", id: stored.managed) } catch {
-                    // the Call and the new deal are written: the error carries them, so Undo can still take them back;
-                    // the old deal is still on the Call and stays the managed one, so the next write removes it
-                    save(r.id, stored.managed)
-                    throw Partial(move: m, cause: error)
+            if r.created {      // a new Call is deleted whole by its own Undo row, the deal association with it
+                save(r.id, "")
+                if !now.isEmpty {
+                    do { try await a.addCallAssociation(callId: r.id, type: "deals", id: now) } catch { throw Partial(move: m, cause: error) }
+                    save(r.id, now)
                 }
-                m.removed = stored.managed
+                return m
             }
-            // managed is the association Pacenote made, not the deal the PM picked: a deal that was already on the
-            // Call (a person added it in HubSpot) is never stored, so a later No deal or switch does not remove it
-            save(r.id, now == stored.managed ? stored.managed : m.added)
+            // the stored managed deal belongs to the stored Call; a Call found again under another id has none
+            let managed = r.id == stored.callId ? stored.managed : ""
+            if managed != stored.managed { m.managedBefore = "" }
+            save(r.id, managed)
+            if !managed.isEmpty, managed != now {
+                do { try await a.removeCallAssociation(callId: r.id, type: "deals", id: managed) }
+                catch { throw Partial(move: m, cause: error) }      // the old deal stays on the Call and stays managed
+                m.removed = managed
+                save(r.id, "")
+            }
+            if !now.isEmpty, now != managed {
+                do {
+                    // managed is the association Pacenote made, not the deal the PM picked: a deal that was already on
+                    // the Call (a person added it in HubSpot) is never stored, so a later No deal or switch keeps it
+                    let before = try await a.callAssociations(callId: r.id, type: "deals")
+                    if !before.contains(now) {
+                        do { try await a.addCallAssociation(callId: r.id, type: "deals", id: now) } catch {
+                            // the add may have reached HubSpot anyway: take it off; if that fails too, keep it managed
+                            // and in Undo, so Undo or the next No deal removes it
+                            if (try? await a.removeCallAssociation(callId: r.id, type: "deals", id: now)) == nil {
+                                m.added = now; save(r.id, now)
+                            }
+                            throw error
+                        }
+                        m.added = now
+                        save(r.id, now)
+                    }
+                } catch { throw Partial(move: m, cause: error) }     // the old deal is off: Undo links it again
+            }
             return m
         }
     }

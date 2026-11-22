@@ -43,8 +43,9 @@ Pacenote. Earlier versions are described in the commit messages and in
   to another deal or to No deal, Apply also moves the HubSpot Call off the deal Pacenote linked it to; deals a person
   added in HubSpot stay, and Undo takes the new deal off the Call and links the old deal again (a deal that was
   already on the Call stays). Picking a deal that someone already added to the Call in HubSpot never makes it
-  Pacenote's, so a later No deal or another pick leaves that association. If the old deal cannot be taken off the
-  Call after the new one was linked, Apply reports the error and Undo still takes the new deal off. Applying the same call again keeps the close date it
+  Pacenote's, so a later No deal or another pick leaves that association. The Call is updated first, then the old deal is
+  taken off, then the new deal is linked, so a failure at any step (the Call update, the removal or the link) reports
+  the error, leaves nothing outside Undo, and applying again finishes the move. Applying the same call again keeps the close date it
   suggested. A failed read of the company's deals or the stages says so with **Try again** instead of an empty list.
   The deal preview, Apply and Undo first check that the call is linked in the HubSpot account of the current key.
 

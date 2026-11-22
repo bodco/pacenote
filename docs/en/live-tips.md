@@ -1689,7 +1689,8 @@ deal, the old suggestions disappear at once and Apply waits until the new deal i
 deal or to No deal also moves the HubSpot Call off the deal Pacenote linked it to when you Apply; deals someone added
 in HubSpot stay, and Undo takes the new deal off the Call and links the old deal again (a deal that was already on
 the Call stays). If you pick a deal that someone already added to the Call in HubSpot, Pacenote does not count it
-as its own, so a later No deal or another pick leaves that association. If the company's deals or the stages cannot be read, the window
+as its own, so a later No deal or another pick leaves that association. If a step of the move fails, Apply says so,
+Undo still reverses what was done, and applying again finishes the move. If the company's deals or the stages cannot be read, the window
 says so with **Try again**. The deal is read, and Apply and Undo write, only when the call is linked in the HubSpot
 account of the current key.
 
