@@ -6,8 +6,9 @@ Pacenote. Earlier versions are described in the commit messages and in
 ## Unreleased
 
 - **One task across calls in the commitments register (GraphRAG G1, PB-51).** A task named again on a later call joins
-  the older item instead of becoming a new one when both have the same Notion page or HubSpot task (for now in the
-  register's migration only: a new item gets its page or task later), or the same
+  the older item instead of becoming a new one when both have the same Notion page or HubSpot task in the same
+  project and not of two different known clients (for now in the register's migration only: a new item gets its page
+  or task later), or the same
   explicit reference ("item 13", "пункт 13"; not a bare "#1") for the same person in the same project and the same
   known client. Without a known client (the engine does not know a call's client yet) the same reference in one
   meeting series is only a suggestion, so Acme's item 13 and Globex's item 13 never merge even when both meetings are

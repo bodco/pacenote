@@ -3,7 +3,8 @@
 Pure helpers, no network. The commitments register uses them; decisions and risks can key on the same functions.
 
 Order of the stable key of an item (the first that applies wins; a PM's own link, split or reject always wins):
-  1. tracker  the same Notion page or HubSpot task id
+  1. tracker  the same Notion page or HubSpot task id (with its portal) in the same project, never for another
+              known client
   2. ref      an explicit reference in the text ("item 13", "пункт 13", "task #13") in the same project AND the same
               known client, for the same person (one id in the voice library, not just the same first name)
   3. suggest  the same reference or a similar text of the same person in an earlier call of the same client, or of
@@ -51,12 +52,23 @@ def is_tentative(text: str) -> bool:
 
 
 def tracker_id(item: dict) -> str:
-    """The item's id in the PM's tracker: the Notion page, else the HubSpot task; "" when it is in none."""
+    """The item's id in the PM's tracker: the Notion page, else the HubSpot task of its portal; "" when it is in none
+    or the task has no portal (task ids repeat across portals, as CRMTaskFlow reads it)."""
     if item.get("notion_page"):
         return "notion:" + str(item["notion_page"]).replace("-", "").lower()
-    if item.get("crm_task"):
-        return "crm:{}:{}".format(item.get("crm_portal") or "", item["crm_task"])
+    if item.get("crm_task") and item.get("crm_portal"):
+        return "crm:{}:{}".format(item["crm_portal"], item["crm_task"])
     return ""
+
+
+def tracker_scope(a: dict, b: dict) -> bool:
+    """Two items with one Tracker ID may join: the same project and not two different known clients (the PM put a
+    page of one client on another's task by mistake; never one item across clients or projects). An unknown client
+    on either side still joins: the tracker link is the PM's own."""
+    if str(a.get("project") or "") != str(b.get("project") or ""):
+        return False
+    ca, cb = (str(x.get("client") or "").strip().lower() for x in (a, b))
+    return not (ca and cb and ca != cb)
 
 
 def scope_of(item: dict) -> str:

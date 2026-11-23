@@ -1312,7 +1312,8 @@ The skill and the app follow the same rules, in `rules/agenda.yaml`, `rules/comm
   There is no tracker integration: Copy is the export.
 - **One task across calls (GraphRAG G1, PB-51).** When the notes of a later call name a task the register already
   holds, the engine joins it to the older item instead of adding a new one, in this order: the same Notion page or
-  HubSpot task (for now only when the register is migrated: a new item gets its page or task later); the same explicit reference ("item 13", "task #13", "пункт 13"; not a bare "#1") for the same person
+  HubSpot task in the same project, never for two different known clients (for now only when the register is
+  migrated: a new item gets its page or task later); the same explicit reference ("item 13", "task #13", "пункт 13"; not a bare "#1") for the same person
   in the same project and the same known client. The older item keeps its owner and status, and its history lists
   every call that mentioned it; if you edited the newer one later, your wording wins. Without a known client (the app
   does not know a call's client yet, and two clients can both have a "Weekly sync"), the same reference in the same

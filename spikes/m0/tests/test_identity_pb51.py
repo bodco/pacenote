@@ -331,6 +331,74 @@ def test_the_same_tracker_id_is_one_item(tmp_path):
     assert C.load(tmp_path)[0]["status"] == "done"
 
 
+def _one_page(a, b, link_a, link_b):
+    """Two items of two calls on one tracker entry (the PM's link events), by the migration and by link_events."""
+    return [add("c-a", "send the security memo", "me", "2026-11-03-1000-weekly-sync.md", "2026-11-03T10:00:00", **a),
+            add("c-b", "draft the memo for security", "me", "2026-11-05-1000-weekly-sync.md", "2026-11-05T10:00:00", **b),
+            dict(link_a, id="c-a"), dict(link_b, id="c-b")]
+
+
+PAGE = {"op": "link", "notion_page": "1111-2222"}
+
+
+@pytest.mark.parametrize("a,b", [(dict(client="Acme"), dict(client="Globex")),            # same page, two clients
+                                 (dict(project="p", client="Acme"), dict(project="q", client="Acme")),   # two projects
+                                 (dict(project="p"), dict(project="q"))])                 # two projects, no client
+def test_one_tracker_id_never_joins_across_clients_or_projects(tmp_path, clock, a, b):
+    ev = _one_page(a, b, PAGE, PAGE)
+    assert C.link_events(ev, ["c-b"], {}) == []
+    C.append(tmp_path, ev)
+    clock("2026-11-16T08:00:00")
+    assert C.migrate(tmp_path, {})["links"] == 0
+    assert sorted(i["id"] for i in C.load(tmp_path)) == ["c-a", "c-b"]
+
+
+def test_one_tracker_id_joins_within_a_client_or_with_an_unknown_one(tmp_path, clock):
+    ev = _one_page(dict(client="Acme"), dict(client="acme "), PAGE, PAGE)
+    assert [e["to"] for e in C.link_events(ev, ["c-b"], {})] == ["c-a"]
+    ev = _one_page(dict(client="Acme"), {}, PAGE, PAGE)
+    assert [(e["to"], e["source"]) for e in C.link_events(ev, ["c-b"], {})] == [("c-a", "tracker")]
+
+
+def test_migration_joins_one_page_per_client_not_across(tmp_path, clock):
+    """An unknown-client item on the page joins Acme's; Globex's item on the same page stays its own."""
+    ev = _one_page({}, dict(client="Acme"), PAGE, PAGE)
+    ev.append(add("c-g", "memo for security review", "me", "2026-11-07-1000-weekly-sync.md", "2026-11-07T10:00:00",
+                  client="Globex"))
+    ev.append(dict(PAGE, id="c-g"))
+    C.append(tmp_path, ev)
+    clock("2026-11-16T08:00:00")
+    assert C.migrate(tmp_path, {})["links"] == 1
+    assert sorted(tuple(i["ids"]) for i in C.load(tmp_path)) == [("c-a", "c-b"), ("c-g",)]
+    ev = C.read_events(tmp_path)                                 # the app path: Acme's mention bars Globex too
+    assert C.link_events(ev, ["c-g"], {}) == []
+
+
+def test_a_hubspot_task_without_its_portal_is_no_tracker_id(tmp_path, clock):
+    assert ID.tracker_id({"crm_task": "42"}) == ""
+    assert ID.tracker_id({"crm_task": "42", "crm_portal": "111"}) == "crm:111:42"
+    bare = {"op": "crm_link", "crm_task": "42", "crm_portal": ""}
+    ev = _one_page({}, {}, bare, bare)
+    assert C.link_events(ev, ["c-b"], {}) == []
+    C.append(tmp_path, ev)
+    clock("2026-11-16T08:00:00")
+    assert C.migrate(tmp_path, {})["links"] == 0
+    task = {"op": "crm_link", "crm_task": "42", "crm_portal": "111"}
+    assert [e["to"] for e in C.link_events(_one_page({}, {}, task, task), ["c-b"], {})] == ["c-a"]
+    other = dict(task, crm_portal="222")                        # the same task id in another portal
+    assert C.link_events(_one_page({}, {}, task, other), ["c-b"], {}) == []
+
+
+def test_split_by_the_id_the_joined_item_kept(tmp_path, clock):
+    C.append(tmp_path, _one_page(dict(client="Acme"), dict(client="Acme"), PAGE, PAGE))
+    clock("2026-11-16T08:00:00")
+    assert C.migrate(tmp_path, {})["links"] == 1
+    e = C.split(tmp_path, "c-a")                               # the PM sees c-a in the list
+    assert e and (e["id"], e["to"]) == ("c-b", "c-a")
+    assert sorted(i["id"] for i in C.load(tmp_path)) == ["c-a", "c-b"]
+    assert C.split(tmp_path, "c-a") is None                    # nothing joined any more
+
+
 # ---------------------------------------------------------------- migration and rollback
 
 def historical(tmp_path):

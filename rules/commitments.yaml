@@ -31,7 +31,8 @@ duplicates: >-
   shares at least 60% of its words with an open item is the same commitment: keep the first.
 identity: >-
   PB-51 (GraphRAG G1): one task across calls. A new item is an older open item (or proposal) of the project when, in
-  this order: 1) both are the same task in the PM's tracker (the same Notion page or HubSpot task id; a new item gets its page or task only later, so today this
+  this order: 1) both are the same task in the PM's tracker (the same Notion page or HubSpot task id of the same portal, in the same project and never across two
+  known clients; a task without its portal is no key; a new item gets its page or task only later, so today this
   key joins items in the migration); 2) both name the
   same explicit reference ("item 13", "task #13", "пункт 13"; a bare "#1" is not one) for the same person in the same
   project AND the same known client. Then the register appends op same: the older item keeps its id, owner and status,

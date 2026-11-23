@@ -550,6 +550,11 @@ def link_events(events: List[dict], new_ids: List[str], people: Optional[Dict[st
     items = fold(events)
     by_id = {x: i for i in items for x in i.get("ids") or [i["id"]]}
     rej, out, done = _rejected(events), [], set()
+    client_of = {e["id"]: e.get("client") or "" for e in events if e.get("op") == "add" and e.get("id")}
+
+    def tracker_ok(it: dict, o: dict) -> bool:       # every mention joined into o, not only the oldest one's client
+        return all(ID.tracker_scope(it, dict(o, client=client_of.get(x, ""))) for x in o.get("ids") or [o["id"]])
+
     for nid in new_ids:
         it = by_id.get(nid)
         if not it or it["id"] != nid or it["status"] == "dropped" or nid in done:   # a ticked (done) mention still joins
@@ -557,7 +562,7 @@ def link_events(events: List[dict], new_ids: List[str], people: Optional[Dict[st
         tid, ref = ID.tracker_id(it), _ref(it)
         pool = [o for o in items if o["id"] != nid and o["id"] not in new_ids and o["status"] in LIVE
                 and o.get("created", "") <= it.get("created", "") and not _is_rejected(rej, it, o)]
-        hit = [o for o in pool if tid and ID.tracker_id(o) == tid]
+        hit = [o for o in pool if tid and ID.tracker_id(o) == tid and tracker_ok(it, o)]
         why = "tracker"
         if not hit and ref:
             hit = [o for o in pool if _ref(o) == ref and _same_scope(it, o, people, link=True)]
@@ -575,18 +580,20 @@ def migration_links(events: List[dict], people: Optional[Dict[str, str]] = None,
     of the same known client and person (link_events' keys). Only open items and proposals take part, so the
     migration never closes or reopens anything; a done or dropped item stays as it was."""
     rej, out = _rejected(events), []
-    by_tid: Dict[str, dict] = {}
+    by_tid: Dict[tuple, List[dict]] = {}
     by_ref: Dict[tuple, List[dict]] = {}
     for it in sorted(fold(events), key=lambda i: i.get("created", "")):
         if it["status"] not in LIVE:
             continue
         tid, ref, client = ID.tracker_id(it), _ref(it), str(it.get("client") or "").strip().lower()
-        key = (str(it.get("project") or ""), client, ID.person_id(it.get("owner") or "me", people), ref)
+        project = str(it.get("project") or "")
+        key = (project, client, ID.person_id(it.get("owner") or "me", people), ref)
         mine = _calls(it)
         hit, why = None, "tracker"
-        if tid and tid in by_tid and not _is_rejected(rej, it, by_tid[tid]):
-            hit = by_tid[tid]
-        elif ref and client:
+        if tid:
+            hit = next((o for o in by_tid.get((project, tid), [])
+                        if ID.tracker_scope(it, o) and not _is_rejected(rej, it, o)), None)
+        if not hit and ref and client:
             cands = [o for o in by_ref.get(key, []) if not (o["calls"] & mine) and not _is_rejected(rej, it, o)]
             hit = sorted(cands, key=lambda o: (-_overlap(it, o), o.get("created", "")))[0] if cands else None
             why = "ref"
@@ -594,12 +601,13 @@ def migration_links(events: List[dict], people: Optional[Dict[str, str]] = None,
             out.append({"op": "same", "id": it["id"], "to": hit["id"], "by": by, "source": why, "at": at or now_iso()})
             hit["calls"] |= mine
             hit["ids"] = hit["ids"] + it["ids"]
-            if tid:
-                by_tid.setdefault(tid, hit)
+            hit["client"] = hit.get("client") or it.get("client") or ""    # a later join keeps to this client
+            if tid and not any(o is hit for o in by_tid.setdefault((project, tid), [])):
+                by_tid[(project, tid)].append(hit)
             continue
         node = dict(it, calls=set(mine), ids=list(it["ids"]))
         if tid:
-            by_tid.setdefault(tid, node)
+            by_tid.setdefault((project, tid), []).append(node)
         if ref and client:
             by_ref.setdefault(key, []).append(node)
     return out
@@ -656,12 +664,17 @@ def reject(folder, cid: str, to: str) -> dict:
 
 
 def split(folder, cid: str) -> Optional[dict]:
-    """The PM undid a link: the item is its own again, and the pair is never linked again."""
+    """The PM undid a link: the item is its own again, and the pair is never linked again. `cid` may be the newer id
+    or the id the joined item kept (the one the PM sees in lists): then the latest link into that item is undone."""
     events = read_events(folder)
     link = next((e for e in reversed(events) if e.get("op") == "same" and e.get("id") == cid), None)
     if not link:
+        item = next((i for i in fold(events) if cid in (i.get("ids") or [i["id"]])), None)
+        ids = set(item.get("ids") or []) - {item["id"]} if item else set()
+        link = next((e for e in reversed(events) if e.get("op") == "same" and e.get("id") in ids), None)
+    if not link:
         return None
-    e = {"op": "split", "id": cid, "to": link.get("to", ""), "by": "pm", "at": now_iso()}
+    e = {"op": "split", "id": link["id"], "to": link.get("to", ""), "by": "pm", "at": now_iso()}
     append(folder, [e])
     return e
 
