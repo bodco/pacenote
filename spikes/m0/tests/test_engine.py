@@ -82,7 +82,8 @@ def test_diet_rate_blocks_second_orange(tmp_path):
         if "ROLE classify" in user:
             return json.dumps({"need_tip": True, "level": "orange", "trigger": "add_fact", "topic": "x"})
         return json.dumps({"gist": "🟠 Add a fact " + str(time.monotonic()), "level": "orange", "topic": "topic " + str(time.monotonic())})
-    cfg = dict(CFG, direct_route=False, periodic_classify_s=0)
+    # PB-37: the replay clock runs 40x wall time, so under load 45 s passed between two oranges; an hour holds
+    cfg = dict(CFG, direct_route=False, periodic_classify_s=0, active_rate_seconds=3600)
     eng, timing, tips, prov = run(tmp_path, cfg, FakeProvider(resp, 0.0, 0.0))
     assert len([t for t in tips if t.get("level") == "orange" and not t.get("partial")]) == 1
     assert any(s.get("outcome") in ("diet_rate", "diet_pm_speaking") for s in timing)
