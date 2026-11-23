@@ -33,6 +33,15 @@ What the baseline says:
   becomes a new item (6 duplicates; the rollout checklist is 3 open items after the weekly call), "we will try" stands
   as an open commitment (2), and the Tracker of each call shows the other client's item 13 (4).
 
+## After PB-70 (client scope, 2026-11-23)
+
+The call's client is decided before ranking; the other client's files, Tracker items and lines of shared files reach
+neither the preparation nor the search during the call. Prep leaks 11 -> 0, live leaks 4 -> 0; prep coverage 80% and
+live answer rate 100% unchanged (the same 4 misses). Lookup p50/p95 0.26/1.14 -> 1.62/2.35 ms (the scope check per question; latency varies between runs). Item 13 cross-client
+stays 4: it counts the register after the call and a Tracker collected without the call (no client scope).
+Raw numbers: `spikes/m0/bench/g0/results/A-2026-11-23-pb70.json`. The harness now allows the fixture's loopback page
+(`PACENOTE_TEST_WEB_LOOPBACK`): since PB-37 the Acme status page on 127.0.0.1 was refused and its fact dropped out.
+
 ## What is measured
 
 Each target call is replayed on a clean copy of the fixture project, with every file dated by the date in its name

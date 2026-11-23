@@ -79,6 +79,14 @@ def test_results_file_has_no_absolute_paths_and_compare_works(bench, result, tmp
     assert "| Prep coverage |" in out and "not comparable" not in out
 
 
+def test_pb70_no_fact_of_the_other_client_and_no_loss(result):
+    """PB-70 (owner 23.11): the one score asserted here. No fact of the other client in the preparation or the top
+    results of the live search, and the baseline coverage (80%) and answer rate (100%) kept."""
+    t = result["totals"]
+    assert t["prep_leaks"] == 0 and t["live_leaks"] == 0
+    assert t["prep_coverage"] >= 80.0 and t["live_answer_rate"] >= 100.0
+
+
 def test_later_variants_are_not_faked(bench):
     with pytest.raises(SystemExit):
         bench.variant("C")

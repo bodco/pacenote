@@ -27,6 +27,7 @@ from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
 from .. import call_layout as CL
+from .. import client_scope as CS
 from . import readers
 from . import size as Z
 
@@ -320,6 +321,12 @@ def check(s: dict, req: dict, texts: Dict[str, str], route: str, windows: dict) 
         s["access"] = "denied"
         s["access_reason"] = f"cannot read: {type(e).__name__}"
         s["fix_action"] = "retry"
+    scope = req.get("_client_scope")
+    if text and scope and s.get("auto") and CS.side(scope, s.get("path") or "") is None:
+        # PB-70: a shared source Pacenote added (decisions, Current State, commits) without another client's lines
+        text, n = CS.filter_text(scope, text)
+        if n:
+            s["other_client_lines"] = n
     s["chars"] = len(text)
     s["size_tokens"] = Z.estimate(text, route, windows) if text else (int(s.get("size_tokens") or 0) if s.get("fetch") else 0)
     if s.get("fetch") and not s["size_tokens"]:
@@ -378,6 +385,7 @@ def normalize(raw: List[dict]) -> List[dict]:
 def collect(req: dict, route: Optional[str] = None) -> Tuple[List[dict], Dict[str, str], List[dict]]:
     """(sources with access and size, their texts by id, move suggestions for the context)."""
     route = route or req.get("route") or "codex"
+    req = CS.with_scope(req)
     windows = Z.load_windows()
     raw = list(req.get("sources") or [])
     ctx = (req.get("context") or "").strip()
@@ -530,6 +538,7 @@ def auto_sources(req: dict) -> List[dict]:
     from .. import prepcontext as PC
     from ..localprep import previous_calls
     from . import tracker as TR
+    req = CS.with_scope(req)          # PB-70: the Tracker and the series keep to the call's client
     project = req.get("project") or {}
     root = os.path.expanduser(project.get("root") or req.get("root") or "")
     meeting = req.get("meeting") or {}
@@ -541,7 +550,8 @@ def auto_sources(req: dict) -> List[dict]:
     # the series: the last calls before this one (a rebuild during the call never reads its own transcript)
     last_day: Optional[_dt.date] = None
     if live and os.path.isdir(live):
-        calls = [p for p in previous_calls(live, title, 8) if not stamp or os.path.basename(p)[:15] < stamp][:3]
+        calls = [p for p in previous_calls(live, title, 8) if (not stamp or os.path.basename(p)[:15] < stamp)
+                 and CS.side(req["_client_scope"], p) != "other"][:3]
         for p in calls:
             stem = re.sub(r"(\.named)?\.md$", "", p)
             notes = str(CL.sidecar(stem, ".notes.md"))
@@ -827,6 +837,8 @@ def expand_folders(srcs: List[dict], texts: Dict[str, str], req: dict, route: st
         if s.get("parent") in fids:
             texts.pop(s["id"], None)
     sett = _settings(req)
+    req = CS.with_scope(req)
+    scope = req["_client_scope"]
     today = _dt.date.fromisoformat(req["today"]) if req.get("today") else _dt.date.today()
     keys = _meeting_keys(req)
     have = {os.path.realpath(os.path.expanduser(s["path"])) for s in srcs if s.get("path") and s.get("type") != "folder"}
@@ -847,6 +859,12 @@ def expand_folders(srcs: List[dict], texts: Dict[str, str], req: dict, route: st
         files, _ex = folder_files(s["path"], today)
         total = len(files)
         files = [c for c in files if os.path.realpath(c["path"]) not in have]
+        # PB-70: a file of another client is not read for this call, unless the PM added that client's folder (or
+        # the file) as a source by hand
+        n_files = len(files)
+        if scope and CS.side(scope, s["path"]) != "other":
+            files = [c for c in files if CS.side(scope, c["path"]) != "other"]
+        other = n_files - len(files)
         window = [c for c in files if c["age_days"] < days]
         fallback = not window
         pick = window if window else files[:n_fallback]
@@ -881,6 +899,8 @@ def expand_folders(srcs: List[dict], texts: Dict[str, str], req: dict, route: st
         room -= used_t
         info = {"days": days, "recent": len(taken), "in_window": len(window), "searchable": total,
                 "fallback": fallback, "over_budget": over, "tokens": used_t}
+        if other:
+            info["other_client"] = other
         s["folder"] = info
         s["size_tokens"] = 0
         s["chars"] = 0

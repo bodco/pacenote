@@ -24,6 +24,8 @@ import threading
 import time
 from pathlib import Path
 from .. import call_layout as CL
+from .. import client_scope as CS
+from .. import commitments as CM
 from typing import Iterable, List, Optional
 
 TEXT_EXT = {".md", ".txt", ".csv", ".json", ".yaml", ".yml", ".eml", ".html", ".htm", ".tsv", ".log", ".rst", ".org"}
@@ -253,10 +255,51 @@ def deep_files(root: str) -> List[Path]:
         return list(walk_files(Path(root)))
 
 
-def _text_of(pp: Path, max_bytes: int) -> str:
+def _register_scoped(pp: Path, text: str, scope: Optional[dict]) -> str:
+    """PB-70: the commitments register without another client's items (the call's scope)."""
+    return CS.filter_register(scope, text) if scope and pp.name == CM.FILE else text
+
+
+def scope_docs(scope: Optional[dict], docs: List[dict], sheet=None) -> List[dict]:
+    """PB-70 (owner 23.11): the passages of the call's client and the project-wide ones, before ranking. A file of
+    another client is left out, a shared file loses the lines and sections of another client; the sheet's facts and
+    the sources the PM added to the sheet by hand stay as they are."""
+    if not scope:
+        return docs
+    picked = {}                    # the sheet's sources: another client's one is there because the PM picked it
+    for s in (sheet.get("sources") or []) if isinstance(sheet, dict) else []:
+        if isinstance(s, dict) and s.get("path"):
+            picked[os.path.realpath(os.path.expanduser(str(s["path"])))] = bool(s.get("auto"))
+    out, sides = [], {}
+    for d in docs:
+        p = d.get("path") or ""
+        if p not in sides:
+            sides[p] = CS.side(scope, p)
+            rp = os.path.realpath(p) if p else ""
+            if rp in picked and (not picked[rp] or sides[p] == "other"):
+                sides[p] = "hand"
+        side = sides[p]
+        if d["src"].startswith("Meeting Sheet") or side == "hand":
+            out.append(d)
+            continue
+        if side == "other":
+            continue
+        if side is None:
+            if CS.text_side(scope, d.get("head") or "") == "other":
+                continue                                   # a passage under another client's heading
+            text, n = CS.filter_text(scope, d["text"])
+            if n:
+                if not text.strip():
+                    continue
+                d = {k: v for k, v in d.items() if k != "_t"} | {"text": text}
+        out.append(d)
+    return out
+
+
+def _text_of(pp: Path, max_bytes: int, scope: Optional[dict] = None) -> str:
     """A text file as is; a pdf, pptx, xlsx or docx of a folder source through the shared readers."""
     if pp.suffix.lower() in TEXT_EXT or pp.name.endswith(".jsonl"):
-        text = _read(pp, max_bytes)
+        text = _register_scoped(pp, _read(pp, max_bytes), scope)
         if pp.suffix.lower() in (".json", ".jsonl") or pp.name.endswith(".jsonl"):
             text = _jsonl_text(text)
         return text
@@ -270,7 +313,8 @@ def _text_of(pp: Path, max_bytes: int) -> str:
 
 
 def collect(question: str, sheet=None, roots=(), max_files: int = 4000, max_bytes: int = 400_000,
-            max_seconds: float = 3.0, exclude_prefix: str = "", max_docs: int = 6000, folders: bool = True) -> List[dict]:
+            max_seconds: float = 3.0, exclude_prefix: str = "", max_docs: int = 6000, folders: bool = True,
+            scope: Optional[dict] = None) -> List[dict]:
     """Every passage to rank: sheet facts, sheet source files, then the folders (newest first is not needed: BM25).
     0.10.0 (Meeting Sheet, hardening): at most `max_docs` passages, so ranking stays within the call's time budget."""
     t0 = time.time()
@@ -295,7 +339,7 @@ def collect(question: str, sheet=None, roots=(), max_files: int = 4000, max_byte
             if key in seen:
                 continue
             seen.add(key)
-            text = _read(pp, max_bytes)
+            text = _register_scoped(pp, _read(pp, max_bytes), scope)
             if not text.strip():
                 continue
             if pp.suffix.lower() in (".json", ".jsonl") or pp.name.endswith(".jsonl"):
@@ -317,7 +361,7 @@ def collect(question: str, sheet=None, roots=(), max_files: int = 4000, max_byte
             if key in seen:
                 continue
             seen.add(key)
-            text = _text_of(pp, max_bytes)
+            text = _text_of(pp, max_bytes, scope)
             if not text.strip():
                 continue
             rel = root.name + "/" + str(pp.relative_to(root)) if str(pp).startswith(str(root)) else pp.name
@@ -392,21 +436,26 @@ def rank(question: str, docs: List[dict], k: int = 8, k1: float = 1.4, b: float 
 
 
 def snippets(question: str, sheet=None, roots=(), k: int = 8, queries=(), budget_chars: int = 14000,
-             max_seconds: float = 3.0, exclude_prefix: str = "", index: "Optional[FolderIndex]" = None) -> List[dict]:
+             max_seconds: float = 3.0, exclude_prefix: str = "", index: "Optional[FolderIndex]" = None,
+             scope: Optional[dict] = None) -> List[dict]:
     """The best passages for the question (and extra queries, e.g. from the model), within the character budget.
     Shape fits engine.passages(): src, date, text (+ path, score, n).
+    PB-70: `scope` (default: the client_scope the preparation kept in the sheet) leaves out another client's passages
+    before ranking (scope_docs).
     0.10.0 (Meeting Sheet, hardening): `max_seconds` is the whole budget (reading and ranking). With `index` (a
     FolderIndex built in the background at call start) the folders are not read again: only the passages that hold a
     word of the question are scored, so a question takes milliseconds, not seconds."""
     t0 = time.time()
     deadline = t0 + max(0.05, float(max_seconds))
     rest = (0, 0)
+    scope = scope if scope is not None else CS.from_sheet(sheet)
     if index is not None:
         cands = index.candidates(question, list(queries), deadline)
         rest = (max(0, index.size()[0] - len(cands)), max(0, index.size()[1] - sum(len(d["_t"]) for d in cands)))
         docs = index.extra_docs(sheet) + cands
     else:
-        docs = collect(question, sheet, roots, max_seconds=max_seconds * 0.6, exclude_prefix=exclude_prefix)
+        docs = collect(question, sheet, roots, max_seconds=max_seconds * 0.6, exclude_prefix=exclude_prefix, scope=scope)
+    docs = scope_docs(scope, docs, sheet)
     merged, seen = [], set()
     for q in [question] + [x for x in queries if x and x != question]:
         if time.time() > deadline and merged:
@@ -453,8 +502,9 @@ class FolderIndex:
 
     def __init__(self, roots, exclude_prefix: str = "", max_files: int = 1500, max_docs: int = 20000,
                  max_bytes: int = 400_000, max_seconds: float = 90.0, ttl: float = 300.0, deep=(),
-                 max_deep_files: int = 5000):
+                 max_deep_files: int = 5000, scope: Optional[dict] = None):
         self.roots = [str(r) for r in roots if r]
+        self.scope = scope          # PB-70: the register is indexed without another client's items
         # 0.10.0 (Meeting Sheet, folders): the sheet's folder sources, indexed in full (every file that passes the
         # filters, pdf/pptx/xlsx/docx too), not capped by max_files; the preparation took only their recent files
         self.deep = [str(r) for r in deep if r]
@@ -464,7 +514,7 @@ class FolderIndex:
         if self.deep:
             self.max_docs = max(max_docs, 40000)
         self.max_seconds, self.ttl = max_seconds, ttl
-        self.key = (tuple(self.roots), exclude_prefix, tuple(self.deep))
+        self.key = (tuple(self.roots), exclude_prefix, tuple(self.deep), (scope or {}).get("client"))
         self.docs: List[dict] = []
         self.post: dict = {}
         self.lock = threading.Lock()
@@ -524,7 +574,7 @@ class FolderIndex:
             for _m, pp, root in self._paths():
                 if time.time() - t0 > self.max_seconds or len(self.docs) >= self.max_docs:
                     break
-                text = _text_of(pp, self.max_bytes)
+                text = _text_of(pp, self.max_bytes, self.scope)
                 if not text.strip():
                     continue
                 try:

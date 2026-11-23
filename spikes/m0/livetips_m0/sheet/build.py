@@ -34,6 +34,7 @@ from urllib.parse import urlparse
 
 from . import SCHEMA
 from .. import call_layout as CL
+from .. import client_scope as CS
 from . import merge as M
 from . import presets as P
 from . import prompt as PR
@@ -968,6 +969,9 @@ def build(req: dict, refresh: bool = False, emit=say, responder: Optional[Callab
     chosen = req.get("route") or "codex"
     route = Z.route_key(chosen)
     req = dict(req, route=route)
+    # PB-70 (owner 23.11): the call's client is decided before any source is read; another client's files, Tracker
+    # items and lines of shared files stay out of this call (sources the PM added by hand stay in)
+    req = CS.with_scope(req)
     if chosen.lower() in Z.RETIRED_GEMINI_ROUTES:
         req["model"] = (req.get("models") or {}).get("gemini")
     lang = req.get("language") or "en"
@@ -1198,6 +1202,14 @@ def build(req: dict, refresh: bool = False, emit=say, responder: Optional[Callab
     # size budget; the folder itself has no text and is never "skipped" for it
     srcs = SRC.expand_folders(srcs, texts, req, route, windows)
     by_sid.update({s["id"]: s for s in srcs})
+    sc = req.get("_client_scope")
+    if sc:
+        n_files = sum(int((s.get("folder") or {}).get("other_client") or 0) for s in srcs)
+        n_lines = sum(int(s.get("other_client_lines") or 0) for s in srcs)
+        n_items = int((tracker or {}).get("other_client") or 0)
+        if n_files or n_lines or n_items:
+            notes.append("Kept to {} (by {}): left out {} file(s), {} Tracker item(s) and {} line(s) of shared files "
+                         "of {}.".format(sc["client"], sc["why"], n_files, n_items, n_lines, ", ".join(sc["others"])))
     for s in srcs:
         for k in ("text",):
             s.pop(k, None)                     # the texts live in the files, not in the sheet
@@ -1433,6 +1445,8 @@ def build(req: dict, refresh: bool = False, emit=say, responder: Optional[Callab
             s["reason"] = "the page is longer than %d KB: only the first %d KB were read" % (
                 int(cut.get("limit_bytes") or 0) // 1000, int(cut.get("read_bytes") or 0) // 1000)
     sheet["sources"] = srcs
+    if req.get("_client_scope"):
+        sheet["client_scope"] = CS.public(req["_client_scope"])     # the search during the call keeps to it
     if tracker and SU.has_blocks(sheet["blocks"]):
         from . import tracker as TR
         sheet["tracker"] = TR.for_sheet(tracker)    # the live window's fallback for the My update card

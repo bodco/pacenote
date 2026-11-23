@@ -5,6 +5,13 @@ Pacenote. Earlier versions are described in the commit messages and in
 
 ## Unreleased
 
+- **Preparation no longer mixes in another client's facts (PB-70).** When one project folder holds several clients,
+  Pacenote first decides whose call it is (the other side's company, else the call's title, matched to the client
+  folders of the project, such as `docs/acme` and `docs/globex`). The preparation and the search during the call then
+  leave out the other clients' files and earlier calls, their Tracker items, and their lines and sections in the
+  decisions and the Current State page. Items without a client stay, a file or folder you add by hand is always read,
+  and when the client is not clear nothing is hidden. On the G0 benchmark: facts of the other client in the
+  preparation 11 -> 0, in the live search 4 -> 0, with the same coverage.
 - **Team/quality: a call context benchmark for GraphRAG (G0).** No change for users. `spikes/m0/bench/g0` replays three
   invented calls (two clients that both have an "item 13") through the current preparation, live lookup and
   commitments register, offline and without a model, and prints one table: preparation coverage and scope leaks,

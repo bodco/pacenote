@@ -47,6 +47,7 @@ if str(M0) not in sys.path:
 import yaml  # noqa: E402
 
 from livetips_m0 import call_layout as CL  # noqa: E402
+from livetips_m0 import client_scope as CS  # noqa: E402
 from livetips_m0 import commitments as CM  # noqa: E402
 from livetips_m0.sheet import build as B  # noqa: E402
 from livetips_m0.sheet import lookup as LK  # noqa: E402
@@ -130,11 +131,18 @@ def offline():
     socket.create_connection = guard
     saved = {k: os.environ.pop(k) for k in ("LT_AI_STATE", "ANTHROPIC_API_KEY", "CLAUDE_API", "OPENAI_API_KEY",
                                             "GEMINI_API_KEY") if k in os.environ}
+    # PB-37 refuses loopback pages outside tests; the fixture site is served on 127.0.0.1 by this harness
+    loop = os.environ.get("PACENOTE_TEST_WEB_LOOPBACK")
+    os.environ["PACENOTE_TEST_WEB_LOOPBACK"] = "1"
     try:
         yield blocked
     finally:
         socket.create_connection = real
         os.environ.update(saved)
+        if loop is None:
+            os.environ.pop("PACENOTE_TEST_WEB_LOOPBACK", None)
+        else:
+            os.environ["PACENOTE_TEST_WEB_LOOPBACK"] = loop
 
 
 @contextlib.contextmanager
@@ -212,8 +220,10 @@ class VariantA:
                 "error": res.get("error") if isinstance(res, dict) else None}
 
     def lookup_index(self, root: Path, exclude_prefix: str, sheet: Optional[dict]):
-        """engine._folder_index: the project root, the sheet's folder sources in full (deep), built once."""
-        return LK.FolderIndex([str(root)], exclude_prefix=exclude_prefix, deep=LK.sheet_folder_roots(sheet)).build()
+        """engine._folder_index: the project root, the sheet's folder sources in full (deep), the call's client scope
+        the sheet keeps (PB-70), built once."""
+        return LK.FolderIndex([str(root)], exclude_prefix=exclude_prefix, deep=LK.sheet_folder_roots(sheet),
+                              scope=CS.from_sheet(sheet)).build()
 
     def lookup(self, question: str, root: Path, exclude_prefix: str, sheet: Optional[dict], index) -> List[dict]:
         """engine._project_snippets > own_search with no lt and no model queries (k 6, 14000 chars, 1 s)."""
