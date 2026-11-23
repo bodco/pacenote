@@ -9,6 +9,9 @@ models/
 *.named.md
 *.jsonl
 !Fixtures/*.jsonl
+# PB-50: the G0 benchmark fixture is a project folder in the app's own layout (live/, commitments.jsonl)
+!spikes/m0/bench/g0/fixtures/*/live/
+!spikes/m0/bench/g0/fixtures/*/live/commitments.jsonl
 # quality gates (ub-mode: crapper, dryer, mutator)
 .metrics/
 target/
