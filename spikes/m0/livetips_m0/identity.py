@@ -116,23 +116,23 @@ def voice_aliases(path=None) -> Dict[str, str]:
     except (OSError, ValueError):
         return {}
     al = data.get("aliases") if isinstance(data, dict) else None
-    return {str(k).strip().lower(): str(v) for k, v in al.items()} if isinstance(al, dict) else {}
+    return {str(k).strip().casefold(): str(v) for k, v in al.items()} if isinstance(al, dict) else {}
 
 
 def person_id(name: str, aliases: Optional[Dict[str, str]] = None, me: Optional[List[str]] = None) -> str:
-    """One id per person: "me" for the PM (his name aliases), else the name the voice library keeps for this spelling
-    (aliases followed at most 5 steps, as VoiceBook.resolve), lower case."""
+    """One id per person: "me" for the PM (the PM's name aliases), else the name the voice library keeps for this
+    spelling (aliases followed at most 5 steps, as VoiceBook.resolve), case-folded like VoiceLibrary.canonical."""
     n = (name or "").strip()
-    mine = {x.strip().lower() for x in (me or []) if x and x.strip()} | {ME, "я", "pm"}
-    if not n or n.lower() in mine:
+    mine = {x.strip().casefold() for x in (me or []) if x and x.strip()} | {ME, "я", "pm"}
+    if not n or n.casefold() in mine:
         return ME
-    al = aliases or {}
+    al = aliases or {}                  # keys case-folded (voice_aliases)
     for _ in range(5):
-        nx = al.get(n.lower())
-        if not nx or nx.strip().lower() == n.lower():
+        nx = al.get(n.casefold())
+        if not nx or nx.strip().casefold() == n.casefold():
             break
         n = nx.strip()
-    return ME if n.lower() in mine else n.lower()
+    return ME if n.casefold() in mine else n.casefold()
 
 
 def same_person(a: str, b: str, aliases: Optional[Dict[str, str]] = None, strict: bool = False) -> bool:

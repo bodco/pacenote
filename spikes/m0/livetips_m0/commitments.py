@@ -150,7 +150,8 @@ def _add(items: Dict[str, dict], alias: Dict[str, str], e: dict) -> None:
     modality = "tentative" if e.get("modality") == "tentative" else ("agreed" if e.get("modality") == "agreed" else "")
     items[cid] = dict({k: e.get(k, "") for k in ITEM_KEYS}, status="proposal" if modality == "tentative" else "open",
                       modality=modality, notion_page="", notion_note="", crm_task="", crm_portal="", ids=[cid], edited_at="",
-                      history=[{"id": cid, "call": e.get("call", ""), "text": e.get("text", ""), "created": e.get("created", "")}],
+                      history=[{"id": cid, "call": e.get("call", ""), "text": e.get("text", ""), "created": e.get("created", ""),
+                                "client": e.get("client", "")}],
                       **NOT_DONE)
 
 
@@ -474,7 +475,7 @@ def migrate_owners(folder, *, call: str, notes: str, aliases: Optional[List[str]
             new.append((what, "me" if not o or o.lower() in names or o.lower().split()[0] in first else o[:40]))
     out, at = [], now_iso()
     for it in fold(events):
-        if call_key(it.get("call")) != call_key(call) or it.get("status") != "open" or it["id"] in touched:
+        if call_key(it.get("call")) != call_key(call) or it.get("status") not in LIVE or it["id"] in touched:
             continue
         old = it.get("owner") or "me"
         if old == "me" and it["id"] not in from_notes:
@@ -527,6 +528,18 @@ def _calls(item: dict) -> set:
     return {call_key(h.get("call")) for h in history_of(item)}
 
 
+def _clients(item: dict) -> set:
+    """The known clients of every mention joined into the item, not only of the oldest one."""
+    return {c for c in (str(x.get("client") or "").strip().lower() for x in [item] + history_of(item)) if c}
+
+
+def _scoped(item: dict) -> dict:
+    """The item with one client for the scope tests: its only known client, "" when none, and a client no other item
+    has when the PM already joined mentions of two clients (no reference or Tracker ID takes it to a named client)."""
+    cs = _clients(item)
+    return dict(item, client=next(iter(cs)) if len(cs) == 1 else ("several:" + item["id"] if cs else ""))
+
+
 def _overlap(a: dict, b: dict) -> float:
     x, y = words(a.get("text", "")), words(b.get("text", ""))
     return len(x & y) / max(1, min(len(x), len(y)))
@@ -534,8 +547,9 @@ def _overlap(a: dict, b: dict) -> float:
 
 def _same_scope(a: dict, b: dict, people: Optional[Dict[str, str]], link: bool = False) -> bool:
     """Two items of different calls that may be one: for a link the same known client and one person id in the
-    voice library; for a suggestion also the same meeting series without a client and the same first name."""
-    scope = ID.scope_match(a, b)
+    voice library; for a suggestion also the same meeting series without a client and the same first name. The
+    client is read from every mention joined into each item (_scoped)."""
+    scope = ID.scope_match(_scoped(a), _scoped(b))
     return ((scope == "link" if link else bool(scope))
             and ID.same_person(a.get("owner") or "me", b.get("owner") or "me", people, strict=link)
             and not (_calls(a) & _calls(b)))
@@ -550,10 +564,9 @@ def link_events(events: List[dict], new_ids: List[str], people: Optional[Dict[st
     items = fold(events)
     by_id = {x: i for i in items for x in i.get("ids") or [i["id"]]}
     rej, out, done = _rejected(events), [], set()
-    client_of = {e["id"]: e.get("client") or "" for e in events if e.get("op") == "add" and e.get("id")}
 
     def tracker_ok(it: dict, o: dict) -> bool:       # every mention joined into o, not only the oldest one's client
-        return all(ID.tracker_scope(it, dict(o, client=client_of.get(x, ""))) for x in o.get("ids") or [o["id"]])
+        return ID.tracker_scope(_scoped(it), _scoped(o))
 
     for nid in new_ids:
         it = by_id.get(nid)
@@ -585,32 +598,43 @@ def migration_links(events: List[dict], people: Optional[Dict[str, str]] = None,
     for it in sorted(fold(events), key=lambda i: i.get("created", "")):
         if it["status"] not in LIVE:
             continue
-        tid, ref, client = ID.tracker_id(it), _ref(it), str(it.get("client") or "").strip().lower()
+        tid, ref, clients = ID.tracker_id(it), _ref(it), _clients(it)   # every mention joined before the migration
+        client = next(iter(clients)) if len(clients) == 1 else ""      # two clients already joined: no reference key
         project = str(it.get("project") or "")
-        key = (project, client, ID.person_id(it.get("owner") or "me", people), ref)
+        person = ID.person_id(it.get("owner") or "me", people)
         mine = _calls(it)
         hit, why = None, "tracker"
         if tid:
             hit = next((o for o in by_tid.get((project, tid), [])
-                        if ID.tracker_scope(it, o) and not _is_rejected(rej, it, o)), None)
+                        if len(clients | o["clients"]) <= 1 and not _is_rejected(rej, it, o)), None)
         if not hit and ref and client:
-            cands = [o for o in by_ref.get(key, []) if not (o["calls"] & mine) and not _is_rejected(rej, it, o)]
+            cands = [o for o in by_ref.get((project, client, person, ref), [])
+                     if o["clients"] == clients and not (o["calls"] & mine) and not _is_rejected(rej, it, o)]
             hit = sorted(cands, key=lambda o: (-_overlap(it, o), o.get("created", "")))[0] if cands else None
             why = "ref"
         if hit:
             out.append({"op": "same", "id": it["id"], "to": hit["id"], "by": by, "source": why, "at": at or now_iso()})
             hit["calls"] |= mine
             hit["ids"] = hit["ids"] + it["ids"]
-            hit["client"] = hit.get("client") or it.get("client") or ""    # a later join keeps to this client
+            hit["clients"] |= clients                                   # a later join keeps to this client
             if tid and not any(o is hit for o in by_tid.setdefault((project, tid), [])):
                 by_tid[(project, tid)].append(hit)
+            _index_ref(by_ref, hit)
             continue
-        node = dict(it, calls=set(mine), ids=list(it["ids"]))
+        node = dict(it, calls=set(mine), ids=list(it["ids"]), clients=set(clients), _person=person, _refkey=None)
         if tid:
             by_tid.setdefault((project, tid), []).append(node)
-        if ref and client:
-            by_ref.setdefault(key, []).append(node)
+        _index_ref(by_ref, node)
     return out
+
+
+def _index_ref(by_ref: Dict[tuple, List[dict]], node: dict) -> None:
+    """Keep a migration node under the reference key of its one known client (a tracker join may bring it one)."""
+    ref = _ref(node)
+    if not ref or len(node["clients"]) != 1 or node.get("_refkey"):
+        return
+    node["_refkey"] = (str(node.get("project") or ""), next(iter(node["clients"])), node["_person"], ref)
+    by_ref.setdefault(node["_refkey"], []).append(node)
 
 
 PLAIN = {"the", "and", "for", "with", "from", "about", "this", "that", "our", "their", "them", "his", "her", "your",
@@ -634,13 +658,22 @@ def suggestions(folder_or_events, people: Optional[Dict[str, str]] = None) -> Li
     events = folder_or_events if isinstance(folder_or_events, list) else read_events(folder_or_events)
     items, rej, out = fold(events), _rejected(events), []
     names = {w for i in items for w in words(i.get("owner", ""))} | {w for v in (people or {}).values() for w in words(v)}
-    for it in sorted(items, key=lambda i: i.get("created", ""), reverse=True):
-        if it["status"] not in LIVE:
-            continue
-        cands = [o for o in items if o["id"] != it["id"] and o["status"] in LIVE and o.get("created", "") < it.get("created", "")
-                 and _same_scope(it, o, people) and not _is_rejected(rej, it, o) and _ref(o) == _ref(it)
-                 and not (ID.tracker_id(o) and ID.tracker_id(it) and ID.tracker_id(o) != ID.tracker_id(it))
-                 and (_ref(it) or any(close_text(a, b, names) for a in _texts(it) for b in _texts(o)))]
+    live = [i for i in items if i["status"] in LIVE]
+    ref = {i["id"]: _ref(i) for i in live}            # once per item, not per pair (1000 items)
+    tid = {i["id"]: ID.tracker_id(i) for i in live}
+    sc = {i["id"]: _scoped(i) for i in live}
+    calls = {i["id"]: _calls(i) for i in live}
+
+    def same(it: dict, o: dict) -> bool:              # _same_scope with the item's precomputed client and calls
+        return (bool(ID.scope_match(sc[it["id"]], sc[o["id"]])) and not (calls[it["id"]] & calls[o["id"]])
+                and ID.same_person(it.get("owner") or "me", o.get("owner") or "me", people))
+
+    for it in sorted(live, key=lambda i: i.get("created", ""), reverse=True):
+        r, t = ref[it["id"]], tid[it["id"]]
+        cands = [o for o in live if o["id"] != it["id"] and o.get("created", "") < it.get("created", "")
+                 and ref[o["id"]] == r and not (tid[o["id"]] and t and tid[o["id"]] != t)
+                 and same(it, o) and not _is_rejected(rej, it, o)
+                 and (r or any(close_text(a, b, names) for a in _texts(it) for b in _texts(o)))]
         if cands:
             o = sorted(cands, key=lambda c: (-_overlap(it, c), c.get("created", "")))[0]
             day = str(o.get("created", ""))[:10]

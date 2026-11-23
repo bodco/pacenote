@@ -114,6 +114,8 @@ def test_person_id_follows_voice_library_aliases_and_merges(tmp_path):
     assert ID.same_person("Mike T.", "Mike Turner", people)
     assert not ID.same_person("Mike T.", "Emily", people)
     assert ID.voice_aliases(tmp_path / "missing.json") == {}
+    lib.write_text(json.dumps({"aliases": {"STRASSE": "Jake Strauss"}}), encoding="utf-8")   # case-folded as the app
+    assert ID.person_id("Straße", ID.voice_aliases(lib)) == ID.person_id("Jake Strauss") == "jake strauss"
 
 
 def test_scope_is_client_when_known_else_series():
@@ -372,6 +374,40 @@ def test_migration_joins_one_page_per_client_not_across(tmp_path, clock):
     assert sorted(tuple(i["ids"]) for i in C.load(tmp_path)) == [("c-a", "c-b"), ("c-g",)]
     ev = C.read_events(tmp_path)                                 # the app path: Acme's mention bars Globex too
     assert C.link_events(ev, ["c-g"], {}) == []
+
+
+def _joined_before(tmp_path, page=True, text="item 13: send the security memo"):
+    """c-a (no client) and c-b (Acme) joined by the PM before the migration, then Globex's c-g of the same page or
+    the same "item 13". The joined item's own client is unknown; only its Acme mention tells the scope."""
+    ev = [add("c-a", text, "me", "2026-11-03-1000-weekly-sync.md", "2026-11-03T10:00:00"),
+          add("c-b", text, "me", "2026-11-05-1000-weekly-sync.md", "2026-11-05T10:00:00", client="Acme"),
+          {"op": "same", "id": "c-b", "to": "c-a", "by": "pm", "source": "pm", "at": "2026-11-05T11:00:00"},
+          add("c-g", text, "me", "2026-11-07-1000-weekly-sync.md", "2026-11-07T10:00:00", client="Globex")]
+    if page:
+        ev += [dict(PAGE, id="c-a"), dict(PAGE, id="c-b"), dict(PAGE, id="c-g")]
+    C.append(tmp_path, ev)
+    return ev
+
+
+@pytest.mark.parametrize("page", [True, False])           # the same Tracker ID, or only the same "item 13"
+def test_an_item_joined_before_the_migration_keeps_its_clients(tmp_path, clock, page):
+    ev = _joined_before(tmp_path, page)
+    assert C.link_events(ev, ["c-g"], {}) == []
+    assert not [s for s in C.suggestions(ev, {}) if {s["id"], s["to"]} == {"c-g", "c-a"}]
+    clock("2026-11-16T08:00:00")
+    assert C.migrate(tmp_path, {})["links"] == 0
+    assert sorted(tuple(i["ids"]) for i in C.load(tmp_path)) == [("c-a", "c-b"), ("c-g",)]
+
+
+def test_an_item_with_no_client_of_its_own_is_matched_by_its_joined_client(tmp_path, clock):
+    """The mention joined into it names Acme, so Acme's later "item 13" joins it by reference."""
+    _joined_before(tmp_path, page=False)
+    C.append(tmp_path, [add("c-c", "item 13: send the security memo", "me", "2026-11-09-1000-weekly-sync.md",
+                            "2026-11-09T10:00:00", client="acme")])
+    assert [e["to"] for e in C.link_events(C.read_events(tmp_path), ["c-c"], {})] == ["c-a"]   # the app path too
+    clock("2026-11-16T08:00:00")
+    assert C.migrate(tmp_path, {})["links"] == 1
+    assert sorted(tuple(i["ids"]) for i in C.load(tmp_path)) == [("c-a", "c-b", "c-c"), ("c-g",)]
 
 
 def test_a_hubspot_task_without_its_portal_is_no_tracker_id(tmp_path, clock):

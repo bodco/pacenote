@@ -35,7 +35,9 @@ identity: >-
   known clients; a task without its portal is no key; a new item gets its page or task only later, so today this
   key joins items in the migration); 2) both name the
   same explicit reference ("item 13", "task #13", "пункт 13"; a bare "#1" is not one) for the same person in the same
-  project AND the same known client. Then the register appends op same: the older item keeps its id, owner and status,
+  project AND the same known client. An item's client is read from every mention joined into it, not only the
+  oldest one: an item that holds an Acme mention is Acme's, and one that holds mentions of two clients takes no
+  automatic link to a named client. Then the register appends op same: the older item keeps its id, owner and status,
   the newer id stays its alias, every event on either id applies to the one item, and its history lists every call
   that mentioned it. 3) Otherwise it is only a suggestion ("Looks like the task from 12.11, is it the same?"): the same
   reference or a similar task of the same person from an earlier call of the same client, or of the same meeting
@@ -51,7 +53,8 @@ modality: >-
   PB-51: a "we will try" promise (an item that opens, optionally after we/I/ми/я, with "try to", "will try", "we'll
   try", "attempt to", "спробуємо", "постараюсь", "maybe", "if possible", "можливо", "мабуть", "якщо вийде") is a
   proposal, not an agreed commitment: the add carries "modality":"tentative" and the item has status proposal (not
-  open, so the Tracker does not list it as owed). Someone else trying inside a firm task ("fix the crash when users
+  open, so the Tracker does not list it as owed; the open lists, the promises lookup and the tips leave it out until
+  it is agreed, while Rewrite notes still gives it the new owner like an open item). Someone else trying inside a firm task ("fix the crash when users
   try to export", "попросити Олега спробувати новий білд"), a hedge after the task ("send the SOW by Friday, maybe
   earlier", "send the deck if possible") and quoted text ("fix the 'try to login' banner") keep the task agreed. An agreed mention on a later call or the PM's op agree (`python -m
   livetips_m0.commitments agree <live folder> <id>`) makes it open; a "try" on a later call never weakens an agreed item.
