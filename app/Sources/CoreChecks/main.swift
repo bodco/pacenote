@@ -1827,6 +1827,18 @@ func crmSync() async {
     expect(CRMScopeCheck.probes.filter { !$0.scope.contains(".schemas.") }.allSatisfy { p in CRMObject.allCases.contains { $0.scopes.contains(p.scope) } }
            && CRMScopeCheck.blocking(.calls, missing: missing) == ["crm.objects.owners.read"],
            "scopes: a scope the live check finds missing shows on the switch that needs it")
+    // 0.27.1: the Leads scopes are on the list only while Leads are on; there is no meetings scope (the Meetings API
+    // names only the contacts scopes); the live check proves every read scope on the list
+    let base = HubSpotConnector.requiredScopes(leads: false), withLeads = HubSpotConnector.requiredScopes(leads: true)
+    expect(base == HubSpotConnector.scopes && base.count == 10 && !base.contains { $0.contains(".meetings.") || $0.contains(".leads.") }
+           && withLeads == base + HubSpotConnector.leadScopes, "0.27.1: required scopes, Leads only when on: \(withLeads)")
+    expect((base + ["crm.objects.leads.read"]).filter { $0.hasSuffix(".read") }.allSatisfy { s in (CRMScopeCheck.probes + CRMScopeCheck.leadProbes).contains { $0.scope == s } },
+           "0.27.1: every read scope on the list has a live probe")
+    let lf = StatusFake(); lf.status = ["/crm/v3/objects/leads": 403, "/crm/v3/objects/meetings": 403]
+    let noLeads = await CRMScopeCheck.check(HubSpotConnector(transport: lf, sleep: { _ in }))
+    let leadsOn = await CRMScopeCheck.check(HubSpotConnector(transport: lf, sleep: { _ in }), leads: true)
+    expect(noLeads.missing.isEmpty && leadsOn.missing == ["crm.objects.leads.read"],
+           "0.27.1: the Leads probe runs only with Leads on: \(noLeads.missing) \(leadsOn.missing)")
     await crmSyncIntegration()
 }
 

@@ -3,6 +3,16 @@
 Pacenote. Earlier versions are described in the commit messages and in
 [docs/en/live-tips.md](docs/en/live-tips.md), section 14.
 
+## 0.27.1 (2026-11-23)
+
+- **The HubSpot key list includes Leads when you use them (2026-11-23):** Settings > Integrations > HubSpot listed ten
+  scopes and never the two Leads scopes, so a key made from that list failed on Leads. With Leads turned on, the list
+  and Copy list now add `crm.objects.leads.read` and `crm.objects.leads.write`, and Test checks the Leads scope. The
+  guide has the key step by step with every scope and what it is for. Meetings, Calls, Emails and tasks need no scope
+  of their own: they use the contacts scopes.
+- **Site: Report a problem (2026-11-23).** pacenote.bodco.pm has a Report a problem link in the footer and on the
+  Download page, to the beta feedback form.
+
 ## 0.27.0 (2026-11-23)
 
 - **Gemini now requires an API key.** Pacenote removed Google account sign-in through Antigravity CLI because

@@ -193,7 +193,7 @@ final class CRMService: ObservableObject {
                 let a = try await c.testConnection()
                 // the scopes the key lacks show up as 403 on a read (H6: every read-provable scope, CRMScopeCheck)
                 var missing: [String] = [], unverified: [String] = []
-                if let hs = c as? HubSpotConnector { (missing, unverified) = await CRMScopeCheck.check(hs) }
+                if let hs = c as? HubSpotConnector { (missing, unverified) = await CRMScopeCheck.check(hs, leads: SettingsWindow.model.config.crm.proposeLeads) }
                 unverifiedScopes = unverified
                 // 0.8.7 (I6.2): the owner is picked by the user's email until the PM chooses one
                 let picked = SettingsWindow.model.config.crm.ownerAuto ? (try? await c.owners()).flatMap { CRMOwner.pick($0, emails: Self.ownEmails) } : nil
@@ -264,7 +264,7 @@ struct HubSpotPage: View {
             }
             Section {
                 VStack(alignment: .leading, spacing: 4) {
-                    ForEach(HubSpotConnector.scopes, id: \.self) { s in
+                    ForEach(HubSpotConnector.requiredScopes(leads: model.config.crm.proposeLeads), id: \.self) { s in
                         HStack(spacing: 6) {
                             // 0.8.7: after a good Test every scope on the key gets a green tick; a missing one a red cross;
                             // a grey circle only means "not tested yet" (an empty circle read as "not ticked")
@@ -280,7 +280,7 @@ struct HubSpotPage: View {
                     Spacer()
                     Button(copied ? L("int.copied") : L("int.copyList")) {
                         NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(HubSpotConnector.scopes.joined(separator: "\n"), forType: .string)
+                        NSPasteboard.general.setString(HubSpotConnector.requiredScopes(leads: model.config.crm.proposeLeads).joined(separator: "\n"), forType: .string)
                         copied = true
                     }.buttonStyle(.pnTertiary)
                 }

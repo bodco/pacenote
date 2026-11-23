@@ -291,3 +291,9 @@ items:
     title_uk: "Завантаження можна скасувати"
     body_en: "Setup, add-ons and Ollama models show the download size and free space first, and Cancel stops a download and cleans up after it."
     body_uk: "Налаштування, додатки і моделі Ollama спершу показують розмір завантаження і вільне місце, а Cancel зупиняє завантаження і прибирає за ним."
+  - id: hubspot_key_scopes
+    version: 0.27.1
+    title_en: "Every HubSpot scope in one list"
+    title_uk: "Усі scope HubSpot в одному списку"
+    body_en: "Settings > Integrations > HubSpot lists every scope the key needs, and adds the two Leads scopes when Leads are on. Copy list copies them all, and Test checks them."
+    body_uk: "Settings > Integrations > HubSpot показує всі scope, потрібні ключу, і додає два scope для Leads, коли Leads увімкнено. Copy list копіює їх усі, а Test їх перевіряє."

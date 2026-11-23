@@ -1745,7 +1745,7 @@
  "int.hubspot.how": "Як створити сервісний ключ",
  "int.hubspot.how1": "У HubSpot відкрийте More у лівій навігації, далі Development.",
  "int.hubspot.how2": "Keys > Service Keys > Create service key. Назва Pacenote.",
- "int.hubspot.how3": "Add new scope і позначте десять scope нижче (Copy list допоможе), далі Update.",
+ "int.hubspot.how3": "Add new scope, введіть кожен scope зі списку нижче в поле пошуку і позначте його (Copy list копіює їх усі), далі Update. Якщо користуєтесь Leads, спершу ввімкніть їх: тоді список додасть ще два scope.",
  "int.hubspot.how4": "Create і підтвердіть. Automatic rotation лишіть вимкненим або вставляйте новий ключ після кожної ротації.",
  "int.hubspot.how5": "На сторінці ключа натисніть Copy біля ключа.",
  "int.hubspot.how6": "Вставте його сюди, Save, далі Test.",
