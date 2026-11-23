@@ -350,7 +350,7 @@ public enum CallSync {
     /// sheet model knows, so refresh history (top-level `gone_facts`, a fact's `was`) and any later key never go out.
     /// A fact that cites a page of a researched site is left out (its text may repeat the page), and so are the gap
     /// facts that copy it (`about`) and links to it (`conflict_with`, `superseded_by`, a readiness gap), and the meeting
-    /// goal when its header fact cites such a page (the AI wrote it); a `web_page` source keeps only its address and state.
+    /// goal when its header fact cites such a page (the AI wrote it); a `web_page` source keeps only its site name and state.
     /// Citations alone are not trusted: a fact the builder marked `from_web` (its model call was given a researched page)
     /// and a fact citing a source the sheet no longer lists stay local too, and the flag itself never goes out.
     static func syncedSheet(_ raw: [String: Any]) -> [String: Any] {
@@ -359,15 +359,27 @@ public enum CallSync {
         let blockKeys = Set(SheetBlock.CodingKeys.allCases.map(\.rawValue))
         let factKeys = Set(SheetFact.CodingKeys.allCases.map(\.rawValue)).subtracting(["from_web"])
         let sourceKeys = Set(SheetSource.CodingKeys.allCases.map(\.rawValue))
-        let webSourceKeys: Set<String> = ["id", "n", "type", "uri", "parent", "access", "used"]
+        let webSourceKeys: Set<String> = ["id", "n", "type", "parent", "access", "used"]
         var o = only(raw, topKeys)
         let sources = (o["sources"] as? [[String: Any]]) ?? []
         let web = Set(sources.filter { ($0["type"] as? String) == "web_page" }.compactMap { $0["id"] as? String })
         if o["sources"] != nil {
             o["sources"] = sources.map { s -> [String: Any] in
-                guard (s["type"] as? String) == "web_page" else { return only(s, sourceKeys) }
+                guard (s["type"] as? String) == "web_page" else {
+                    // a link (also one found on a researched page and taken) goes without its query, fragment or login,
+                    // where a token may sit; a title that repeats the link is cut the same way
+                    var k = only(s, sourceKeys)
+                    if let u = k["uri"] as? String {
+                        let bare = bareLink(u)
+                        if (k["title"] as? String) == u { k["title"] = bare }
+                        k["uri"] = bare
+                    }
+                    return k
+                }
                 var w = only(s, webSourceKeys)
-                w["title"] = (s["uri"] as? String) ?? ""      // a title is required; the page's own title stays local
+                // a title is required: the site name only; the page's own title and its address (a crawled link's path or
+                // query may carry a token) stay local
+                w["title"] = URLComponents(string: (s["uri"] as? String) ?? "")?.host?.lowercased() ?? ""
                 return w
             }
         }
@@ -415,6 +427,13 @@ public enum CallSync {
             if (hg?["text"] as? String) != g { o.removeValue(forKey: "goal") }
         }
         return o
+    }
+
+    /// PB-37: a link as call sync sends it: no query, fragment, user or password (a text that is not a link stays as it is).
+    public static func bareLink(_ s: String) -> String {
+        guard var c = URLComponents(string: s), c.scheme != nil else { return s }
+        c.query = nil; c.fragment = nil; c.user = nil; c.password = nil
+        return c.string ?? s
     }
 
     static func driveID(_ s: String) -> Bool { s.range(of: "^[A-Za-z0-9_-]{10,200}$", options: .regularExpression) != nil }

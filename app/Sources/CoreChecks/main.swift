@@ -1233,11 +1233,11 @@ func meetingLaunch096() {
     expect(CallSync.decisions(mn).count == 1 && CallSync.tasks(mn).first?["text"] as? String == "Mike sends the proposal", "sync: decisions and tasks")
     expect(CallSync.sheetBody(Data("[1]".utf8)) == nil && CallSync.sheetBody(Data("{\"a\":1}".utf8)) != nil, "sync: sheet is an object")
     // PB-37: nothing from a researched page reaches the server payload (title, path, fact text, quote, refresh history);
-    // facts from other sources stay, and the page's address and state stay
+    // facts from other sources stay, and the page's site name and state stay
     let webSheet = Data(#"{"sources":[{"id":"w1","n":1,"type":"web_page","uri":"https://example-company.com/team","title":"ZEBRA-TITLE-7731","path":"/tmp/ZEBRA-PATH-7731.txt","why":["ZEBRA-WHY-7731"],"access":"ok","used":"full"},{"id":"s1","n":2,"type":"file","title":"Brief.pdf","access":"ok","used":"full"}],"blocks":[{"id":"b0","type":"gaps","facts":[{"id":"f-gap-1","label":"Sources disagree: Company","text":"ZEBRA-GAPFACT-7731","source_ids":[],"locator":{},"status":"needs_check","origin":"readiness","about":"f1"},{"id":"f-gap-2","label":"Sources disagree: Company","text":"keep-gap-fact","source_ids":[],"locator":{},"status":"needs_check","origin":"readiness","about":"f2"}]},{"id":"b1","type":"company","facts":[{"id":"f1","text":"ZEBRA-FACT-7731","was":"ZEBRA-WAS-7731","source_ids":["w1"],"locator":{"quote":"ZEBRA-QUOTE-7731","url":"https://example-company.com/team"}},{"id":"f2","text":"keep-this","was":"ZEBRA-OLD-7731","source_ids":["s1"],"status":"conflict","conflict_with":["f1"],"locator":{"quote":"keep-quote"}}],"zebra_block":"ZEBRA-BLOCK-7731"}],"gone_facts":[{"id":"f0","text":"ZEBRA-GONE-7731"}],"readiness":{"state":"almost","gaps":[{"id":"g1","fact":"f1","text":"ZEBRA-GAP-7731"},{"id":"g2","text":"keep-gap"}]},"zebra_later":"ZEBRA-LATER-7731"}"#.utf8)
     let webJSON = String(data: CallSync.json(CallSync.sheetBody(webSheet) ?? [:]), encoding: .utf8) ?? ""
     expect(!webJSON.contains("ZEBRA") && webJSON.contains("keep-this") && webJSON.contains("keep-quote") && webJSON.contains("keep-gap")
-           && webJSON.contains("Brief.pdf") && webJSON.contains("example-company.com/team"), "sync: researched page content stays local")
+           && webJSON.contains("Brief.pdf") && webJSON.contains("example-company.com"), "sync: researched page content stays local")
     let webBlocks = ((CallSync.sheetBody(webSheet)?["sheet"] as? [String: Any])?["blocks"] as? [[String: Any]]) ?? []
     let webGaps = (webBlocks.first?["facts"] as? [[String: Any]]) ?? []
     expect(webGaps.count == 1 && webGaps[0]["id"] as? String == "f-gap-2" && webJSON.contains("keep-gap-fact"),
@@ -1246,7 +1246,13 @@ func meetingLaunch096() {
     expect(webFacts.count == 1 && (webFacts[0]["conflict_with"] as? [String]) == [] && webFacts[0]["status"] as? String == "needs_check",
            "sync: a dropped researched fact leaves no dangling link")
     let webSrc = ((CallSync.sheetBody(webSheet)?["sheet"] as? [String: Any])?["sources"] as? [[String: Any]])?.first
-    expect(webSrc?["title"] as? String == "https://example-company.com/team" && webSrc?["path"] == nil, "sync: a researched page keeps a title, its address")
+    expect(webSrc?["title"] as? String == "example-company.com" && webSrc?["path"] == nil && webSrc?["uri"] == nil
+           && !webJSON.contains("/team"), "sync: a researched page keeps a title, its site name only")
+    // PB-37 (round 10): a page address found by the crawler can carry a token in its query; no part of it beyond the site goes
+    let tokSheet = Data(#"{"sources":[{"id":"w1","n":1,"type":"web_page","uri":"https://example-company.com/ZEBRA-PATH?token=ZEBRA-TOKEN-7731&sig=ZEBRA-SIG","parent":"w0","title":"t","access":"ok","used":"full"}],"blocks":[]}"#.utf8)
+    let tokJSON = String(data: CallSync.json(CallSync.sheetBody(tokSheet) ?? [:]), encoding: .utf8) ?? ""
+    expect(!tokJSON.contains("ZEBRA") && !tokJSON.contains("token") && tokJSON.contains("example-company.com"),
+           "sync: a researched page address and its query stay local")
     // PB-37: a goal the AI wrote from researched pages (its header fact cites them) stays local in both copies; a typed goal goes
     func goalSheet(_ cites: String, fact: String = "GOAL-7731") -> Data {
         Data(#"{"goal":"GOAL-7731","sources":[{"id":"s-meeting","n":1,"type":"calendar","title":"Meeting","access":"ok","used":"full"},{"id":"w1","n":2,"type":"web_page","uri":"https://example-company.com/","title":"t","access":"ok","used":"full"}],"blocks":[{"id":"b0","type":"header","facts":[{"id":"f-header-goal","label":"Goal","text":"\#(fact)","source_ids":[\#(cites)],"locator":{},"status":"found"}]}]}"#.utf8)
@@ -1613,6 +1619,16 @@ func meetingSheetUI0100() {
     }
     expect(syncJSON(sg).contains("\"title\":\"partner.example\\/case-studies\"") || syncJSON(sg).contains("\"title\":\"partner.example/case-studies\""),
            "sync: a taken suggested link goes out under its address as title")
+    // PB-37 (round 10): a taken link keeps its query locally (it is read with it) but sync sends it without query, fragment or login
+    var sq = base
+    if let x = try? JSONDecoder().decode(SheetSource.self, from: Data(#"{"id":"x2","n":98,"type":"web","uri":"https://bob:ZEBRA-PW@partner.example/case?token=ZEBRA-TOKEN-7731#ZEBRA-FRAG","title":"https://bob:ZEBRA-PW@partner.example/case?token=ZEBRA-TOKEN-7731#ZEBRA-FRAG","access":"ok","used":"full"}"#.utf8)) {
+        sq.sources.append(x)
+    }
+    let sqJSON = syncJSON(sq)
+    expect(!sqJSON.contains("ZEBRA") && sqJSON.contains("partner.example") && sq.sources.last?.uri?.contains("ZEBRA-TOKEN") == true,
+           "sync: a taken link's query, fragment and login stay local")
+    expect(CallSync.bareLink("not a url") == "not a url" && CallSync.bareLink("https://docs.google.com/document/d/abc/edit?usp=sharing") == "https://docs.google.com/document/d/abc/edit",
+           "sync: a bare link keeps scheme, host and path")
     expect(SheetEdit.setOwner(&g, factID: "f-overview", owner: "Mike Carter") && g.fact(id: "f-overview")?.value?.owner == "Mike Carter", "gap: owner")
     expect(SheetEdit.addFact(&g, blockType: .agenda, text: "Kick-off", now: "n") != nil && g.block(.agenda)?.facts.first?.status == .edited, "fact: added into a new block")
     // export

@@ -28,9 +28,11 @@ Pacenote. Earlier versions are described in the commit messages and in
   researched pages is sent to Pacenote by call sync: every fact the AI wrote while it had those pages (whatever
   source it names, also after you edit it or remove the page and refresh), the Gaps notes that repeat such a fact,
   a question for the call made from such a fact (Add question on its gap, or Keep both, ask on the call on its conflict),
-  the meeting goal when the AI wrote it from those pages, their titles and quotes, and the sheet's refresh history stay on this Mac. A link to
+  the meeting goal when the AI wrote it from those pages, their titles, addresses and quotes (only the site name goes),
+  and the sheet's refresh history stay on this Mac. A link to
   another site found on the pages is suggested under its address; the site's own link text shows only in the
-  suggestion and is never saved as the source's title. The plan footer says that Google Drive may sync the copies to colleagues.
+  suggestion and is never saved as the source's title. Call sync sends every link source without its query, fragment
+  or login, where a token may sit. The plan footer says that Google Drive may sync the copies to colleagues.
 - **Quick prep takes a link (2026-11-22, FB7):** the Sources line of Quick has a Link to add field, so a link no
   longer needs Expert.
 
