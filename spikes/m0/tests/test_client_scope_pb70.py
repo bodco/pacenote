@@ -78,7 +78,30 @@ def test_scope_is_the_call_client_and_its_sibling_client_folders(tmp_path):
     sc = CS.for_request(_req(root))
     assert sc["client"] == "acme" and sc["others"] == ["globex"]
     assert sc["folders"] == {"acme": ["docs/acme"], "globex": ["docs/globex"]}
+    # the title alone does not make a folder a client; it picks one a company of an earlier sheet backs
+    assert CS.for_request(_req(root, company="", title="Globex weekly")) is None
+    _earlier_sheet(root, "Globex")
     assert CS.for_request(_req(root, company="", title="Globex weekly"))["client"] == "globex"   # by the title
+
+
+def _earlier_sheet(root, company, call="2026-11-11-globex-weekly"):
+    _w(root / "live" / call / ".work" / "prep-{}-1100-x.sheet.json".format(call[:10]),
+       json.dumps({"schema": "pacenote.sheet/1", "participants": {"theirs": [{"name": "Sarah", "company": company}]}}))
+
+
+def test_topic_folders_named_like_series_are_not_clients(tmp_path):
+    """Review r0: one client, folders by topic (docs/design, docs/research) and series named after them. No company
+    backs either folder, so there is no scope and the research files and lines stay."""
+    root = tmp_path / "initech"
+    _w(root / "docs" / "design" / "flows.md", "# Onboarding flows\n")
+    _w(root / "docs" / "research" / "interviews.md", "# Research interviews\n\n- Users skip the tour.\n")
+    _w(root / "live" / "2026-11-10-design-review" / "2026-11-10-1000-design-review.md", "x\n")
+    _w(root / "live" / "2026-11-11-research-sync" / "2026-11-11-1000-research-sync.md", "x\n")
+    for company in ("", "Initech"):
+        assert CS.decide(str(root), "Design review", [company] if company else []) is None
+        assert CS.for_request(_req(root, company=company, title="Design review")) is None
+    _earlier_sheet(root, "Initech", "2026-11-10-design-review")
+    assert CS.decide(str(root), "Design review", [], str(root / "live" / "2026-11-17-1000-design-review.md")) is None
 
 
 def test_no_clear_client_hides_nothing(tmp_path):
@@ -226,7 +249,11 @@ def test_engine_scope_from_the_call_and_lt_hits_of_the_other_client_dropped(tmp_
     call = root / "live" / "2026-11-17-acme-weekly" / "2026-11-17-1000-acme-weekly.md"
     e.cfg = {"project_root": str(root), "title": "Acme weekly", "call_file": str(call), "lt_cmd": "lt",
              "lookup_index": False}
-    assert e._client_scope()["client"] == "acme"
+    assert e._client_scope() is None                    # no sheet, no company backs a folder: nothing is hidden
+    _w(root / "live" / "prep-2026-11-10-1000-acme-weekly.sheet.json",
+       json.dumps({"participants": {"theirs": [{"name": "Mike", "company": "Acme"}]}}))
+    e._cscope_key = None
+    assert e._client_scope()["client"] == "acme"        # an earlier sheet backs docs/acme, the title picks it
     gx = str(root / "docs" / "globex" / "item-13-invoice-export.md")
     ac = str(root / "docs" / "acme" / "acme-release-plan.md")
     monkeypatch.setattr(CTX, "index_snippets", lambda *a, **k: [
@@ -235,3 +262,22 @@ def test_engine_scope_from_the_call_and_lt_hits_of_the_other_client_dropped(tmp_
     srcs = [x["src"] for x in e._project_snippets("item 13 release")]
     assert "docs/acme/acme-release-plan.md" in srcs
     assert not any("globex" in s for s in srcs)
+
+
+@pytest.mark.parametrize("kw", [{"company": "Acme", "title": "Globex weekly"}, {"client_scope": False}])
+def test_live_search_follows_the_preparations_hide_nothing(tmp_path, kw):
+    """Review r0: the preparation decided to hide nothing (company and title name different clients, or the scope is
+    switched off). The sheet says so and the engine does not decide again from the title."""
+    from livetips_m0.engine import Engine
+    root = _project(tmp_path)
+    _earlier_sheet(root, "Globex")
+    req = CS.with_scope(_req(root, **kw))
+    sheet = {"schema": "pacenote.sheet/1", "client_scope": CS.for_sheet(req), "blocks": [], "sources": []}
+    assert sheet["client_scope"]["client"] is None
+    assert sheet["client_scope"]["why"] == ("off" if "client_scope" in kw else "not sure")
+    e = Engine.__new__(Engine)
+    e.cfg = {"project_root": str(root), "title": "Globex weekly", "call_file": ""}
+    assert CS.decide(str(root), "Globex weekly")["client"] == "globex"      # what the title alone would pick
+    assert e._client_scope(sheet) is None
+    hits = LK.snippets("Where are we with item 13?", sheet=sheet, roots=[str(root)], k=8)
+    assert any("globex" in (h.get("path") or "").lower() for h in hits)

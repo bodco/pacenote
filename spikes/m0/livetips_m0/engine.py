@@ -1824,12 +1824,15 @@ class Engine:
             return None
 
     def _client_scope(self, sheet=None) -> Optional[dict]:
-        """PB-70: the call's client scope: the one the preparation kept in the sheet, else decided from the project
-        folder, the call's title and file (once per call). None = nothing is hidden."""
+        """PB-70: the call's client scope. With a Meeting Sheet: what the preparation decided (an old sheet without
+        client_scope, or "hide nothing", gives None). Without a sheet: decided from the project folder, the call's
+        title and file (once per call); with no companies here only earlier sheets can back a client folder.
+        None = nothing is hidden."""
         from . import client_scope as CS
-        sc = CS.from_sheet(sheet if sheet is not None else self._sheet())
-        if sc:
-            return sc
+        if sheet is None:
+            sheet = self._sheet()
+        if sheet is not None:
+            return CS.from_sheet(sheet)
         key = (self.cfg.get("project_root"), self.cfg.get("title"), self.cfg.get("call_file"))
         if getattr(self, "_cscope_key", None) != key:
             try:

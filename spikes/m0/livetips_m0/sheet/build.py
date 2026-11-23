@@ -1445,8 +1445,7 @@ def build(req: dict, refresh: bool = False, emit=say, responder: Optional[Callab
             s["reason"] = "the page is longer than %d KB: only the first %d KB were read" % (
                 int(cut.get("limit_bytes") or 0) // 1000, int(cut.get("read_bytes") or 0) // 1000)
     sheet["sources"] = srcs
-    if req.get("_client_scope"):
-        sheet["client_scope"] = CS.public(req["_client_scope"])     # the search during the call keeps to it
+    sheet["client_scope"] = CS.for_sheet(req)       # the search during the call keeps to it, "hide nothing" included
     if tracker and SU.has_blocks(sheet["blocks"]):
         from . import tracker as TR
         sheet["tracker"] = TR.for_sheet(tracker)    # the live window's fallback for the My update card

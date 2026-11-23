@@ -13,7 +13,7 @@ app runs today and measures what the engine assembles BEFORE the model:
   after    commitments.record_notes with the call's notes into the register; duplicates of an existing item, items of
            the other client's "item 13" in the call's Tracker, "we will try" items that stand as open commitments
 
-  python3 bench/g0/run.py --variant A            # prints the table, writes results/A-<date>.json
+  python3 bench/g0/run.py --variant A            # prints the table, writes results/A-<date>.json (never over an existing one; --tag x: A-<date>-x.json)
   python3 bench/g0/run.py --compare A C          # the newest result of each, metric by metric
   python3 bench/g0/run.py --regen-register       # rebuild fixtures/.../live/commitments.jsonl from the past notes
 
@@ -490,9 +490,15 @@ def misses(res: dict) -> str:
     return "\n".join(out)
 
 
-def save(res: dict) -> Path:
+def save(res: dict, tag: str = "") -> Path:
+    """results/<variant>-<date>[-<tag>].json; a file already there (a committed baseline) is never overwritten: the
+    new run gets -2, -3, ..."""
     RESULTS.mkdir(parents=True, exist_ok=True)
-    p = RESULTS / "{}-{}.json".format(res["variant"], res["date"])
+    base = "{}-{}".format(res["variant"], res["date"]) + ("-" + re.sub(r"[^\w.-]+", "-", tag) if tag else "")
+    p, n = RESULTS / (base + ".json"), 1
+    while p.exists():
+        n += 1
+        p = RESULTS / "{}-{}.json".format(base, n)
     p.write_text(json.dumps(res, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
     return p
 
@@ -553,6 +559,7 @@ def main(argv=None) -> int:
     ap.add_argument("--variant", choices=VARIANTS, default="A")
     ap.add_argument("--compare", nargs=2, metavar=("X", "Y"), help="variants (or result files) to compare")
     ap.add_argument("--no-save", action="store_true", help="print only, write no results file")
+    ap.add_argument("--tag", default="", help="suffix of the results file name (A-<date>-<tag>.json)")
     ap.add_argument("--regen-register", action="store_true")
     a = ap.parse_args(argv)
     if a.regen_register:
@@ -567,7 +574,7 @@ def main(argv=None) -> int:
     if m:
         print("\n" + m)
     if not a.no_save:
-        print("\nwrote", save(res).relative_to(HERE))
+        print("\nwrote", save(res, a.tag).relative_to(HERE))
     return 0
 
 

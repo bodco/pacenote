@@ -37,7 +37,7 @@ What the baseline says:
 
 The call's client is decided before ranking; the other client's files, Tracker items and lines of shared files reach
 neither the preparation nor the search during the call. Prep leaks 11 -> 0, live leaks 4 -> 0; prep coverage 80% and
-live answer rate 100% unchanged (the same 4 misses). Lookup p50/p95 0.26/1.14 -> 1.62/2.35 ms (the scope check per question; latency varies between runs). Item 13 cross-client
+live answer rate 100% unchanged (the same 4 misses). Lookup p50/p95 0.26/1.14 -> 1.69/2.55 ms (the scope check per question; latency varies between runs). Item 13 cross-client
 stays 4: it counts the register after the call and a Tracker collected without the call (no client scope).
 Raw numbers: `spikes/m0/bench/g0/results/A-2026-11-23-pb70.json`. The harness now allows the fixture's loopback page
 (`PACENOTE_TEST_WEB_LOOPBACK`): since PB-37 the Acme status page on 127.0.0.1 was refused and its fact dropped out.
@@ -79,7 +79,8 @@ All data is invented.
 
 ```sh
 cd spikes/m0
-python3 bench/g0/run.py --variant A          # the table, and results/A-<date>.json
+python3 bench/g0/run.py --variant A          # the table, and results/A-<date>.json (-2, -3... if it exists)
+python3 bench/g0/run.py --variant A --tag x  # the same, saved as results/A-<date>-x.json
 python3 bench/g0/run.py --compare A C        # the newest result of each variant, metric by metric
 python3 -m pytest -q tests/test_g0_bench.py  # runs the harness, checks the fixture (not the scores)
 ```

@@ -2,7 +2,7 @@
  "schema": "pacenote.bench.g0/1",
  "variant": "A",
  "date": "2026-11-23",
- "commit": "892ef4b",
+ "commit": "22dce02",
  "fixture_sha": "26d3ec6b228f19a9",
  "gold_sha": "180234bba3fef52c",
  "route": "codex",
@@ -121,10 +121,10 @@
     "answer_text_rate": 50.0,
     "answer_text": 2,
     "leaks": 0,
-    "p50_ms": 2.1,
-    "p95_ms": 2.41,
-    "index_build_ms": 4.5,
-    "cold_ms": 6.5
+    "p50_ms": 2.2,
+    "p95_ms": 2.67,
+    "index_build_ms": 5.1,
+    "cold_ms": 7.3
    },
    "after": {
     "duplicates": 3,
@@ -254,10 +254,10 @@
     "answer_text_rate": 100.0,
     "answer_text": 3,
     "leaks": 0,
-    "p50_ms": 1.37,
-    "p95_ms": 1.48,
-    "index_build_ms": 4.2,
-    "cold_ms": 5.5
+    "p50_ms": 1.44,
+    "p95_ms": 1.62,
+    "index_build_ms": 4.5,
+    "cold_ms": 5.9
    },
    "after": {
     "duplicates": 2,
@@ -381,10 +381,10 @@
     "answer_text_rate": 100.0,
     "answer_text": 3,
     "leaks": 0,
-    "p50_ms": 1.48,
-    "p95_ms": 1.75,
-    "index_build_ms": 4.4,
-    "cold_ms": 6.5
+    "p50_ms": 1.58,
+    "p95_ms": 1.84,
+    "index_build_ms": 4.7,
+    "cold_ms": 6.4
    },
    "after": {
     "duplicates": 1,
@@ -426,12 +426,12 @@
   "live_total": 10,
   "live_answer_text_rate": 80.0,
   "live_leaks": 0,
-  "lookup_p50_ms": 1.62,
-  "lookup_p95_ms": 2.35,
+  "lookup_p50_ms": 1.69,
+  "lookup_p95_ms": 2.55,
   "duplicates": 6,
   "wrong_identity": 5,
   "item13_cross_client": 4,
   "false_agreed": 2
  },
- "seconds": 1.25
+ "seconds": 1.31
 }

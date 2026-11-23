@@ -8,7 +8,10 @@ the Current State page, its notes in the folder search.
 - Client folders: folders of the project (up to 3 levels down) whose name is also the first word of a meeting series
   in live/ or a company of the call's other side. Only siblings count as other clients: docs/acme and docs/globex.
 - The call's client: the client folder named by the other side's companies, else by the call's title or its file
-  name. Two clients named, none named, or no sibling client folder: no scope, nothing is hidden (today's behaviour).
+  name, but only a folder a company backs (this call's or one kept in an earlier Meeting Sheet). Two clients named,
+  none named, or no sibling client folder: no scope, nothing is hidden (today's behaviour).
+- The preparation keeps its decision in the sheet (client_scope), "none" included, and the search during the call
+  follows it; it decides by itself only for a call without a sheet.
 - Left out: a file or a call of another client (by its path), a register item of another client's series, a passage
   or a line of a shared file (decisions, Current State) that names only another client, with its section. Items
   without a client stay. A source the PM added by hand for this call is never left out (sheet/build.py, lookup.py).
@@ -17,12 +20,15 @@ the Current State page, its notes in the folder search.
     side(scope, path) / series_side(scope, series) / text_side(scope, text) -> "own" | "other" | None
     filter_text(scope, text) -> (text, lines left out)
 """
+import glob
 import json
 import os
 import re
 from typing import Dict, List, Optional, Tuple
 
 MAX_DEPTH = 3
+MAX_SHEETS = 200
+MAX_SHEET_BYTES = 2_000_000
 SKIP_DIRS = {"live", "_notion", "pacenote", "meeting-sheet", "node_modules", "__pycache__", "repos", "build", "dist"}
 CALL_NAME = re.compile(r"^\d{4}-\d\d-\d\d-(?:\d{4}-)?([^\W_]+)", re.U)
 HEADING = re.compile(r"^(#{1,6})\s+(.*)$")
@@ -75,23 +81,58 @@ def _client_dirs(root: str, hints: set) -> Dict[str, Dict[str, str]]:
     return out
 
 
+def _recorded_companies(live: str) -> List[str]:
+    """The other side's companies kept in the project's earlier Meeting Sheets (live/, call folders and their .work/)."""
+    out: List[str] = []
+    n = 0
+    for pattern in ("*.sheet.json", "*/*.sheet.json", "*/.work/*.sheet.json"):
+        for p in sorted(glob.glob(os.path.join(glob.escape(live), pattern))):
+            n += 1
+            if n > MAX_SHEETS:
+                return out
+            try:
+                if os.path.getsize(p) > MAX_SHEET_BYTES:
+                    continue
+                with open(p, encoding="utf-8") as f:
+                    theirs = ((json.load(f).get("participants") or {}).get("theirs")) or []
+            except (OSError, ValueError, AttributeError):
+                continue
+            out += [str(x.get("company") or "") for x in theirs if isinstance(x, dict) and str(x.get("company") or "").strip()]
+    return out
+
+
+def _backs(company: str, label: str) -> bool:
+    return label in _names(company) or label == slug(company)
+
+
 def decide(root: str, title: str = "", companies: Optional[List[str]] = None, call: str = "") -> Optional[dict]:
     """The scope of one call: {client, others, folders: {label: [rel paths]}, root, why}, or None when the client
-    cannot be told apart (then nothing is hidden)."""
+    cannot be told apart (then nothing is hidden).
+
+    The call's client folder must be backed by a company: one of this call's other side, or one kept in an earlier
+    Meeting Sheet of the project. The title or the call's file name only picks among such folders and never makes a
+    folder a client on its own, so a project with only topic folders (docs/design, docs/research, series "Design
+    review") gets no scope. The other clients are the own folder's siblings named like a company or a series (the
+    G0 fixture has no earlier sheets to back them). The engine passes no companies, so without a sheet only the
+    earlier sheets can back a client."""
     root = os.path.realpath(os.path.expanduser(root or ""))
     if not root or not os.path.isdir(root):
         return None
     companies = [c for c in (companies or []) if str(c or "").strip()]
-    hints = _series_words(os.path.join(root, "live")) | {slug(c) for c in companies} | set().union(*[_names(c) for c in companies])
+    live = os.path.join(root, "live")
+    recorded = _recorded_companies(live)
+    backing = companies + recorded
+    hints = _series_words(live) | {slug(c) for c in backing} | set().union(*[_names(c) for c in backing])
     groups = _client_dirs(root, hints)
     labels = {lb for g in groups.values() for lb in g}
     if len(labels) < 2:
         return None
-    named = {lb for c in companies for lb in labels if lb in _names(c) or lb == slug(c)}
+    backed = {lb for lb in labels if any(_backs(c, lb) for c in backing)}
+    named = {lb for lb in backed if any(_backs(c, lb) for c in companies)}
     why = "the other side's company"
     by_title = {lb for lb in labels if lb in _names(title) or lb in _names(os.path.basename(call or "").replace("-", " "))}
     if not named:
-        named, why = by_title, "the call's title"
+        named, why = by_title & backed, "the call's title"
     elif by_title and by_title != named:
         return None                     # the company says one client, the title another: not sure, hide nothing
     if len(named) != 1:
@@ -112,6 +153,15 @@ def from_sheet(sheet) -> Optional[dict]:
     """The scope the preparation decided and kept in the sheet (client_scope), or None."""
     sc = sheet.get("client_scope") if isinstance(sheet, dict) else None
     return sc if isinstance(sc, dict) and sc.get("client") and sc.get("others") and sc.get("root") else None
+
+
+def for_sheet(req: dict) -> dict:
+    """What the sheet keeps: the scope, or {client: None, why} when the preparation decided to hide nothing (switched
+    off, or not sure). Always written, so the search during the call never decides differently."""
+    sc = req.get("_client_scope")
+    if sc:
+        return public(sc)
+    return {"client": None, "why": "off" if req.get("client_scope") is False else "not sure"}
 
 
 def for_request(req: dict) -> Optional[dict]:

@@ -73,6 +73,8 @@ def test_results_file_has_no_absolute_paths_and_compare_works(bench, result, tmp
     clean = {k: v for k, v in result.items() if not k.startswith("_")}
     monkeypatch.setattr(bench, "RESULTS", tmp_path)
     p = bench.save(clean)
+    again = bench.save(clean)                       # a committed baseline of the same day is never overwritten
+    assert again != p and again.name.endswith("-2.json") and bench.save(clean, "x").name.endswith("-x.json")
     text = p.read_text(encoding="utf-8")
     assert "/Users/" not in text and "/var/folders" not in text and "/tmp/" not in text
     out = bench.compare(json.loads(text), json.loads(text))
