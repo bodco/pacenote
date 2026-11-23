@@ -261,3 +261,33 @@ items:
     title_uk: "Проєкти організації знову синхронізуються"
     body_en: "When you start a new organization project in New project, you are now always on it, so its calls sync. Before, they could fail with \"invalid fields: org_project_id\". A project linked to one you are not on now says so and how to fix it."
     body_uk: "Коли ви створюєте новий проєкт організації в New project, ви тепер завжди в ньому, тож його дзвінки синхронізуються. Раніше вони могли падати з \"invalid fields: org_project_id\". Проєкт, привʼязаний до проєкту організації без вас, тепер каже про це і як виправити."
+  - id: hubspot_crm
+    version: 0.27.0
+    title_en: "Your call in HubSpot"
+    title_uk: "Ваш дзвінок у HubSpot"
+    body_en: "Update HubSpot on a call page logs the Call, finds or adds the contacts, company and Lead, suggests deal fields with evidence from the call, and adds the notes and your follow-up email to the HubSpot timeline. You review every row, Undo takes it back, and the transcript is never sent. Automatic writes are off until you turn them on in Settings > Integrations > HubSpot."
+    body_uk: "Update HubSpot на сторінці дзвінка записує Call, знаходить або додає контакти, компанію і Lead, пропонує поля угоди з доказами з дзвінка і додає нотатки та ваш follow-up лист у таймлайн HubSpot. Кожен рядок ви переглядаєте самі, Undo повертає зміну, а транскрипт ніколи не надсилається. Автоматичний запис вимкнено, доки ви не ввімкнете його в Settings > Integrations > HubSpot."
+  - id: hubspot_tasks
+    version: 0.27.0
+    title_en: "HubSpot tasks in Tracker"
+    title_uk: "Задачі HubSpot у Трекері"
+    body_en: "Your open HubSpot tasks show in On you, the Tracker and the call window's On me tab. Add to HubSpot tasks turns an item on you into a task on the call's contacts, company and deal, and a tick in Pacenote completes it in HubSpot."
+    body_uk: "Ваші відкриті задачі HubSpot видно в On you, Трекері і вкладці On me вікна дзвінка. Add to HubSpot tasks робить із пункту на вас задачу на контактах, компанії і угоді дзвінка, а галочка в Pacenote закриває її в HubSpot."
+  - id: call_language
+    version: 0.27.0
+    title_en: "Everything in the language of the call"
+    title_uk: "Усе мовою дзвінка"
+    body_en: "Notes, Summary, Recap, the follow-up, the Meeting Sheet, the brief and the Notion page are written in the language of the call, not the interface language. A call in two or three languages gets an Output language menu and Regenerate on its call page."
+    body_uk: "Нотатки, Summary, Recap, follow-up, Meeting Sheet, бриф і сторінка Notion пишуться мовою дзвінка, а не мовою інтерфейсу. Дзвінок двома-трьома мовами має на своїй сторінці меню Output language і Regenerate."
+  - id: tips_strip_language
+    version: 0.27.0
+    title_en: "Transcript and call language in the tips window"
+    title_uk: "Транскрипт і мова дзвінка у вікні підказок"
+    body_en: "The tips window strip has a Transcript button (⌘⇧T) and a call language chip. Pick another language for the rest of the call when people switch."
+    body_uk: "Смужка вікна підказок має кнопку Transcript (⌘⇧T) і чип мови дзвінка. Коли люди переходять на іншу мову, оберіть її на решту дзвінка."
+  - id: cancel_downloads
+    version: 0.27.0
+    title_en: "Cancel a download"
+    title_uk: "Завантаження можна скасувати"
+    body_en: "Setup, add-ons and Ollama models show the download size and free space first, and Cancel stops a download and cleans up after it."
+    body_uk: "Налаштування, додатки і моделі Ollama спершу показують розмір завантаження і вільне місце, а Cancel зупиняє завантаження і прибирає за ним."

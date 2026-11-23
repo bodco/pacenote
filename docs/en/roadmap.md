@@ -2,7 +2,7 @@
 
 Where Pacenote has been and where it is going: what shipped, what we build now, what comes next. Updated with every release.
 
-Updated: 20 November 2026. Visual version: https://pacenote.bodco.pm/roadmap/
+Updated: 23 November 2026. Visual version: https://pacenote.bodco.pm/roadmap/
 
 ## The route
 
@@ -17,7 +17,8 @@ Updated: 20 November 2026. Visual version: https://pacenote.bodco.pm/roadmap/
 - [x] 0.23: Three looks
 - [x] 0.24-0.25: New screen layouts
 - [x] 0.26: Notion and call folders
-- [>] Now: Call language
+- [x] 0.27: Call language and HubSpot
+- [>] Now: Better briefs and tips
 - [ ] Next: Two-factor sign-in and emails
 - [ ] Later: Paid plans and mobile
 
@@ -27,7 +28,6 @@ Updated: 20 November 2026. Visual version: https://pacenote.bodco.pm/roadmap/
 
 ### Now
 
-- **Your call's language, everywhere.** The transcript keeps the language people actually speak, and the brief, tips, notes and follow-up follow the language of the call. A call with two or three languages gets an Output language menu and Regenerate on the call page.
 - **Better briefs and tips.** Every call is reviewed after it ends: which tips helped, which were noise, what was missed. The prompts change from that.
 
 ### Next
@@ -49,6 +49,7 @@ Updated: 20 November 2026. Visual version: https://pacenote.bodco.pm/roadmap/
 
 ## What shipped
 
+- **23 Nov · 0.27. Call language and HubSpot.** Notes, Summary, the follow-up, the Meeting Sheet, the brief and Notion follow the language of the call, and a call in two or three languages can be regenerated in another one. A Transcript button and a call language chip in the tips window. Update HubSpot logs the call, its people, deal fields, the meeting notes and your follow-up email, each with Undo, and your HubSpot tasks show in the Tracker. Downloads you can cancel. Gemini now through an API key.
 - **20 Nov · 0.26.2-0.26.4. Calls in folders, speakers you can fix.** A folder for every call, and older calls move into theirs on their own. Fix who said what after the call, merge speakers and remember a voice, then Rewrite notes with the right names. Model lists come from your AI provider. Sign in to the web console with your email and password. Fixes from the beta.
 - **19 Nov · 0.26-0.26.1. Connect with Notion.** Connect Notion in one click and keep a local copy of it without Control Tower. Notices inside Pacenote instead of pop-up alerts, questions right where you clicked, and what happened at the top of the Summary.
 - **18-19 Nov · 0.24-0.25. New screen layouts.** Home, the call pages, the Meeting Sheet steps, Tracker, Past calls, Statistics and Settings laid out anew. Roadbook and Broadsheet redrawn, who decided next to each decision, tips as key, detail and source, a compact tip card under the camera. Setup with no Terminal or browser, and updates in one click.

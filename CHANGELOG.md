@@ -3,7 +3,7 @@
 Pacenote. Earlier versions are described in the commit messages and in
 [docs/en/live-tips.md](docs/en/live-tips.md), section 14.
 
-## Unreleased
+## 0.27.0 (2026-11-23)
 
 - **Gemini now requires an API key.** Pacenote removed Google account sign-in through Antigravity CLI because
   Google's terms prohibit access through third-party apps and Google can suspend accounts. If you selected
