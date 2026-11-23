@@ -50,6 +50,50 @@ Pacenote. Earlier versions are described in the commit messages and in
   or login, where a token may sit. The plan footer says that Google Drive may sync the copies to colleagues.
 - **Quick prep takes a link (2026-11-22, FB7):** the Sources line of Quick has a Link to add field, so a link no
   longer needs Expert.
+- **The call language is kept in the transcript (2026-11-21, PB-30, FB1):** with Ukrainian + English, English speech
+  of the other side no longer comes out translated to Ukrainian, mixed, or in Icelandic or Russian. With two or more
+  languages, each line is written in the language spoken; the main one is the language spoken most so far (after the
+  first minute of the call), not the first in the list. A language outside the set is written in the main language
+  and the line is marked `translated_from` in the call's `.timing.jsonl`; Russian is never written (redone in the
+  main language, also a short "Пока."; even when English is the main one). A short reply in another language keeps
+  its own language. On a one-language call the language is forced (no detection), so no marker. Whisper's stop-phrases on silence ("Дякую за перегляд!", "Thank you for watching", "Bye") are dropped when
+  the line is short and its speech is near-silent; the same words in a normal voice are kept. Rules: `rules/asr_filters.yaml`.
+  A marked line that is still Russian or in a wrong script is translated in the background (a local model through
+  Ollama first, else the AI route from Settings > AI, which the app passes to the recorder for the call, when the call
+  may use the AI; a local answer that is still Russian or in a wrong script falls through to that route; text only,
+  never audio; the live recorder never waits, 15 s per request): the translation replaces the line in the live
+  transcript at once (tips window and tips engine) and in the saved file when the call ends, and `.timing.jsonl` keeps
+  the original and `translated_from`. A call request cannot set the translation command (it comes only from the app's
+  `config.json`). The text goes only to the AIs you allowed for live tips (the same chain and exclusions: never the
+  Gemini account or the model on this Mac through the route), and only when the app launches the recorder for that call with
+  permission: without it, whatever `config.json` or the environment holds, only the local model is used and the recorder
+  gets no key. A translation of several lines is saved as one row, and in the live pane it changes the row of its own
+  channel (you or the other side), even when the row is read after the translation, and even when the recorder dropped
+  an echo of your mic in the same second (the writer publishes each row's id when it appends the row). With no route the marked line stays. A short out-of-set phrase now uses the call's
+  main language (not the previous line's); "Субтитри зроблені спільнотою" and "Subtitles by" are dropped only on
+  near-silence, like the other stop-phrases. Every line of a Latin-script language outside the set (French, Spanish,
+  German...) is translated, also when the foreign text is in the call's own script (French marked as English) and Whisper was sure of it: the model answers
+  SAME when the line is already in the target language, and an answer that only repeats the text is not used (the
+  next route is asked, else the line stays marked). The local model is used only on this Mac (redirects included,
+  never through a proxy); a model server elsewhere gets the text only with the call's permission. Two identical rows
+  from one speaker stay two lines in the live view, and the end-of-call rewrite does not add a translated row to the
+  tips engine a second time, nor drops it when the engine first reads the file after the rewrite. A line from outside
+  the set is translated into the language it was written for (the main one), also when Whisper wrote it in the
+  other language of the call (French with English as the main one, written in Ukrainian letters); Ukrainian heard as
+  Russian stays Ukrainian. A failed translation is logged with its route and the reason (a timeout, an exit code,
+  a bad answer), never with the text.
+  A marked row now ends with the language the speech was in, ` (← fr)` (the start of the row is unchanged), and the
+  transcript pane shows "translated from fr" next to it, whether the translation succeeded, the model said SAME or no
+  translator answered. When the saved transcript is replaced at the end of the call, the pane reloads the new file
+  (by its identity, also when it is longer) instead of adding it again or reading it from the old offset, and the tips
+  engine keeps each row's own id and speaker when one speaker's translated line matches another speaker's words in
+  the same second (rows already read are matched by their place in the file, also when the engine joined mid-call,
+  and a row from before the join never gives its id to a later row with the same words).
+  Belarusian or Bulgarian heard on a call is marked and translated into the call's main language, Ukrainian or
+  English, also when Whisper wrote it in Cyrillic on an English call (the model answers SAME when it was Ukrainian
+  after all); Ukrainian heard as Russian still stays unmarked. A translation that is still in another language of the
+  same script (a French paraphrase instead of English), or only keeps part of the original ("Bonne soirée" for
+  "Passez une bonne soirée"), is not used: the next route is asked, else the line stays marked.
 
 ## 0.27.2 (2026-11-23)
 

@@ -7,6 +7,7 @@ from . import call_layout
 from typing import Dict, List, Optional
 
 LINE_RE = re.compile(r"^\[(\d\d:\d\d:\d\d)\]\s+(.+?)(?:\s+\[(S\d+)\])?\s+\((\w{2})\):\s?(.*)$")
+TR_MARK_RE = re.compile(r"\s\(\u2190 ([a-z]{2,3}|\?)\)$")   # PB-30: " (← fr)" ends a row whose speech was in another language
 
 
 def hms_to_s(v: str) -> float:
@@ -32,6 +33,8 @@ class Line:
     seg_end: Optional[float] = None   # seconds of day: end of the speech segment
     written: Optional[float] = None   # seconds of day: line appended to the transcript
     dur: Optional[float] = None
+    seq: Optional[int] = None         # PB-30: the recorder's id of the line (timing record), keys a "translated" event
+    translated_from: Optional[str] = None   # PB-30: the row's " (\u2190 fr)" marker, "und" for " (← ?)"
 
     @property
     def t_s(self) -> float:
@@ -44,7 +47,13 @@ def parse_line(raw: str, line_id: int, me_label: str) -> Optional[Line]:
         return None
     t, label, stag, lang, text = m.groups()
     speaker = "me" if label.strip() == me_label else "them"
-    return Line(line_id, t, speaker, label.strip(), stag, lang, text.strip())
+    text = text.strip()
+    mk = TR_MARK_RE.search(text)
+    src = None
+    if mk:                                   # the tips see the words only; the row event and translations match them
+        src = "und" if mk.group(1) == "?" else mk.group(1)
+        text = text[:mk.start()].rstrip()
+    return Line(line_id, t, speaker, label.strip(), stag, lang, text, translated_from=src)
 
 
 def load_timing(path: Path) -> List[dict]:
@@ -71,6 +80,8 @@ def load_call(md_path: Path, me_label: str) -> List[Line]:
     timing = load_timing(call_layout.sidecar(str(md_path), ".timing.jsonl"))
     pool: Dict[tuple, List[dict]] = {}
     for rec in timing:
+        if rec.get("event"):
+            continue                              # PB-30: a "translated" event, not a line's timing
         pool.setdefault((rec.get("t"), rec.get("ch")), []).append(rec)
     for ln in lines:
         recs = pool.get((ln.t, ln.speaker))

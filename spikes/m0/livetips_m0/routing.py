@@ -800,8 +800,9 @@ def _secret(loader: Callable[[str], str], name: str) -> str:
         return ""
 
 
-def provider_from_env(job: Optional[str] = None, timeout: float = 120.0) -> Provider:
-    """For a one-off job started by the app: LT_AI_ROUTE (api | code), LT_AI_AUTO (1 | 0), LT_AI_STATE,
+def provider_from_env(job: Optional[str] = None, timeout: float = 120.0, background: bool = False) -> Provider:
+    """`background=True`: the job follows the live tips rules (the same chain and exclusions, PB-30).
+    For a one-off job started by the app: LT_AI_ROUTE (api | code), LT_AI_AUTO (1 | 0), LT_AI_STATE,
     LT_CLAUDE_CLI; the key in CLAUDE_API. Without LT_AI_ROUTE: the API key only, as before 0.8.2."""
     env = os.environ
     route = env.get("LT_AI_ROUTE", "")
@@ -815,6 +816,7 @@ def provider_from_env(job: Optional[str] = None, timeout: float = 120.0) -> Prov
     from .cost import ProviderCaps
     return RoutedProvider(j, route, legs, caps=ProviderCaps.from_cfg({}),
                           auto=bool(route) and env.get("LT_AI_AUTO", "1") == "1", state=RouteState(),
+                          background=background,
                           gemini_fallback=bool(route) and env.get("LT_GEMINI_FALLBACK") == "1",
                           chain=chain_from(env.get("LT_AI_CHAIN")) if route else None)
 

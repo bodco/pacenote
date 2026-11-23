@@ -23,6 +23,7 @@ import argparse
 import collections
 import datetime as dt
 import difflib
+import itertools
 import json
 import os
 import queue
@@ -41,6 +42,7 @@ import numpy as np
 # Optional semantic layer (Ollama embeddings). Without it everything works on keywords as before.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import call_layout
+import translate as TR
 try:
     import semantic as SEM
     SEM_ERR = None
@@ -62,8 +64,19 @@ DEFAULTS = {
     "them_label": "Співрозмовник",
     "me_lang": "uk",            # language of the PM's own mic; "auto" = pick from langs
     "me_langs": [],             # optional: languages the PM may switch between (e.g. uk+en); mic picks among them
-    "langs": ["uk", "en"],      # allowed languages in this meeting, the first one is the main one
+    "langs": ["uk", "en"],      # allowed languages in this meeting, the first one is the main one until the warm-up ends
     "lang_bias": 2.0,           # another allowed language wins only if it is this many times likelier than the main one
+    "lang_warmup_s": 60.0,      # PB-30 (D56): s of the call before the main language is the one most spoken so far
+    "lang_foreign_min": 0.5,    # PB-30: a language outside the set is recognised from this detector probability
+    "silence_max_s": 2.5,       # PB-30 (rules/asr_filters.yaml > silence_stop_phrases): only lines this short ...
+    "silence_rms": 0.0035,      # ... whose speech frames are this quiet (well under the VAD floor) are dropped
+    "translate": True,          # PB-30: a line Whisper wrote in another language is translated in the background
+    "translate_timeout_s": 15.0,  # ... each request (local model, then the PM's AI route) has this deadline
+    "translate_queue": 16,      # ... lines waiting for a translation; when behind the oldest stays marked
+    "translate_drain_s": 20.0,  # ... at the end of the call the recorder waits this long for the queued ones
+    "translate_model": "",      # ... local model (default: LT_LOCAL_MODEL, else gemma4:26b)
+    "translate_cmd": [],        # ... the tips engine's text command, e.g. [python, "-m", "livetips_m0.translate_text"]
+    "translate_dir": "",        # ... its PYTHONPATH (the folder that contains livetips_m0/)
     "vad_mode": 2,              # webrtcvad aggressiveness 0..3
     "end_silence": 0.7,         # s of silence that closes a segment
     "max_segment": 9.0,         # s, hard cut for long monologues (12 until 2026-10-23: the trigger line of
@@ -138,8 +151,7 @@ DEFAULTS = {
 
 # Phrases Whisper invents on silence or noise. Compared after normalisation.
 HALLUCINATIONS = {
-    "thank you", "thanks for watching", "thank you for watching", "you", "bye",
-    "дякую за перегляд", "дякую", "субтитри", "субтитрування", "продовження далі",
+    "you", "субтитри", "субтитрування", "продовження далі",   # PB-30: "thank you", "bye", "дякую" ... are in SILENCE_STOP_PHRASES
     "спасибо за просмотр", "спасибо", "субтитры", "редактор субтитров",
     "gracias", "gracias por ver", "subtítulos", "amara.org",
 }
@@ -150,8 +162,8 @@ HALLUCINATIONS = {
 # A sentence matching any pattern is removed; a line left empty is dropped.
 HALLUCINATION_PATTERNS = [re.compile(p, re.I) for p in (
     r"субтитр", r"subtit", r"dimatorzok", r"корректор", r"amara\.org",
-    r"продолжение следует", r"продовження (далі|буде|слідує)",
-    r"спасибо за просмотр", r"дякую за перегляд", r"thanks? (you )?for watching",
+    r"продолжение следует", r"продовження (далі|слідує)",
+    r"спасибо за просмотр",
     r"подписывайтесь", r"підписуйтесь", r"ставьте лайк", r"ставте лайк",
     r"^\W*(динамичная |спокойная |веселая |тревожная )?музыка\W*$", r"^\W*музика\W*$", r"^\W*music\W*$",
     # Seen on real calls as a whole line on noise or silence (not inside a longer sentence):
@@ -178,8 +190,9 @@ DICT_RULES: list = []         # 0.10.0: the PM's dictionary, "heard as" variants
 def clean_text(text: str, prompt_words: set[str]) -> str:
     """Remove Whisper artefacts. Returns "" when nothing real is left."""
     text = (text or "").strip()
-    parts = re.split(r"(?<=[.!?…])\s+", text)
-    text = " ".join(p for p in parts if p and not any(rx.search(p) for rx in HALLUCINATION_PATTERNS)).strip()
+    if norm(text) not in SILENCE_STOP_PHRASES:     # PB-30: a listed stop-phrase is judged by loudness in asr_segment()
+        parts = re.split(r"(?<=[.!?…])\s+", text)
+        text = " ".join(p for p in parts if p and not any(rx.search(p) for rx in HALLUCINATION_PATTERNS)).strip()
     if not text or norm(text) in HALLUCINATIONS:
         return ""
     # Repetition loop ("Маша, Льоша, Маша, Льоша, ..." or "сьому сьому сьому"): collapse repeats;
@@ -235,6 +248,207 @@ def fix_lang_by_script(text: str, lang: str, langs: list[str]) -> str:
             if l not in CYRILLIC_LANGS:
                 return l
     return lang
+
+
+RU_ONLY_LETTERS = re.compile(r"[ыэъё]", re.I)
+UK_ONLY_LETTERS = re.compile(r"[іїєґ]", re.I)
+RU_ONLY_WORDS = {   # common Russian words that Ukrainian does not share (PB-30: "Russian never")
+    "это", "что", "как", "его", "они", "мы", "только", "есть", "был", "была", "были", "когда", "если", "уже",
+    "нет", "очень", "сегодня", "хорошо", "спасибо", "привет", "здравствуйте", "можно", "нужно", "чтобы",
+    "потому", "меня", "тебя", "этот", "эта", "эти", "который", "которые", "сейчас", "тоже", "ещё", "еще",
+    "пока", "ладно", "пожалуйста", "конечно",
+}
+
+
+def is_russian(text: str) -> bool:
+    """PB-30 (D56): the text is Russian: Cyrillic, and either letters only Russian has (ы э ъ ё) or enough words only
+    Russian has. Ukrainian letters (і ї є ґ) with no Russian ones mean Ukrainian."""
+    letters = re.findall(r"[^\W\d_]", text)
+    if len(letters) < 3 or sum(1 for c in letters if "Ѐ" <= c <= "ӿ") / len(letters) < 0.7:
+        return False
+    words = re.findall(r"[^\W\d_]+", text.lower())
+    ratio = sum(w in RU_ONLY_WORDS for w in words) / max(1, len(words))
+    if RU_ONLY_LETTERS.search(text):
+        return not UK_ONLY_LETTERS.search(text) or ratio >= 0.3
+    hits = sum(w in RU_ONLY_WORDS for w in words)
+    if len(words) <= 2 and any(w in RU_ONLY_WORDS and w != "уже" for w in words):
+        return True                      # a short reply: "Пока.", "Хорошо." ("уже" is also Ukrainian)
+    return ratio >= 0.2 and hits >= 2   # one hit is not enough in a longer line
+
+
+PRODUCT_NAMES = {"slack", "jira", "zoom", "teams", "notion", "github", "gitlab", "confluence", "figma", "google",
+                 "excel", "outlook", "salesforce", "hubspot", "trello", "asana", "linear", "pacenote"}
+
+
+def script_mismatch(text: str, lang: str) -> bool:
+    """The text is in another script than `lang` (Latin letters on a Cyrillic language or the other way round).
+    On a line that has Cyrillic, capitalized Latin words and known product names (Slack, Jira) are not counted."""
+    if lang in CYRILLIC_LANGS and re.search(r"[Ѐ-ӿ]", text):
+        text = " ".join(w for w in re.findall(r"[^\W\d_]+", text)
+                        if not (re.fullmatch(r"[A-Za-z]+", w) and (w[0].isupper() or w.lower() in PRODUCT_NAMES)))
+    letters = re.findall(r"[^\W\d_]", text)
+    if len(letters) < 3:
+        return False
+    cyr = sum(1 for c in letters if "Ѐ" <= c <= "ӿ") / len(letters)
+    return cyr <= 0.1 if lang in CYRILLIC_LANGS else cyr >= 0.7
+
+
+class LangShare:
+    """PB-30 (D56): which allowed language is spoken most. The share is seconds of speech since the call start; during
+    the warm-up (and with one language) the first language of the set is the main one."""
+
+    def __init__(self, langs: list[str], warmup_s: float = 60.0):
+        self.warmup_s = warmup_s
+        self.reset(langs)
+
+    def reset(self, langs: list[str]) -> None:
+        self.langs = list(langs) or ["uk"]
+        self.secs: dict[str, float] = {}
+        self.t0: float | None = None
+
+    def add(self, lang: str | None, secs: float) -> None:
+        if lang in self.langs:
+            self.secs[lang] = self.secs.get(lang, 0.0) + max(0.0, secs)
+
+    def dominant(self, t: float) -> str:
+        if self.t0 is None:
+            self.t0 = t
+        if len(self.langs) == 1 or t - self.t0 < self.warmup_s or not any(self.secs.values()):
+            return self.langs[0]
+        return max(self.langs, key=lambda l: (self.secs.get(l, 0.0), -self.langs.index(l)))
+
+
+# rules/asr_filters.yaml > silence_stop_phrases (mirrored here, a test keeps the two in step)
+SILENCE_STOP_PHRASES = {
+    "дякую за перегляд", "дякуємо за перегляд", "продовження буде", "субтитри зроблені спільнотою", "subtitles by",
+    "thank you for watching", "thanks for watching", "thank you", "thanks", "bye", "дякую",
+}
+
+
+def silence_stop(text: str, speech_s: float, rms: float, cfg: dict) -> bool:
+    """PB-30 (D56 point 5): a Whisper stop-phrase ("Дякую за перегляд!") on a short line in near-silence is not speech.
+    `rms` is the loudness of the speech frames only. The same words in a normal voice are kept."""
+    return (norm(text) in SILENCE_STOP_PHRASES and speech_s <= float(cfg.get("silence_max_s", 2.5))
+            and rms < float(cfg.get("silence_rms", 0.0035)))
+
+
+def drop_silence_stop(seg: "Segment", text: str, cfg: dict) -> bool:
+    """True when `text` decoded from `seg` is a stop-phrase hallucination on near-silence (logged at debug level)."""
+    rms = seg.voiced_rms if seg.voiced_rms >= 0 else (
+        float(np.sqrt(np.mean(np.square(seg.audio)))) if len(seg.audio) else 0.0)
+    if silence_stop(text, seg.speech_s, rms, cfg):
+        log(f"debug: dropped stop-phrase {text!r} ({seg.speech_s:.1f} s, rms {rms:.4f})")
+        return True
+    return False
+
+
+class Decoded(tuple):
+    """PB-30: a decode result (text, language tag, translated_from) that also says whether a kept segment was unsure
+    (`low_conf`). It compares equal to the plain tuple."""
+    low_conf = False
+
+    def __new__(cls, items, low_conf: bool = False):
+        self = super().__new__(cls, items)
+        self.low_conf = low_conf
+        return self
+
+
+LOW_CONF_LOGPROB = -1.0       # a kept segment below this was decoded unsure (the hard cut is -1.25)
+
+
+def asr_segment(whisper, seg: "Segment", cfg: dict, lang_share: LangShare, last_lang: dict, prompt: str | None,
+                prompt_words: set[str]) -> tuple[str, str, str | None] | None:
+    """PB-30 (D56): one segment -> (text, language tag, translated_from), or None when nothing real is left. A short
+    segment falls back to the channel's previous language only when the detector is unsure (a short English reply
+    after a Ukrainian line stays English). The seconds of speech are credited to the language that was heard, not to
+    the language the decode was forced to."""
+    me_set = cfg["me_langs"] if len(cfg["me_langs"]) > 1 else None
+    main = lang_share.dominant(seg.t_start)         # the language most spoken so far is the main one
+    heard = foreign = None
+    short = seg.duration < cfg["sticky_short"]
+    if seg.channel == "me" and cfg["me_lang"] != "auto" and not me_set:
+        lang = main = heard = cfg["me_lang"]
+    else:
+        # The PM's mic switches only between own languages (e.g. uk <-> en), never to ru by mistake.
+        allowed = me_set if seg.channel == "me" and me_set else None
+        lang, heard, foreign = whisper.choose(seg.audio, allowed, main, last_lang[seg.channel] if short else main)
+        if lang is None and short:
+            lang = last_lang[seg.channel]           # no detector: a short segment keeps the channel's language
+    auto = lang is None                             # Whisper picks the language: what it says is the evidence
+    dec = whisper.decode(seg.audio, lang, prompt, main, foreign)
+    text, lang, translated_from = dec
+    low_conf = bool(getattr(dec, "low_conf", False))
+    text = clean_text(text, prompt_words)
+    if not text or not norm(text):
+        return None
+    if drop_silence_stop(seg, text, cfg):
+        return None                                 # "Дякую за перегляд!", "Bye." on near-silence
+    lang_share.add(None if translated_from else (heard or (lang if auto else None)), seg.speech_s)
+    return Decoded((text, lang, translated_from), low_conf)
+
+
+def needs_translation(text: str, lang: str, translated_from: str | None, low_conf: bool = False) -> bool:
+    """PB-30 (D56): a line marked with a known language outside the set (French decoded in English, Belarusian decoded
+    in Ukrainian) is always translated in the background: script and confidence cannot tell French from English or
+    Belarusian from Ukrainian, so the model checks the language and answers SAME when Whisper already wrote it in the
+    target one. A line marked Russian or unknown is translated when it is Russian, in a wrong script or unsure: for
+    those the script tells (clean Ukrainian heard as Russian stays as it is)."""
+    if not translated_from:
+        return False
+    return (translated_from not in ("ru", "und") or is_russian(text) or script_mismatch(text, lang)
+            or low_conf)
+
+
+# PB-30 (review round 6): common words of one language that the others in this table do not use. An answer to a
+# translation is rejected when it has more of another language's words than of the target's (a French paraphrase
+# instead of an English translation); a short answer with none of them passes.
+FUNCTION_WORDS = {
+    "en": {"the", "and", "is", "are", "you", "to", "of", "we", "it", "this", "that", "with", "for", "have", "not",
+           "would", "like", "please", "thank", "will", "can", "my", "your", "what", "be", "was", "i"},
+    "fr": {"je", "tu", "nous", "vous", "le", "la", "les", "un", "une", "des", "est", "et", "pas", "que", "qui",
+           "pour", "avec", "ce", "cette", "mais", "oui", "merci", "voudrais", "bonjour", "du", "au", "suis"},
+    "de": {"der", "die", "das", "und", "ist", "ich", "nicht", "ein", "eine", "wir", "mit", "für", "auf", "danke",
+           "auch", "zu", "bitte", "möchte"},
+    "es": {"el", "los", "las", "del", "una", "por", "para", "con", "pero", "gracias", "hola", "está", "yo", "muy",
+           "quiero", "es", "y"},
+    "it": {"il", "gli", "della", "che", "sono", "per", "con", "una", "grazie", "ciao", "è", "anche", "molto",
+           "vorrei"},
+    "pt": {"os", "uma", "não", "você", "obrigado", "obrigada", "com", "para", "mas", "é", "muito", "eu", "gostaria"},
+    "pl": {"nie", "jest", "się", "że", "na", "dziękuję", "tak", "jak", "ale", "czy", "proszę", "chciałbym"},
+    "uk": {"і", "й", "та", "що", "це", "не", "на", "як", "але", "дякую", "я", "ми", "ви", "так", "вже", "є", "дуже",
+           "будь", "ласка"},
+    "be": {"і", "што", "гэта", "не", "на", "як", "але", "дзякуй", "я", "мы", "вы", "так", "ужо", "ёсць", "вельмі",
+           "калі", "ласка", "ў"},
+    "bg": {"и", "че", "това", "не", "на", "как", "но", "благодаря", "аз", "ние", "вие", "да", "много", "моля"},
+}
+
+
+def in_language(text: str, dst: str) -> bool:
+    """False when the text has more common words of another language than of `dst` (only the words the two do not
+    share count), or has letters only Belarusian has when `dst` is Ukrainian. True when `dst` is not in the table."""
+    own = FUNCTION_WORDS.get(dst)
+    if own is None:
+        return True
+    if dst == "uk" and re.search(r"[ўЎ]", text):
+        return False
+    raw = re.findall(r"[^\W\d_]+", text)
+    words = [w.lower() for w in raw]
+    # a capitalized word after the first one is a name ("Los Angeles", "Le Bistro"): not a word of another language
+    plain = [w.lower() for i, w in enumerate(raw) if i == 0 or not w[0].isupper()]
+    for lang, other in FUNCTION_WORDS.items():
+        if lang == dst:
+            continue
+        mine = sum(w in own and w not in other for w in words)
+        theirs = sum(w in other and w not in own for w in plain)
+        if theirs > mine:
+            return False
+    return True
+
+
+def translation_ok(new: str, dst: str) -> bool:
+    """A translation is used only when it is real text in the target language, never Russian: the right script and no
+    more common words of another language than of the target one."""
+    return bool(norm(new)) and not is_russian(new) and not script_mismatch(new, dst) and in_language(new, dst)
 
 
 def now() -> float:
@@ -344,6 +558,7 @@ class Segment:
     t_end: float
     audio: np.ndarray
     voiced_s: float = -1.0   # s of speech frames in the segment (-1 = unknown: use the duration)
+    voiced_rms: float = -1.0  # RMS over the speech frames only (-1 = unknown: use the whole audio)
 
     @property
     def speech_s(self) -> float:
@@ -374,6 +589,7 @@ class Segmenter:
         self.paused = False           # 2026-10-27: Pause in the tips window stops the transcript too (both sides)
         self.last_feed: float | None = None   # wall time of the last chunk from audiocap (also while muted)
         self.voiced = 0               # speech frames in the open segment
+        self.voiced_sq = 0.0          # sum of squares of those frames (PB-30: loudness of the voice, not of the padding)
         self.noise_dropped = 0        # segments dropped as noise (low share of speech or too quiet)
         self.last_speech_at: float | None = None   # wall time of the last speech frame (mic_hold)
         self.last_nonzero: float | None = None     # wall time of the last chunk with a non-zero sample
@@ -451,12 +667,14 @@ class Segmenter:
                 self.silence = 0.0
                 self.cur = list(self.pre)
                 self.voiced = 1
+                self.voiced_sq = float(np.mean(frame * frame))
                 self.seg_start_sample = self.samples - (len(self.pre) - 1) * FRAME
                 self.pre = []
             return
         self.cur.append(frame)
         if speech:
             self.voiced += 1
+            self.voiced_sq += float(np.mean(frame * frame))
         self.silence = 0.0 if speech else self.silence + fd
         length = len(self.cur) * fd
         if self.silence >= self.cfg["end_silence"] or length >= self.cfg["max_segment"] or (
@@ -467,6 +685,7 @@ class Segmenter:
         audio = np.concatenate(self.cur) if self.cur else np.zeros(0, dtype=np.float32)
         frames = max(1, len(self.cur))
         voiced, self.voiced = self.voiced, 0
+        voiced_sq, self.voiced_sq = self.voiced_sq, 0.0
         self.cur = []
         self.in_speech = False
         self.silence = 0.0
@@ -479,7 +698,8 @@ class Segmenter:
                 self.noise_dropped += 1
                 return
             start = self.wall(self.seg_start_sample)
-            self.out.put(Segment(self.channel, start, start + len(audio) / SR, audio, voiced * FRAME / SR))
+            v_rms = float(np.sqrt(voiced_sq / voiced)) if voiced else -1.0
+            self.out.put(Segment(self.channel, start, start + len(audio) / SR, audio, voiced * FRAME / SR, v_rms))
 
     def flush(self) -> None:
         if self.in_speech:
@@ -513,6 +733,7 @@ class Whisper:
         self.repo = cfg["model"]
         self.langs = [l for l in cfg["langs"] if l] or ["uk"]
         self.bias = float(cfg.get("lang_bias") or 1.0)
+        self.foreign_min = float(cfg.get("lang_foreign_min") or 0.5)
         self.max_no_speech = float(cfg.get("max_no_speech") or 0.85)
         self.detector = None
         # Warm up and download the model on first run.
@@ -544,22 +765,45 @@ class Whisper:
             self.detector = None
             log(f"restricted language detection unavailable ({e!r}); using whisper auto + check")
 
-    def pick_language(self, audio: np.ndarray, allowed: list[str] | None = None) -> str | None:
+    def choose(self, audio: np.ndarray, allowed: list[str] | None = None, main: str | None = None,
+               keep: str | None = None) -> tuple[str | None, str | None, str | None]:
+        """PB-30 (D56): -> (language to decode with, language heard, foreign language the audio was detected in).
+        One language: forced. Several: a language of the set is written as spoken; one outside the set is decoded in
+        the main language (the most spoken so far) and reported as foreign. `keep` (default: main) is the language an
+        unclear segment stays in: for a short one the channel's previous language."""
         allowed = allowed or self.langs
         if len(allowed) == 1:
-            return allowed[0]
+            return allowed[0], allowed[0], None
         if self.detector is None:
-            return None if allowed is self.langs else allowed[0]
+            return (None if allowed is self.langs else allowed[0]), None, None
         probs = self.detector(audio)
-        base = allowed[0]
+        base = main if main in allowed else allowed[0]
+        keep = keep if keep in allowed else base
         best = max(allowed, key=lambda l: probs.get(l, 0.0))
-        # The first language is the main one: switch away only on a clear win, so short or
-        # noisy phrases stay in the main language instead of flipping to another one.
-        if best != base and probs.get(best, 0.0) < self.bias * probs.get(base, 0.0):
-            return base
-        return best
+        top = max(probs, key=probs.get) if probs else best
+        if top not in allowed and probs.get(top, 0.0) >= self.foreign_min and probs[top] > probs.get(best, 0.0):
+            if top == "ru" and base in CYRILLIC_LANGS:
+                return base, None, None        # Ukrainian heard as ru: the main language (a Russian text is still caught)
+            # be/bg with a Cyrillic main language: the source is kept, so the line is marked and the model translates it
+            # or answers SAME (review round 6: Belarusian on a Ukrainian call went out as Ukrainian, unmarked)
+            return base, None, top             # else the main language, even when it is English, and the source is kept
+        # The main language wins unless another one is clearly likelier: short or noisy phrases stay in it.
+        if best != keep and probs.get(best, 0.0) < self.bias * probs.get(keep, 0.0):
+            return keep, None, None            # the bias overrode what the detector preferred: nothing was clearly heard
+        return best, best, None
+
+    def pick_language(self, audio: np.ndarray, allowed: list[str] | None = None) -> str | None:
+        return self.choose(audio, allowed)[0]
 
     def transcribe(self, audio: np.ndarray, language: str | None, prompt: str | None) -> tuple[str, str]:
+        return self.decode(audio, language, prompt)[:2]
+
+    def decode(self, audio: np.ndarray, language: str | None, prompt: str | None, main: str | None = None,
+               foreign: str | None = None, redo: bool = False) -> tuple[str, str, str | None]:
+        """-> (text, language tag, language the line was translated from or None). `main` is the language a line
+        that Whisper heard in another language is redone in (the most spoken one; default: first of the set).
+        `redo`: this is already the one retry; what is still Russian or foreign after it is only marked."""
+        main = main if main in self.langs else self.langs[0]
         res = self.mlx_whisper.transcribe(
             audio, path_or_hf_repo=self.repo, language=language, initial_prompt=prompt or None,
             condition_on_previous_text=False, temperature=(0.0, 0.2, 0.4),
@@ -569,12 +813,13 @@ class Whisper:
         lang = res.get("language") or language or "?"
         if language is None and lang not in self.langs:
             # Auto picked something outside the allowed set (typical: Ukrainian heard as Russian
-            # is fine, but "be", "pl", "pt" are not). Redo with the first allowed language.
-            return self.transcribe(audio, self.langs[0], prompt)
+            # is fine, but "be", "pl", "pt" are not). Redo with the main language.
+            return self.decode(audio, main, prompt, main, foreign or lang)
         parts = []
+        low_conf = False
         segs = res.get("segments", [])
         if segs and min(x.get("no_speech_prob", 0) for x in segs) > self.max_no_speech:
-            return "", lang   # Whisper itself is sure there is no speech
+            return "", lang, None   # Whisper itself is sure there is no speech
         for s in segs:
             nsp, lp = s.get("no_speech_prob", 0), s.get("avg_logprob", 0)
             if nsp > 0.6 and lp < -0.8:
@@ -582,13 +827,31 @@ class Whisper:
             if lp < -1.25 or s.get("compression_ratio", 0) > 2.4:
                 continue   # low confidence or a repetition loop
             parts.append(s.get("text", "").strip())
+            low_conf = low_conf or lp < LOW_CONF_LOGPROB
         text = " ".join(p for p in parts if p).strip()
         lang = fix_lang_by_script(text, lang, self.langs)
-        if language != self.langs[0] and (lang not in self.langs or (lang == "en" and NOT_ENGLISH.search(text))):
+        russian = "ru" not in self.langs and is_russian(text)
+        if russian and not redo:
+            return self.decode(audio, main, prompt, main, foreign or "ru", True)   # PB-30: Russian never: one retry in the main language
+        if language != main and not redo and (lang not in self.langs or (lang == "en" and NOT_ENGLISH.search(text))):
             # 0.8.5 (owner): Ukrainian heard as another language came out as Polish ("Dostup do ... w Tobie jest"):
             # a line outside the allowed set, or "English" with letters English never has, is redone in the main one.
-            return self.transcribe(audio, self.langs[0], prompt)
-        return text, lang
+            return self.decode(audio, main, prompt, main, foreign or lang, True)
+        if not text:
+            return text, lang, None
+        if russian:
+            foreign = foreign or "ru"
+        elif not (foreign or script_mismatch(text, lang)):
+            return text, lang, None
+        if russian or foreign not in ("ru", None):
+            # the line is meant to be in the language it was decoded in (the main one), whatever script Whisper wrote:
+            # French or Belarusian heard with English dominant can come out in Ukrainian letters; it is tagged and
+            # translated to English (review round 7: Belarusian went to Ukrainian). Clean Ukrainian heard as "ru" keeps
+            # its own tag: it is a language of the set, kept as spoken.
+            lang = language if language in self.langs else main
+        # a line still in a foreign script after the redo stays as Whisper wrote it and is marked (translated_from,
+        # "und" when the language is unknown); the background translation then writes it in the tagged language
+        return Decoded((text, lang, foreign or "und"), low_conf)
 
 
 class FakeWhisper:
@@ -599,6 +862,14 @@ class FakeWhisper:
 
     def pick_language(self, audio, allowed=None):
         return (allowed or self.langs)[0]
+
+    def choose(self, audio, allowed=None, main=None, keep=None):
+        lang = self.pick_language(audio, allowed)
+        return lang, lang, None
+
+    def decode(self, audio, language, prompt, main=None, foreign=None, redo=False):
+        text, lang = self.transcribe(audio, language, prompt)
+        return text, lang, None
 
     def transcribe(self, audio, language, prompt):
         import hashlib
@@ -618,6 +889,19 @@ class Line:
     written: bool = False
     created: float = field(default_factory=now)
     sid: str | None = None    # speaker cluster of a system-channel line ("S2"), None = no speaker tag
+    translated_from: str | None = None   # PB-30: the language the speech was in when Whisper wrote it in another one
+    seq: int = 0              # PB-30: stable id of the line in this call (the timing record and "translated" event carry it)
+    row: str = ""             # the transcript row as written (set by Writer._write)
+    row_occ: int = 0          # how many rows with the same text were written before this one: tells identical rows apart
+
+
+def tr_mark(src: str | None) -> str:
+    """PB-30 (review round 6): the end of a row whose speech was in another language: ` (← fr)`, ` (← ?)` when the
+    language is unknown. The row prefix stays as it was, so every reader of the row format keeps working; the tips
+    window shows it as "translated from fr" and the tips engine strips it."""
+    if not src:
+        return ""
+    return f" (← {'?' if src == 'und' else src})"
 
 
 def hold_me_line(last_them_speech: float | None, line_t: float, window: float = 4.0) -> bool:
@@ -637,6 +921,10 @@ class Writer:
         self.held_me: list[Line] = []
         self.lines = 0
         self.last_line_at = None
+        self.replaced: list[tuple[str, int, str]] = []   # PB-30: (row as written, its occurrence among identical rows, row after translation), applied in close()
+        self.written_rows: dict[str, int] = {}           # row text -> how many were appended
+        self.closed = False
+        self.on_row = None          # PB-30: called with a line just before its row is appended (publishes the row's seq)
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "a", encoding="utf-8") as f:
             f.write(header)
@@ -691,12 +979,55 @@ class Writer:
                 keep.append(m)
         self.held_me = keep
 
-    def _write(self, line: Line) -> None:
+    def _row(self, line: Line) -> str:
         label = self.cfg["me_label"] if line.channel == "me" else self.cfg["them_label"]
         if line.channel == "them" and line.sid:
             label += f" [{line.sid}]"
+        return f"[{hhmmss(line.t)}] {label} ({line.lang}): {line.text}{tr_mark(line.translated_from)}"
+
+    def replace(self, line: Line, text: str, announce=None) -> str | None:
+        """PB-30: a background translation replaces the line text. A line still held is changed in memory; a written
+        one is rewritten in close(), so a reader that follows the file by offset never sees an earlier row change.
+        -> None when the writer is closed; else the row as it was written ("" when the line is still held), read
+        under the lock, so the caller knows whether the live readers already show the line. `announce(old)` runs under
+        the lock for a written row: its live event is in the timing file before close() can rewrite the row."""
+        with self.lock:
+            if self.closed:
+                return None
+            old = line.row
+            line.text = " ".join(text.split())      # a row is one line; a break would leave an untagged tail
+            if old:
+                self.replaced.append((old, line.row_occ, self._row(line)))
+                if announce is not None:
+                    announce(old)
+            return old
+
+    def _rewrite(self) -> None:
+        """Apply the translations to the file (atomic); a row that is no longer there is left alone."""
+        if not self.replaced:
+            return
+        todo = {(old, occ): new for old, occ, new in self.replaced}
+        seen: dict[str, int] = {}
+        out = []
+        for raw in self.path.read_text(encoding="utf-8").split("\n"):
+            k = seen.get(raw, 0)       # the k-th identical row is the k-th one written: a translation targets that one
+            seen[raw] = k + 1
+            out.append(todo.pop((raw, k), raw))
+        tmp = self.path.with_name(self.path.name + ".tr.tmp")
+        tmp.write_text("\n".join(out), encoding="utf-8")
+        os.replace(tmp, self.path)
+
+    def _write(self, line: Line) -> None:
+        line.row = self._row(line)
+        line.row_occ = self.written_rows.get(line.row, 0)
+        self.written_rows[line.row] = line.row_occ + 1
+        if self.on_row is not None:
+            try:
+                self.on_row(line)
+            except Exception as e:  # noqa: BLE001
+                log(f"translate: row event failed ({e!r})")
         with open(self.path, "a", encoding="utf-8") as f:
-            f.write(f"[{hhmmss(line.t)}] {label} ({line.lang}): {line.text}\n")
+            f.write(line.row + "\n")
             f.flush()
             os.fsync(f.fileno())
         self.lines += 1
@@ -705,6 +1036,11 @@ class Writer:
     def close(self, footer: str) -> None:
         with self.lock:
             self._release(force=True)
+            try:
+                self._rewrite()
+            except OSError as e:
+                log(f"translate: rewrite failed ({e!r}); the marked lines stay")
+            self.closed = True
             with open(self.path, "a", encoding="utf-8") as f:
                 f.write(footer)
 
@@ -4636,7 +4972,7 @@ def listener_age() -> int | None:
         return None
 
 
-REQUEST_BLOCKED = {"ollama_url", "index_extra", "semantic_model", "python"}
+REQUEST_BLOCKED = {"ollama_url", "index_extra", "semantic_model", "python", "translate_cmd", "translate_dir"}
 
 
 def _local_url(u: str) -> bool:
@@ -5046,6 +5382,7 @@ def main() -> int:
 
     last_lang = {"me": cfg["me_lang"] if cfg["me_lang"] != "auto" else cfg["langs"][0],
                  "them": cfg["langs"][0]}
+    lang_share = LangShare(cfg["langs"], float(cfg.get("lang_warmup_s", 60.0)))
     prompt = cfg.get("prompt")
     prompt_words = set(re.findall(r"\w+", (prompt or "").lower()))
     global PROMPT_HEAD
@@ -5114,28 +5451,53 @@ def main() -> int:
     recent: list[tuple[float, str, str]] = []   # (t, channel, text) of the last ~2 min, for SOS
     recent_lock = threading.Lock()
 
+    def apply_translation(j: dict, new: str) -> None:
+        """The translation replaces the line text (the file at the end of the call); the sidecar keeps the original."""
+        new = apply_dictionary(" ".join(new.split()), DICT_RULES)   # one line: a break would split the transcript row
+
+        def announce(_row: str) -> None:
+            """The row is already in the file (and so in the live transcript): the live readers (tips engine,
+            transcript pane) change it in place, keyed by the line's seq. Written under the writer's lock, so the
+            event is always before the end-of-call rewrite of the row."""
+            try:
+                with open(call_layout.sidecar_of(out, ".timing.jsonl"), "a", encoding="utf-8") as tf:
+                    tf.write(json.dumps({"event": "translated", "seq": j["line"].seq, "t": j["t"], "ch": j["ch"],
+                                         "translated_from": j["src"], "original": j["text"], "text": new},
+                                        ensure_ascii=False) + "\n")
+            except OSError as e:
+                # the saved row is already queued for the translation: say that the live view will stay stale
+                log(f"translate: live event for row {j['line'].seq} not written: {type(e).__name__}")
+
+        writer.replace(j["line"], new, announce)   # closed, or a held line: no event, it goes out translated
+
+    def publish_row(line: Line) -> None:
+        """The writer is about to append this row: publish its seq. Readers pair rows with seq by this event (time,
+        channel, text), not by the timing entries, which also exist for mic lines the writer drops as echo."""
+        with open(call_layout.sidecar_of(out, ".timing.jsonl"), "a", encoding="utf-8") as tf:
+            tf.write(json.dumps({"event": "row", "seq": line.seq, "t": hhmmss(line.t), "ch": line.channel,
+                                 "text": line.text}, ensure_ascii=False) + "\n")
+
+    writer.on_row = publish_row
+    line_seq = itertools.count(1)
+    tr_worker = None
+    if cfg.get("translate", True):
+        tr_worker = TR.TranslateWorker(TR.Translator(cfg, translation_ok, log=log).translate, apply_translation, translation_ok,
+                                       maxlen=int(cfg.get("translate_queue", 16)), log=log)
+        tr_worker.start()
+
     def process(seg: Segment) -> None:
         job = None
         if (seg.channel == "them" and spk["worker"] is not None
                 and seg.speech_s >= float(cfg.get("speaker_min_s", 1.0))):
             job = spk["worker"].submit(seg.audio)   # runs in parallel with the ASR below
-        me_set = cfg["me_langs"] if len(cfg["me_langs"]) > 1 else None
-        if seg.channel == "me" and cfg["me_lang"] != "auto" and not me_set:
-            lang = cfg["me_lang"]
-        elif seg.duration < cfg["sticky_short"]:
-            lang = last_lang[seg.channel]
-        elif seg.channel == "me" and me_set:
-            # The PM switches only between own languages (e.g. uk <-> en), never to ru by mistake.
-            lang = whisper.pick_language(seg.audio, me_set)
-        else:
-            lang = whisper.pick_language(seg.audio)
-        t_asr0 = time.time()
         maybe_glossary()
-        text, lang = whisper.transcribe(seg.audio, lang, pcell[0])
+        t_asr0 = time.time()
+        res = asr_segment(whisper, seg, cfg, lang_share, last_lang, pcell[0], pwords[0])
         t_asr1 = time.time()
-        text = clean_text(text, pwords[0])
-        if not text or not norm(text):
+        if res is None:
             return
+        text, lang, translated_from = res
+        low_conf = bool(getattr(res, "low_conf", False))
         text = apply_dictionary(text, DICT_RULES)          # 0.10.0: the PM's dictionary, before anything sees the line
         last_lang[seg.channel] = lang
         sid = None
@@ -5150,8 +5512,12 @@ def main() -> int:
                     sid = tracker.observe(hhmmss(seg.t_start), seg.t_start, seg.t_end, emb, seg.duration, text)
             except Exception as e:  # noqa: BLE001
                 log(f"speakers: {e!r}")
-        line_obj = Line(seg.channel, seg.t_start, lang, text, sid=sid)
+        line_obj = Line(seg.channel, seg.t_start, lang, text, sid=sid, translated_from=translated_from,
+                        seq=next(line_seq))
         writer.add(line_obj)
+        if tr_worker is not None and needs_translation(text, lang, translated_from, low_conf):
+            tr_worker.submit({"text": text, "src": translated_from, "dst": lang, "line": line_obj,
+                              "t": hhmmss(seg.t_start), "ch": seg.channel})
         if sid:
             try:
                 tracker.after_line(sid)
@@ -5216,7 +5582,9 @@ def main() -> int:
                     "queued_s": round(t_asr0 - seg.t_end, 2),
                     "asr_s": round(t_asr1 - t_asr0, 2),
                     "written": dt.datetime.fromtimestamp(t_asr1).strftime("%H:%M:%S.%f")[:-3],
-                    "chars": len(text)}, ensure_ascii=False) + "\n")
+                    "chars": len(text), "seq": line_obj.seq,
+                    # PB-30: set only when the line was written in another language than spoken (UI: "translated from")
+                    **({"translated_from": translated_from} if translated_from else {})}, ensure_ascii=False) + "\n")
         except Exception:  # noqa: BLE001
             pass
 
@@ -5355,6 +5723,7 @@ def main() -> int:
                 me, me_langs, langs = LANG_SETS[val]
                 cfg.update(me_lang=me, me_langs=me_langs, langs=langs)
                 whisper.langs = list(langs)
+                lang_share.reset(langs)             # PB-30: the share of spoken languages starts again
                 last_lang["me"], last_lang["them"] = me, langs[0]
                 status.update(call_lang=val, me_lang=me, me_langs=me_langs, langs=langs)
                 newp = cfg.get("prompt_" + val) or (None if val == "en" else cfg.get("prompt"))
@@ -5702,6 +6071,8 @@ def main() -> int:
     deadline = now() + 60
     while segq.unfinished_tasks and now() < deadline:
         time.sleep(0.3)
+    if tr_worker is not None:
+        tr_worker.stop(float(cfg.get("translate_drain_s", 20.0)))    # the footer stays the last row
     writer.close(f"\n--- {L('кінець запису', 'end of recording')} {hhmmss(now())} ---\n")
     sheet_live.save_state(out)               # 0.10.0 (Meeting Sheet, phase 7): for the after-call check
     if spk["worker"] is not None:

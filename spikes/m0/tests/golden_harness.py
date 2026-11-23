@@ -74,6 +74,17 @@ def responder(model, user):
                        "items": ["Review on Monday"], "fact_ids": ["F1"] if h % 2 else []})
 
 
+class ScriptedProvider(FakeProvider):
+    """The scripted model answers at once: its gist is at the start of the request. FakeProvider measures it with
+    the real clock, so the time the engine spends in on_text leaked into gist_at (+0.04 s on a busy machine)."""
+
+    def complete(self, **kw):
+        c = super().complete(**kw)
+        if c.t_gist is not None:
+            c.t_gist = c.t_start
+        return c
+
+
 class DeferredPool:
     """Runs submitted work later, in submission order, on the caller's thread."""
 
@@ -138,7 +149,7 @@ def run_variant(name: str, tmp: Path) -> dict:
             ln.written = ln.seg_end + 1.0
     lines.sort(key=lambda x: x.written)
     clock = {"t": lines[0].written}
-    prov = FakeProvider(responder)
+    prov = ScriptedProvider(responder)
     out = tmp / name
     eng, stem = build_engine(cfg, md, out, lambda: clock["t"], prov)
     pool = DeferredPool()

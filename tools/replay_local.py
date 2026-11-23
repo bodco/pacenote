@@ -109,7 +109,7 @@ def load_lines(md: Path, timing: Path | None, date: str | None = None) -> list[R
     date = date or d or dt.date.today().isoformat()
     slots: dict[tuple[str, str], list[dict]] = collections.defaultdict(list)
     for r in T._read_jsonl(timing) if timing else []:
-        if r.get("t") and r.get("ch"):
+        if r.get("t") and r.get("ch") and not r.get("event"):     # PB-30: "translated" events are not line timing
             slots[(str(r["t"]), str(r["ch"]))].append(r)
     out, prev = [], None
     for hms, label, lang, text in rows:
