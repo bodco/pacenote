@@ -90,7 +90,10 @@ a key. G2 adds one:
 - **CLI and tests without the app**: `--project-uid` and `--store` arguments; with neither, the CLI refuses to run
   (it never derives a key from the path on its own, so two folders never share one store by accident).
 - The existing semantic index `.livetips-index/` sits inside the project root (Drive-synced). G2 neither reads nor
-  writes it; vectors G2 needs are stored in the SQLite file.
+  writes it; vectors G2 needs are stored in the SQLite file. This repeats bge-m3 vectors for the same files on
+  purpose: `.livetips-index/` uses its own chunker, so its vectors do not line up with the store's snippets and
+  locators, and it sits in the Drive-synced folder, where the store must never write. G4 decides whether
+  `semantic.py` later reads from the store and `.livetips-index/` goes away.
 
 ## 5. Sources, revisions and change detection
 
@@ -105,7 +108,7 @@ a key. G2 adds one:
 | `register` | `live/commitments.jsonl` | `commitments.fold()` | pm / deterministic | rel path + event line number + event id | no |
 | `tracker` | the Notion and HubSpot tasks the app already holds in Swift (`CRMTasks.swift`, `OrgRegisters.swift`), exported by the app to a snapshot file (section 5.2, item 5) | snapshot file | primary (system of record) | `notion:<page id>` or `crm:<portal>:<task>` + field | no |
 | `project_state` | `pacenote/decisions.md`, `_notion/... Current State.md`, `pacenote/answer-cards.md` | text | primary (decisions) / derived (Current State is written by a skill) | rel path + heading + line range | yes |
-| `web_page` | `<live>/<date>-<slug>/.work/web/<host>/*.txt` (G6, title line, URL line, body) | text | primary (external) | URL + stored path + char range | yes |
+| `web_page` | `<live>/<date>-<slug>/.work/web/<host>/*.txt` and, for a sheet without a call folder, `<SheetCLI.stateDir>/web/<host>/*.txt` (G6, `MeetingSheetDraft.swift:279`; title line, URL line, body); the app passes the second location's folders of this project's sheets with each pass (S5) | text | primary (external) | URL + stored path + char range | yes |
 | `gdoc` / `notion` copies | `live/google/google-file-<id16>.<ext>`, `_notion/` mirror files | as `file` | primary | as `file` + original URL | yes |
 
 The column "origin" is what the confirmation rule (section 7.4) counts on. Git commits and the 14-day digest stay
@@ -117,8 +120,16 @@ every task.
 `history.json` in Application Support) is never extracted and never searched, like `rules/decisions.yaml` says
 for decisions ("Never for a hidden call"). Its transcript, notes, brief and sheet get `source.state = excluded` with
 `state_reason = "hidden call"`. The worker cannot read `history.json` itself, so the app passes the list of hidden
-call files with each pass (S4); a call hidden later moves its sources to `excluded` on the next pass, and unhiding it
-moves them back to `active`.
+call files with each pass (S5). Hiding or unhiding a call starts an **immediate state-only pass** (`evidence
+exclude --hidden-calls ...`): it only sets `source.state` and marks the topics that cite those sources `stale`
+(section 8.7), makes no model, network or embed request and takes well under a second, so the call stops being
+searchable at once. During a call the worker does not run (section 8.5), so a hide made during a call is applied by
+that state-only pass right after the call ends; until it has run, every `search` the app or the skill starts passes
+the hidden call's files in `exclude` (section 11.1), so the hidden call never appears in between. Unhiding moves the
+sources back to `active`.
+
+The docs say a page under `.work/web` is "not searched"; with the flag on, G2 changes that for the store (the pages
+stay out of the folder lookup and the call files list). S5 updates the docs EN and UK.
 
 ### 5.2 Change detection
 
@@ -133,15 +144,23 @@ No content hashing exists in the app today (`file_day` uses the date in the name
 4. The register is append-only: the store keeps the byte offset of the last read line and reads only new lines. An
    `op migrate` or `op rollback` line (G1) triggers a full refold of the register.
 5. The Tracker: the worker makes no Notion or HubSpot request (section 12). The app writes what it already fetched
-   for its own Tracker view to `<LT_AI_STATE>/tracker-snapshot/<evidence_uid>.json` (items with id, text, status,
-   owner, due, `last_edited`, project), at most once per pass trigger (S4). The worker hashes the normalised item
+   for its own Tracker view to `tracker-snapshot/<evidence_uid>.json` in the state folder next to `ai-routes.json`
+   (`LT_AI_STATE` is the path of that file, `routing.default_state_path()`) (items with id, text, status,
+   owner, due, `last_edited`, project), at most once per pass trigger (S5). The worker hashes the normalised item
    list and diffs item by item. No snapshot file yet, or an older one, keeps the last ingested state with its
    `observed_at`; a missing file is never treated as "all items deleted". Tracker ids already present on register
    items (`identity.tracker_id`: `notion:` and `crm:` links) are linked from the register alone, without the
    snapshot.
-6. A file that disappears gets `state = deleted`; a Google or Notion document that the API reports as gone or no
-   longer shared gets `state = revoked`. Both stay in the store for history and audit but never reach search
-   (section 11.2). Claims that rest only on such a source are hidden with it.
+6. A file that disappears gets `state = deleted`. **Revoked**: the worker makes no Google or Notion request, and the
+   picked copy `live/google/google-file-<id16>.*` stays on disk after access is lost, so the signal comes from the
+   app. The prep already knows each Google source's `google.status: ok | denied | not_found` (`sheet/sources.py`,
+   the `access` field), and the app knows the Notion pages it can no longer read. The app passes the list of
+   `denied` and `not_found` documents (Google file id, Notion page id) with each pass, the same way it passes hidden
+   calls (S5), and a document's change to `denied` or `not_found` starts the same immediate state-only pass as a
+   hide (section 5.1). The worker maps each id to its sources (the picked copy by `<id16>`, the `_notion/` mirror file
+   by page id) and sets `state = revoked`; a later `ok` sets it back to `active`. Deleted and revoked sources stay in
+   the store for history and audit but never reach search (section 11.2). Claims that rest only on such a source are
+   hidden with it.
 7. Transcripts of the call in progress are never read: a transcript whose call is active (section 8.5), or that was
    modified in the last 10 minutes, waits for the next pass.
 
@@ -256,13 +275,14 @@ CREATE VIRTUAL TABLE snippet_fts USING fts5(text, heading, content='snippet', co
 
 CREATE TABLE entity (
   id          TEXT PRIMARY KEY,         -- c-<sha1:10> (G1 commitment), d-/r-<sha1:10>, person:<casefold>, me,
-                                        -- client:<slug>, e-<sha1(type|norm name|client):10>
+                                        -- client:<slug>, e-<sha1(type|norm name):10> (section 7.1)
   type        TEXT NOT NULL,            -- person, client, task, decision, risk, topic, document, system, call, date_event
-  name        TEXT NOT NULL,
-  client      TEXT NOT NULL DEFAULT '',
-  status      TEXT,                     -- open, proposal, done, dropped (tasks, from the register)
+  name        TEXT NOT NULL,            -- cache of the current name (section 11.2 step 2 derives it under as_of)
+  client      TEXT NOT NULL DEFAULT '', -- home client label of a deterministic entity; '' for llm entities
+  status      TEXT,                     -- cache of the current status: open, proposal, done, dropped (tasks)
   origin      TEXT NOT NULL,            -- g1, tracker, voices, llm, pm
-  merged_into TEXT REFERENCES entity(id),
+  merged_into TEXT REFERENCES entity(id),  -- cache of the current merge
+  merged_at   TEXT,                     -- `at` of the register event or pm_override that merged it
   pm_locked   INTEGER NOT NULL DEFAULT 0,
   created_run INTEGER REFERENCES run(id),
   updated_at  TEXT NOT NULL
@@ -275,6 +295,7 @@ CREATE TABLE alias (
   lang        TEXT,                     -- en, uk, ''
   origin      TEXT NOT NULL,            -- voices, g1, tracker, llm, pm
   status      TEXT NOT NULL,            -- confirmed, suggested, rejected
+  client_set  TEXT NOT NULL DEFAULT '', -- labels of the snippets the alias was found in; filtered like a snippet
   vec         BLOB,
   PRIMARY KEY (alias_norm, entity_id)
 );
@@ -286,11 +307,11 @@ CREATE TABLE claim (                    -- a statement about one entity
   predicate   TEXT NOT NULL,            -- status, due, owner, decided, risk_level, waiting_for, value, said
   value       TEXT,
   modality    TEXT NOT NULL,            -- proposal, expectation, confirmation, statement
-  said_by     TEXT REFERENCES entity(id),
-  said_at     TEXT NOT NULL,
+  said_by     TEXT REFERENCES entity(id), -- of the earliest evidence row; each row keeps its own (evidence.said_by)
+  said_at     TEXT NOT NULL,            -- earliest evidence said_at; timelines date each quote by its own row
   due         TEXT,
-  client_set  TEXT NOT NULL DEFAULT '',
-  status      TEXT NOT NULL,            -- accepted, suggestion, rejected, superseded
+  client_set  TEXT NOT NULL DEFAULT '', -- cache: union of the evidence snippets' labels (access uses the rows)
+  status      TEXT NOT NULL,            -- cache of now: accepted, suggestion, rejected, superseded
   origin      TEXT NOT NULL,            -- deterministic, llm, pm
   confidence  REAL,
   run_id      INTEGER REFERENCES run(id),
@@ -307,15 +328,15 @@ CREATE TABLE edge (                     -- a relation between two entities
                                         -- same_as (always a suggestion until the PM confirms)
   dst_id        TEXT NOT NULL REFERENCES entity(id),
   modality      TEXT NOT NULL,
-  client_set    TEXT NOT NULL DEFAULT '',
-  status        TEXT NOT NULL,          -- accepted, suggestion, rejected, superseded
+  client_set    TEXT NOT NULL DEFAULT '',  -- cache: union of the evidence snippets' labels (access uses the rows)
+  status        TEXT NOT NULL,          -- cache of now: accepted, suggestion, rejected, superseded
   origin        TEXT NOT NULL,
   confidence    REAL,
   first_said_at TEXT NOT NULL,
   last_said_at  TEXT NOT NULL,
   run_id        INTEGER REFERENCES run(id),
-  UNIQUE (src_id, rel, dst_id, client_set)
-);
+  UNIQUE (src_id, rel, dst_id)          -- one row per relation; the same edge found in a shared and a client
+);                                      -- file adds evidence rows, not a second edge
 CREATE INDEX edge_src ON edge(src_id, status);
 CREATE INDEX edge_dst ON edge(dst_id, status);
 
@@ -325,6 +346,7 @@ CREATE TABLE evidence (                 -- every claim and every edge has at lea
   snippet_id  INTEGER NOT NULL REFERENCES snippet(id) ON DELETE CASCADE,
   quote       TEXT NOT NULL,            -- verbatim from the snippet, at most 300 characters
   q_start     INTEGER NOT NULL, q_end INTEGER NOT NULL,  -- offsets inside snippet.text
+  said_by     TEXT REFERENCES entity(id),  -- who said this quote (the snippet's speaker or the model's said_by)
   PRIMARY KEY (target, target_id, snippet_id, q_start)
 );
 CREATE INDEX evidence_snippet ON evidence(snippet_id);
@@ -335,7 +357,7 @@ CREATE TABLE pm_override (              -- PM edits; always applied last, never 
   target_key TEXT NOT NULL,             -- natural key, stable across a rebuild (never an integer row id):
                                         --   entity: its id; alias: alias_norm|entity_id;
                                         --   claim: claim.nkey;
-                                        --   edge: src_id|rel|dst_id|client_set
+                                        --   edge: src_id|rel|dst_id
   field      TEXT NOT NULL,             -- status, name, merge, split, reject, confirm, value
   value      TEXT,
   at         TEXT NOT NULL,
@@ -348,21 +370,32 @@ CREATE TABLE topic (
   label        TEXT NOT NULL,
   client_set   TEXT NOT NULL DEFAULT '',
   member_hash  TEXT NOT NULL,           -- hash of the sorted accepted claim and edge ids it covers
-  summary      TEXT,                    -- NULL until summarised
-  summary_at   TEXT, summary_run INTEGER REFERENCES run(id),
+  summary_at   TEXT, summary_run INTEGER REFERENCES run(id),  -- NULL until summarised
   state        TEXT NOT NULL            -- fresh, stale, pending
 );
 CREATE TABLE topic_member (topic_id INTEGER REFERENCES topic(id) ON DELETE CASCADE, entity_id TEXT, weight REAL,
   PRIMARY KEY (topic_id, entity_id));
-CREATE TABLE topic_cite (topic_id INTEGER REFERENCES topic(id) ON DELETE CASCADE, target TEXT, target_id INTEGER,
-  PRIMARY KEY (topic_id, target, target_id));
-CREATE VIRTUAL TABLE topic_fts USING fts5(label, summary, content='topic', content_rowid='id');
+CREATE TABLE topic_sentence (           -- the summary, one row per sentence, so access can drop single sentences
+  id        INTEGER PRIMARY KEY,
+  topic_id  INTEGER NOT NULL REFERENCES topic(id) ON DELETE CASCADE,
+  ord       INTEGER NOT NULL,
+  text      TEXT NOT NULL,
+  UNIQUE (topic_id, ord)
+);
+CREATE TABLE topic_cite (               -- the claims and edges each sentence cites (at least one per sentence)
+  sentence_id INTEGER NOT NULL REFERENCES topic_sentence(id) ON DELETE CASCADE,
+  target TEXT NOT NULL, target_id INTEGER NOT NULL,
+  PRIMARY KEY (sentence_id, target, target_id));
+CREATE INDEX topic_cite_target ON topic_cite(target, target_id);
+CREATE VIRTUAL TABLE topic_fts USING fts5(text, content='topic_sentence', content_rowid='id');
+-- topic labels are matched through the aliases of the topic's member entities, not through topic_fts
 
 CREATE TABLE run (
   id             INTEGER PRIMARY KEY,
   kind           TEXT NOT NULL,         -- ingest, extract, summarize, rebuild, relabel
   route          TEXT, model TEXT,      -- routing.ROUTES: api, code, local, openai, codex, gemini
   fallback_from  TEXT,                  -- the route it fell back from, if any
+  extractor      TEXT,                  -- rules version + prompt hash of this run
   started_at     TEXT NOT NULL, ended_at TEXT,
   status         TEXT NOT NULL,         -- running, done, ceiling, paused_call, off, failed, cancelled
   segments_plan  INTEGER, segments_done INTEGER,
@@ -377,17 +410,19 @@ CREATE TABLE run_item (
   run_id       INTEGER NOT NULL REFERENCES run(id) ON DELETE CASCADE,
   revision_id  INTEGER NOT NULL REFERENCES revision(id) ON DELETE CASCADE,
   segment      INTEGER NOT NULL,
-  seg_hash     TEXT,                    -- links the segment to segment_cache (reuse and vacuum)
-  status       TEXT NOT NULL,           -- done, cached, invalid, failed, skipped
+  seg_hash     TEXT,                    -- content key of the segment; with run.extractor links to segment_cache
+  status       TEXT NOT NULL,           -- done, cached, invalid, failed, skipped, cancelled
   in_tokens INTEGER, out_tokens INTEGER, dropped INTEGER, error TEXT,
   PRIMARY KEY (run_id, revision_id, segment)
 );
 CREATE TABLE segment_cache (             -- validated extraction output per segment content (section 8.2)
-  seg_hash    TEXT PRIMARY KEY,          -- sha256(extractor | context snippet | segment snippets)
+  seg_hash    TEXT NOT NULL,             -- sha256(client label | heading path | segment snippet texts); content only
+  extractor   TEXT NOT NULL,             -- rules version + prompt hash that produced the output
   output      TEXT NOT NULL,             -- validated JSON
   run_id      INTEGER REFERENCES run(id),
   in_tokens INTEGER, out_tokens INTEGER,
-  last_used   TEXT NOT NULL
+  last_used   TEXT NOT NULL,
+  PRIMARY KEY (seg_hash, extractor)
 );
 ```
 
@@ -405,6 +440,12 @@ Notes on the schema:
   the natural keys above, so a PM edit re-applies to the same claim or edge after a rebuild. An override whose key no
   longer matches anything stays stored (orphaned) and applies again if extraction finds the same statement later.
 - `entity.merged_into` records a confirmed merge (alias of a G1 `same`, or a PM merge). Readers follow it one step.
+- **Columns that hold "now".** `entity.name`, `entity.status`, `entity.merged_into` and `claim.status` / `edge.status`
+  are caches of the current state, used only without `as_of`. Under `as_of` they are derived, never read (section
+  11.2 step 2), so they need no history columns and a rebuild gets them right for free.
+- **Client labels live on evidence.** `claim.client_set`, `edge.client_set` and `alias.client_set` are caches for
+  display and the topic split; access is decided on the evidence snippets' own labels (section 11.2 step 1), so one
+  edge found in a shared file and in a client file is one row whose client evidence passes only for that client.
 - There is no table per relation type and no recursive graph engine. A graph walk is 1 or 2 indexed SQL lookups on
   `edge_src` / `edge_dst` (section 11).
 - FTS5 availability: the Python `sqlite3` the sidecar runs with must have FTS5. S1 checks it at start; without it
@@ -430,8 +471,14 @@ Notes on the schema:
 - **People**: `identity.person_id` (the voice library aliases, `me` for the PM), as `person:<casefold>`.
 - **Clients**: `client:<slug>` from the client folders `client_scope.decide` finds.
 - **Everything the LLM finds** (topics, systems, documents, people not in the voice library):
-  `e-<sha1(type|normalised name|client)>`. A new name that matches an existing alias of the same type and client
-  joins it; a near match (same type, alias vector cosine at least 0.85, or edit distance at most 2 on names of 6+
+  `e-<sha1(type|normalised name)>`, without the client, so "the SSO integration" in a shared file and in a client file
+  is one node and the cross-file hop works. Client scope is not on the node but on its evidence: every claim, edge and
+  alias of it carries the labels of the snippets it was quoted from, and the entity itself is visible to a scope only
+  through them (section 11.2 step 1), so a node found only in one client's files never shows in another client's
+  call. When the same name is used for two different things by two clients (the model resolves it to a known id of
+  one client, or the PM splits it), the second gets `e-<sha1(type|normalised name|client)>` and a `same_as`
+  suggestion between them is never created across two clients. A new name that matches an existing alias of the same
+  type joins it; a near match (same type, alias vector cosine at least 0.85, or edit distance at most 2 on names of 6+
   characters) becomes an alias with `status = suggested`, never a merge.
 
 ### 7.2 Modality
@@ -447,7 +494,10 @@ The owner's vocabulary is canonical in the store; G1's register values map onto 
 | `statement` | a plain fact (a number, a date, a description) | items with `modality: ""` |
 
 The extraction prompt uses the same table and the hedge words of `identity.TENTATIVE_RX` and `HEDGE_RX` (copied
-into the rules file, not re-invented). A `proposal` never becomes `confirmation` without a later quote that confirms
+into the rules file, not re-invented). Those two patterns are anchored at the start of an item's text (`^\W*`),
+which fits a register item but not a quote; `rules/evidence.yaml` therefore keeps the same word list twice: anchored
+(`hedge_start`, for parity tests with `identity.py`) and unanchored with word boundaries (`hedge_anywhere`, used by
+the validator in section 8.4 item 9 to find a hedge word anywhere inside a quote). A `proposal` never becomes `confirmation` without a later quote that confirms
 it from a primary source or a PM edit.
 
 ### 7.3 PM edits win
@@ -500,19 +550,33 @@ path (section 11.4).
 
 ### 8.2 Segments
 
-A segment is whole snippets of one revision up to 6000 characters, with the previous snippet repeated for context
-(not extracted from twice: only quotes inside the segment's own snippets are accepted). The segment text is sent
-with line numbers. A transcript segment keeps speaker names and timestamps.
+A segment is whole snippets of **one heading section** of one revision, up to 6000 characters; a segment never
+crosses a heading boundary and never packs two sections together (a section over 6000 characters becomes several
+segments, a short section is a short segment). The previous snippet is sent before the segment for context (not
+extracted from twice: only quotes inside the segment's own snippets are accepted). The segment text is sent with
+line numbers. A transcript has no headings: it is cut into segments of whole snippets up to 6000 characters from
+its start, and a transcript is extracted once, after the call, so its cuts do not need to survive edits. A transcript
+segment keeps speaker names and timestamps.
 
 **Extraction cache per segment.** A small edit to a large file (Current State, `decisions.md`) must not re-extract
-the whole file. Segments are cut at heading sections first and only then filled up to 6000 characters, so an edit
-in one section leaves the segments of the other sections byte-equal. Each segment has
-`seg_hash = sha256(extractor | context snippet text | segment snippet texts)`. The validated output of every
-segment is kept in a `segment_cache` table (`seg_hash` primary key, the output JSON, `run_id`, tokens). When a new
-revision is built, a segment whose `seg_hash` is in the cache reuses that output: it is re-validated against the new
-snippets (quotes are matched again, offsets recomputed) at no model cost, and only segments with a new hash are sent.
-`run_item` records reused segments as `status = cached`. The cache is per store, dropped by "Re-read with the new
-rules" (a new `extractor` changes every `seg_hash` anyway), and vacuumed with the revisions that used it.
+the whole file. Snippets are stable across an edit in another section (`lookup.chunks` closes a chunk at each
+heading, and `chunks_at` keeps that rule), and segments do not cross headings, so an edit in one section leaves the
+segments of every other section byte-equal. Each segment has a content key
+`seg_hash = sha256(client label | heading path | segment snippet texts)`: the context snippet and the extractor are
+not in it (the context can change when the section above is edited, and quotes from it are never accepted). The
+validated output of every segment is kept in `segment_cache`, keyed by `(seg_hash, extractor)`. When a new revision
+is built, a segment whose `seg_hash` has a cache row with the current `extractor` reuses that output: it is
+re-validated against the new snippets in full (section 8.4: quotes matched again, offsets recomputed, the client
+check, and every `known_id` checked against the entities visible to this segment) at no model cost, and only the
+other segments are sent.
+`run_item` records reused segments as `status = cached`. "Re-read with the new rules" sends every segment again
+because no cache row has the new `extractor`; old rows are vacuumed with the revisions that used them. Inside one
+section longer than 6000 characters, an edit can shift the later segments of that section only.
+
+Cost effect: files with many short sections produce more, smaller segments than the Appendix A model assumes
+(`ceil(characters / 6000)` per document), each paying the prefix and catalog. The segment count in section 9 is a
+lower bound for heading-dense files; S3 reports segments per document on the G0 scale set and in `--extract`, and
+the estimate shown to the PM counts the real segments of the pending revisions, not the model's average.
 
 ### 8.3 Prompt contract (`rules/evidence.yaml`, shared with the live-tips skill)
 
@@ -527,7 +591,10 @@ The prompt has a fixed, cacheable prefix (instructions, the type and relation li
 
 - source meta: kind, origin, date, title, client label;
 - the project's clients and a catalog of at most 60 known entities relevant to the segment (G1 task ids with their
-  text, people with aliases, recent topics), chosen by FTS and alias match on the segment;
+  text, people with aliases, recent topics), chosen by FTS and alias match on the segment, and **only from entities
+  and aliases visible to the segment's own scope**: the visibility rule of section 11.2 step 1 with
+  `scope.client` = the segment's client label (shared only for a shared segment), so another client's task names,
+  people or aliases are never sent with this segment;
 - the segment with line numbers.
 
 Instructions in short: extract only what the text says; every entity, claim and relation must quote the text
@@ -565,8 +632,8 @@ the whole segment:
 7. Caps per segment: 40 entities, 60 claims, 60 relations; extras are dropped (a runaway answer cannot fill the
    store).
 8. Fields under a `pm_override` and pairs the PM rejected are skipped.
-9. Modality guard: `confirmation` from a derived source becomes `statement`; a hedge word inside the quote makes
-   `confirmation` a `proposal`.
+9. Modality guard: `confirmation` from a derived source becomes `statement`; a hedge word anywhere inside the quote
+   (`hedge_anywhere`, section 7.2) makes `confirmation` a `proposal`.
 
 All of this is pure code and runs the same for every route.
 
@@ -574,21 +641,33 @@ All of this is pure code and runs the same for every route.
 
 - The worker is a sidecar command (`evidence pass`) the app starts: after a call ends and its notes are written,
   after the folder watcher sees changes (debounced 10 minutes), at most once per hour while the Mac is idle and on
-  power, and by the PM's "Index now".
-- A call in progress is a file the app writes: `<LT_AI_STATE>/call-active.json` (`{"started_at", "pid"}`), created
-  at call start and removed at the end. This is the one path for it; it is not next to `embed-server.json`, which
-  `semantic.py` (`launcher_path`, line 85) reads from `<root>/state/` or `LT_EMBED_LAUNCHER`. A file older than 6
-  hours or with a dead pid is stale. The worker checks it before every segment and before every model request;
-  when it appears, the worker finishes writing the segment it already received, records `status = paused_call` and exits. No request is sent
-  while the file is present. The worker does not take the embed server either while it is present.
-- The worker runs at low priority (`nice 10`), one at a time per project (the writer lock), at most one model request
+  power, and by the PM's "Index now". Hiding or unhiding a call and a document turning `denied` or `not_found` start
+  the immediate state-only pass (sections 5.1 and 5.2), which makes no model, network or embed request.
+- A call in progress is a file the app writes: `call-active.json` (`{"started_at", "pid"}`) in the state folder next
+  to `ai-routes.json` (`LT_AI_STATE` is the path of that file, not a folder), created at call start and removed at the
+  end. This is the one path for it; it is not next to `embed-server.json`, which `semantic.py` (`launcher_path`, line
+  85) reads from `<root>/state/` or `LT_EMBED_LAUNCHER`. A file older than 6 hours or with a dead pid is stale. The
+  worker checks it before every segment and before every model request, and **watches it while a request is in
+  flight** (a 1-second poll on a side thread). When it appears during a request, the worker aborts that request at
+  once: it closes the HTTP connection on api, openai and gemini (Ollama stops generating when its client disconnects,
+  so the local model stops loading the Mac too) and kills the process group of a `codex` or `code` CLI request. The
+  segment stays `pending` (`run_item.status = cancelled`), nothing of the partial answer is kept, the run records
+  the input tokens of the aborted request as spent (conservative, the provider may bill them) and ends with
+  `status = paused_call`. No request is sent while the file is present. The worker does not take the embed server
+  either while it is present.
+- The worker runs at low priority (`nice 10`), one pass at a time across all projects (the global worker lock,
+  section 13.1) and one writer per project (the project lock), at most one model request
   in flight per route (the plan limits are shared with the PM's prep work).
 
 ### 8.6 Routing
 
 - A new routing job `index` joins `JOBS = ("prep", "tips", "after")`. Its route defaults to the route of `after`
   and can be set separately in Settings; `LT_AI_ROUTE` works as for other jobs, but the general fallback chain
-  (`CHAIN_DEFAULT`) is not used: extraction falls back only to `local`, never to another cloud route.
+  (`CHAIN_DEFAULT`) is not used: extraction falls back only to `local`, never to another cloud route. The job still
+  has to exist everywhere jobs are listed, so Settings can show it and the chain code does not reject it: Python
+  `routing.JOBS`, Swift `AIChain` (`AIChain.allowed(route, job: "index")`, `Components.afterRemovingLocal`) and the
+  `chain` entry of `rules/ai.yaml`, which states that `index` steps only to the model on this Mac (S5 for Swift, S3
+  for Python and the rules).
 - Model per route: the cheaper model of each route for extraction (api `haiku-5-5`, openai `gpt-6-luna`, gemini
   `gemini-3.5-flash-lite`, codex `codex/default`, code with its smallest model, local `LT_LOCAL_MODEL` or
   `gemma4:26b`) and the route's `after` model for topic summaries. The model names come from `rules/ai.yaml`, not
@@ -612,9 +691,20 @@ All of this is pure code and runs the same for every route.
 - **Summary**: per topic whose `member_hash` changed, one model request on the `index` route's summary model with the
   topic's accepted claims and edges (with dates, modality, quotes) up to 6000 tokens; the output must cite claim ids
   and is validated like section 8.4 (every sentence cites at least one claim; uncited sentences are dropped). Stored
-  in `topic.summary`, marked derived, never evidence.
-- **When**: team default eager, at the end of a pass for topics touched by it, inside the same ceiling (40 topics
-  cost about $0.04 on Haiku, about $0.73 on Sonnet); a setting switches to lazy (summarise only when a preparation or
+  one row per sentence in `topic_sentence`, with the claims and edges it cites in `topic_cite`, marked derived, never
+  evidence.
+- **Access on summaries is per sentence.** At query time a sentence is returned only when **every** claim or edge it
+  cites passes section 11.2 steps 1 and 2 for the request (scope, `exclude`, source state, `as_of`); other sentences
+  of the same topic can still be returned. So a summary written before a source was excluded, revoked or hidden, or
+  one that cites a file in this request's `exclude`, never returns that source's facts. A topic with no passing
+  sentence is not returned at all.
+- **Staleness on access change.** When a source changes state (excluded, hidden, deleted, revoked, or back to
+  active), every topic with a sentence citing a claim or edge that has evidence on that source is marked `stale`
+  (`topic_cite_target` index), and the next pass re-summarises it; until then the per-sentence filter above keeps it
+  safe.
+- **When**: team default eager, at the end of a pass for topics touched by it, inside the same ceiling and on the
+  `after` model of the route (40 topics of the typical project: about $0.73 on Sonnet, $0.73 on GPT-6.1 Sol, $0.27 on
+  Gemini 3.8 Flash before 2027-01-01, section 9); a setting switches to lazy (summarise only when a preparation or
   the PM asks a global question).
 - **Global questions** ("what about SSO over all time"): `evidence.ask_global(query, scope, as_of)` finds topics
   by `topic_fts` and alias match, returns their summaries plus the dated claims behind them as a timeline. Answering
@@ -637,14 +727,14 @@ Ukrainian. That is 3.87M characters and 678 segments. Per segment: a 1,500-token
 entity catalog, and output between **500 tokens (typical)** and **2,000 tokens (the per-request cap, section 8.6)**.
 The contract allows 40 entities, 60 claims and 60 relations with quotes up to 300 characters, which would exceed the
 cap; the cap, not the item limits, bounds the output. 40 topic summaries of 6,000 input and 600 output tokens, priced
-on the same model as extraction. A typical week after the first index: 3 calls, 10 changed documents, 5,000
+in the table on the same model as extraction (summaries on the `after` model are added below the table). A typical week after the first index: 3 calls, 10 changed documents, 5,000
 characters of state, 6 topics: 272,000 characters, 48 segments. Every figure is a range "typical to cap"; the
-real output per segment is calibrated in S2 (G0 `--extract`) before S4 shows any number to the PM.
+real output per segment is calibrated in S3 (G0 `--extract`) before S5 shows any number to the PM.
 
 **Prompt cache on api Haiku.** The table assumes the provider caches the 1,500-token prefix. Anthropic documents a
 minimum cacheable prompt length per model, and for Haiku models it has been higher than for Sonnet; whether 1,500
 tokens qualify on `haiku-5-5` was **not verified** in this step. The Haiku row therefore uses the no-cache price.
-S2 checks the provider's cached-token count on the first requests of every route and the estimate uses no cache on
+S3 checks the provider's cached-token count on the first requests of every route and the estimate uses no cache on
 any route where it stays 0.
 
 | Route and model | First full index (typical to cap) | One week incremental (typical to cap) |
@@ -661,17 +751,32 @@ any route where it stays 0.
 | code plan (Claude Code), 4.0M to 5.0M tokens | not measured: no anchor for the Claude plan yet | not measured |
 | local `gemma4:26b`, 3.33M to 4.35M tokens | $0, 4.7 to 28 hours (assumed 300 to 600 tokens/s prefill, 15 to 30 tokens/s output; not measured) | 0.4 to 2.1 hours |
 
+Two corrections to the table, computed in this step with the second script of Appendix A:
+
+- **Topic summaries run on the `after` model** (section 8.7), not the extraction model. 40 summaries cost $0.73 on
+  Sonnet or GPT-6.1 Sol and $0.27 on Gemini 3.8 Flash ($0.55 from 2027-01-01), against $0.04 on Haiku or GPT-6 Luna
+  and $0.13 on Flash-Lite in the table. With recommendation (a) of section 15 (cheap model extracts, `after` model
+  summarises), a first index costs **$1.24 to $1.74** on Claude key (Haiku plus Sonnet), **$1.06 to $1.57** on OpenAI
+  (GPT-6 Luna plus GPT-6.1 Sol) and **$1.61 to $4.15** on Gemini (Flash-Lite plus 3.8 Flash). A typical week (6
+  topics) then costs $0.14 to $0.18 on Claude key, $0.13 to $0.17 on OpenAI and $0.13 to $0.31 on Gemini. The S3 estimator prices
+  each request on the model that sends it, so summaries are priced on the summary model.
+- **The entity catalog is closer to 2,000 tokens than 500** on api (60 entities with ids, text and aliases). That
+  adds 1.02M fresh input tokens to a first index: +$0.10 on Haiku, +$2.03 on Sonnet, up to +16% of a 5-hour window
+  on Codex (fewer tokens per character there). Output still dominates the dollar cost, so the ranges hold in shape;
+  S3 measures the real catalog size with the output per segment.
+
 What the numbers say:
 
 - Output is 40% to 62% of the dollar cost at the typical output and 72% to 86% at the cap (output prices are 5 to 8
   times input), so the output cap and short quotes matter more than input trimming. This is why the cap is part of
-  the contract and S2 measures the real output per segment.
+  the contract and S3 measures the real output per segment.
 - On api and openai, where the cache applies, the cacheable prefix saves about 18% to 22% at the typical output and
-  about 10% at the cap (e.g. Sonnet $10.90 -> $8.86, $21.07 -> $19.03). S2 sends the prefix first and identical on
+  about 10% at the cap (e.g. Sonnet $10.90 -> $8.86, $21.07 -> $19.03). S3 sends the prefix first and identical on
   every request so the providers' prompt cache applies.
-- On the cheap model of each route the first full index costs $0.37 to $4.01; on the `after` models of api and
-  openai it costs $7.35 to $19.03. The weekly incremental is cents on the cheap models and up to $1.40 on the
-  `after` models.
+- On the cheap model of each route the first full index costs $0.37 to $4.01 for extraction ($1.06 to $4.15 with
+  summaries on the `after` model); on the `after` models of api and openai it costs $7.35 to $19.03. The weekly
+  incremental is $0.13 to $0.31 with recommendation (a) (cents for extraction, the rest summaries) and up to $1.40
+  on the `after` models.
 - On the Codex plan the first full index does not fit one 5-hour window next to normal work; it has to spread over
   several passes under the ceiling. On local it is an overnight job at best and more than a day at the cap.
 - The G0 fixture is 10,383 bytes (20 files): about 3 segments, far below one cent on any route; it is not a cost
@@ -681,19 +786,24 @@ What the numbers say:
 
 - One ceiling per pass, in the unit of the route: USD on `api`, `openai`, `gemini` (default $1.00 per pass), percent
   of the 5-hour window on `codex` and `code` (default 10%, read from `ai-accounts.json` before the pass and after
-  every 10 segments through the existing `account_usage_*` functions), wall-clock minutes on `local` (default 120).
+  every request through the existing `account_usage_*` functions), wall-clock minutes on `local` (default 120).
   These are team defaults, each a setting (section 10); on reaching the ceiling the pass waits for the next one,
   and continuing on the local model is an opt-in setting (off by default).
 - **Daily cap**: passes can run hourly, so a per-pass ceiling alone does not bound a day. A second cap per project
   and route per calendar day: 3 times the pass ceiling by default ($3.00, 30% of the 5-hour window summed over the
   day's passes, 360 minutes on local), also a setting. The worker sums today's `run` rows before every pass and
-  before every request; at the daily cap the pass ends with `status = ceiling` and the row says "daily". The monthly
-  `cost.ProviderCaps` and `BudgetGuard` stay in force on top and bound the month.
+  before every request; at the daily cap the pass ends with `status = ceiling` and the row says "daily".
+- **Global daily cap across projects**: with N projects the per-project cap alone allows N times the spend in a day.
+  One more cap sums today's `index` spend of all projects per route from `spend-ledger.jsonl` (job `index`), which is
+  shared by all projects; default the same $3.00, 30% of the 5-hour window or 360 minutes on local, a setting. A
+  pass stops at whichever of the three caps (pass, project day, all projects day) comes first. Only one pass runs at
+  a time across all projects (a global worker lock next to the per-project lock), so two projects never race past the
+  global cap. The monthly `cost.ProviderCaps` and `BudgetGuard` stay in force on top and bound the month.
 - The estimate before each request uses `size.estimate` on the segment plus the prefix plus the full output cap
   (2,000 tokens for extraction, 800 for a summary), never the typical output, so the pass stops before the request
   that would cross the ceiling (`status = ceiling`) even if that request returns the longest allowed answer. With the
   output cap set on every request (section 8.6), the ceiling is a hard bound on USD routes; on plan routes the
-  percent is read back from the account and can overshoot by at most one request.
+  percent is read back from the account after every request and can overshoot by at most one request.
 - Plan routes also stop when the 5-hour window is above 80% used (the same `near_share` idea as prep), so indexing
   never eats the limit the PM needs for the next preparation.
 - Spend is written to the existing `spend-ledger.jsonl` with job `index`.
@@ -705,21 +815,23 @@ Settings > AI, a new row under the routes (only when the flag is on):
 - Title: "Project memory". Help line: "Pacenote reads your project's calls, notes and files on this Mac and keeps
   who and what they mention, with quotes. It never runs during a call."
 - Per project: "Indexed 412 of 678 parts. Last pass: Nov 23, 14:10, 1.2M tokens, $0.31 on Claude key (Haiku).
-  Next pass: about 48 parts, about $0.04 to $0.08." On plan routes: "about 4% of your 5-hour ChatGPT limit". On
+  Next pass: about 48 parts and 6 topic summaries, about $0.14 to $0.18." On plan routes: "about 4% of your 5-hour ChatGPT limit". On
   local: "about 25 minutes on this Mac, free".
 - Controls: "Index now", "Pause", the route ("Use for indexing: same as after the call / <route list>"), the ceiling
   ("Stop each pass at $1.00 / 10% of the 5-hour limit / 120 minutes on this Mac", "and each day at $3.00 / 30% /
-  360 minutes"), "Topic summaries: after each pass / only when asked", the switch "Use AI to read
+  360 minutes", and for all projects together "Never more than $3.00 / 30% / 360 minutes a day for all projects"),
+  "Topic summaries: after each pass / only when asked", the switch "Use AI to read
   sources" (off = deterministic links only, no model requests), and "Delete this project's memory".
 - Before the first full index of a project, a confirmation: "First index of Northpoint: 192 sources, about 3.9M
-  characters. On Claude key (Haiku): about $0.55 to $1.05, in 1 to 2 passes. On your ChatGPT plan: about 52% to 68%
-  of a 5-hour limit, in 6 to 7 passes. On this Mac: 5 to 28 hours, free. Your files are sent only to the AI you chose
+  characters. On Claude key (Haiku reads, Sonnet writes topic summaries): about $1.24 to $1.74, in 2 passes. On your
+  ChatGPT plan: about 52% to 68% of a 5-hour limit, in 6 to 7 passes over 2 to 3 days. On this Mac: 5 to 28 hours,
+  free. Your files are sent only to the AI you chose
   for this job." Buttons: "Start", "Use this Mac only", "Not now". The range comes from the estimate with typical
-  output and with the output cap; after S2 calibration the typical end uses the measured output per segment.
+  output and with the output cap; after S3 calibration the typical end uses the measured output per segment.
 - After a pass, in the same row: "Done: 230 parts, 0.9M tokens, $0.29 (estimate was $0.31)". A stopped pass says
   why: "Stopped at your $1.00 ceiling", "Paused: a call started", "Local model not installed".
 
-Strings go to `rules/i18n/en.json` and `uk.json` together when S4 builds them.
+Strings go to `rules/i18n/en.json` and `uk.json` together when S5 builds them.
 
 ## 11. Search API
 
@@ -730,7 +842,8 @@ search(store, query, *,
        scope,                    # Scope(project_uid, client, others, allow_shared=True) from client_scope.decide/from_sheet
        as_of=None,               # datetime; None = now. Replay passes the call start.
        window=None,              # (from, to) on said_at; None = all time
-       exclude=(),               # source ids or uris excluded for this request (Sources "skip", this call's own files)
+       exclude=(),               # source ids or uris excluded for this request (Sources "skip", this call's own files,
+                                 # and the files of a call hidden since the last state-only pass, section 5.1)
        kinds=None,               # snippet, claim, edge, topic
        mode="prep",              # prep, live, after
        budget=Budget(k=6, chars=14000, ms=1000, hops=1),
@@ -752,7 +865,14 @@ filters on a ranked list:
    `EXISTS` an evidence row whose snippet passes, and `NOT EXISTS` an evidence row whose snippet fails (a claim with
    one out-of-scope or revoked quote is dropped, not shown with fewer quotes; a claim with no evidence left never
    passes). No scope (`decide()` returned None, or a one-client project) passes everything of the project that is
-   not excluded.
+   not excluded. The same check covers the rows that have no evidence of their own:
+   - **Entity**: visible when at least one of its claims or edges passes (with its evidence, as above), or it has a
+     deterministic origin (`g1`, `tracker`, `voices`, `pm`) whose source passes and whose `entity.client` is empty
+     or `scope.client`. An entity that is not visible is never a match, a graph step end, a catalog entry (section
+     8.3) or a `why` path element, and its name is not returned.
+   - **Alias**: matched only when its entity is visible and its `client_set` passes like a snippet's.
+   - **Topic summary sentence**: returned only when every claim and edge it cites passes (section 8.7); a topic
+     with no passing sentence is not returned.
 2. **Time** (content time, section 6): with `as_of`, a revision is valid when `valid_from <= as_of` and
    (`valid_to IS NULL` or `valid_to > as_of`); without `as_of`, the active revision (`superseded_at IS NULL`).
    Snippets must sit on a valid revision and have `said_at <= as_of`. A claim or edge is **current** only while it
@@ -764,10 +884,23 @@ filters on a ranked list:
    used here. `window` narrows on `said_at`. Known limit: a file with only one revision whose content time is after
    the replayed call is not visible in that replay even if part of it existed earlier (the safe side: a coverage
    loss, never a leak); from its second revision on, replay is exact.
+   **State columns under `as_of`.** The "now" caches (`entity.name`, `entity.status`, `entity.merged_into`,
+   `claim.status`, `edge.status`, section 6) are not read in a replay; they are derived from rows dated at or before
+   `as_of`:
+   - an entity's status and name come from its `status` and name claims with `said_at <= as_of` (for tasks these are
+     the register events folded up to `as_of`, the same `commitments.fold()` cut at that time), so a task closed on
+     Nov 19 is open in a replay as of Nov 17; an entity with no name claim keeps the name of its earliest evidence at
+     or before `as_of`, and an entity with no row at or before `as_of` is not visible at all;
+   - a merge applies only when its register event or `pm_override` has `at <= as_of`;
+   - a claim or edge is `superseded` only when the superseding claim (or the PM's `supersedes` edge) is dated at or
+     before `as_of`, and `rejected` only when the rejecting override has `at <= as_of`; one exception: a PM rejection
+     of an extracted claim, edge or alias corrects the store, not the world, so it applies in every replay;
+   - a decision superseded after `as_of` is current in that replay.
 3. **Candidates**: FTS5 on snippets and topics; alias match of query words to entities (casefolded, both languages);
    with `query_vec`, cosine over the allowed snippets' vectors.
-4. **Graph step**: from matched entities, `hops` steps over accepted edges whose both ends and evidence passed 1
-   and 2 (suggestions only with `include_suggestions`).
+4. **Graph step**: from matched entities, `hops` steps over accepted edges (status derived under `as_of`) whose
+   evidence passed 1 and 2 and whose both ends are visible entities by the rule in step 1 (suggestions only with
+   `include_suggestions`).
 5. **Rank**: BM25 score, entity match, path length, recency, primary confirmations; at most 2 items per source (the
    `FolderIndex` rule).
 6. **Budget**: stop at `k`, `chars` or `ms`, whichever comes first, and say `truncated`.
@@ -803,8 +936,11 @@ the notes touch.
 
 ### 11.6 CLI
 
-`python -m livetips_m0 evidence status|ingest|pass|search|card|ask|rebuild|vacuum|delete --project-uid ... --root ...`
-with JSON output, so the Swift app and the skill use one interface.
+`python -m livetips_m0 evidence status|ingest|pass|exclude|search|card|ask|rebuild|vacuum|delete --project-uid ...
+--root ...` with JSON output, so the Swift app and the skill use one interface. `pass` and `exclude` take the lists
+the app passes: `--hidden-calls`, `--revoked` (Google file ids and Notion page ids with status `denied` or
+`not_found`) and `--web-dirs` (stored page folders outside call folders). `exclude` is the state-only pass of
+section 5.1: no model, network or embed request.
 
 ## 12. Privacy
 
@@ -815,8 +951,11 @@ with JSON output, so the Swift app and the skill use one interface.
   or web request: the Tracker comes from the snapshot file the app writes (section 5.2, item 5), site pages from
   what G6 already stored. The first full index asks before it starts (section 10) because it sends more text than
   one preparation does.
-- Hidden calls (section 5.1) are never sent to any model and never searched; hiding a call later moves its sources
-  to `excluded` on the next pass, and their claims stop passing the access check at once.
+- Hidden calls (section 5.1) are never sent to any model and never searched; hiding a call later starts the
+  immediate state-only pass, which moves its sources to `excluded`, and from then on their claims, edges and the
+  topic sentences citing them stop passing the access check. Until that pass has run (a hide during a call), the
+  app passes the hidden call's files in `exclude` on every search. A document that loses access (`denied` or
+  `not_found`) goes the same way to `revoked` (section 5.2, item 6).
 - Vectors come from the bundled local bge-m3 server; nothing is embedded in the cloud.
 - Emails and phone numbers are already scrubbed from site pages (G6); the store keeps text as the reader returns it,
   so the store holds what the project folder holds. Secrets folders skipped by `semantic.py` and `.livetipsignore`
@@ -833,7 +972,12 @@ with JSON output, so the Swift app and the skill use one interface.
 ### 13.1 Concurrency
 
 - One writer per project: the worker takes `<uid>.lock` (flock) for a pass; ingest from the prep step waits at most
-  2 seconds for it and otherwise reads the last committed state.
+  2 seconds for it and otherwise reads the last committed state. The state-only pass (hide, unhide, revoke) also
+  waits at most 2 seconds; when a full pass holds the lock, it writes its change to `<uid>.state-request.json` and
+  the running pass applies it in its own transaction before its next segment (it checks between segments anyway).
+  The app keeps the files in `exclude` until `evidence status` shows the change applied.
+- One pass at a time across all projects (`evidence/worker.lock`), so the global daily cap (section 9.1) is summed
+  without a race.
 - Many readers (prep, the live engine, the skill CLI) use WAL snapshots and never block the writer.
 - Every source revision is one transaction; a crash leaves the previous revision active and the segment
   `pending`.
@@ -845,7 +989,7 @@ with JSON output, so the Swift app and the skill use one interface.
 | Route error, timeout, rate limit | segment stays `pending`, back-off doubles from 1 minute to 1 hour, the pass ends with `failed` after 3 consecutive errors |
 | Invalid output twice | segment `invalid`, retried only after a rules or route change; counted in `evidence status` |
 | Ceiling reached | `status = ceiling`, the rest stays `pending` for the next pass |
-| Call starts | `paused_call`, section 8.5 |
+| Call starts | the request in flight is aborted, the segment stays `pending`, `paused_call`, section 8.5 |
 | Corrupt SQLite (`PRAGMA quick_check` fails at open) | the file is moved to `<uid>.corrupt-<stamp>.sqlite`, a fresh store is built deterministically (free), extraction starts again under the ceiling; the PM sees one line saying so |
 | Disk full | the transaction rolls back, the pass ends `failed`, nothing half-written |
 | FTS5 missing | fallback search (section 6), noted in status |
@@ -873,8 +1017,8 @@ them `pending` (it costs money, so it is never automatic).
   uid and a new store; the old one is listed in status as orphaned and deleted after confirmation.
 - **Vacuum** (weekly, outside calls, and right after a source is revoked): purge snippets of superseded revisions
   nobody cites, purged sources, then, in the same transaction, every claim and edge left with no evidence row and
-  every `segment_cache` row whose `seg_hash` no `run_item` of a remaining revision uses; old `run_item` rows (keep
-  90 days); then `VACUUM`.
+  every `segment_cache` row whose `seg_hash` no segment of a remaining revision has, or whose `extractor` is not the
+  current one and is older than 30 days; old `run_item` rows (keep 90 days); then `VACUUM`.
 
 ## 14. G0: how the store is measured
 
@@ -892,7 +1036,10 @@ difference B to C is the graph and nothing else.
 
 The bench makes no model call and blocks every host (`run.py`). Variant C therefore uses a **checked-in extraction
 fixture**: `bench/g0/fixtures/extract/<seg_hash>.json`, written once by a real extraction run on a cheap route
-(route, model and date recorded in the file). The fixture is the **raw validated model output**: a hand review may
+(route, model, date and `extractor` recorded in the file). It is keyed by the content-only `seg_hash` (section 8.2),
+so a prompt or rules change does not invalidate it: C still replays it, and the report states when the fixture's
+`extractor` differs from the current one. Re-recording (a paid run) is a deliberate step, needed only when a gold
+file's text changes or the contract changes the output shape. The fixture is the **raw validated model output**: a hand review may
 only delete items that are wrong (each deletion listed with its reason in the same file), never add or edit one, so
 what C finds is what the model found. C replays the fixture through the same validator (section 8.4).
 
@@ -929,12 +1076,17 @@ New gold (`gold.yaml` version 2, all invented, US names, same two clients) that 
    in order (topic summary plus claims).
 4. **Time replay**: a go-live date changed on Nov 19 in an edited file (the two revision states of section 14.1);
    replayed as of Nov 17 the answer must be the old date and the Nov 19 fact must not appear (future leak); asked
-   now, the answer is the new date and the old one appears only in the timeline marked "changed later".
+   now, the answer is the new date and the old one appears only in the timeline marked "changed later". The same
+   replay also covers state columns: a task the register closes on Nov 19 must be open as of Nov 17, and a decision
+   superseded on Nov 19 must be current as of Nov 17 (section 11.2 step 2).
 5. **Modality**: "Did Globex agree to 39 hours?" where 39 hours was only proposed: the answer must carry
    `proposal`; a fact said only in generated notes must not count as confirmed.
 6. **Exclusion and revocation**: one file excluded by the PM, one deleted file, one revoked document and one hidden
    call (its transcript and notes), each with a unique fact; none may ever appear, neither as a snippet nor as a
-   claim, edge or topic summary sentence.
+   claim, edge, entity name, alias or topic summary sentence. The topic summary that cites the fact is built
+   **before** the exclusion, so the per-sentence filter of section 8.7 is what the gold tests. The bench passes the
+   revoked document through `--revoked` and the hidden call through `--hidden-calls`, the same way the app does
+   (section 11.6).
 7. **Scale**: a seeded noise generator adds about 2 MB of plausible project text (40 extra documents, 10 extra
    calls) so that ranking and latency are measured with distractors; the 10 KB set stays as the "small" set.
 
@@ -948,8 +1100,8 @@ New gold (`gold.yaml` version 2, all invented, US names, same two clients) that 
 | Evidence recall | gold facts returned as a claim or edge with a valid quote and locator |
 | Quote validity | returned quotes that are verbatim at their locator (must be 100%) |
 | Modality accuracy | modality questions with the expected modality; derived-only facts counted as confirmed (must be 0) |
-| Future leaks | items with `said_at` or `summary_at` after `as_of` (must be 0) |
-| Excluded leaks | items from excluded, hidden-call, deleted or revoked sources (must be 0) |
+| Future leaks | items with `said_at` or `summary_at` after `as_of`, and entity status, name, merge or claim and edge status values that come from a row dated after `as_of` (must be 0) |
+| Excluded leaks | items (snippets, claims, edges, entity names, aliases, topic sentences) from excluded, hidden-call, deleted or revoked sources (must be 0) |
 | Store p50 / p95 ms | `search(mode="live")` and `mode="prep"`, small and scale sets |
 | Index cost | segments, tokens (deterministic count from the fixture), re-extracted segments after changing one section of one file (must be that section's segments only; the rest `cached`) |
 
@@ -959,34 +1111,38 @@ duplicates, wrong identity, item 13 cross-client, false agreed, false proposal.
 ## 15. Questions for the owner (product choices only)
 
 1. **Which model reads sources.** Options: (a) the cheapest model of the chosen route (Haiku, GPT-6 Luna, Gemini
-   3.5 Flash-Lite: $0.37 to $4.01 for a first index, typical to cap); (b) the route's after-call model (Sonnet,
-   GPT-6.1 Sol: $7.35 to $19.03). **Recommendation: (a)** for extraction, the after-call model only for topic
-   summaries; G0 `--extract` compares quality and we switch if the cheap model misses too much.
+   3.5 Flash-Lite) for extraction and the after-call model for topic summaries: $1.06 to $4.15 for a first index,
+   typical to cap, in 2 to 5 passes (1 to 2 days at the daily cap); (b) the route's after-call model (Sonnet,
+   GPT-6.1 Sol) for both: $7.35 to $19.03, which at the $3.00 daily cap takes **3 to 7 days** to finish. On the Codex
+   plan either option takes 6 to 7 passes over **2 to 3 days** (52% to 68% of a window at 30% a day).
+   **Recommendation: (a)**; G0 `--extract` compares quality and we switch if the cheap model misses too much.
 2. **Consent before spending on a cloud route.** Options: (a) ask once per project before the first full index,
    showing the volume, provider and cost range (section 10), then run increments in the background without asking,
    under the per-pass and daily caps; (b) no prompt at all, the flag is consent enough; (c) local only for the first
    index, cloud for increments; (d) ask before every pass. **Recommendation: (a)**.
 
 Team defaults, each a setting in section 10, not owner questions: $1.00 per pass and $3.00 per day on paid keys,
-10% per pass and 30% per day of the 5-hour window on plans, 120 and 360 minutes on local; at the ceiling wait for the
-next pass, local overflow off; topic summaries eager (40 topics: about $0.04 on Haiku, $0.73 on Sonnet). With these
-defaults a first index of the typical project finishes in 1 to 2 passes on Haiku or GPT-6 Luna, 2 to 5 passes (up to
-2 days at the daily cap) on Gemini 3.5 Flash-Lite, and in about 6 to 7
-passes on the Codex plan.
+10% per pass and 30% per day of the 5-hour window on plans, 120 and 360 minutes on local, and the same day caps for
+all projects together; at the ceiling wait for the next pass, local overflow off; topic summaries eager on the
+after-call model (40 topics: about $0.73 on Sonnet or GPT-6.1 Sol, $0.27 on Gemini 3.8 Flash). With these defaults
+and option (a), a first index of the typical project finishes in 2 passes on Claude key or OpenAI ($1.24 to $1.74,
+$1.06 to $1.57), 2 to 5 passes (up to 2 days at the daily cap) on Gemini ($1.61 to $4.15), and in 6 to 7 passes
+over 2 to 3 days on the Codex plan.
 
 ## 16. Risks
 
 - **Invented links** (V3's main risk): every edge needs a verbatim quote and a word of both ends, ambiguous ones stay
   suggestions, the G0 extraction fixture is raw model output (review may only delete), and `--extract` measures
   precision and the hop and paraphrase rates per route.
-- **Output size drives cost**: the first-index range is wide ($0.37 to $4.01 on cheap models) because output per
-  segment is not measured yet; the per-request cap bounds it and S2 calibrates it before any number reaches the PM.
+- **Output size drives cost**: the first-index range is wide ($0.37 to $4.01 for extraction on cheap models, $1.06
+  to $4.15 with summaries on the `after` model) because output per
+  segment is not measured yet; the per-request cap bounds it and S3 calibrates it before any number reaches the PM.
 - **Synthetic gold proves correctness, not usefulness**: gains on the owner's real calls stay "not verified" until
   G3 runs on live calls (the plan's section 10 risk, unchanged).
 - **Cost of the first index on plan routes**: about 52% to 68% of a Codex 5-hour window for a typical project (on an
   assumed anchor); the ceiling
   and the 80% stop keep it from blocking preparation, at the price of an index that takes days to complete.
-- **Local model speed and quality**: not measured; S2 measures tokens per second on the owner's Mac class before the
+- **Local model speed and quality**: not measured; S3 measures tokens per second on the owner's Mac class before the
   fallback is offered in the UI.
 - **Two sources of truth for tasks**: the register stays canonical; the store only reads it. Where PM edits are
   written is the one rule in section 7.3.
@@ -1005,92 +1161,141 @@ default; `LT_EVIDENCE=1` for tests), with tests, CHANGELOG (Unreleased) when use
 `rules/` plus the generated skill section where the contract changes. Each has a G0 gate: no existing column
 regresses, its new columns meet the bar.
 
-### S1. Store, deterministic ingest, search, G0 variants B and C plumbing (core)
+### S1. Store, deterministic ingest, search, CLI (core)
 
-Scope: `livetips_m0/evidence/` (schema, migrations, store open/lock, ingest per source type with change detection and
-client labels, deterministic entities and claims from the register, the Tracker snapshot file reader, sheets,
-voice aliases, hidden-call exclusion from a passed list, `d-`/`r-` ids in `identity.py`, `pm_override` from register
-events), `client_scope.labels(root)`, `lookup.chunks_at` (offsets and client boundaries), slug history for renamed
-projects, `search` / `entity_card` with access and time filters, the CLI (with `--hidden-calls` and, for tests and
-the bench, `--valid-from`), `gold.yaml` v2 (at least 6 multi-hop questions, the two revision states, the hidden
-call) and the scale set, VariantB and VariantC (deterministic part) in `run.py`.
+Scope: `livetips_m0/evidence/` (schema, migrations, store open/lock and the global worker lock, ingest per source
+type with change detection and client labels, deterministic entities and claims from the register, the Tracker
+snapshot file reader, sheets, voice aliases, the state-only pass with hidden calls and revoked documents from the
+passed lists and the state-request file, `d-`/`r-` ids in `identity.py`, `pm_override` from register events),
+`client_scope.labels(root)`, `lookup.chunks_at` (offsets and client boundaries), slug history for renamed projects,
+`search` / `entity_card` with access (snippets, claims, edges, entities, aliases) and time filters including the
+`as_of` derivation of state columns, the CLI (`exclude`, `--hidden-calls`, `--revoked`, `--web-dirs` and, for tests
+and the bench, `--valid-from`).
 
 Acceptance:
 - [ ] The store is created only under `<support>/evidence/<uid>.sqlite`; a test asserts nothing is written under the
       project root.
 - [ ] Changing one file creates exactly one new revision; touching mtime without content change creates none; a
       deleted file is `deleted` and absent from search; register `migrate`/`rollback` triggers a refold.
-- [ ] Access tests: excluded, hidden call, deleted, revoked, another client's file, another client's line in a
-      shared file, a claim with one out-of-scope evidence row: none returned, and each case is filtered in the SQL
-      candidate query (checked by a test that ranks nothing it was not allowed).
+- [ ] Access tests: excluded, hidden call, deleted, revoked (from the `--revoked` list: a Google picked copy by
+      `<id16>` and a `_notion/` file by page id), another client's file, another client's line in a shared file, a
+      claim with one out-of-scope evidence row, an entity known only from another client's files (no name, alias or
+      graph step through it): none returned, and each case is filtered in the SQL candidate query (checked by a test
+      that ranks nothing it was not allowed).
+- [ ] `exclude --hidden-calls` makes no model, network or embed request and the hidden call is gone from the next
+      `search`; with a full pass holding the lock, the change goes through the state-request file and is applied
+      before the pass's next segment.
 - [ ] Client parity: on the G0 fixture, for each scope, the snippets that pass cover exactly the lines
       `client_scope.filter_text` keeps.
 - [ ] Time tests on content time: a first index of files with past content times, replayed as of a past call, sees
-      the files valid then; `as_of` before a revision, before a claim and before a summary returns none of them; a
-      claim whose evidence sits only on a replaced revision is not current.
+      the files valid then; `as_of` before a revision or before a claim returns none of them; a claim whose evidence
+      sits only on a replaced revision is not current; a task closed after `as_of` is open, a merge after `as_of` is
+      not applied, a decision superseded after `as_of` is current, and a PM rejection applies at every `as_of`.
+- [ ] One edge found in a shared file and in a client file is one row; for the other client's scope it passes only
+      through the shared evidence (and is dropped when it also has a failing row, section 11.2).
 - [ ] PM edits from the register and `pm_override` rows on a claim and on an edge survive a rebuild (natural keys).
 - [ ] Purge: after a source is revoked and vacuumed, no claim or edge is left without evidence, and none of its
       facts is returned.
 - [ ] A register item written before a project rename joins one written after it.
 - [ ] Two processes: a reader during a write sees the previous complete revision.
 
-G0 gate: B and C run on the small and scale sets; C: prep and live leaks 0, future leaks 0, excluded leaks 0, quote
-validity 100%, evidence recall for register and Tracker facts 100%; A's columns unchanged; `mode="live"` p95 on the
-scale set at most 150 ms.
+G0 gate: A's columns unchanged; the store unit tests above run on the current 10 KB G0 fixture with leaks 0 (client,
+excluded, future); `mode="live"` p95 on that fixture at most 150 ms. (The new variants and gold come in S2, so S1
+merges on its own without them.)
 
-### S2. LLM extraction, validation, routing, ceiling (core)
+### S2. G0 gold v2, scale set, variants B and C (core)
+
+Scope: `gold.yaml` v2 (section 14.2: at least 6 multi-hop questions, paraphrase and other-language questions, the
+global timeline, the two revision states with a task closed and a decision superseded between them, modality, the
+excluded, deleted, revoked and hidden-call cases with a topic summary built before the exclusion), the scale set's
+seeded noise generator, VariantB and VariantC in `run.py` (deterministic part, with and without vectors), the new
+metrics of section 14.3, and the extraction fixture loader keyed by content-only `seg_hash` (the fixture itself is
+recorded in S3).
+
+Acceptance:
+- [ ] `run.py --variant A|B|C` runs offline on the small and the scale set, blocks every host, and writes the new
+      columns; A's existing columns are byte-equal to the last A result.
+- [ ] Every gold v2 question states which variant is expected to pass it and why, so a later gain is attributable.
+- [ ] The future-leak metric counts entity and claim state values from after `as_of`; the excluded-leak metric
+      counts entity names, aliases and topic sentences.
+- [ ] The scale set is reproducible (same seed, same bytes) and its generated extraction is marked so no hop or
+      paraphrase gate uses it.
+
+G0 gate: B and C (deterministic part) on the small and scale sets: prep and live leaks 0, future leaks 0, excluded
+leaks 0, quote validity 100%, evidence recall for register and Tracker facts 100%; A's columns unchanged;
+`mode="live"` p95 on the scale set at most 150 ms.
+
+### S3. LLM extraction, validation, routing, ceiling (core)
 
 Scope: `rules/evidence.yaml`, `rules/evidence_schema.json`, generated `skill_evidence.md` and the skill copy; segmenter,
-prompt builder with cacheable prefix, validator (section 8.4), the `index` routing job on all six routes with local
-fallback, the per-request output cap, the segment cache, the worker (`evidence pass`) with the call-active check, the
-pass and daily ceilings (USD, percent, minutes), estimates and run accounting, the extraction fixture for G0 (raw
-model output, deletions only) and `--extract <route>` with output-per-segment calibration.
+prompt builder with cacheable prefix and the client-filtered catalog, validator (section 8.4, with the unanchored
+`hedge_anywhere` words), the `index` routing job on all six routes with local fallback (Python `routing.JOBS` and
+the `chain` entry of `rules/ai.yaml`), the per-request output cap, segments that never cross a heading and the
+segment cache keyed by `(seg_hash, extractor)`, the worker (`evidence pass`) with the call-active check and the abort
+of a request in flight, the pass, project-day and all-projects-day ceilings (USD, percent read after every request,
+minutes), estimates priced per request on the model that sends it, run accounting, the extraction fixture for G0
+(raw model output, deletions only, keyed by content) and `--extract <route>` with output-per-segment, catalog-size
+and segments-per-document calibration.
 
 Acceptance:
 - [ ] Validator unit tests: a non-verbatim quote, a wrong line range, an unknown enum, a cross-client quote, a hedge
-      under `confirmation`, a derived `confirmation`, an override field, a rejected pair: each dropped or downgraded
-      as specified.
+      word in the middle of a quote under `confirmation`, a derived `confirmation`, an override field, a rejected
+      pair: each dropped or downgraded as specified.
+- [ ] The catalog sent with a client's segment holds no entity or alias visible only to another client.
 - [ ] A fake provider that returns oversized, invalid and slow answers: caps hold, the repair retry happens once,
       the pass ends `failed` after 3 errors.
 - [ ] `call-active.json` present: no request is sent (fake provider counts 0) and the run ends `paused_call`.
-- [ ] Ceiling: every request carries the output cap; the pass stops before the request that would cross the pass or
-      the daily cap when that request returns the full cap (a fake provider always answering at the cap never
-      exceeds a USD ceiling); `est_usd`/`usd`, `pct_before`/`pct_after` and `seconds` are filled per route kind;
-      spend goes to `spend-ledger.jsonl` with job `index`.
-- [ ] Re-running a pass with no changes sends 0 requests; editing one section of a large file sends only that
-      section's segments, the rest are `cached`.
+      Created while a slow fake request is in flight: that request is cancelled within 2 seconds (the fake provider
+      sees the disconnect, a fake CLI process group is killed), no further request is sent, the segment stays
+      `pending` and the run ends `paused_call`.
+- [ ] Ceiling: every request carries the output cap; the pass stops before the request that would cross the pass,
+      the project-day or the all-projects-day cap when that request returns the full cap (a fake provider always
+      answering at the cap never exceeds a USD ceiling; two projects together never exceed the global cap);
+      `est_usd`/`usd`, `pct_before`/`pct_after` and `seconds` are filled per route kind; spend goes to
+      `spend-ledger.jsonl` with job `index`.
+- [ ] Re-running a pass with no changes sends 0 requests; editing one section of a large file (including a short
+      section between two others, and the section right above another) sends only that section's segments, the rest
+      are `cached`; a new `extractor` sends every segment again.
 - [ ] A route whose cached-token count stays 0 is estimated without cache.
 
 G0 gate: C with the extraction fixture: hop answer rate at least 4 of 6 multi-hop questions and at least 2 more than
-B (A and B: expected 0 to 2), paraphrase answer rate above B, modality accuracy 100%, derived counted as confirmed 0,
-all S1 zeros still 0; `--extract` on one cheap route reports precision, recall, its own hop and paraphrase rates,
-output tokens per segment and cost (recorded, not gated; the measured output per segment replaces the 500-token
-assumption in the estimates before S4 shows any number).
+B (A and B: expected 0 to 2), paraphrase answer rate not below B in the run with vectors and above B in the run
+without vectors (B also has bge-m3, so with vectors both may already find the paraphrase), modality accuracy 100%,
+derived counted as confirmed 0, all S1 and S2 zeros still 0; `--extract` on one cheap route reports precision,
+recall, its own hop and paraphrase rates, output tokens per segment, catalog tokens, segments per document and cost
+(recorded, not gated; the measured values replace the 500-token output and catalog assumptions in the estimates
+before S5 shows any number).
 
-### S3. Topic summaries and global questions (core)
+### S4. Topic summaries and global questions (core)
 
-Scope: deterministic communities per client, summary requests inside the pass ceiling, summary validation with claim
-citations, `topic_fts`, `ask_global`, staleness by `member_hash`.
+Scope: deterministic communities per client, summary requests on the `after` model inside the pass ceiling, summary
+validation with claim citations, `topic_sentence` and per-sentence `topic_cite`, the per-sentence access filter,
+`topic_fts`, `ask_global`, staleness by `member_hash` and by a change of state of a cited source.
 
 Acceptance:
 - [ ] Same input, same topics (seeded); no topic mixes two clients.
 - [ ] A summary sentence without a valid claim citation is dropped; summaries never appear as evidence or as a
       confirmation.
-- [ ] Only topics whose members changed are re-summarised.
+- [ ] Only topics whose members changed, or whose cited sources changed state, are re-summarised.
+- [ ] A topic summarised before one of its sources was excluded, revoked or hidden, or asked with that source in
+      `exclude`, returns none of the sentences that cite it and still returns its other sentences.
 - [ ] `ask_global` with `as_of` never returns a summary written after `as_of`.
 
-G0 gate: global timeline recall at least 75% with correct order on the global gold, future leaks 0, everything from
-S1 and S2 unchanged.
+G0 gate: global timeline recall at least 75% with correct order on the global gold, future leaks 0, excluded leaks 0
+(including topic sentences), everything from S1, S2 and S3 unchanged.
 
-### S4. App integration: flag, project uid, scheduler, settings and cost text
+### S5. App integration: flag, project uid, scheduler, settings and cost text
 
 Scope: Swift: `evidence_uid` in `projects.json` with the slug passed on every pass (slug history), `LT_PROJECT_UID`,
 `call-active.json` written at call start and removed at the end, the Tracker snapshot file
-(`<LT_AI_STATE>/tracker-snapshot/<uid>.json` from the Notion and HubSpot items the app already holds), the list of
-hidden calls from `history.json` passed to each pass, triggers (after notes, folder change debounce, idle hourly,
-"Index now"), the settings row and
-the first-index confirmation with the texts of section 10 (en and uk i18n), delete per project, status line; docs EN
-and UK; CHANGELOG.
+(`tracker-snapshot/<uid>.json` in the state folder next to `ai-routes.json`, from the Notion and HubSpot items the
+app already holds), the lists passed to each pass (hidden calls from `history.json`; Google and Notion documents with
+status `denied` or `not_found`; stored page folders under `SheetCLI.stateDir/web` for this project's sheets), the
+state-only pass on hide, unhide and loss of access, with the hidden call's files in `exclude` on every search until
+it has applied, triggers (after notes, folder change debounce, idle hourly, "Index now"), the `index` job in Swift
+`AIChain` (`allowed`, Settings list, stepping only to the model on this Mac), the settings row with the all-projects
+day cap and the first-index confirmation with the texts of section 10 (en and uk i18n), delete per project, status
+line; docs EN and UK (including that G2 searches stored site pages); CHANGELOG.
 
 Acceptance:
 - [ ] Flag off: no store file is created, no worker runs, no setting is shown (test and `swift build`).
@@ -1098,17 +1303,20 @@ Acceptance:
       as orphaned.
 - [ ] `call-active.json` exists for the whole call and is removed after it, including after a crash on the next
       launch.
-- [ ] Hiding a call on Home puts its file in the list the next pass receives; the Tracker snapshot file is written
-      only from data the app already has (no new request; pure-logic test on the writer).
+- [ ] Hiding a call on Home starts the state-only pass at once (outside a call) or right after the call (during
+      one), and the call's files are in `exclude` of every search until it has applied; a Google document turning
+      `denied` does the same with `--revoked`; the Tracker snapshot file is written only from data the app already
+      has (no new request; pure-logic tests on the list builders and the writer).
+- [ ] `AIChain` accepts the `index` job and never steps it to another cloud route (pure-logic test).
 - [ ] The cost text before and after a pass shows the numbers from the `run` row as a range (typical to cap), using
-      the S2-calibrated output per segment (pure-logic tests on the formatter); screenshots only through the harness
+      the S3-calibrated output per segment (pure-logic tests on the formatter); screenshots only through the harness
       gate (L33).
 
 G0 gate: no change to any G0 column (the app wiring is not on the bench); `CoreChecks` and `swift build` green.
 
-Order: S1 -> S2 -> S3, S4 can start after S1 (it needs only the CLI and the flag), shows cost numbers only after
-S2's calibration, and must land before the flag is offered to the owner. S1 goes first because it makes every later
-gate measurable.
+Order: S1 -> S2 -> S3 -> S4; S5 can start after S1 (it needs only the CLI and the flag), shows cost numbers only after
+S3's calibration, and must land before the flag is offered to the owner. S1 and S2 go first because they make every
+later gate measurable; S1 is split from S2 so the store merges without waiting for the new gold.
 
 ## Appendix A. Cost model script
 
@@ -1180,6 +1388,38 @@ for name, (ch, segs, topics) in (("FULL", FULL), ("WEEK", WEEK)):
         print("  local gemma4:26b at %d tok/s prefill, %d tok/s out: %.1f h" % (pre, gen, ((f + c) / pre + o / gen) / 3600))
 ```
 
+The second script (`python3 -I extra.py`) gives the corrections under the section 9 table: topic summaries priced
+on the `after` model, the larger entity catalog and the days to finish at the daily cap. The table rows it starts
+from are the outputs of the first script.
+
+```python
+T, FRESH, PRE, OUT = 40, 6000, 1500, 600  # 40 topic summaries: fresh input, cached prefix, output tokens
+SUM = {"sonnet-5-5": (2.0, 0.10, 10.0), "gpt-6.1-sol": (2.0, 0.10, 10.0),
+       "gemini-3.8-flash now": (0.75, 0.075, 3.75), "gemini-3.8-flash 2027": (1.50, 0.15, 7.50),
+       "haiku-5-5": (0.10, 0.01, 0.50), "gpt-6-luna": (0.10, 0.01, 0.50), "gemini-3.5-flash-lite": (0.30, 0.03, 2.50)}
+s = {k: T * (FRESH * pi + PRE * pc + OUT * po) / 1e6 for k, (pi, pc, po) in SUM.items()}
+for k, v in s.items():
+    print("summaries %s: $%.4f" % (k, v))
+rows = {"haiku-5-5 (no cache)": ((0.55, 1.05), "haiku-5-5", "sonnet-5-5"),
+        "gpt-6-luna": ((0.37, 0.88), "gpt-6-luna", "gpt-6.1-sol"),
+        "gemini-3.5-flash-lite": ((1.47, 4.01), "gemini-3.5-flash-lite", "gemini-3.8-flash now")}
+for k, ((lo, hi), cheap, after) in rows.items():
+    d = s[after] - s[cheap]
+    print("first index %s + after-model summaries: $%.2f to $%.2f" % (k, lo + d, hi + d))
+extra = 678 * 1500  # catalog 2,000 instead of 500 tokens on 678 segments
+for k, pi in (("haiku-5-5", 0.10), ("sonnet-5-5", 2.0)):
+    print("catalog %s: +%.2fM tokens, +$%.2f" % (k, extra / 1e6, extra * pi / 1e6))
+print("catalog codex: +%.0f%% of a window (upper bound)" % (extra / 250000 * 4))
+week = {"haiku-5-5 (no cache)": ((0.04, 0.08), "haiku-5-5", "sonnet-5-5"),  # 6 topics a week, section 9
+        "gpt-6-luna": ((0.03, 0.07), "gpt-6-luna", "gpt-6.1-sol"),
+        "gemini-3.5-flash-lite": ((0.11, 0.29), "gemini-3.5-flash-lite", "gemini-3.8-flash now")}
+for k, ((lo, hi), cheap, after) in week.items():
+    d = (s[after] - s[cheap]) * 6 / T
+    print("week %s + after-model summaries: $%.2f to $%.2f" % (k, lo + d, hi + d))
+for k, lo, hi, cap in (("Sonnet $", 8.86, 19.03, 3.0), ("GPT-6.1 Sol $", 7.35, 17.52, 3.0), ("codex %", 52, 68, 30)):
+    print("days at the daily cap, %s: %.1f to %.1f" % (k, lo / cap, hi / cap))
+```
+
 ## Підсумок українською
 
 1. PB-52 (GraphRAG G2): локальне сховище доказів у SQLite в Application Support, окремий файл на проєкт за новим
@@ -1187,18 +1427,23 @@ for name, (ch, segs, topics) in (("FULL", FULL), ("WEEK", WEEK)):
 2. Схема: джерела з ревізіями (sha256 тексту), уривки з локаторами, сутності з ідентичністю G1, твердження з
    модальністю, ребра з цитатами, аліаси, правки PM, теми з підсумками, проходи з вартістю.
 3. Спершу детерміновані звʼязки (реєстр, знімок Tracker від застосунку, люди, шити), потім LLM-екстракція з усіх
-   джерел у фоні, ніколи під час дзвінка (файл `call-active.json`), інкрементально з кешем на сегмент; приховані
-   дзвінки виключені й ніколи не йдуть у модель.
+   джерел у фоні, ніколи під час дзвінка (файл `call-active.json`; запит у польоті переривається), інкрементально з
+   кешем на сегмент за змістом (сегмент не перетинає заголовок); приховані дзвінки і документи без доступу
+   виключаються одразу окремим проходом без моделі й ніколи не йдуть у модель.
 4. Контракт промпту і схема виходу в `rules/evidence.yaml` і `rules/evidence_schema.json`, спільні зі скілом;
    валідатор перевіряє дослівність цитат, клієнта, модальність, правки PM.
 5. Модальність: proposal / expectation / confirmation / statement, мапінг зі значень G1; підсумки й нотатки ніколи
    не рахуються незалежним підтвердженням.
-6. Пошук: доступ, клієнт (PB-70, точна мітка на кожен уривок) і час (`as_of` за часом змісту) фільтруються в SQL до
-   ранжування; правки PM за природними ключами переживають перебудову; режим live без нових викликів.
-7. Вартість першого індексу типового проєкту (оцінка, від типового виходу до ліміту 2000 токенів): $0.37-4.01 на
-   дешевих моделях, $7.35-19.03 на Sonnet або GPT-6.1 Sol, 52-68% 5-годинного вікна Codex, 5-28 годин локально.
-8. Стеля на прохід і на день у долари, відсотки ліміту або хвилини, показ вартості до і після, вимикач і видалення.
+6. Пошук: доступ, клієнт (PB-70, точна мітка на кожен уривок) і час (`as_of` за часом змісту, статуси й злиття теж
+   на момент `as_of`) фільтруються в SQL до ранжування, також для сутностей, аліасів і кожного речення підсумку
+   теми; правки PM за природними ключами переживають перебудову; режим live без нових викликів.
+7. Вартість першого індексу типового проєкту (оцінка, від типового виходу до ліміту 2000 токенів): $1.06-4.15 з
+   дешевою моделлю для екстракції і моделлю after для підсумків, $7.35-19.03 на Sonnet або GPT-6.1 Sol (3-7 днів
+   за денної стелі), 52-68% 5-годинного вікна Codex (2-3 дні), 5-28 годин локально.
+8. Стеля на прохід, на день для проєкту і на день для всіх проєктів разом у долари, відсотки ліміту або хвилини,
+   показ вартості до і після, вимикач і видалення.
 9. G0: варіанти B і C з однаковими кандидатами, фікстура екстракції як сирий вихід моделі, складніший еталон (6+
    питань на кілька кроків, перефразування, глобальні, реплей у часі, модальність, виключення, масштаб).
-10. Розбиття: S1 сховище і пошук, S2 екстракція і стеля, S3 теми і глобальні питання, S4 інтеграція в застосунок;
+10. Розбиття: S1 сховище і пошук, S2 еталон G0 v2 і варіанти B/C, S3 екстракція і стеля, S4 теми і глобальні
+    питання, S5 інтеграція в застосунок;
     2 питання до Bohdan: яка модель читає джерела, згода перед першим хмарним індексом.
