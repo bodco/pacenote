@@ -408,6 +408,8 @@ def _public_address(value):
     address = ipaddress.ip_address(value)
     if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
         address = address.ipv4_mapped
+    elif isinstance(address, ipaddress.IPv6Address) and address.sixtofour:
+        address = address.sixtofour
     if address.is_loopback and os.environ.get("PACENOTE_TEST_WEB_LOOPBACK") == "1":
         return True
     return (address.is_global and not address.is_multicast and not address.is_reserved

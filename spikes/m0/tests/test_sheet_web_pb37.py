@@ -214,7 +214,8 @@ def test_cli_contract_and_fixture_contacts(http_fixture, tmp_path, capsys):
     assert not hits
 
 
-@pytest.mark.parametrize("address", ["127.0.0.1", "10.0.0.1", "169.254.169.254", "::1", "::ffff:192.168.1.2"])
+@pytest.mark.parametrize("address", ["127.0.0.1", "10.0.0.1", "169.254.169.254", "::1", "::ffff:192.168.1.2",
+                                     "2002:7f00:1::", "2002:a00:1::"])
 def test_private_addresses_are_refused(address, monkeypatch):
     monkeypatch.delenv("PACENOTE_TEST_WEB_LOOPBACK", raising=False)
     host = f"[{address}]" if ":" in address else address

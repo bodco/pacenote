@@ -24,7 +24,8 @@ Pacenote. Earlier versions are described in the commit messages and in
   (an empty page is listed and never sent to the model, a cut page is reported as truncated), and a website read
   automatically at build time follows the same private-address and redirect rules as the crawler. In Quick, the
   pages read are counted per site. The reason a page is ranked
-  is worded in your language, a private address is reported as such (not as robots.txt), and nothing from
+  is worded in your language, a private address is reported as such (not as robots.txt), also when it is
+  wrapped in an IPv6 6to4 address, and nothing from
   researched pages is sent to Pacenote by call sync: every fact the AI wrote while it had those pages (whatever
   source it names, also after you edit it or remove the page and refresh), the Gaps notes that repeat such a fact,
   a question for the call made from such a fact (Add question on its gap, or Keep both, ask on the call on its conflict),

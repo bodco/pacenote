@@ -19,3 +19,9 @@ Claude outputs/
 
 # 0.9.1: the Google OAuth client of a development build (rules/google.yaml)
 google_oauth.json
+
+# scratch from test runs and merges (PB-37): never committed
+*.tmp
+*.patch
+*.orig
+*.rej
