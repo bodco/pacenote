@@ -406,8 +406,10 @@ CREATE TABLE edge (                     -- a relation between two entities
   first_said_at TEXT NOT NULL,          -- cache over all rows; search derives both from passing rows only
   last_said_at  TEXT NOT NULL,
   run_id        INTEGER REFERENCES run(id),
-  UNIQUE (src_id, rel, dst_id)          -- one row per relation; the same edge found in a shared and a client
-);                                      -- file adds evidence rows, not a second edge
+  UNIQUE (src_id, rel, dst_id, modality) -- one row per relation and modality (the key rule below); the same edge
+);                                      -- with the same modality found in a shared and a client file adds
+                                        -- evidence rows, not a second edge; a proposal and a confirmation of
+                                        -- one relation are two rows
 CREATE INDEX edge_src ON edge(src_id, status);
 CREATE INDEX edge_dst ON edge(dst_id, status);
 
@@ -429,7 +431,7 @@ CREATE TABLE pm_override (              -- PM edits; always applied last, never 
                                         --   entity: its id, or an alias key (notion:<page id>) resolved through
                                         --   `alias` whenever overrides are applied or read; alias: alias_norm|entity_id;
                                         --   claim: claim.nkey;
-                                        --   edge: src_id|rel|dst_id
+                                        --   edge: src_id|rel|dst_id|modality
   field      TEXT NOT NULL,             -- status, name, merge, split, reject, confirm, value, supersede
                                         -- (supersede: target notion:<old page id>, value notion:<new page id>,
                                         -- both resolved through `alias`, section 7.1)
@@ -518,6 +520,16 @@ Notes on the schema:
   transaction as the purge), and the search never relies on "every evidence row passes" alone: it also requires at
   least one passing row (section 11.2). A claim whose only evidence came from a revoked source therefore disappears,
   it is never shown without a quote.
+- **One key rule for claims and edges.** The natural key of a claim or an edge holds every field that a PM edit,
+  a request `exclude`, a revocation or an `as_of` can keep or drop separately, and modality is one of them: claim
+  `nkey` = `subject_id|predicate|modality|sha1(normalised value):10`, edge key = `src_id|rel|dst_id|modality`.
+  Modality is final when the key is built: the validator (section 8.4 item 9) applies the hedge and
+  derived-source guards first, then the item is keyed. So a proposal in one file and a confirmation in another are
+  two rows, each with its own evidence, status and overrides; excluding, revoking or rejecting the confirming source
+  or row leaves the proposal row as it was, and the relation is never shown as confirmed by evidence that does not
+  pass. Two edges have a fixed modality whatever the quote says: `supersedes` (PM only) is `confirmation` and
+  `same_as` is `statement`, so a PM rejection of a `same_as` pair has one key and is never re-suggested under
+  another modality.
 - **Overrides by natural key.** Claim and edge row ids are reassigned by a rebuild; `pm_override.target_key` uses
   the natural keys above, so a PM edit re-applies to the same claim or edge after a rebuild. An override whose key no
   longer matches anything stays stored (orphaned) and applies again if extraction finds the same statement later.
@@ -527,7 +539,7 @@ Notes on the schema:
   11.2 step 2), so they need no history columns and a rebuild gets them right for free.
 - **Client labels live on evidence.** `claim.client_set`, `edge.client_set` and `alias.client_set` are caches for
   display and the topic split; access is decided on the evidence snippets' own labels (section 11.2 step 1), so one
-  edge found in a shared file and in client A's file is one row that passes for A and is dropped for client B
+  edge found with the same modality in a shared file and in client A's file is one row that passes for A and is dropped for client B
   (strict denial); an edge quoted only in shared files passes for both (section 7.1).
 - There is no table per relation type and no recursive graph engine. A graph walk is 1 or 2 indexed SQL lookups on
   `edge_src` / `edge_dst` (section 11).
@@ -616,7 +628,10 @@ into the rules file, not re-invented). Those two patterns are anchored at the st
 which fits a register item but not a quote; `rules/evidence.yaml` therefore keeps the same word list twice: anchored
 (`hedge_start`, for parity tests with `identity.py`) and unanchored with word boundaries (`hedge_anywhere`, used by
 the validator in section 8.4 item 9 to find a hedge word anywhere inside a quote). A `proposal` never becomes `confirmation` without a later quote that confirms
-it from a primary source or a PM edit.
+it from a primary source or a PM edit. With modality in the key (section 6) that later quote is a second claim or
+edge row next to the proposal, never a change of the proposal row: the proposal keeps its own evidence and date, a
+consumer shows both rows of one relation together (the newest `confirmation` first, then the proposal with its
+date), and if the confirming row is excluded, revoked, rejected or later than `as_of`, only the proposal is left.
 
 ### 7.3 PM edits win
 
@@ -789,7 +804,8 @@ All of this is pure code and runs the same for every route.
   and can be set separately in Settings; `LT_AI_ROUTE` works as for other jobs, but the general fallback chain
   (`CHAIN_DEFAULT`) is not used: extraction falls back only to `local`, never to another cloud route. The job still
   has to exist everywhere jobs are listed, so Settings can show it and the chain code does not reject it: Python
-  `routing.JOBS`, Swift `AIChain` (`AIChain.allowed(route, job: "evidence")`, `Components.afterRemovingLocal`) and the
+  `routing.JOBS`, Swift `AIChain` (`AIChain.allowed(route, job: "evidence")`, `ComponentCatalog.afterRemovingLocal` in
+  `LiveTipsCore/Components.swift:78`, called from `OptionalComponents.swift:171`) and the
   `chain` entry of `rules/ai.yaml`, which states that `evidence` steps only to the model on this Mac (S5 for Swift, S3
   for Python and the rules).
 - Model per route: the cheaper model of each route for extraction (api `haiku-5-5`, openai `gpt-6-luna`, gemini
@@ -894,14 +910,18 @@ Two corrections to the table, computed in this step with the second script of Ap
 - **Topic summaries run on the `after` model** (section 8.7), not the extraction model. 40 summaries cost $0.73 on
   Sonnet or GPT-6.1 Sol and $0.27 on Gemini 3.8 Flash ($0.55 from 2027-01-01), against $0.04 on Haiku or GPT-6 Luna
   and $0.13 on Flash-Lite in the table. With recommendation (a) of section 15 (cheap model extracts, `after` model
-  summarises), a first index costs **$1.24 to $1.74** on Claude key (Haiku plus Sonnet), **$1.06 to $1.57** on OpenAI
-  (GPT-6 Luna plus GPT-6.1 Sol) and **$1.61 to $4.15** on Gemini (Flash-Lite plus 3.8 Flash). A typical week (6
-  topics) then costs $0.14 to $0.18 on Claude key, $0.13 to $0.17 on OpenAI and $0.13 to $0.31 on Gemini. The S3 estimator prices
+  summarises), a first index costs $1.24 to $1.74 on Claude key (Haiku plus Sonnet), $1.06 to $1.57 on OpenAI
+  (GPT-6 Luna plus GPT-6.1 Sol) and $1.61 to $4.15 on Gemini (Flash-Lite plus 3.8 Flash) with the 500-token
+  catalog; with the catalog correction below these become the ranges used everywhere else in this spec. A typical week (6
+  topics) then costs $0.14 to $0.18 on Claude key, $0.13 to $0.17 on OpenAI and $0.13 to $0.31 on Gemini (the 2,000-token catalog adds about 0.07M tokens a week on 48 segments, under
+  a cent on Haiku or GPT-6 Luna and about 2 cents on Flash-Lite, so the weekly ranges keep these values). The S3 estimator prices
   each request on the model that sends it, so summaries are priced on the summary model.
 - **The entity catalog is closer to 2,000 tokens than 500** on api (60 entities with ids, text and aliases). That
   adds 1.02M fresh input tokens to a first index: +$0.10 on Haiku, +$2.03 on Sonnet, up to +16% of a 5-hour window
-  on Codex (fewer tokens per character there). Output still dominates the dollar cost, so the ranges hold in shape;
-  S3 measures the real catalog size with the output per segment.
+  on Codex (fewer tokens per character there). With both corrections a first index costs **$1.34 to $1.84** on
+  Claude key, **$1.16 to $1.67** on OpenAI and **$1.92 to $4.46** on Gemini (the last lines of the second script);
+  these are the ranges of sections 10 and 15. Output still dominates the dollar cost; S3 measures the real catalog
+  size with the output per segment and its calibration replaces these numbers.
 
 What the numbers say:
 
@@ -911,8 +931,8 @@ What the numbers say:
 - On api and openai, where the cache applies, the cacheable prefix saves about 18% to 22% at the typical output and
   about 10% at the cap (e.g. Sonnet $10.90 -> $8.86, $21.07 -> $19.03). S3 sends the prefix first and identical on
   every request so the providers' prompt cache applies.
-- On the cheap model of each route the first full index costs $0.37 to $4.01 for extraction ($1.06 to $4.15 with
-  summaries on the `after` model); on the `after` models of api and openai it costs $7.35 to $19.03. The weekly
+- On the cheap model of each route the first full index costs $0.37 to $4.01 for extraction ($1.16 to $4.46 with
+  summaries on the `after` model and the 2,000-token catalog); on the `after` models of api and openai it costs $7.35 to $19.03. The weekly
   incremental is $0.13 to $0.31 with recommendation (a) (cents for extraction, the rest summaries) and up to $1.40
   on the `after` models.
 - On the Codex plan the first full index does not fit one 5-hour window next to normal work; it has to spread over
@@ -964,7 +984,7 @@ Settings > AI, a new row under the routes (only when the flag is on):
   "Topic summaries: after each pass / only when asked", the switch "Use AI to read
   sources" (off = deterministic links only, no model requests), and "Delete this project's memory".
 - Before the first full index of a project, a confirmation: "First index of Northpoint: 192 sources, about 3.9M
-  characters. On Claude key (Haiku reads, Sonnet writes topic summaries): about $1.24 to $1.74, in 2 passes. On your
+  characters. On Claude key (Haiku reads, Sonnet writes topic summaries): about $1.34 to $1.84, in 2 passes. On your
   ChatGPT plan: about 52% to 68% of a 5-hour limit, in 6 to 7 passes over 2 to 3 days. On this Mac: 5 to 28 hours,
   free. Your files are sent only to the AI you chose
   for this job." When the indexing provider is not the one used for preparation, one more line: "Your project files
@@ -1179,7 +1199,11 @@ ids (`--request-id <id>` asks about one).
   - Reading: `search`, `entity_card`, `ask_global` and the snapshot loaders (section 11.3) read the unapplied lines
     (a small file, read once per call) and treat the sources of a pending hide or revoke as denied (section 11.2
     step 1) and drop snapshot items citing them. A pending unhide, un-revoke or `override` has no effect until it
-    applies.
+    applies. Readers take no lock: the appender writes each line with one `write()` call that includes its trailing
+    newline, and a reader (and a writer applying lines) skips a last line that has no trailing newline or is not
+    valid JSON, which is a line still being appended; it is read on the next call. A compaction writes a new file
+    and `os.rename`s it over the old one, so a reader without the lock sees the old file or the new one, never a
+    truncated one.
   - Retry: the app keeps the ids it sent until `evidence status` lists them as applied, and re-sends any id not
     listed after the pass ends (or at the next launch); a re-sent id that is already applied is a no-op.
 - One pass at a time across all projects (`evidence/worker.lock`), so the global daily cap (section 9.1) is summed
@@ -1389,7 +1413,7 @@ duplicates, wrong identity, item 13 cross-client, false agreed, false proposal.
 ## 15. Questions for the owner (product choices only)
 
 1. **Which model reads sources.** Options: (a) the cheapest model of the chosen route (Haiku, GPT-6 Luna, Gemini
-   3.5 Flash-Lite) for extraction and the after-call model for topic summaries: $1.06 to $4.15 for a first index,
+   3.5 Flash-Lite) for extraction and the after-call model for topic summaries: $1.16 to $4.46 for a first index,
    typical to cap, in 2 to 5 passes (1 to 2 days at the daily cap); (b) the route's after-call model (Sonnet,
    GPT-6.1 Sol) for both: $7.35 to $19.03, which at the $3.00 daily cap takes **3 to 7 days** to finish. On the Codex
    plan either option takes 6 to 7 passes over **2 to 3 days** (52% to 68% of a window at 30% a day). These figures
@@ -1405,8 +1429,8 @@ Team defaults, each a setting in section 10, not owner questions: $1.00 per pass
 10% per pass and 30% per day of the 5-hour window on plans, 120 and 360 minutes on local, and the same day caps for
 all projects together; at the ceiling wait for the next pass, local overflow off; topic summaries eager on the
 after-call model (40 topics: about $0.73 on Sonnet or GPT-6.1 Sol, $0.27 on Gemini 3.8 Flash). With these defaults
-and option (a), a first index of the typical project finishes in 2 passes on Claude key or OpenAI ($1.24 to $1.74,
-$1.06 to $1.57), 2 to 5 passes (up to 2 days at the daily cap) on Gemini ($1.61 to $4.15), and in 6 to 7 passes
+and option (a), a first index of the typical project finishes in 2 passes on Claude key or OpenAI ($1.34 to $1.84,
+$1.16 to $1.67), 2 to 5 passes (up to 2 days at the daily cap) on Gemini ($1.92 to $4.46), and in 6 to 7 passes
 over 2 to 3 days on the Codex plan.
 
 ## 16. Risks
@@ -1414,8 +1438,8 @@ over 2 to 3 days on the Codex plan.
 - **Invented links** (V3's main risk): every edge needs a verbatim quote and a word of both ends, ambiguous ones stay
   suggestions, the G0 extraction fixture is raw model output (review may only delete), and `--extract` measures
   precision and the hop and paraphrase rates per route.
-- **Output size drives cost**: the first-index range is wide ($0.37 to $4.01 for extraction on cheap models, $1.06
-  to $4.15 with summaries on the `after` model) because output per
+- **Output size drives cost**: the first-index range is wide ($0.37 to $4.01 for extraction on cheap models, $1.16
+  to $4.46 with summaries on the `after` model and the larger catalog) because output per
   segment is not measured yet; the per-request cap bounds it and S3 calibrates it before any number reaches the PM.
 - **Synthetic gold proves correctness, not usefulness**: gains on the owner's real calls stay "not verified" until
   G3 runs on live calls (the plan's section 10 risk, unchanged).
@@ -1434,6 +1458,11 @@ over 2 to 3 days on the Codex plan.
   file stale is caught by the 6-hour and pid checks.
 - **Scope drift**: client labels are computed at ingest; a change in the client list relabels everything (free), and
   the search re-checks labels on every evidence row before ranking.
+- **Coverage loss across clients (follow-up task under GraphRAG, out of PB-52 scope)**: when client A's file and
+  client B's file each state the same fact, LLM entity ids and `nkey` carry no client, so it becomes one claim with
+  evidence from both; strict denial (section 11.2 step 1) then drops it for both clients. Nothing leaks, but each
+  client loses a fact its own files support. The follow-up decides between a client-aware key for client-labelled
+  evidence and per-client claim rows, and adds a gold row for it.
 
 ## 17. Implementation split
 
@@ -1523,7 +1552,12 @@ Acceptance:
       the files valid then; `as_of` before a revision or before a claim returns none of them; a claim whose evidence
       sits only on a replaced revision is not current; a task closed after `as_of` is open, a merge after `as_of` is
       not applied, a decision superseded after `as_of` is current, and a PM rejection applies at every `as_of`.
-- [ ] One edge found in a shared file and in client A's file is one row; it passes for A and is dropped for client B
+- [ ] Edge modality (each sub-case fails on the old key `src_id|rel|dst_id`): "Globex blocks Northpoint" quoted as
+      `proposal` in file 1 and as `confirmation` in file 2 gives two edge rows; `exclude` of file 2 returns only the
+      proposal row, dated by file 1; `exclude` of file 1 returns only the confirmation row; revoking file 2 leaves
+      the proposal row; a PM reject on the confirmation row (override key with `confirmation`) leaves the proposal
+      row returned and survives a rebuild; as of a date between the two quotes only the proposal is returned.
+- [ ] One edge found with the same modality in a shared file and in client A's file is one row; it passes for A and is dropped for client B
       (denied row, strict); an edge quoted only in shared files passes for both (section 11.2 step 1).
 - [ ] A snippet under a nested subheading of a client heading carries that client's label (heading path).
 - [ ] PM edits from the register and `pm_override` rows on a claim and on an edge survive a rebuild (natural keys).
@@ -1771,6 +1805,9 @@ extra = 678 * 1500  # catalog 2,000 instead of 500 tokens on 678 segments
 for k, pi in (("haiku-5-5", 0.10), ("sonnet-5-5", 2.0)):
     print("catalog %s: +%.2fM tokens, +$%.2f" % (k, extra / 1e6, extra * pi / 1e6))
 print("catalog codex: +%.0f%% of a window (upper bound)" % (extra / 250000 * 4))
+for k, ((lo, hi), cheap, after) in rows.items():  # both corrections together: the ranges of sections 9, 10 and 15
+    d = s[after] - s[cheap] + extra * SUM[cheap][0] / 1e6
+    print("first index %s + after-model summaries + 2,000-token catalog: $%.2f to $%.2f" % (k, lo + d, hi + d))
 week = {"haiku-5-5 (no cache)": ((0.04, 0.08), "haiku-5-5", "sonnet-5-5"),  # 6 topics a week, section 9
         "gpt-6-luna": ((0.03, 0.07), "gpt-6-luna", "gpt-6.1-sol"),
         "gemini-3.5-flash-lite": ((0.11, 0.29), "gemini-3.5-flash-lite", "gemini-3.8-flash now")}
@@ -1794,7 +1831,8 @@ for k, lo, hi, cap in (("Sonnet $", 8.86, 19.03, 3.0), ("GPT-6.1 Sol $", 7.35, 1
    уже вважає ці джерела закритими) й ніколи не йдуть у модель.
 4. Контракт промпту і схема виходу в `rules/evidence.yaml` і `rules/evidence_schema.json`, спільні зі скілом;
    валідатор перевіряє дослівність цитат, клієнта, модальність, правки PM.
-5. Модальність: proposal / expectation / confirmation / statement, мапінг зі значень G1; підсумки й нотатки ніколи
+5. Модальність: proposal / expectation / confirmation / statement, мапінг зі значень G1; модальність входить у
+   ключ твердження і ребра, тож пропозиція і підтвердження одного звʼязку це два рядки з власними доказами; підсумки й нотатки ніколи
    не рахуються незалежним підтвердженням.
 6. Пошук: доступ, клієнт (PB-70, точна мітка на кожен уривок) і час (`as_of` за часом змісту з точністю до секунди
    в UTC: ревізія 2 і далі від mtime, а не від дня чи початку дзвінка, тож пізніша правка не потрапляє в реплей;
@@ -1804,7 +1842,7 @@ for k, lo, hi, cap in (("Sonnet $", 8.86, 19.03, 3.0), ("GPT-6.1 Sol $", 7.35, 1
    повністю; переміщений файл з тим самим вмістом зберігає своє джерело; id рішення завжди з ключа дедупу, id сторінки
    Notion лише аліас; заміну рішення PM записує локально з датою;
    правки PM за природними ключами переживають перебудову; режим live без нових викликів.
-7. Вартість першого індексу типового проєкту (оцінка, від типового виходу до ліміту 2000 токенів): $1.06-4.15 з
+7. Вартість першого індексу типового проєкту (оцінка, від типового виходу до ліміту 2000 токенів): $1.16-4.46 з
    дешевою моделлю для екстракції і моделлю after для підсумків, $7.35-19.03 на Sonnet або GPT-6.1 Sol (3-7 днів
    за денної стелі), 52-68% 5-годинного вікна Codex (2-3 дні), 5-28 годин локально.
 8. Стеля на прохід, на день для проєкту і на день для всіх проєктів разом у долари, відсотки ліміту або хвилини,
