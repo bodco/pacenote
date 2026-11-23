@@ -19,6 +19,9 @@ struct CRMLink: Codable, Equatable {
     var occurrence = ""                 // H2 (fix round 6): the calendar occurrence Refresh linked it for; carried only to that call
     var companyIds: [String] = []       // H3: the other companies of the call's people (a mixed call), besides companyId
     var callDealId = ""                 // H4: the deal Pacenote associated the Call with, removed when the call moves to another
+    var meetingId = ""                  // H5: the HubSpot Meeting that holds this call's notes (ours, or the one HubSpot's calendar sync made)
+    var emailId = ""                    // H5: the HubSpot Email engagement of the follow-up
+    var emailOurs = false               // H5: Pacenote created emailId; an email HubSpot or the PM logged is never changed
 
     init() {}
     init(from d: Decoder) throws {
@@ -30,6 +33,8 @@ struct CRMLink: Codable, Equatable {
         callKey = s(.callKey); callId = s(.callId); portalId = s(.portalId); occurrence = s(.occurrence)
         companyIds = (try? c.decodeIfPresent([String].self, forKey: .companyIds)) ?? nil ?? []
         callDealId = s(.callDealId)
+        meetingId = s(.meetingId); emailId = s(.emailId)
+        emailOurs = (try? c.decodeIfPresent(Bool.self, forKey: .emailOurs)) ?? nil ?? false
     }
 
     static func url(base: String) -> URL { URL(fileURLWithPath: CallLayout.sidecar(base, ".crm.json")) }
@@ -60,8 +65,8 @@ extension CRMService {
             let portal = try await c.portalId()
             if link.portalId != portal {     // H2: ids from another portal (or an unknown one) are not kept; the call key
                 var fresh = CRMLink(); fresh.callKey = link.callKey    // and the PM's "No deal" are, and the calendar
-                fresh.occurrence = link.occurrence                     // occurrence (it is not a portal id)
-                if link.dealId == "none" { fresh.dealId = "none" }
+                fresh.occurrence = link.occurrence                     // occurrence (it is not a portal id). H5: the
+                if link.dealId == "none" { fresh.dealId = "none" }     // Meeting and Email ids are not kept either
                 link = fresh
             }
             link.portalId = portal
@@ -326,6 +331,10 @@ struct CRMUpdateView: View {
     @State private var undo: [CRMUndoItem] = []
     @State private var undoPortal = ""     // H2: the portal the Apply wrote to; Undo checks it before any change
     @State private var undoUntil: Date? = nil
+    @State private var meetingLog: CRMMeetingLog? = nil      // H5 (CRMTimelineFlow.swift)
+    @State private var emailLog: CRMEmailLog? = nil
+    @State private var meetingPick: [CRMMeetingCandidate] = []   // H5: HubSpot Meetings near the call, not sure to be its own
+    @State private var pickPortal = ""      // H5: the portal that offered meetingPick
     @State private var applied = false     // 0.8.7.1: a second Apply wrote the note and the task twice
     @State private var needsRelink = false // H2: the link is from another portal, or from before the portal was kept
     @StateObject private var people = CRMPeopleModel()     // H3: the call's contacts, company and leads
@@ -352,6 +361,20 @@ struct CRMUpdateView: View {
                 CRMDealSection(model: $dm, dealName: l.dealId == "none" ? "" : l.dealName, setDeal: pickDeal, retry: loadDeal)
             } else {
                 Text(L("crm.update.noLink")).foregroundStyle(PN.C.text3)
+            }
+            if !meetingPick.isEmpty {       // H5: the PM says which Meeting gets the notes; nothing was written to one yet
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(L("crm.meeting.pick")).font(PN.Font.caption).foregroundStyle(PN.C.text3).fixedSize(horizontal: false, vertical: true)
+                    ScrollView {        // every meeting HubSpot returned, closest first: the right one may be any of them
+                        VStack(alignment: .leading, spacing: 6) {
+                            ForEach(meetingPick, id: \.id) { m in
+                                Button(L("crm.meeting.attach", ["title": m.title.isEmpty ? L("crm.meeting.untitled") : m.title, "time": CallPageView.fmt("jmm").string(from: m.start)])) { pickMeeting(m.id) }
+                                    .buttonStyle(.pnSecondary).disabled(busy)
+                            }
+                        }
+                    }.frame(maxHeight: 150)
+                    Button(L("crm.meeting.new")) { pickMeeting(CRMMeetingLog.newTarget) }.buttonStyle(.pnSecondary).disabled(busy)
+                }
             }
             Spacer()
             HStack {
@@ -386,6 +409,11 @@ struct CRMUpdateView: View {
                                    qualification: [:], mapping: [:], followUp: next.isEmpty ? nil : (next, nil),
                                    writeNote: crmCfg.writeNote, writeDeal: crmCfg.writeDeal, writeTask: crmCfg.writeTask,
                                    callLog: callLog, writeCall: crmCfg.writeCall)
+        if let l = link {       // H5: the Meeting and the sent follow-up Email as two more rows
+            meetingLog = CRMTimelineLogger.meeting(file: file, link: l); emailLog = CRMTimelineLogger.email(file: file, link: l)
+            let at = plan?.rows.firstIndex { $0.id == "transcript" } ?? plan?.rows.count ?? 0      // the transcript row stays last
+            plan?.rows.insert(contentsOf: CRMTimelineLogger.rows(meeting: meetingLog, email: emailLog), at: at)
+        }
         if let l = link, !needsRelink {      // H3: reads HubSpot, writes nothing; another portal gets no email and the call needs Relink
             Task {
                 var nl = await people.load(file: file, link: l, name: "")
@@ -434,6 +462,7 @@ struct CRMUpdateView: View {
         Task {
             var done: [CRMUndoItem] = []
             var fields = 0
+            var extra = ""
             do {
                 try await CRMPortal.verify(link: l.portalId, connector: c)     // H2: nothing goes to another portal's ids
                 // H3: the ticked people first, so the Call (and the note and task) are associated with them
@@ -464,6 +493,17 @@ struct CRMUpdateView: View {
                     link?.callId = CRMLink.load(base: base)?.callId ?? r.id      // the id as stored, never one the write declined to store
                     link?.callDealId = CRMLink.load(base: base)?.callDealId ?? ""     // what the write stored: only a deal Pacenote added
                 }
+                if let w = c as? CRMTimelineWriter {
+                    // H5: in turn with Auto, with the stored ids and associations read from <base>.crm.json when the turn comes
+                    let t = await CRMTimelineLogger.apply(w, connector: c, meeting: meetingLog, email: emailLog, base: base, link: link ?? l, refs: refs) { id in p.rows.first(where: { $0.id == id })?.on == true }
+                    done += t.undo
+                    if link?.portalId == t.portal {     // a Relink while this was pending: its ids and pick are the old portal's
+                        link?.meetingId = t.link.meetingId; link?.emailId = t.link.emailId; link?.emailOurs = t.link.emailOurs
+                        meetingPick = t.pick; pickPortal = t.portal        // the pick block below says what is waiting
+                    }
+                    if !t.pick.isEmpty { extra = " " + L("crm.meeting.waiting") }
+                    if let e = t.error { throw e }
+                }
                 if p.rows.first(where: { $0.id == "deal" })?.on == true, !l.dealId.isEmpty, l.dealId != "none", !dealFields.isEmpty {
                     let old = try await c.updateDeal(id: l.dealId, fields: dealFields); done.append(CRMUndoItem("deals", l.dealId, old)); fields = dealFields.count
                 }
@@ -472,7 +512,7 @@ struct CRMUpdateView: View {
                 }
                 UsageLog.log("update_crm", ["fields": fields])
                 undo = done; undoPortal = l.portalId; undoUntil = Date().addingTimeInterval(8); applied = true
-                status = L("crm.updated", ["crm": c.providerName])
+                status = L("crm.updated", ["crm": c.providerName]) + extra
                 DispatchQueue.main.asyncAfter(deadline: .now() + 8.2) { if let u = undoUntil, u <= Date() { undoUntil = nil } }     // a kept batch has its own 8 s
             } catch {
                 undo = done; undoPortal = l.portalId; undoUntil = done.isEmpty ? nil : Date().addingTimeInterval(8)
@@ -484,11 +524,41 @@ struct CRMUpdateView: View {
         }
     }
 
+    /// H5: the PM's pick of the Meeting (an id, or a new one): only the Meeting row is written, in turn with the other
+    /// writes of the call, and its Undo joins the one still open (or opens a new one).
+    func pickMeeting(_ target: String) {
+        guard var m = meetingLog, var l = link, let c = crm.connector(), let w = c as? CRMTimelineWriter else { return }
+        l = CRMCallLogger.keyed(base: base, l); link = l      // H3: one queue key with Auto, Apply and Relink
+        m.target = target; m.targetPortal = pickPortal       // written only in the portal that offered it
+        busy = true; status = L("crm.writing")
+        Task {
+            let t = await CRMTimelineLogger.apply(w, connector: c, meeting: m, email: nil, base: base, link: l, refs: CRMCallLogger.refs(l)) { $0 == "meeting" }
+            // an open Undo of another portal is not joined: each record is undone only in the portal it was written in
+            if (undoUntil ?? .distantPast) <= Date() || (!t.portal.isEmpty && undoPortal != t.portal) { undo = [] }
+            if !t.undo.isEmpty { undoPortal = t.portal }
+            undo += t.undo
+            if link?.portalId == t.portal { link?.meetingId = t.link.meetingId; meetingPick = t.pick; pickPortal = t.portal }   // not after a Relink meanwhile
+            if let e = t.error {
+                let code = (e as? CRMError)?.code
+                needsRelink = code == CRMPortal.mismatchCode
+                if code == CRMTimelineSync.stalePickCode { meetingPick = []; pickPortal = "" }
+                status = needsRelink ? L("crm.relink.needed") : code == CRMTimelineSync.stalePickCode ? L("crm.meeting.stale")
+                    : ((e as? CRMError)?.message ?? e.localizedDescription)
+            } else { status = L("crm.updated", ["crm": c.providerName]) }
+            if !t.undo.isEmpty {
+                undoUntil = Date().addingTimeInterval(8)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 8.2) { if let u = undoUntil, u <= Date() { undoUntil = nil } }
+            }
+            busy = false
+        }
+    }
+
     /// H2: links the call again in the portal of the key in use: the company by the attendees' domains of the calendar
     /// occurrence the link was saved for (fix round 7: never the nearest meeting, it may be another customer's), else
     /// by the linked company's name without contacts; the call key is kept, the old ids are not. Fix round 8: in turn
     /// with the call's Call writes (an Auto write waiting for HubSpot finishes first), reading the link when its turn comes.
     /// H3: the call key is made and stored first, so Relink queues with the people write, Auto and Apply of this call.
+    /// H5: the same turn as the Meeting and Email writes; the pick and the open Undo name ids of the old portal, so they go.
     func relink() {
         guard let old = link else { return }
         let l = CRMCallLogger.keyed(base: base, old); link = l
@@ -501,40 +571,57 @@ struct CRMUpdateView: View {
                 await crm.refresh(base: base, emails: emails, name: l.companyName, keep: CRMLink.load(base: base) ?? l)
             }) ?? (nil, L("crm.notConnected"))
             busy = false
-            if nl != nil { needsRelink = false; load(); status = L("crm.relink.done") } else { status = e }
+            if nl != nil {
+                meetingPick = []; pickPortal = ""; undo = []; undoPortal = ""; undoUntil = nil
+                needsRelink = false; load(); status = L("crm.relink.done")
+            } else { status = e }
         }
     }
 
     /// Undo: notes, tasks and the new Call, contacts, companies and leads are deleted, deal and Call fields get their
     /// old values back. H3: only in the portal Apply wrote to; another portal gets nothing and the batch is kept. H4: a
-    /// deal move is reversed (the new deal off the Call, the old one on again) and the managed deal is stored back.
+    /// deal move is reversed (the new deal off the Call, the old one on again) and the managed deal is stored back. H5:
+    /// a Meeting or Email gets its old fields back (a new one is deleted), a Meeting whose notes changed in HubSpot after
+    /// Apply keeps them and that is said. In turn with the call's writes and Relink: Undo reads a Meeting's notes before
+    /// it writes them back, and the stored ids go never between another write's read and save.
     func runUndo() {
         guard let c = crm.connector() else { return }
         let items = undo, portal = undoPortal; undo = []; undoUntil = nil
+        let base = base, key = CRMCallLogger.keyed(base: base, link ?? CRMLink()).callKey
         Task {
-            let r = await CRMUndo.run(items, portal: portal, connector: c)
+            let r = (try? await CRMCallSync.relink(key: key) { () async -> (undone: [CRMUndoItem], failed: Int, kept: Int, deleted: [CRMUndoItem], error: CRMError?) in
+                let r = await CRMUndo.run(items, portal: portal, connector: c)
+                guard r.error == nil else { return r }
+                // on disk, only in the link of the portal Undo ran in, without overwriting an id another write stored
+                for it in r.undone where it.type == "callDeal" {      // H4: the deal Pacenote managed before the move
+                    if var d = CRMLink.load(base: base), d.portalId == portal, d.callId == it.id { d.callDealId = it.old["managed"] ?? ""; d.save(base: base) }
+                }
+                for it in r.deleted {
+                    if ["calls", "meetings", "emails"].contains(it.type) { CRMTimelineLogger.forget(type: it.type, id: it.id, portal: portal, base: base) }
+                    if ["contacts", "companies", "leads"].contains(it.type), let d = CRMLink.load(base: base), d.portalId == portal {     // H3
+                        await CRMPeopleFlow.forget(type: it.type, id: it.id, in: d).save(base: base)
+                    }
+                }
+                return r
+            }) ?? ([], 0, 0, [], CRMError(code: 0, message: L("crm.notConnected")))
             if let e = r.error {
-                undo = items; undoUntil = Date().addingTimeInterval(8)
+                undo = items; undoPortal = portal; undoUntil = Date().addingTimeInterval(8)
                 DispatchQueue.main.asyncAfter(deadline: .now() + 8.2) { if let u = undoUntil, u <= Date() { undoUntil = nil } }
                 status = e.code == CRMPortal.mismatchCode ? L("crm.undo.otherPortal", ["crm": c.providerName]) : e.message
                 return
             }
-            for it in r.undone where it.type == "callDeal" {      // H4: the deal Pacenote managed before the move
-                let managed = it.old["managed"] ?? ""
-                if var d = CRMLink.load(base: base), d.portalId == portal, d.callId == it.id { d.callDealId = managed; d.save(base: base) }
-                if link?.callId == it.id { link?.callDealId = managed }
-            }
-            for it in r.undone where it.old.isEmpty {
-                if it.type == "calls" {     // the next Apply makes a new Call
-                    if var d = CRMLink.load(base: base), d.portalId == portal, d.callId == it.id { d.callId = ""; d.save(base: base) }
-                    link?.callId = ""
+            for it in r.undone where it.type == "callDeal" && link?.callId == it.id { link?.callDealId = it.old["managed"] ?? "" }
+            for it in r.deleted {
+                if it.type == "calls" { link?.callId = "" }     // the next Apply makes a new Call
+                if link?.portalId == portal {       // H5: a deleted one is made again by the next Apply
+                    if it.type == "meetings", link?.meetingId == it.id { link?.meetingId = "" }
+                    if it.type == "emails", link?.emailId == it.id { link?.emailId = ""; link?.emailOurs = false }
                 }
-                if ["contacts", "companies", "leads"].contains(it.type) {     // H3: on disk too, without overwriting a Call id Auto stored
-                    if let d = CRMLink.load(base: base), d.portalId == portal { CRMPeopleFlow.forget(type: it.type, id: it.id, in: d).save(base: base) }
-                    if let l = link { link = CRMPeopleFlow.forget(type: it.type, id: it.id, in: l) }
-                }
+                if ["contacts", "companies", "leads"].contains(it.type), let l = link { link = CRMPeopleFlow.forget(type: it.type, id: it.id, in: l) }
             }
-            status = r.failed == 0 ? L("crm.undone") : L("crm.undoFailed", ["n": "\(r.failed)", "crm": c.providerName])     // 0.8.7.1: said, not hidden
+            // 0.8.7.1: a failed undo is said, not hidden behind "Undone"; H5: notes kept in a Meeting are said too
+            status = r.failed > 0 ? L("crm.undoFailed", ["n": "\(r.failed)", "crm": c.providerName])
+                : r.kept > 0 ? L("crm.undoKept", ["n": "\(r.kept)", "crm": c.providerName]) : L("crm.undone")
             if r.failed == 0 { applied = false }
         }
     }

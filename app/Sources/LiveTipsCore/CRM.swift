@@ -79,16 +79,22 @@ public enum CRMPortal {
 
 /// H3: Undo of one Apply. The ids are of the portal Apply wrote to; when the key now opens another portal (or the
 /// portal cannot be read) nothing is sent and the whole batch is returned to keep. H4: a "callDeal" row reverses a
-/// deal move of the Call (the added deal off, the removed deal on again).
+/// deal move of the Call (the added deal off, the removed deal on again). H5 (PB-61): an updated Meeting or Email gets
+/// its old fields back and loses the associations Pacenote added (`CRMTimelineWriter.restore`); a Meeting whose
+/// Pacenote notes were edited in HubSpot after Apply, or one Pacenote created that got notes there since, keeps them
+/// (`kept`, not in `undone`).
 public struct CRMUndoItem: Equatable {
     public var type: String, id: String, old: [String: String]
     public init(_ type: String, _ id: String, _ old: [String: String] = [:]) { self.type = type; self.id = id; self.old = old }
 }
 public enum CRMUndo {
-    public static func run(_ items: [CRMUndoItem], portal: String, connector c: CRMConnector) async -> (undone: [CRMUndoItem], failed: Int, error: CRMError?) {
+    /// deleted: the items whose object is gone (deleted now, or a created Meeting already deleted in HubSpot), so their
+    /// stored ids must go and the next Apply makes them again.
+    public static func run(_ items: [CRMUndoItem], portal: String, connector c: CRMConnector) async
+        -> (undone: [CRMUndoItem], failed: Int, kept: Int, deleted: [CRMUndoItem], error: CRMError?) {
         do { try await CRMPortal.verify(link: portal, connector: c) }
-        catch { return ([], 0, (error as? CRMError) ?? CRMError(code: 0, message: error.localizedDescription)) }
-        var undone: [CRMUndoItem] = [], failed = 0
+        catch { return ([], 0, 0, [], (error as? CRMError) ?? CRMError(code: 0, message: error.localizedDescription)) }
+        var undone: [CRMUndoItem] = [], deleted: [CRMUndoItem] = [], failed = 0, kept = 0
         for it in items.reversed() {
             do {
                 if it.type == "deals" { _ = try await c.updateDeal(id: it.id, fields: it.old) }
@@ -98,11 +104,15 @@ public enum CRMUndo {
                     if let d = it.old["added"], !d.isEmpty { try await a.removeCallAssociation(callId: it.id, type: "deals", id: d) }
                     if let d = it.old["removed"], !d.isEmpty { try await a.addCallAssociation(callId: it.id, type: "deals", id: d) }
                 }
-                else { try await c.delete(type: it.type, id: it.id) }
+                else if (it.type == "meetings" || it.type == "emails") && !it.old.isEmpty {     // H5
+                    guard let w = c as? CRMTimelineWriter else { failed += 1; continue }
+                    if try await w.restore(type: it.type, id: it.id, fields: it.old) { deleted.append(it) }
+                }
+                else { try await c.delete(type: it.type, id: it.id); deleted.append(it) }
                 undone.append(it)
-            } catch { failed += 1 }
+            } catch is CRMUndoConflict { kept += 1 } catch { failed += 1 }
         }
-        return (undone, failed, nil)
+        return (undone, failed, kept, deleted, nil)
     }
 }
 
@@ -168,7 +178,7 @@ public enum CRMCallSync {
                             deleted: (CRMUndoItem) -> Void = { _ in }) async throws -> Int {
         let r = await CRMUndo.run(items, portal: portal, connector: c)
         if let e = r.error { throw e }
-        for it in r.undone where it.type != "deals" && it.type != "callDeal" && !(it.type == "calls" && !it.old.isEmpty) { deleted(it) }
+        for it in r.deleted { deleted(it) }
         return r.failed
     }
 }

@@ -500,7 +500,7 @@ public enum CRMCallDeal {
         if let e = r.error { throw e }
         for it in r.undone {
             if it.type == "callDeal" { restored(it) }
-            else if it.type != "deals" && !(it.type == "calls" && !it.old.isEmpty) { deleted(it) }
+            else if r.deleted.contains(it) { deleted(it) }
         }
         return r.failed
     }

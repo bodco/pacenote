@@ -739,8 +739,8 @@ func crmLinkCarry() {
     let link: [String: Any] = ["provider": "hubspot", "portalId": "4711", "companyId": "c1", "companyName": "Northwind",
                                "dealId": "d1", "dealName": "Orbit renewal", "contactIds": ["p1", "p2"],
                                "contactNames": ["Emily Carter", "James Miller"], "callKey": "old-key", "callId": "old-call",
-                               "occurrence": "ev-orbit@1795870800"]
-    let occ = "ev-orbit@1795870800"      // the calendar occurrence Refresh saved the link for (fix round 6)
+                               "occurrence": "ev-orbit@1795870800", "meetingId": "old-meeting", "emailId": "old-email", "emailOurs": true]
+    let occ = "ev-orbit@1795870800"     // the calendar occurrence Refresh saved the link for (fix round 6)
     func read(_ p: String) -> [String: Any] { fm.contents(atPath: p).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:] }
     func write(_ o: [String: Any], _ p: String) { try? JSONSerialization.data(withJSONObject: o).write(to: URL(fileURLWithPath: p)) }
     expect(!CRMLinkCarry.carry(from: prep, to: call, occurrence: occ, chosen: false), "carry: no link at the preparation, nothing written")
@@ -764,6 +764,8 @@ func crmLinkCarry() {
            && got["contactIds"] as? [String] == ["p1", "p2"] && got["contactNames"] as? [String] == ["Emily Carter", "James Miller"],
            "carry: portal, company, deal and contacts kept")
     expect(got["callKey"] == nil && got["callId"] == nil, "carry: the call key and the HubSpot Call id are not carried")
+    // H5 (PB-61 merge): the Meeting and the Email belong to the call that wrote them; another call's notes never go into them
+    expect(got["meetingId"] == nil && got["emailId"] == nil && got["emailOurs"] == nil, "carry: the HubSpot Meeting and Email ids are not carried")
     // the call's own link (Relink, or an Apply that stored a Call id) is never replaced by the preparation's
     var mine = got; mine["callId"] = "c-9"; mine["dealId"] = "none"
     write(mine, dst)
@@ -1525,6 +1527,7 @@ await crmPeople()
 await crmDeals()
 await crmTasksChecks()
 await crmTaskFlowChecks()
+await crmTimeline()
 learningPatterns()
 enginePathsFollowTheApp()
 engineHealsAPythonWithoutModules()

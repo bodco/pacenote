@@ -153,6 +153,25 @@ Pacenote. Earlier versions are described in the commit messages and in
   also when the task is not in your lists; Undo or a refused delete gives a completed item back completed, with its
   date. A task deleted in HubSpot unlinks its item even after you completed it, also with more than 80 linked items.
 
+- **Meetings and follow-up emails on the HubSpot timeline (H5).** Update HubSpot has two more rows. **Meeting**
+  (ticked by default) adds the call page's Summary, Decisions and Next steps to a HubSpot Meeting associated with the
+  matched contacts, company and deal. If HubSpot's own calendar sync has meetings near the call (on one of the call's
+  contacts, within 15 minutes), nothing is written to any of them on its own, even when the title or the start
+  matches (the preparation the call was started with may be another invite's): Update HubSpot lists all of them, the
+  ones with the call's or the calendar event's title or start first, and the notes go into the one you pick, or into a
+  new Meeting. Your pick is kept with the call, and a meeting already holding this call's block is used without asking. Applying again replaces only
+  Pacenote's block for this call and keeps any text around it. **Email** appears once the follow-up draft has been
+  written in the app, is never ticked for you, and records the email you sent as a HubSpot email engagement (Pacenote
+  still sends no mail); an email HubSpot already logged is never changed, it only gets the missing associations. No
+  automatic switch for either. Undo of a Meeting takes back only Pacenote's block and keeps notes added in HubSpot
+  after Apply; if that block itself was edited in HubSpot since (its text or a link in it), it is kept as it is and
+  Undo says so. A Meeting Pacenote created is read again before Undo deletes it: if someone added notes to it in
+  HubSpot since, the Meeting stays with their notes, only Pacenote's block goes, and Undo says so. Undo also
+  removes the associations Pacenote added, a failed write leaves nothing half done (an association HubSpot would not let it take back stays in Undo), and transcript text is never sent. The
+  meetings to pick and Undo belong to the HubSpot account they came from: Relink to another account drops them, and
+  they never write to a record of the new account with the same id. Relink and Undo wait until a write of the
+  same call that is still running has finished, so that write's ids never end up in the new link and never overwrite it.
+
 ## 0.26.4 (2026-11-20)
 
 - **A new organization project includes the person who made it (2026-11-20):** in New project > start a new

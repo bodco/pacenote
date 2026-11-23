@@ -1772,6 +1772,33 @@ chooses Notion or HubSpot for the automatic add; the menus offer both until an i
 which call it came from and links back to it; transcript text is never sent. Undo of the automatic add deletes the new
 tasks and unlinks their items; a task HubSpot does not let you delete stays linked, and the toast says so.
 
+**Meetings and follow-up emails on the timeline.** Update HubSpot also has a Meeting row, ticked by default: the call
+page's Summary, Decisions and Next steps, with the link back, go into HubSpot as a Meeting with the call's title, start
+and end, outcome Completed, associated with the matched contacts, the company and the open deal. If HubSpot's own
+calendar sync has a meeting at that time (on one of the call's contacts, a start within 15 minutes), Pacenote does not
+add a notes block to it on its own, even when the title or the start matches: the preparation you started the call
+with may belong to another invite. Nothing is added to any meeting and Update HubSpot lists all the meetings near that
+time, with "Add the notes to ..." for each and "Make a new Meeting instead". Meetings with the call's title, or with
+the title or start of the calendar event the call was prepared for, come first, then the rest closest first. The one
+you pick gets the notes in its internal notes, below your own text, and its title and invite stay as they are; Pacenote
+keeps your pick with the call, so applying again goes to the same meeting. A meeting that only shares the company or
+the deal is never offered. Only a meeting that already holds this call's Pacenote block is used without asking. Pacenote's block starts and ends with a line that names the call, so applying again replaces only that block
+and keeps everything around it. The **Email** row appears once the call's follow-up draft has been written in this
+session of the app (the draft is not saved to a file) and is never ticked for you: Pacenote does not send mail, so tick
+it after you sent the email yourself, and HubSpot gets an email engagement with the subject and text as you edited them
+(not an email sent through HubSpot), associated the same way. If HubSpot already logged that email (one of the call's
+contacts, the same subject and the same text above any quoted reply, in the last day), Pacenote never changes it and only adds the missing
+associations. Both rows need Apply; there is no automatic switch for them. Undo works for 8 seconds and also removes
+the associations Pacenote added. On a Meeting it reads the notes again and takes back only Pacenote's block, so notes
+someone added in HubSpot after Apply stay; if Pacenote's block itself was edited there since (its text or a link in
+it), it is kept as it is and
+Undo says so. A Meeting Pacenote created is deleted by Undo only if nobody added notes to it in HubSpot since;
+otherwise it stays with those notes, only Pacenote's block goes, and Undo says so. If a write fails halfway, what it changed is taken back, and an association HubSpot
+would not let it take back stays in Undo. The meetings offered to pick and Undo belong to the HubSpot account that
+was searched or written: after Relink to another account they are dropped, and a pick or Undo from the old account
+never writes to the new one, even when an id there is the same. Relink and Undo wait until a write of the same
+call that is still running has finished, so that write's ids never end up in the new link. No transcript text is sent.
+
 **What Pacenote can do.** Help > What Pacenote can do lists every feature with Try it and how often you used it
 (from the local usage log, Settings > General > Data). For the first 14 days it is also a card on Home.
 

@@ -7,7 +7,7 @@ import Foundation
 /// hand, or Refresh saved the link for this very calendar occurrence. Otherwise the call stays unlinked.
 public enum CRMLinkCarry {
     /// Copies <base>.crm.json to <stem>.crm.json when the call has no link yet and the link is verified for this call
-    /// (see verified). The call key, the HubSpot Call id and its managed deal are left out: they belong to one call, and a preparation
+    /// (see verified). The call key, the HubSpot Call id and its managed deal, and the Meeting and Email ids (H5) are left out: they belong to one call, and a preparation
     /// used again for another call must not update that Call.
     @discardableResult
     public static func carry(from base: String, to stem: String, occurrence: String, chosen: Bool, fm: FileManager = .default) -> Bool {
@@ -17,6 +17,7 @@ public enum CRMLinkCarry {
               var obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return false }
         obj.removeValue(forKey: "callKey"); obj.removeValue(forKey: "callId")
         obj.removeValue(forKey: "callDealId")     // H4: the deal Pacenote put on that Call, so it goes with the Call id
+        for k in ["meetingId", "emailId", "emailOurs"] { obj.removeValue(forKey: k) }     // H5: that call's Meeting and Email
         guard let out = try? JSONSerialization.data(withJSONObject: obj, options: [.sortedKeys]) else { return false }
         try? fm.createDirectory(atPath: (dst as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
         return (try? out.write(to: URL(fileURLWithPath: dst), options: .atomic)) != nil
