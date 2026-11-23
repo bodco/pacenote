@@ -81,6 +81,26 @@ def test_tentative_wording_does_not_catch_a_real_commitment():
     assert ID.is_tentative("можливо надішлемо звіт у п'ятницю")
     assert ID.is_tentative("спробую підтвердити список")
     assert ID.is_tentative("maybe send the report on Friday")
+    assert ID.is_tentative("Мабуть надішлю звіт у п'ятницю")
+    assert not ID.is_tentative("надіслати звіт, мабуть, у п'ятницю")
+
+
+def test_tentative_only_when_the_promise_opens_the_item():
+    # someone else trying inside a firm task does not make it a "we will try" (PB-51 review round 3)
+    assert not ID.is_tentative("Fix the crash when users try to export")
+    assert not ID.is_tentative("Check why users try to log in twice")
+    assert not ID.is_tentative("Block users who attempt to sign in")
+    assert not ID.is_tentative("Send Mike the steps he will try")
+    assert not ID.is_tentative("Попросити Олега спробувати новий білд")
+    assert not ID.is_tentative("Try the new build on staging")
+    assert ID.is_tentative("we'll try to fix the export")
+    assert ID.is_tentative("We’ll try to fix the export")
+    assert ID.is_tentative("I will try to confirm the list")
+    assert ID.is_tentative("will try to send the deck")
+    assert ID.is_tentative("Спробуємо надіслати список")
+    assert ID.is_tentative("Ми спробуємо надіслати список")
+    assert ID.is_tentative("я постараюсь надіслати список")
+    assert ID.is_tentative("- try to send the IdP metadata file for item 13")
 
 
 def test_person_id_follows_voice_library_aliases_and_merges(tmp_path):

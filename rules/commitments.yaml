@@ -47,11 +47,12 @@ identity: >-
   "Mike Brown") is at most a suggestion. When a call moves to another project, its items leave the joined items of
   other calls, which stay as they were.
 modality: >-
-  PB-51: a "we will try" promise ("try to confirm the list", "we will try", "спробуємо", "постараюсь", or an item that
-  opens with "maybe", "if possible", "можливо", "якщо вийде") is a proposal, not an agreed commitment: the add carries
-  "modality":"tentative" and the item has status proposal (not open, so the Tracker does not list it as owed). A hedge
-  after the task ("send the SOW by Friday, maybe earlier", "send the deck if possible") and quoted text ("fix the 'try
-  to login' banner") keep the task agreed. An agreed mention on a later call or the PM's op agree (`python -m
+  PB-51: a "we will try" promise (an item that opens, optionally after we/I/ми/я, with "try to", "will try", "we'll
+  try", "attempt to", "спробуємо", "постараюсь", "maybe", "if possible", "можливо", "мабуть", "якщо вийде") is a
+  proposal, not an agreed commitment: the add carries "modality":"tentative" and the item has status proposal (not
+  open, so the Tracker does not list it as owed). Someone else trying inside a firm task ("fix the crash when users
+  try to export", "попросити Олега спробувати новий білд"), a hedge after the task ("send the SOW by Friday, maybe
+  earlier", "send the deck if possible") and quoted text ("fix the 'try to login' banner") keep the task agreed. An agreed mention on a later call or the PM's op agree (`python -m
   livetips_m0.commitments agree <live folder> <id>`) makes it open; a "try" on a later call never weakens an agreed item.
 migration: >-
   PB-51: the first write of the G1 code appends one migration (op migrate with tag g1-<stamp>): op tentative for the

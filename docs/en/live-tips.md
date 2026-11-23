@@ -1321,8 +1321,9 @@ The skill and the app follow the same rules, in `rules/agenda.yaml`, `rules/comm
   again. An undo gives each item back its own status, due date and done, and what you did on either while they
   were joined stays with that one. Names follow the aliases of your voice library (Settings > Speakers > Voice library > Names), so "Mike T." and "Mike Turner"
   are one person; two people who only share a first name are at most a suggestion. A "we will try" promise is a
-  proposal, not an open commitment ("try to send", or a task that opens with "maybe" or "if possible"; "send the deck
-  by Friday, maybe earlier" stays agreed, and so does quoted text), and `python -m livetips_m0.commitments agree
+  proposal, not an open commitment (a task that opens with "try to", "we will try", "maybe" or "if possible"; "send
+  the deck by Friday, maybe earlier" and "fix the crash when users try to export" stay agreed, and so does quoted
+  text), and `python -m livetips_m0.commitments agree
   <live folder> <id>` makes a proposal open; a task ticked done on a later call closes the older item. The first write
   after the update migrates the register by appending events (no line changes); it never closes or reopens a task,
   and `python -m livetips_m0.commitments rollback <live folder>` undoes it. For now the joins and proposals apply to

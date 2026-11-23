@@ -18,11 +18,16 @@ from typing import Dict, List, Optional
 
 REF_RX = re.compile(r"(?:\b(?:item|task|ticket|point|issue)|(?<!\w)(?:пункт|задач[аіуи]|тікет|питання))\s*(?:№|#|no\.?)?\s*(\d{1,5})\b",
                     re.I | re.U)    # a bare "#1" is not a reference ("our #1 priority"); "task #13" is
-TENTATIVE_RX = re.compile(r"(?<!\w)(?:try to|will try|we'll try|attempt to|"
-                          r"спробу(?:ю|єш|є|ємо|єте|ють|вати|ймо)|постара(?:юсь|юся|ємось|ємося|ється|ються|тися|тись))(?!\w)",
+TENTATIVE_RX = re.compile(r"^\W*(?:"
+                          r"(?:(?:we|i)\s+(?:will|shall)\s+|(?:we|i)['’]ll\s+|will\s+)(?:try|attempt)(?:\s+to)?"
+                          r"|(?:(?:we|i)\s+)?(?:try|attempt)\s+to"
+                          r"|(?:(?:ми|я)\s+)?(?:спробу(?:ю|єш|є|ємо|єте|ють|вати|ймо)"
+                          r"|постара(?:юсь|юся|ємось|ємося|ється|ються|тися|тись)))(?!\w)",
                           re.I | re.U)
-# verb forms only ("спробую", not the noun "спробу"), anywhere in the text
-HEDGE_RX = re.compile(r"^\W*(?:maybe|if possible|можливо|якщо вийде|по можливості)(?![\w-])", re.I | re.U)
+# the promise opens the item, optionally after a first-person subject ("try to confirm", "we'll try", "спробуємо"):
+# someone else trying inside a firm task ("fix the crash when users try to export") is not; verb forms only
+# ("спробую", not the noun "спробу")
+HEDGE_RX = re.compile(r"^\W*(?:maybe|if possible|можливо|мабуть|якщо вийде|по можливості)(?![\w-])", re.I | re.U)
 # a weak hedge counts only when it opens the item ("maybe send the report"): after the task ("send the SOW by Friday,
 # maybe earlier", "send the deck if possible") it softens the date, the task stays agreed
 QUOTED_RX = re.compile(r"(?<!\w)(?:'[^'\n]*'|\"[^\"\n]*\"|‘[^’\n]*’|“[^”\n]*”|«[^»\n]*»|„[^“”\n]*[“”])(?!\w)", re.U)

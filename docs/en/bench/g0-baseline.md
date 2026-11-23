@@ -35,7 +35,7 @@ What the baseline says:
 
 ## After G1 identity (PB-51, variant A, 2026-11-23)
 
-The same variant A after the G1 change (`commitments` identity across calls, with fix round 1). Raw numbers:
+The same variant A after the G1 change (`commitments` identity across calls; measured at commit `080c330`, the totals are unchanged through fix round 4). Raw numbers:
 `spikes/m0/bench/g0/results/A-2026-11-23-g1.json` (same fixture and gold hashes as the baseline).
 
 | Target | Duplicates | Suggested | Duplicates if PM confirms | Wrong identity | Item 13 cross-client | False agreed |
