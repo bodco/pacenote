@@ -11,6 +11,7 @@ import os
 import re
 from typing import Dict, List, Optional
 
+from .. import client_scope as CS
 from .. import commitments as CM
 
 ON_ME_MAX = 25
@@ -96,7 +97,8 @@ def collect(req: dict, today: Optional[_dt.date] = None) -> dict:
     series}; state overdue | today | dated | none. Sorted as Home: overdue, today, by date, the rest newest first."""
     today = today or (_dt.date.fromisoformat(req["today"]) if req.get("today") else _dt.date.today())
     fs = folders(req)
-    seen, items = set(), []
+    scope = req.get("_client_scope")      # PB-70: another client's items stay out of this call's Tracker
+    seen, items, other = set(), [], 0
     for f in fs:
         try:
             got = CM.load(f)
@@ -110,6 +112,9 @@ def collect(req: dict, today: Optional[_dt.date] = None) -> dict:
             if i.get("id") in seen or twin in seen:
                 continue                   # the same item in two registers (a folder added twice) once
             seen.update({i.get("id"), twin})
+            if scope and CS.item_side(scope, i) == "other":
+                other += 1
+                continue
             created = _day(i.get("created")) or today
             d = due_date(str(i.get("due") or ""), created)
             state = "none" if not d else ("overdue" if d < today else "today" if d == today else "dated")
@@ -122,7 +127,7 @@ def collect(req: dict, today: Optional[_dt.date] = None) -> dict:
         return (order[x["state"]], x["due_date"] or "9999", "".join(chr(0x10FFFF - ord(c)) for c in x["created"]))
     mine = sorted([x for x in items if x["owner"].lower() == "me"], key=key)[:ON_ME_MAX]
     theirs = sorted([x for x in items if x["owner"].lower() != "me"], key=key)[:WAITING_MAX]
-    return {"on_me": mine, "waiting": theirs, "folders": len(fs)}
+    return {"on_me": mine, "waiting": theirs, "folders": len(fs), "other_client": other}
 
 
 def _due_note(x: dict) -> str:

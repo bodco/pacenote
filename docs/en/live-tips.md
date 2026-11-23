@@ -2474,6 +2474,18 @@ suggestions come last. What can go in:
   commits of the folders. A stand-up sheet is written as your own short update lines (since last time, today from
   the Tracker items due today or overdue, blockers, whom to ask); a line about the sources instead of the work is
   dropped, and a block with nothing concrete says "not found";
+- one project folder with several clients (PB-70): the call's client is decided first, from the other side's company,
+  else the call's title, matched to the client folders of the project (sibling folders such as `docs/acme` and
+  `docs/globex` whose names are also a client company or the first word of a meeting series). The call's own folder
+  must match a company: one of this call's other side, or one from an earlier preparation of the project; the title
+  only picks among those. A project with only topic folders (`docs/design`, `docs/research` and a "Design review"
+  series) is never scoped. The other clients are the sibling folders of the call's own folder.
+  The preparation and the search during the call then leave out the other clients' files and calls, their Tracker
+  items, and their lines and sections in the decisions and the Current State page. Items without a client stay. A
+  file or folder you add by hand is always read. When the client is not clear (no client named, two clients named, one
+  client folder only, the scope switched off), nothing is hidden, and the search during the call follows the
+  preparation's decision. Not yet scoped: the tools of the optional call agent (commitments, decisions, project
+  state, past calls, search);
 - for a presentation, "This is the deck" on a deck's row, with the slide owners, the minutes and Q&A in the same row.
 
 Every source shows its access before anything runs, with an icon and a word: **Access ok**, **No access**, **Not

@@ -1823,6 +1823,25 @@ class Engine:
         except Exception:  # noqa: BLE001
             return None
 
+    def _client_scope(self, sheet=None) -> Optional[dict]:
+        """PB-70: the call's client scope. With a Meeting Sheet: what the preparation decided (an old sheet without
+        client_scope, or "hide nothing", gives None). Without a sheet: decided from the project folder, the call's
+        title and file (once per call); with no companies here only earlier sheets can back a client folder.
+        None = nothing is hidden."""
+        from . import client_scope as CS
+        if sheet is None:
+            sheet = self._sheet()
+        if sheet is not None:
+            return CS.from_sheet(sheet)
+        key = (self.cfg.get("project_root"), self.cfg.get("title"), self.cfg.get("call_file"))
+        if getattr(self, "_cscope_key", None) != key:
+            try:
+                self._cscope = CS.decide(str(key[0] or ""), str(key[1] or ""), [], str(key[2] or ""))
+            except Exception:  # noqa: BLE001
+                self._cscope = None
+            self._cscope_key = key
+        return self._cscope
+
     def _lookup_ok(self) -> bool:
         """0.10.0: something to search: a folder, or the call's Meeting Sheet."""
         return bool(self._search_roots()) or self._sheet() is not None
@@ -1848,15 +1867,17 @@ class Engine:
             deep = []
         if (not roots and not deep) or self.cfg.get("lookup_index") is False:
             return None
-        key = (tuple(str(r) for r in roots[:4]), self._call_prefix(), tuple(deep))
+        scope = self._client_scope()
+        key = (tuple(str(r) for r in roots[:4]), self._call_prefix(), tuple(deep), (scope or {}).get("client"))
         with self._fidx_lock:
             cur = getattr(self, "_fidx", None)
             if cur is None or cur.key != key:
                 cur = self._fidx = FolderIndex(roots[:4], exclude_prefix=key[1], deep=deep,
-                                               ttl=float(self.cfg.get("lookup_refresh_s", 300))).start()
+                                               ttl=float(self.cfg.get("lookup_refresh_s", 300)), scope=scope).start()
                 self._fidx_next = None
             elif cur.stale() and getattr(self, "_fidx_next", None) is None:
-                nxt = self._fidx_next = FolderIndex(roots[:4], exclude_prefix=key[1], ttl=cur.ttl, deep=deep)
+                nxt = self._fidx_next = FolderIndex(roots[:4], exclude_prefix=key[1], ttl=cur.ttl, deep=deep,
+                                                    scope=scope)
 
                 def swap():
                     nxt.build()
@@ -1887,6 +1908,7 @@ class Engine:
         # next to the lt search instead of before it.
         from concurrent.futures import ThreadPoolExecutor as _TP
         budget_s = float(max_s if max_s is not None else self.cfg.get("lookup_max_s", 1.0))
+        scope = self._client_scope(sheet)       # PB-70: another client's passages never reach the answer
 
         def own_search() -> List[dict]:
             try:
@@ -1894,7 +1916,7 @@ class Engine:
                 fidx = self._folder_index(roots)
                 return lookup.snippets(text, sheet=sheet, roots=roots[:4], k=max(k, 6), queries=qs[1:],
                                        budget_chars=budget_chars, max_seconds=budget_s,
-                                       exclude_prefix=self._call_prefix(), index=fidx)
+                                       exclude_prefix=self._call_prefix(), index=fidx, scope=scope)
             except Exception:  # noqa: BLE001  (the index search below still runs)
                 return []
         own_ex = _TP(max_workers=1)
@@ -1905,7 +1927,11 @@ class Engine:
             jobs = [(q, r) for r in roots[:4] for q in qs]
             with _TP(max_workers=min(12, len(jobs)) or 1) as ex:      # parallel, one overall wait (QA: up to 100 s in a row)
                 results = list(ex.map(lambda j: index_snippets(lt, Path(j[1]), j[0], k=k, timeout=15.0), jobs))
-            idx = fit_snippets(merge_hits(results), budget_chars, self._hit_text)
+            hits = merge_hits(results)
+            if scope:
+                from . import client_scope as CS
+                hits = [h for h in hits if CS.side(scope, h.get("path") or "") != "other"]
+            idx = fit_snippets(hits, budget_chars, self._hit_text)
         try:
             own = own_f.result(timeout=budget_s + 1.0)
         except Exception:  # noqa: BLE001  (over the budget: the answer goes without the folders)
@@ -2190,7 +2216,8 @@ class Engine:
             from .sheet import lookup
             snips = lookup.snippets(text, sheet=sheet, roots=roots[:4], k=6, queries=self._find_queries(text)[1:],
                                     budget_chars=budget_chars, max_seconds=float(self.cfg.get("codriver_search_s", 1.0)),
-                                    exclude_prefix=self._call_prefix(), index=self._folder_index(roots))
+                                    exclude_prefix=self._call_prefix(), index=self._folder_index(roots),
+                                    scope=self._client_scope(sheet))
         except Exception:  # noqa: BLE001
             return ""
         return codriver.passages_text(snips, budget_chars)
