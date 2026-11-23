@@ -1668,13 +1668,40 @@ Repeat call get the blocks Likely objections, Competitors, Stakeholders and (Rep
 answer cards and what earlier calls of the series know about the deal, and warn when nobody is known as the decider.
 
 **Connect HubSpot.** In HubSpot: the left navigation's More > Development, then Keys > Service Keys (or open
-app.hubspot.com/service-keys/ followed by your account id) > Create service key; name it Pacenote; Add new scope and choose the ten scopes listed on Settings > Integrations > HubSpot (Copy list copies them);
+app.hubspot.com/service-keys/ followed by your account id) > Create service key; name it Pacenote; Add new scope and choose the scopes listed on Settings > Integrations > HubSpot (Copy list copies them; the full list and steps are below);
 Update, Create, confirm; copy the key. In Pacenote: Settings > Integrations > HubSpot, paste the key, Save, Test. The
 key stays in the Keychain. Pacenote reads the company (by the attendees' email domains, else the name), its freshest
 open deal, contacts, the last 10 activities and open tasks into `<brief>.crm.md` when you press Refresh in Start
 call. It writes only from the call page's menu, Update HubSpot: a note on the deal, company and contacts, deal fields
 (next step, close date, stage and qualification, only with evidence from the call), a follow-up task, each with a checkbox; Apply writes, Undo works for 8
 seconds. The transcript goes into the note only if you turn that on.
+
+
+**The HubSpot key, step by step (0.27.1).** Pacenote connects with a service key; there is no HubSpot sign-in (OAuth) yet. You need a HubSpot user who can make keys (a Super Admin, or one with access to Development) and about five minutes.
+
+1. In HubSpot open More in the left navigation, then Development, then Keys > Service Keys > Create service key. Name it Pacenote.
+2. Press Add new scope. The list is long: do not scroll it. Type each scope from the table into the search field and tick it. Scopes ending in `.read` only read.
+3. Press Update, then Create, and confirm. Leave Automatic rotation off, or paste the new key after each rotation.
+4. On the key's page press Copy next to the key (it starts with `pat-`).
+5. In Pacenote: Settings > Integrations > HubSpot, paste the key, Save, then Test. The list on that page shows a green tick for each scope the key has and a red cross for a missing one. Copy list copies the whole list.
+6. Using Leads? Turn Leads on in the same page first: the list then adds the two Leads scopes.
+
+| Scope | What Pacenote uses it for |
+|---|---|
+| `crm.objects.contacts.read` | find the people of the call; find HubSpot's own meetings to add the notes to |
+| `crm.objects.contacts.write` | add a contact; write the Call, the Meeting, the Email and tasks |
+| `crm.objects.companies.read` | find the company |
+| `crm.objects.companies.write` | add a company |
+| `crm.objects.deals.read` | read the deal |
+| `crm.objects.deals.write` | update deal fields |
+| `crm.objects.owners.read` | the owner of records |
+| `crm.schemas.contacts.read` | the contact fields |
+| `crm.schemas.companies.read` | the company fields |
+| `crm.schemas.deals.read` | the deal fields and stages |
+| `crm.objects.leads.read` | Leads, only if you use them |
+| `crm.objects.leads.write` | Leads, only if you use them |
+
+The key stays in the Keychain of this Mac only. Once the new key works you can turn the old one off in HubSpot.
 
 **The call in HubSpot.** Update HubSpot also has a Call row, ticked by default: a HubSpot Call with the title, start
 time, duration, direction (Settings > Integrations > HubSpot, default Outbound), outcome Connected, the participants'

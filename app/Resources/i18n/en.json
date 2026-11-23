@@ -1745,7 +1745,7 @@
  "int.hubspot.how": "How to create a service key",
  "int.hubspot.how1": "In HubSpot open More in the left navigation, then Development.",
  "int.hubspot.how2": "Keys > Service Keys > Create service key. Name it Pacenote.",
- "int.hubspot.how3": "Add new scope and tick the ten scopes below (Copy list helps), then Update.",
+ "int.hubspot.how3": "Add new scope, type each scope from the list below into the search field and tick it (Copy list copies them all), then Update. Turn Leads on first if you use them: the list then adds their two scopes.",
  "int.hubspot.how4": "Create and confirm. Leave Automatic rotation off, or paste the new key after each rotation.",
  "int.hubspot.how5": "On the key's page press Copy next to the key.",
  "int.hubspot.how6": "Paste it here, Save, then Test.",

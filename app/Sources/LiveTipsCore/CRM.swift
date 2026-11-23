@@ -300,6 +300,9 @@ public final class HubSpotConnector: CRMConnector {
                                 "crm.objects.contacts.write", "crm.objects.deals.read", "crm.objects.deals.write",
                                 "crm.objects.owners.read", "crm.schemas.companies.read", "crm.schemas.contacts.read",
                                 "crm.schemas.deals.read"]
+    /// 0.27.1: the list Settings > Integrations > HubSpot shows and Copy list copies. The two Leads scopes are added
+    /// only while Leads are turned on, so a key made for a portal without Leads is not asked for them.
+    public static func requiredScopes(leads: Bool) -> [String] { scopes + (leads ? HubSpotConnector.leadScopes : []) }
     let t: CRMTransport
     let sleep: (Double) async -> Void
     /// 0.8.7 (I6.2): the owner of the notes and tasks Pacenote writes ("" = HubSpot's default)

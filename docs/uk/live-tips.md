@@ -1678,13 +1678,40 @@ HubSpot, його стадія угоди зіставляється з Discover
 що попередні дзвінки серії знають про угоду, і попереджають, коли невідомо, хто вирішує.
 
 **Підключити HubSpot.** У HubSpot: у лівій навігації More > Development, далі Keys > Service Keys (або відкрий
-app.hubspot.com/service-keys/ і id свого акаунта) > Create service key; назва Pacenote; Add new scope і вибери десять scope зі списку в Settings > Integrations > HubSpot (Copy list
-копіює їх); Update, Create, підтвердити; скопіювати ключ. У Pacenote: Settings > Integrations > HubSpot, встав
+app.hubspot.com/service-keys/ і id свого акаунта) > Create service key; назва Pacenote; Add new scope і вибери scope зі списку в Settings > Integrations > HubSpot (Copy list
+копіює їх; повний список і кроки нижче); Update, Create, підтвердити; скопіювати ключ. У Pacenote: Settings > Integrations > HubSpot, встав
 ключ, Save, Test. Ключ лежить у Keychain. Pacenote читає компанію (за доменами email учасників, інакше за назвою),
 її найсвіжішу відкриту угоду, контакти, 10 останніх активностей і відкриті задачі у `<brief>.crm.md`, коли ти
 натискаєш Refresh у Start call. Пише лише з меню сторінки дзвінка, Update HubSpot: нотатка на угоду, компанію і
 контакти, поля угоди (наступний крок, дата закриття, етап і кваліфікація, лише з доказом із дзвінка), задача на follow-up, кожне з галочкою; Apply
 пише, Undo працює 8 секунд. Транскрипт іде в нотатку, лише якщо ти це ввімкнеш.
+
+**Ключ HubSpot крок за кроком (0.27.1).** Pacenote підключається сервісним ключем, входу через HubSpot (OAuth) поки немає. Потрібен користувач HubSpot, який може створювати ключі (Super Admin або з доступом до Development), і близько п'яти хвилин.
+
+1. У HubSpot у лівій навігації відкрий More, далі Development, далі Keys > Service Keys > Create service key. Назва Pacenote.
+2. Натисни Add new scope. Список довгий, гортати його не треба: введи кожен scope з таблиці в поле пошуку і познач його. Scope, що закінчуються на `.read`, лише читають.
+3. Натисни Update, далі Create і підтверди. Automatic rotation лиши вимкненим або вставляй новий ключ після кожної ротації.
+4. На сторінці ключа натисни Copy біля ключа (він починається з `pat-`).
+5. У Pacenote: Settings > Integrations > HubSpot, встав ключ, Save, далі Test. Список на цій сторінці показує зелену галочку біля кожного scope, що є в ключа, і червоний хрестик біля відсутнього. Copy list копіює весь список.
+6. Користуєшся Leads? Спершу ввімкни Leads на тій самій сторінці: тоді список додасть два scope для Leads.
+
+| Scope | Навіщо Pacenote |
+|---|---|
+| `crm.objects.contacts.read` | знайти людей зі зустрічі; знайти зустріч у HubSpot, щоб дописати в неї нотатки |
+| `crm.objects.contacts.write` | додати контакт; записати Call, Meeting, Email і задачі |
+| `crm.objects.companies.read` | знайти компанію |
+| `crm.objects.companies.write` | додати компанію |
+| `crm.objects.deals.read` | прочитати угоду |
+| `crm.objects.deals.write` | оновити поля угоди |
+| `crm.objects.owners.read` | відповідальний (owner) записів |
+| `crm.schemas.contacts.read` | поля контакту |
+| `crm.schemas.companies.read` | поля компанії |
+| `crm.schemas.deals.read` | поля й етапи угоди |
+| `crm.objects.leads.read` | Leads, лише якщо ними користуєтесь |
+| `crm.objects.leads.write` | Leads, лише якщо ними користуєтесь |
+
+Ключ лежить лише в Keychain цього Мака. Коли новий ключ запрацює, старий у HubSpot можна вимкнути.
+
 
 **Дзвінок у HubSpot.** В Update HubSpot є ще рядок Call, за замовчуванням із галочкою: дзвінок HubSpot із назвою,
 часом початку, тривалістю, напрямом (Settings > Integrations > HubSpot, типово Outbound), результатом Connected,

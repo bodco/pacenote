@@ -10,14 +10,14 @@ public enum CRMObject: String, CaseIterable, Codable {
 
     /// The scopes a write of this object needs (section 4): the reads its write path makes (matching, the deal read
     /// before an update, the owner), which the live check can prove, then the write scopes, which only a write proves.
-    /// Calls, tasks and meetings are engagements that HubSpot creates with the contacts scopes; meetings may also need
-    /// the meetings read scope on some portals.
+    /// Calls, tasks and meetings are engagements that HubSpot reads and writes with the contacts scopes (0.27.1: there
+    /// is no meetings scope for a service key; the Meetings API names only crm.objects.contacts.read and .write).
     public var scopes: [String] {
         switch self {
         case .calls, .tasks: return ["crm.objects.contacts.read", "crm.objects.owners.read", "crm.objects.contacts.write"]
         case .contacts: return ["crm.objects.contacts.read", "crm.objects.companies.read", "crm.objects.contacts.write", "crm.objects.companies.write"]
         case .deals: return ["crm.objects.deals.read", "crm.objects.deals.write"]
-        case .meetings: return ["crm.objects.contacts.read", "crm.objects.owners.read", "crm.objects.contacts.write", "crm.objects.meetings.read"]
+        case .meetings: return ["crm.objects.contacts.read", "crm.objects.owners.read", "crm.objects.contacts.write"]
         }
     }
 
@@ -452,12 +452,14 @@ public enum CRMScopeCheck {
         ("crm.schemas.companies.read", "/crm/v3/properties/companies"),
         ("crm.schemas.deals.read", "/crm/v3/properties/deals"),
     ]
+    /// 0.27.1: probed only while Leads are on (a portal without Leads answers 403 and the key does not need them).
+    public static let leadProbes: [(scope: String, path: String)] = [("crm.objects.leads.read", "/crm/v3/objects/leads?limit=1")]
 
     /// missing: the scopes whose probe was refused with 403. unverified: the probes that failed another way (network,
     /// 5xx), so the check is not complete for them; they are not called missing.
-    public static func check(_ hs: HubSpotConnector) async -> (missing: [String], unverified: [String]) {
+    public static func check(_ hs: HubSpotConnector, leads: Bool = false) async -> (missing: [String], unverified: [String]) {
         var missing: [String] = [], unverified: [String] = []
-        for (scope, path) in probes {
+        for (scope, path) in probes + (leads ? leadProbes : []) {
             do { _ = try await hs.call("GET", path) } catch let e as CRMError where e.code == 403 { missing.append(scope) } catch { unverified.append(scope) }
         }
         return (missing, unverified)

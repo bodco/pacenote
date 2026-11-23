@@ -12,6 +12,7 @@ providers:
     scopes: [crm.objects.companies.read, crm.objects.companies.write, crm.objects.contacts.read,
              crm.objects.contacts.write, crm.objects.deals.read, crm.objects.deals.write, crm.objects.owners.read,
              crm.schemas.companies.read, crm.schemas.contacts.read, crm.schemas.deals.read]
+    lead_scopes: [crm.objects.leads.read, crm.objects.leads.write]   # 0.27.1: asked for only while Leads are on
     api: v3 objects and search, associations v4, cursor pagination; 429 waits (Retry-After or 1, 2, 4 s) and retries 3 times
 connector:
   read: [testConnection, findCompany(domain, name), findContacts(emails), deals(companyId), deal(id), recentActivity(refs, limit), pipelines, properties(objectType)]

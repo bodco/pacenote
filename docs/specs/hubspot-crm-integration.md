@@ -160,7 +160,6 @@ section 11); if a portal answers 403, the error line already names the missing s
 | Feature | Added scope |
 |---|---|
 | Leads (H3, only when "Propose a Lead" is on in Settings; not in the ten scopes above) | `crm.objects.leads.read`, `crm.objects.leads.write` |
-| Meetings as objects, if portals refuse them with the contacts scopes | `crm.objects.meetings.read` (HubSpot may also need the calendar scope) |
 | Custom Pacenote property on Calls (decision 7) | `crm.schemas.custom.read`, `crm.schemas.custom.write` |
 
 ### OAuth (later, decision 1)
