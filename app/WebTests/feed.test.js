@@ -733,5 +733,18 @@ test('PB-49: acks are kept per key, so a later ack in the same batch does not hi
   assert.strictEqual(f.ack.key, 'call_lang');
 });
 
+test('0.27.2: the call is ending from End call until the recorder stops', () => {
+  const { f } = make();
+  f.status = { state: 'recording' };
+  assert.strictEqual(f.state().call.ending, false);
+  f.ending = true;
+  assert.strictEqual(f.state().call.ending, true);
+  f.ending = false; f.status = { state: 'stopping' };
+  assert.strictEqual(f.state().call.ending, true);
+  f.ending = true; f.status = { state: 'stopped' };
+  const c = f.state().call;
+  assert.strictEqual(c.ending, false); assert.strictEqual(c.state, 'ended');
+});
+
 console.log(`feed tests: ${passed} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);

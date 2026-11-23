@@ -658,6 +658,7 @@
     return {
       call: {
         title: this.title || clean(s.title), state: ready ? 'ready' : st === 'stopped' ? 'ended' : 'live',
+        ending: st !== 'stopped' && (this.ending || st === 'stopping'),   // 0.27.2: End call confirmed, the recorder is finishing
         startedAt: s.started_at ? Date.parse(s.started_at) : null, startsAt: '',
         paused: s.tips_paused === true || s.tips_paused === 'on' || s.tips_paused === 'true',
         tipsOff: s.tips === 'off' || s.call_type === 'transcript' && s.tips !== 'on',   // rules/meeting.yaml > tips

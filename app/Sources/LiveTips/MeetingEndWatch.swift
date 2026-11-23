@@ -32,6 +32,8 @@ final class MeetingEndWatch {
     private var releasedSince: Date?
     private var asking = false
     private var done = false
+    private var loggedSeen = false      // 0.27.2: what the watcher saw goes to app.log once per call and per release
+    private var loggedRelease = false
 
     func start() {
         let keep = UNNotificationAction(identifier: Self.keepAction, title: L("meetend.keep"), options: [])
@@ -48,16 +50,25 @@ final class MeetingEndWatch {
         let live = CallEngine.shared.isRunning || ["recording", "standby"].contains(st.state)
         guard enabled, live else { if asking { hideAsk() }; callKey = ""; return }
         let key = CallEngine.shared.appTipsFile ?? st.tipsFile ?? ""
-        if key != callKey { if asking { hideAsk() }; callKey = key; seen = 0; releasedSince = nil; done = false }
+        if key != callKey { if asking { hideAsk() }; callKey = key; seen = 0; releasedSince = nil; done = false; loggedSeen = false; loggedRelease = false }
         if done { return }
-        if Self.otherAppsUseMicrophone() {
-            seen += Self.step; releasedSince = nil
+        let holders = Self.micHolders()
+        let held: Bool = holders == nil || !(holders ?? []).isEmpty     // CoreAudio cannot say: held (never stop on a guess)
+        if held {
+            seen += Self.step
+            if releasedSince != nil, loggedRelease { AppLog.app("meeting end: the microphone is back (\(Self.names(holders)))") }
+            releasedSince = nil; loggedRelease = false
+            if seen >= Self.meetingSeen, !loggedSeen { loggedSeen = true; AppLog.app("meeting end: a meeting holds the microphone (\(Self.names(holders)))") }
             if asking { hideAsk() }
             return
         }
         guard seen >= Self.meetingSeen else { return }
         let now = Date()
-        guard let r = releasedSince else { releasedSince = now; return }
+        guard let r = releasedSince else {
+            releasedSince = now
+            if !loggedRelease { loggedRelease = true; AppLog.app("meeting end: the microphone was released") }
+            return
+        }
         let quiet = now.timeIntervalSince(r)
         if quiet >= Self.releasedFor + Self.grace { stop(); return }
         if quiet >= Self.releasedFor { showAsk(left: Int((Self.releasedFor + Self.grace - quiet).rounded(.up))) }
@@ -68,6 +79,7 @@ final class MeetingEndWatch {
         guard asking else { return }
         done = true; hideAsk()
         UsageLog.log("meeting_end", ["action": "keep"])
+        AppLog.app("meeting end: keep recording")
     }
 
     func stopNow() { guard asking else { return }; stop() }
@@ -76,6 +88,7 @@ final class MeetingEndWatch {
         hideAsk()
         done = true
         UsageLog.log("meeting_end", ["action": "stop"])
+        AppLog.app("meeting end: stopping the call")
         CallEngine.shared.stop()
     }
 
@@ -84,6 +97,7 @@ final class MeetingEndWatch {
         guard !asking else { return }
         asking = true
         UsageLog.log("meeting_end", ["action": "ask"])
+        AppLog.app("meeting end: asking, stops in \(left) s")
         let c = UNMutableNotificationContent()
         c.title = L("meetend.notif.title")
         c.body = L("meetend.notif.body", ["n": "\(Int(Self.grace))"])
@@ -97,32 +111,61 @@ final class MeetingEndWatch {
         UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [Self.notificationId])
     }
 
+    /// 0.27.2: End call pressed by hand: what the watcher knew at that moment, so a call that did not stop by itself can
+    /// be explained from app.log (the owner's call of 23.11 ended by hand with no meeting_end event at all).
+    func noteManualEnd() {
+        guard enabled else { AppLog.app("meeting end: off in Settings"); return }
+        var state: String
+        if done {
+            state = "kept recording"
+        } else if seen < Self.meetingSeen {
+            state = "no meeting app held the microphone (" + String(Int(seen)) + " s)"
+        } else if let r = releasedSince {
+            state = "the microphone was released " + String(Int(Date().timeIntervalSince(r))) + " s ago"
+        } else {
+            state = "a meeting still holds the microphone (" + Self.names(Self.micHolders()) + ")"
+        }
+        AppLog.app("meeting end: End call by hand, " + state)
+    }
+
+    /// The short names of the processes in a holders list, for app.log (never sent anywhere).
+    nonisolated static func names(_ h: [String]?) -> String {
+        guard let h = h else { return "unknown" }
+        if h.isEmpty { return "none" }
+        return Array(Set(h)).sorted().joined(separator: ", ")
+    }
+
     /// Some process other than Pacenote and its recorder is capturing from an input device. When CoreAudio cannot
     /// say, the answer is yes: a call is never stopped on a guess.
-    nonisolated static func otherAppsUseMicrophone() -> Bool {
+    nonisolated static func otherAppsUseMicrophone() -> Bool { micHolders().map { !$0.isEmpty } ?? true }
+
+    /// 0.27.2: the processes other than Pacenote capturing from an input now (file names); nil when CoreAudio cannot say.
+    nonisolated static func micHolders() -> [String]? {
         let sys = AudioObjectID(kAudioObjectSystemObject)
         var addr = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyProcessObjectList,
                                               mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
         var size: UInt32 = 0
-        guard AudioObjectGetPropertyDataSize(sys, &addr, 0, nil, &size) == noErr, size > 0 else { return true }
+        guard AudioObjectGetPropertyDataSize(sys, &addr, 0, nil, &size) == noErr, size > 0 else { return nil }
         var objs = [AudioObjectID](repeating: 0, count: Int(size) / MemoryLayout<AudioObjectID>.size)
-        guard AudioObjectGetPropertyData(sys, &addr, 0, nil, &size, &objs) == noErr else { return true }
+        guard AudioObjectGetPropertyData(sys, &addr, 0, nil, &size, &objs) == noErr else { return nil }
         let me = getpid()
+        var out: [String] = []
         for o in objs {
             var running: UInt32 = 0
             var s = UInt32(MemoryLayout<UInt32>.size)
             var a = AudioObjectPropertyAddress(mSelector: kAudioProcessPropertyIsRunningInput,
                                                mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
-            guard AudioObjectGetPropertyData(o, &a, 0, nil, &s, &running) == noErr else { return true }
+            guard AudioObjectGetPropertyData(o, &a, 0, nil, &s, &running) == noErr else { return nil }
             if running == 0 { continue }
             var pid: pid_t = 0
             s = UInt32(MemoryLayout<pid_t>.size)
             a.mSelector = kAudioProcessPropertyPID
-            guard AudioObjectGetPropertyData(o, &a, 0, nil, &s, &pid) == noErr else { return true }
+            guard AudioObjectGetPropertyData(o, &a, 0, nil, &s, &pid) == noErr else { return nil }
             if pid == me || isOurs(pid, me: me) || isScreenCapture(pid) { continue }
-            return true
+            var buf = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))
+            out.append(proc_pidpath(pid, &buf, UInt32(buf.count)) > 0 ? (String(cString: buf) as NSString).lastPathComponent : "pid \(pid)")
         }
-        return false
+        return out
     }
 
     /// 2026-11-17 (owner): macOS's screen capture service. While Pacenote records the call (screen, video with sound or

@@ -891,3 +891,16 @@ body.card .tcard{display:block;position:relative;margin:0;padding:14px 16px 12px
 [data-style="roadbook"] .tc-tip{border-left:4px solid var(--tip-mark);padding-left:10px}
 [data-style="broadsheet"] .tc-tip{border-top:3px solid var(--tip-mark);padding-top:6px}
 [data-style="roadbook"] .tc-help{font-family:var(--pn-font-display);font-weight:800;text-transform:var(--pn-caps);font-size:14px}
+/* 0.27.2 (owner 23.11): the close button of the side panel sits over the right end of the Speakers bar; the bar keeps
+   that corner free like the tabs (margin-right:48px) so the chevron is never under the cross */
+.pane .spkbar,.pane .spkbar.collapsed,.sheet .spkbar,.sheet .spkbar.collapsed,
+[data-style] .pane .spkbar,[data-style] .pane .spkbar.collapsed,[data-style] .sheet .spkbar,[data-style] .sheet .spkbar.collapsed{padding-right:48px}
+/* 0.27.2 (owner 23.11): End call is working, a spinner in the Pacenote look (a turning square in the brand styles) */
+@keyframes pn-spin{to{transform:rotate(360deg)}}
+.pn-spin{display:inline-block;flex:none;width:11px;height:11px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:pn-spin .8s linear infinite;vertical-align:-2px}
+[data-style] .pn-spin{border-radius:0;animation-duration:1.2s}
+.endcall.busy,.tc-end.busy{display:inline-flex;align-items:center;gap:7px;cursor:default}
+.tc-end.busy{text-decoration:none}
+.st-ending::before{content:"";display:inline-block;width:9px;height:9px;margin-right:6px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:pn-spin .8s linear infinite;vertical-align:-1px}
+[data-style] .st-ending::before{border-radius:0;animation-duration:1.2s}
+@media (prefers-reduced-motion:reduce){.pn-spin,.st-ending::before{animation-duration:3s}}

@@ -37,7 +37,7 @@
         stance: { for: 'for', neutral: 'neutral', against: 'against', unknown: '' } },
       afterCall: 'What next', callPage: 'Call page', followup: 'Draft follow-up email',
       asked: (w) => `${w} asked`, now: 'now', ago: (m) => `${m}m`,
-      from: 'from', endCall: 'End call', endCallTip: 'End the call: Pacenote stops listening and writes the notes', saidIt: 'Said it', collapse: 'Collapse', expand: 'Expand', notByVoice: 'On this meeting, not matched by voice', del: 'Delete', delConfirm: 'Click again to delete', delTip: 'Delete this line from the transcript', restore: 'Restore', lineDeleted: 'Line deleted: it leaves the transcript after the call', backAuto: 'Back to latest', shorter: 'Shorter', hide: 'Hide', pin: 'Pin', unpin: 'Unpin', edit: 'Edit', save: 'Save', cancel: 'Cancel', rateUsed: 'Useful', ratePartly: 'Fine, but off the point', rateNot: 'Not useful', rateWhy: 'What was off?', rateComment: 'A comment, if you like (what to keep, what to change)', rateSave: 'Save', rateSkip: 'Skip', rateThanks: 'Rated: Pacenote learns from it after the call', reasons: { off_topic: 'Off topic', late: 'Late', wrong_fact: 'Wrong fact', too_long: 'Too long', not_now: 'Not now' },
+      from: 'from', endCall: 'End call', endingBtn: 'Ending…', endCallTip: 'End the call: Pacenote stops listening and writes the notes', saidIt: 'Said it', collapse: 'Collapse', expand: 'Expand', notByVoice: 'On this meeting, not matched by voice', del: 'Delete', delConfirm: 'Click again to delete', delTip: 'Delete this line from the transcript', restore: 'Restore', lineDeleted: 'Line deleted: it leaves the transcript after the call', backAuto: 'Back to latest', shorter: 'Shorter', hide: 'Hide', pin: 'Pin', unpin: 'Unpin', edit: 'Edit', save: 'Save', cancel: 'Cancel', rateUsed: 'Useful', ratePartly: 'Fine, but off the point', rateNot: 'Not useful', rateWhy: 'What was off?', rateComment: 'A comment, if you like (what to keep, what to change)', rateSave: 'Save', rateSkip: 'Skip', rateThanks: 'Rated: Pacenote learns from it after the call', reasons: { off_topic: 'Off topic', late: 'Late', wrong_fact: 'Wrong fact', too_long: 'Too long', not_now: 'Not now' },
       unverified: 'Not verified against documents',
       next: (t, m) => `${t} in ${m} min`, notPrepared: 'not prepared', ready: 'brief ready', preparing: 'preparing', prepare: 'Prepare', open: 'Open',
       ask: 'Ask about this project', help: 'Help',
@@ -129,7 +129,7 @@
         stance: { for: 'за', neutral: 'нейтрально', against: 'проти', unknown: '' } },
       afterCall: 'Що далі', callPage: 'Сторінка дзвінка', followup: 'Чернетка листа-підсумку',
       asked: (w) => `${w} питає`, now: 'щойно', ago: (m) => `${m} хв`,
-      from: 'джерело:', endCall: 'Завершити', endCallTip: 'Завершити дзвінок: Pacenote перестане слухати і напише нотатки', saidIt: 'Сказав', collapse: 'Згорнути', expand: 'Розгорнути', notByVoice: 'Є на цій зустрічі, не за голосом', del: 'Видалити', delConfirm: 'Клацніть ще раз, щоб видалити', delTip: 'Видалити репліку з транскрипту', restore: 'Повернути', lineDeleted: 'Репліку видалено: її не буде в транскрипті після дзвінка', backAuto: 'До останньої', shorter: 'Коротше', hide: 'Сховати', pin: 'Закріпити', unpin: 'Відкріпити', edit: 'Виправити', save: 'Зберегти', cancel: 'Скасувати', rateUsed: 'Корисно', ratePartly: 'Ніби ок, але не в тему', rateNot: 'Не корисно', rateWhy: 'Що не так?', rateComment: 'Коментар, якщо хочете (що лишити, що змінити)', rateSave: 'Зберегти', rateSkip: 'Пропустити', rateThanks: 'Оцінено: Pacenote врахує це після дзвінка', reasons: { off_topic: 'Не в тему', late: 'Запізно', wrong_fact: 'Хибний факт', too_long: 'Задовго', not_now: 'Не зараз' },
+      from: 'джерело:', endCall: 'Завершити', endingBtn: 'Завершую…', endCallTip: 'Завершити дзвінок: Pacenote перестане слухати і напише нотатки', saidIt: 'Сказав', collapse: 'Згорнути', expand: 'Розгорнути', notByVoice: 'Є на цій зустрічі, не за голосом', del: 'Видалити', delConfirm: 'Клацніть ще раз, щоб видалити', delTip: 'Видалити репліку з транскрипту', restore: 'Повернути', lineDeleted: 'Репліку видалено: її не буде в транскрипті після дзвінка', backAuto: 'До останньої', shorter: 'Коротше', hide: 'Сховати', pin: 'Закріпити', unpin: 'Відкріпити', edit: 'Виправити', save: 'Зберегти', cancel: 'Скасувати', rateUsed: 'Корисно', ratePartly: 'Ніби ок, але не в тему', rateNot: 'Не корисно', rateWhy: 'Що не так?', rateComment: 'Коментар, якщо хочете (що лишити, що змінити)', rateSave: 'Зберегти', rateSkip: 'Пропустити', rateThanks: 'Оцінено: Pacenote врахує це після дзвінка', reasons: { off_topic: 'Не в тему', late: 'Запізно', wrong_fact: 'Хибний факт', too_long: 'Задовго', not_now: 'Не зараз' },
       unverified: 'Не звірено з документами',
       next: (t, m) => `${t} за ${m} хв`, notPrepared: 'не підготовлено', ready: 'бриф готовий', preparing: 'готується', prepare: 'Підготувати', open: 'Відкрити',
       ask: 'Запитай про проєкт', help: 'Допоможи',
@@ -470,6 +470,7 @@
     st.classList.toggle('warn', !!(al && al.level === 'warn'));
     const stKind = al || idle ? '' : pausedNow ? 'st-paused' : micOffNow ? 'st-mic' : presenting() ? 'st-pres' : 'st-live';
     ['st-live', 'st-paused', 'st-mic', 'st-pres'].forEach((k) => st.classList.toggle(k, k === stKind));
+    st.classList.toggle('st-ending', !!S.call.ending && !ended);   // 0.27.2: the spinner next to "Ending the call…"
     guard('ai', () => renderAI());
     const openOnMe = openOnMeCount();
     $('onmeLbl').textContent = t.onMe; $('onmeN').textContent = openOnMe;
@@ -596,7 +597,12 @@
 
     $('askLbl').textContent = t.ask; $('askInput').placeholder = t.ask;
     $('helpLbl').textContent = t.help; $('helpKey').textContent = S.keys.help;
-    const eb = $('endBtn'); eb.textContent = t.endCall; eb.title = t.endCallTip; eb.hidden = ended || S.call.state === 'ending';
+    const eb = $('endBtn'), endingNow = !!S.call.ending && !ended;
+    eb.hidden = ended; eb.disabled = endingNow; eb.classList.toggle('busy', endingNow);
+    if (endingNow) eb.setAttribute('aria-busy', 'true'); else eb.removeAttribute('aria-busy');
+    const ebHTML = endingNow ? SPIN + `<span>${esc(t.endingBtn || t.ending)}</span>` : esc(t.endCall);
+    if (eb.dataset.html !== ebHTML) { eb.innerHTML = ebHTML; eb.dataset.html = ebHTML; }
+    eb.title = endingNow ? t.ending : t.endCallTip;
 
     $('app').classList.toggle('pane-off', !!S.ui.paneOff);
     guard('pane', () => renderPane($('pane'), S.ui.paneTab, false));
@@ -647,6 +653,9 @@
   // Theme pass stage 4 (prototype "During the call", Compact, 2026-11-19): the card under the camera. One tip at a time:
   // the question line, the key line, the detail, the source with its kind; a pager when there are more. A tip that arrives
   // while the PM reads an older one does not take the card over: "new" and Latest tip instead (feed.js cardPage).
+  // 0.27.2 (owner 23.11): after End call the window says it is working: a spinner in the Pacenote look (a turning square in
+  // Roadbook and Broadsheet, a ring otherwise) on the button and next to the status (tips.css .pn-spin, .st-ending)
+  const SPIN = '<span class="pn-spin" aria-hidden="true"></span>';
   const EXPAND = '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8.5 1.5h4v4M12.5 1.5 8 6M5.5 12.5h-4v-4M1.5 12.5 6 8"/></svg>';
   const hhmm = (at) => { const d = new Date(at); return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); };
   function renderCard() {
@@ -671,7 +680,7 @@
       <button class="tc-b tc-help" type="button" data-act="card-help" title="${esc(c2.help + key('help'))}">${esc(c2.help)}</button>`}
       <button class="tc-b" type="button" data-act="card-transcript" aria-label="${esc(t.trAria)}" title="${esc(t.trShow + key('transcript'))}">${TR_ICON(14)}</button>
       <button class="tc-b" type="button" data-act="card-expand" aria-label="${esc(c2.expand)}" title="${esc(c2.expand)}">${EXPAND}</button>
-      ${ended ? '' : `<button class="tc-end" type="button" data-act="end-call" title="${esc(t.endCallTip)}">${esc(t.endCall)}</button>`}
+      ${ended ? '' : S.call.ending ? `<span class="tc-end busy" aria-busy="true">${SPIN}${esc(t.endingBtn || t.ending)}</span>` : `<button class="tc-end" type="button" data-act="end-call" title="${esc(t.endCallTip)}">${esc(t.endCall)}</button>`}
     </div>`;
     let note = '';
     // 0.25 (review): the meeting-ended countdown shows on the card too, or the call would stop with no way to keep it
@@ -1811,7 +1820,7 @@
       case 'sheetq': if (feed && feed.toggleQuestion) feed.toggleQuestion(id); break;   // 0.10.0: the PM ticks a sheet question
       case 'theirs-toggle': S.ui.theirsOpen = !(b.getAttribute('aria-expanded') === 'true'); break;
       case 'home': post('menu', { item: 'home' }); return;
-      case 'end-call': post('menu', { item: 'end-call' }); return;
+      case 'end-call': if (S.call.ending) return; post('menu', { item: 'end-call' }); return;   // 0.27.2: no second End call while it ends
       // theme pass stage 4: the compact card
       case 'card-mute': toggleMute(); return;
       case 'card-pause': togglePause(); return;
