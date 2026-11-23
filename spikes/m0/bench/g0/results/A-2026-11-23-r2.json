@@ -1,0 +1,478 @@
+{
+ "schema": "pacenote.bench.g0/1",
+ "variant": "A",
+ "date": "2026-11-23",
+ "commit": "7f663b3",
+ "fixture_sha": "26d3ec6b228f19a9",
+ "gold_sha": "180234bba3fef52c",
+ "route": "codex",
+ "top": 3,
+ "lookup_reps": 5,
+ "targets": [
+  {
+   "id": "acme-weekly-status-2026-11-17",
+   "client": "acme",
+   "prep": {
+    "coverage": 75.0,
+    "found": 6,
+    "total": 8,
+    "facts": [
+     {
+      "id": "w-item13-waiting",
+      "present": true,
+      "from": "weekly 2026-11-10 notes"
+     },
+     {
+      "id": "w-item13-blocks-sso",
+      "present": false,
+      "from": "technical 2026-11-12 notes (cross-series)"
+     },
+     {
+      "id": "w-freeze",
+      "present": false,
+      "from": "weekly 2026-10-20 notes (4th call back)"
+     },
+     {
+      "id": "w-golive",
+      "present": true,
+      "from": "weekly 2026-11-10, decisions"
+     },
+     {
+      "id": "w-pilot-60",
+      "present": true,
+      "from": "weekly 2026-10-27 notes"
+     },
+     {
+      "id": "w-checklist",
+      "present": true,
+      "from": "weekly notes, register"
+     },
+     {
+      "id": "w-user-list-maybe",
+      "present": true,
+      "from": "weekly 2026-11-03 notes"
+     },
+     {
+      "id": "w-rehearsal",
+      "present": true,
+      "from": "docs/acme release plan 2026-11-14"
+     }
+    ],
+    "leaks": [
+     "gx-export",
+     "gx-sample",
+     "gx-budget",
+     "gx-csv"
+    ],
+    "passes": 1,
+    "size": {
+     "state": "fits",
+     "total_tokens": 888,
+     "per_pass": 250000
+    },
+    "context_chars": 3952,
+    "error": null
+   },
+   "live": {
+    "answer_rate": 100.0,
+    "answered": 4,
+    "total": 4,
+    "questions": [
+     {
+      "q": "When does the Acme change freeze start?",
+      "ok": true,
+      "answer_in_top": true,
+      "top": [
+       "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.notes.md",
+       "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.md",
+       "live/2026-11-05-acme-technical-sync/2026-11-05-1400-acme-technical-sync.md"
+      ],
+      "leaks": []
+     },
+     {
+      "q": "Where are we with item 13?",
+      "ok": true,
+      "answer_in_top": false,
+      "top": [
+       "docs/globex/item-13-invoice-export-2026-11-13.md",
+       "docs/acme/item-13-sso-user-mapping.md",
+       "live/2026-11-04-globex-weekly/2026-11-04-1100-globex-weekly.notes.md"
+      ],
+      "leaks": [
+       "docs/globex/item-13-invoice-export-2026-11-13.md",
+       "live/2026-11-04-globex-weekly/2026-11-04-1100-globex-weekly.notes.md"
+      ]
+     },
+     {
+      "q": "How many users are in the pilot?",
+      "ok": true,
+      "answer_in_top": true,
+      "top": [
+       "_notion/Northpoint Current State.md",
+       "live/2026-10-27-acme-weekly-status/2026-10-27-1000-acme-weekly-status.notes.md",
+       "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.notes.md"
+      ],
+      "leaks": []
+     },
+     {
+      "q": "Чого ми чекаємо від служби безпеки Acme?",
+      "ok": true,
+      "answer_in_top": false,
+      "top": [
+       "Meeting Sheet [1]",
+       "live/2026-11-12-acme-technical-sync/2026-11-12-1400-acme-technical-sync.notes.md",
+       "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.notes.md"
+      ],
+      "leaks": []
+     }
+    ],
+    "answer_text_rate": 50.0,
+    "answer_text": 2,
+    "leaks": 2,
+    "p50_ms": 0.29,
+    "p95_ms": 0.34,
+    "index_build_ms": 4.4,
+    "cold_ms": 4.3
+   },
+   "after": {
+    "duplicates": 3,
+    "wrong_identity": 2,
+    "false_agreed": 0,
+    "false_proposal": 0,
+    "suggested": 3,
+    "duplicates_if_confirmed": 0,
+    "item13_cross_client": 1,
+    "item13_cross_events": 0,
+    "item13_in_tracker": 1,
+    "items": [
+     {
+      "id": "w-a-checklist",
+      "kind": "update",
+      "ok": false,
+      "open_items": 3,
+      "added": 1,
+      "tentative_open": false,
+      "firm_as_proposal": 0
+     },
+     {
+      "id": "w-a-mapping",
+      "kind": "update",
+      "ok": false,
+      "open_items": 2,
+      "added": 1,
+      "tentative_open": false,
+      "firm_as_proposal": 0
+     },
+     {
+      "id": "w-a-rehearsal",
+      "kind": "new",
+      "ok": true,
+      "open_items": 1,
+      "added": 1,
+      "tentative_open": false,
+      "firm_as_proposal": 0
+     },
+     {
+      "id": "w-a-user-list",
+      "kind": "existing",
+      "ok": true,
+      "open_items": 0,
+      "added": 0,
+      "tentative_open": false,
+      "firm_as_proposal": 0
+     }
+    ],
+    "events": 3
+   }
+  },
+  {
+   "id": "globex-weekly-2026-11-18",
+   "client": "globex",
+   "prep": {
+    "coverage": 80.0,
+    "found": 4,
+    "total": 5,
+    "facts": [
+     {
+      "id": "g-item13-export",
+      "present": true,
+      "from": "globex 2026-11-04 notes"
+     },
+     {
+      "id": "g-hours-left",
+      "present": true,
+      "from": "globex 2026-11-11"
+     },
+     {
+      "id": "g-csv-only",
+      "present": true,
+      "from": "globex 2026-11-11 notes, decisions"
+     },
+     {
+      "id": "g-sample-file",
+      "present": true,
+      "from": "globex 2026-11-04 notes, register"
+     },
+     {
+      "id": "g-net-30",
+      "present": false,
+      "from": "docs/globex SOW summary (old file)"
+     }
+    ],
+    "leaks": [
+     "ac-sso",
+     "ac-checklist",
+     "ac-golive"
+    ],
+    "passes": 1,
+    "size": {
+     "state": "fits",
+     "total_tokens": 716,
+     "per_pass": 250000
+    },
+    "context_chars": 3229,
+    "error": null
+   },
+   "live": {
+    "answer_rate": 100.0,
+    "answered": 3,
+    "total": 3,
+    "questions": [
+     {
+      "q": "What is item 13?",
+      "ok": true,
+      "answer_in_top": true,
+      "top": [
+       "docs/globex/item-13-invoice-export-2026-11-13.md",
+       "docs/acme/item-13-sso-user-mapping.md",
+       "live/2026-11-04-globex-weekly/2026-11-04-1100-globex-weekly.notes.md"
+      ],
+      "leaks": [
+       "docs/acme/item-13-sso-user-mapping.md"
+      ]
+     },
+     {
+      "q": "How many hours are left on the Globex budget?",
+      "ok": true,
+      "answer_in_top": true,
+      "top": [
+       "live/2026-11-11-globex-weekly/2026-11-11-1100-globex-weekly.notes.md",
+       "live/2026-11-11-globex-weekly/2026-11-11-1100-globex-weekly.md",
+       "_notion/Northpoint Current State.md"
+      ],
+      "leaks": []
+     },
+     {
+      "q": "What are the payment terms?",
+      "ok": true,
+      "answer_in_top": true,
+      "top": [
+       "docs/globex/globex-sow-summary.md"
+      ],
+      "leaks": []
+     }
+    ],
+    "answer_text_rate": 100.0,
+    "answer_text": 3,
+    "leaks": 1,
+    "p50_ms": 0.22,
+    "p95_ms": 0.29,
+    "index_build_ms": 4.3,
+    "cold_ms": 4.2
+   },
+   "after": {
+    "duplicates": 2,
+    "wrong_identity": 2,
+    "false_agreed": 0,
+    "false_proposal": 0,
+    "suggested": 3,
+    "duplicates_if_confirmed": 0,
+    "item13_cross_client": 2,
+    "item13_cross_events": 0,
+    "item13_in_tracker": 2,
+    "items": [
+     {
+      "id": "g-a-sample",
+      "kind": "update",
+      "ok": false,
+      "open_items": 2,
+      "added": 1,
+      "tentative_open": false,
+      "firm_as_proposal": 0
+     },
+     {
+      "id": "g-a-mockup",
+      "kind": "update",
+      "ok": false,
+      "open_items": 2,
+      "added": 1,
+      "tentative_open": false,
+      "firm_as_proposal": 0
+     }
+    ],
+    "events": 2
+   }
+  },
+  {
+   "id": "acme-technical-sync-2026-11-19",
+   "client": "acme",
+   "prep": {
+    "coverage": 85.7,
+    "found": 6,
+    "total": 7,
+    "facts": [
+     {
+      "id": "t-item13-blocks-sso",
+      "present": true,
+      "from": "technical 2026-11-12 notes"
+     },
+     {
+      "id": "t-item13-waiting",
+      "present": false,
+      "from": "weekly 2026-11-10 notes (cross-series)"
+     },
+     {
+      "id": "t-cert",
+      "present": true,
+      "from": "technical 2026-11-05 transcript (no notes)"
+     },
+     {
+      "id": "t-saml",
+      "present": true,
+      "from": "technical 2026-11-12, decisions"
+     },
+     {
+      "id": "t-okta",
+      "present": true,
+      "from": "technical 2026-11-05 transcript"
+     },
+     {
+      "id": "t-site-sso",
+      "present": true,
+      "from": "the Acme status page (local site)"
+     },
+     {
+      "id": "t-rehearsal",
+      "present": true,
+      "from": "docs/acme release plan 2026-11-14"
+     }
+    ],
+    "leaks": [
+     "gx-export",
+     "gx-sample",
+     "gx-budget",
+     "gx-csv"
+    ],
+    "passes": 1,
+    "size": {
+     "state": "fits",
+     "total_tokens": 828,
+     "per_pass": 250000
+    },
+    "context_chars": 3739,
+    "error": null
+   },
+   "live": {
+    "answer_rate": 100.0,
+    "answered": 3,
+    "total": 3,
+    "questions": [
+     {
+      "q": "Що зараз блокує пункт 13?",
+      "ok": true,
+      "answer_in_top": true,
+      "top": [
+       "live/2026-11-12-acme-technical-sync/2026-11-12-1400-acme-technical-sync.md",
+       "docs/globex/item-13-invoice-export-2026-11-13.md",
+       "docs/acme/item-13-sso-user-mapping.md"
+      ],
+      "leaks": [
+       "docs/globex/item-13-invoice-export-2026-11-13.md"
+      ]
+     },
+     {
+      "q": "When does the staging certificate expire?",
+      "ok": true,
+      "answer_in_top": true,
+      "top": [
+       "live/2026-11-05-acme-technical-sync/2026-11-05-1400-acme-technical-sync.md"
+      ],
+      "leaks": []
+     },
+     {
+      "q": "Do we use SAML or OIDC for SSO?",
+      "ok": true,
+      "answer_in_top": true,
+      "top": [
+       "live/2026-11-12-acme-technical-sync/2026-11-12-1400-acme-technical-sync.notes.md",
+       "pacenote/decisions.md",
+       "live/2026-11-12-acme-technical-sync/2026-11-12-1400-acme-technical-sync.md"
+      ],
+      "leaks": []
+     }
+    ],
+    "answer_text_rate": 100.0,
+    "answer_text": 3,
+    "leaks": 1,
+    "p50_ms": 0.21,
+    "p95_ms": 0.23,
+    "index_build_ms": 4.2,
+    "cold_ms": 4.2
+   },
+   "after": {
+    "duplicates": 0,
+    "wrong_identity": 0,
+    "false_agreed": 0,
+    "false_proposal": 0,
+    "suggested": 2,
+    "duplicates_if_confirmed": 0,
+    "item13_cross_client": 1,
+    "item13_cross_events": 0,
+    "item13_in_tracker": 1,
+    "items": [
+     {
+      "id": "t-a-idp",
+      "kind": "update",
+      "ok": true,
+      "open_items": 1,
+      "added": 0,
+      "tentative_open": false,
+      "firm_as_proposal": 0
+     },
+     {
+      "id": "t-a-cert",
+      "kind": "new",
+      "ok": true,
+      "open_items": 1,
+      "added": 1,
+      "tentative_open": false,
+      "firm_as_proposal": 0
+     }
+    ],
+    "events": 2
+   }
+  }
+ ],
+ "blocked_connections": 0,
+ "totals": {
+  "prep_coverage": 80.0,
+  "prep_found": 16,
+  "prep_total": 20,
+  "prep_leaks": 11,
+  "live_answer_rate": 100.0,
+  "live_answered": 10,
+  "live_total": 10,
+  "live_answer_text_rate": 80.0,
+  "live_leaks": 4,
+  "lookup_p50_ms": 0.23,
+  "lookup_p95_ms": 0.92,
+  "duplicates": 5,
+  "wrong_identity": 4,
+  "suggested": 8,
+  "duplicates_if_confirmed": 0,
+  "item13_cross_client": 4,
+  "false_agreed": 0,
+  "false_proposal": 0
+ },
+ "seconds": 1.19
+}
