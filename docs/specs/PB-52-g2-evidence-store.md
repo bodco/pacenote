@@ -123,10 +123,12 @@ for decisions ("Never for a hidden call"). Its transcript, notes, brief and shee
 call files with each pass (S5). Hiding or unhiding a call starts an **immediate state-only pass** (`evidence
 exclude --hidden-calls ...`): it only sets `source.state` and marks the topics that cite those sources `stale`
 (section 8.7), makes no model, network or embed request and takes well under a second, so the call stops being
-searchable at once. During a call the worker does not run (section 8.5), so a hide made during a call is applied by
-that state-only pass right after the call ends; until it has run, every `search` the app or the skill starts passes
-the hidden call's files in `exclude` (section 11.1), so the hidden call never appears in between. Unhiding moves the
-sources back to `active`.
+searchable at once. It is a local SQLite write only, so it runs at once **also during a call** (the live path reads
+the file `mode=ro` through WAL and is never blocked, section 11.4); it is not the extraction worker that section 8.5
+keeps out of calls. The only window left is a full pass holding the project lock (outside a call): the change then
+goes through the state-request file (section 13.1), and until `evidence status` shows it applied, every `search` the
+app or the skill starts passes the hidden call's files in `exclude` (section 11.1), so nothing quoted from them is
+returned in between. Unhiding moves the sources back to `active`.
 
 The docs say a page under `.work/web` is "not searched"; with the flag on, G2 changes that for the store (the pages
 stay out of the folder lookup and the call files list). S5 updates the docs EN and UK.
@@ -137,10 +139,18 @@ No content hashing exists in the app today (`file_day` uses the date in the name
 
 1. Pre-check per path: `(mtime, size)` against the active revision. Equal: nothing to do.
 2. Otherwise read and normalise the text (the same reader the prep uses, line endings normalised, trailing spaces
-   dropped) and take `sha256` of it. Equal hash: update `mtime`/`size` only, no new revision.
-3. New hash: a new revision is built in one transaction (snippets, deterministic entities and claims), marked
-   `extract_state = pending`; the previous revision gets `superseded_at`. Readers keep seeing the previous complete revision
-   until the transaction commits.
+   dropped) and take `sha256` of it. Equal to the hash of the **active** revision: update `mtime`/`size` only, no
+   new revision.
+3. Different hash: a new revision is built in one transaction (snippets, deterministic entities and claims), marked
+   `extract_state = pending`; the previous revision gets `superseded_at` and `valid_to`. Readers keep seeing the
+   previous complete revision until the transaction commits. **A revert** (content A, then B, then A again) is a new
+   revision row with its own `valid_from`, even though an older row has the same hash, so each period keeps its own
+   validity and a replay in either A period or the B period sees the right text. In the common case nothing is paid twice:
+   the new snippets are rebuilt deterministically, a snippet whose text equals a snippet of an earlier revision of
+   the same source copies its vector (no embed request), and every segment whose cache row survives (section 13.4;
+   it does while the earlier revision is kept, which is the common case) hits the segment cache (section 8.2), which writes
+   the evidence rows onto the new snippets at no model cost (`run_item.status = cached`, then `extract_state =
+   done`). Without those rows every claim of the A text would count as history (section 11.2 step 2).
 4. The register is append-only: the store keeps the byte offset of the last read line and reads only new lines. An
    `op migrate` or `op rollback` line (G1) triggers a full refold of the register.
 5. The Tracker: the worker makes no Notion or HubSpot request (section 12). The app writes what it already fetched
@@ -176,6 +186,9 @@ differs in two ways:
 - it also cuts at client boundaries: a heading section that names a client (by `client_scope.text_side` against the
   project's labels, section 5.3) starts a new chunk, and a line that names a client other than the one of the
   current chunk ends it. So one snippet never holds the lines of two clients unless one line names both.
+- it returns the full heading path of every chunk (all ancestor headings, not only the last one): `filter_text`
+  drops every nested subheading under a client heading (`skip_level`), so a snippet under "Globex > Timeline" takes
+  its client label from the ancestor "Globex", and the label at ingest (section 5.3) reads the whole path.
 
 Variant A keeps `lookup.chunks` unchanged. B and C use `chunks_at`; the chunk boundaries therefore differ slightly
 from A, which the G0 report states next to the A versus B numbers (B exists to show the effect of more context, so
@@ -232,7 +245,7 @@ CREATE TABLE source (
   origin        TEXT NOT NULL,          -- primary, derived, pm
   call_key      TEXT,                   -- commitments.series_key + call file for call sources
   state         TEXT NOT NULL DEFAULT 'active',  -- active, excluded, deleted, revoked
-  state_reason  TEXT,                   -- "skipped by you", "file deleted", "no longer shared", ".livetipsignore"
+  state_reason  TEXT,                   -- "hidden call", "file deleted", "no longer shared", ".livetipsignore"
   state_at      TEXT,
   first_seen    TEXT NOT NULL,
   last_checked  TEXT
@@ -249,9 +262,9 @@ CREATE TABLE revision (
   observed_at    TEXT NOT NULL,         -- audit only
   superseded_at  TEXT,                  -- observation time of the next revision; NULL = active revision
   extract_state  TEXT NOT NULL DEFAULT 'pending',  -- pending, done, failed, skipped_off, not_needed
-  extractor      TEXT,                  -- rules version + prompt hash used
-  UNIQUE (source_id, content_hash)
-);
+  extractor      TEXT                   -- rules version + prompt hash used
+);                                      -- no UNIQUE on (source_id, content_hash): a revert is a new row (section 5.2)
+CREATE INDEX revision_hash ON revision(source_id, content_hash);
 CREATE INDEX revision_active ON revision(source_id, superseded_at);
 CREATE INDEX revision_valid ON revision(source_id, valid_from, valid_to);
 CREATE INDEX revision_extract ON revision(extract_state);
@@ -307,8 +320,9 @@ CREATE TABLE claim (                    -- a statement about one entity
   predicate   TEXT NOT NULL,            -- status, due, owner, decided, risk_level, waiting_for, value, said
   value       TEXT,
   modality    TEXT NOT NULL,            -- proposal, expectation, confirmation, statement
-  said_by     TEXT REFERENCES entity(id), -- of the earliest evidence row; each row keeps its own (evidence.said_by)
-  said_at     TEXT NOT NULL,            -- earliest evidence said_at; timelines date each quote by its own row
+  said_by     TEXT REFERENCES entity(id), -- cache: said_by of the earliest evidence row; search returns the one of
+                                        -- the earliest row that passes the request (section 11.2 step 1)
+  said_at     TEXT NOT NULL,            -- cache: earliest evidence said_at; search derives it from passing rows only
   due         TEXT,
   client_set  TEXT NOT NULL DEFAULT '', -- cache: union of the evidence snippets' labels (access uses the rows)
   status      TEXT NOT NULL,            -- cache of now: accepted, suggestion, rejected, superseded
@@ -332,7 +346,7 @@ CREATE TABLE edge (                     -- a relation between two entities
   status        TEXT NOT NULL,          -- cache of now: accepted, suggestion, rejected, superseded
   origin        TEXT NOT NULL,
   confidence    REAL,
-  first_said_at TEXT NOT NULL,
+  first_said_at TEXT NOT NULL,          -- cache over all rows; search derives both from passing rows only
   last_said_at  TEXT NOT NULL,
   run_id        INTEGER REFERENCES run(id),
   UNIQUE (src_id, rel, dst_id)          -- one row per relation; the same edge found in a shared and a client
@@ -358,7 +372,8 @@ CREATE TABLE pm_override (              -- PM edits; always applied last, never 
                                         --   entity: its id; alias: alias_norm|entity_id;
                                         --   claim: claim.nkey;
                                         --   edge: src_id|rel|dst_id
-  field      TEXT NOT NULL,             -- status, name, merge, split, reject, confirm, value
+  field      TEXT NOT NULL,             -- status, name, merge, split, reject, confirm, value, supersede
+                                        -- (supersede: target entity d-<old>, value d-<new>, section 7.1)
   value      TEXT,
   at         TEXT NOT NULL,
   via        TEXT NOT NULL              -- register, app, skill
@@ -445,7 +460,8 @@ Notes on the schema:
   11.2 step 2), so they need no history columns and a rebuild gets them right for free.
 - **Client labels live on evidence.** `claim.client_set`, `edge.client_set` and `alias.client_set` are caches for
   display and the topic split; access is decided on the evidence snippets' own labels (section 11.2 step 1), so one
-  edge found in a shared file and in a client file is one row whose client evidence passes only for that client.
+  edge found in a shared file and in client A's file is one row that passes for A and is dropped for client B
+  (strict denial); an edge quoted only in shared files passes for both (section 7.1).
 - There is no table per relation type and no recursive graph engine. A graph walk is 1 or 2 indexed SQL lookups on
   `edge_src` / `edge_dst` (section 11).
 - FTS5 availability: the Python `sqlite3` the sidecar runs with must have FTS5. S1 checks it at start; without it
@@ -464,18 +480,31 @@ Notes on the schema:
   when the item was sent to Notion; otherwise the dedupe key of `rules/decisions.yaml` (the call file plus the
   normalised text), hashed; then, across calls, the G1 key functions (`identity.tracker_id`, `ref_of`,
   `scope_match`) propose a join as a suggestion only. New code in `identity.py`, owned by S1.
-- **Superseded decisions**: the PM's click in `decision_notion.py` (`--supersede`, line 278) sets Status Superseded
-  with the Supersedes and Superseded By relations. The store reads it as `status = superseded` on the old decision
-  and a `supersedes` edge (new -> old, `origin = pm`). A superseded decision is never returned as current; it is shown
-  only in timelines and entity cards. Extraction never sets `superseded` on its own.
+- **Superseded decisions**: the PM's click (`CallPage.swift`, which runs `decision_notion.py --supersede`, line 278)
+  only updates Notion today; nothing on the Mac records it (the click counts usage, and `pacenote/decisions.md` lists
+  active decisions only). The worker makes no Notion request (section 12), so G2 adds a local, dated record: after
+  `--supersede` returns ok, the app runs `evidence override --target entity --key d-<old> --field supersede --value
+  d-<new> --at <now> --via app` (section 11.6), which writes one `pm_override` row. Both ids map directly: a decision
+  sent to Notion has the `d-` id of its Notion page id, and `--supersede` and `--new` are those page ids. The
+  `status = superseded` of the old decision and the `supersedes` edge (new -> old, `origin = pm`) are both derived
+  from that row, with its `at` as their date (section 11.2 step 2). The write is local SQLite only (no model, network
+  or embed request), so it runs at once, also during a call, like the state-only pass; with the flag on and no store
+  file yet, it creates the store first (free), so a click before the first pass is not lost. Known limits: a
+  supersede clicked before the flag was on, or with the flag off, is not recorded; a supersede of a decision never
+  written from Pacenote (no `<stem>.notion.json` entry, so no local `d-` entity) stays an orphaned override that
+  applies if that decision is ever ingested (section 6); a decision that disappears from
+  `pacenote/decisions.md` is never treated as superseded. A superseded decision is never returned as current; it is
+  shown only in timelines and entity cards. Extraction never sets `superseded` on its own.
 - **People**: `identity.person_id` (the voice library aliases, `me` for the PM), as `person:<casefold>`.
 - **Clients**: `client:<slug>` from the client folders `client_scope.decide` finds.
 - **Everything the LLM finds** (topics, systems, documents, people not in the voice library):
   `e-<sha1(type|normalised name)>`, without the client, so "the SSO integration" in a shared file and in a client file
-  is one node and the cross-file hop works. Client scope is not on the node but on its evidence: every claim, edge and
-  alias of it carries the labels of the snippets it was quoted from, and the entity itself is visible to a scope only
-  through them (section 11.2 step 1), so a node found only in one client's files never shows in another client's
-  call. When the same name is used for two different things by two clients (the model resolves it to a known id of
+  is one node and a hop from a shared file into that client's file works. Client scope is not on the node but on its
+  evidence: every claim, edge and alias of it carries the labels of the snippets it was quoted from, and the entity
+  itself is visible to a scope only through them (section 11.2 step 1), so a node found only in one client's files
+  never shows in another client's call. Access denial is strict (section 11.2 step 1): an edge quoted in a shared
+  file and in client A's file passes for A and is dropped for client B; only an edge quoted in shared files alone
+  passes for both, so B reaches the shared node through its own or shared-only edges, never through A's. When the same name is used for two different things by two clients (the model resolves it to a known id of
   one client, or the PM splits it), the second gets `e-<sha1(type|normalised name|client)>` and a `same_as`
   suggestion between them is never created across two clients. A new name that matches an existing alias of the same
   type joins it; a near match (same type, alias vector cosine at least 0.85, or edit distance at most 2 on names of 6+
@@ -556,7 +585,11 @@ segments, a short section is a short segment). The previous snippet is sent befo
 extracted from twice: only quotes inside the segment's own snippets are accepted). The segment text is sent with
 line numbers. A transcript has no headings: it is cut into segments of whole snippets up to 6000 characters from
 its start, and a transcript is extracted once, after the call, so its cuts do not need to survive edits. A transcript
-segment keeps speaker names and timestamps.
+segment keeps speaker names and timestamps. **Call notes** (`<stem>.notes.md`, `.app.notes.md`) are cut the same way
+as a transcript, across their headings: they have 8 fixed short sections (`callnotes.py:183-185`) and are written
+once after the call, so a per-section cut would pay the prefix and catalog 8 times for a cache that never helps.
+The snippets keep their heading path. For every kind, a segment also ends where the snippets' `client_set`
+changes, so each segment carries one client label (the one in its `seg_hash` and in the prompt's source meta).
 
 **Extraction cache per segment.** A small edit to a large file (Current State, `decisions.md`) must not re-extract
 the whole file. Snippets are stable across an edit in another section (`lookup.chunks` closes a chunk at each
@@ -564,7 +597,8 @@ heading, and `chunks_at` keeps that rule), and segments do not cross headings, s
 segments of every other section byte-equal. Each segment has a content key
 `seg_hash = sha256(client label | heading path | segment snippet texts)`: the context snippet and the extractor are
 not in it (the context can change when the section above is edited, and quotes from it are never accepted). The
-validated output of every segment is kept in `segment_cache`, keyed by `(seg_hash, extractor)`. When a new revision
+validated output of every segment is kept in `segment_cache`, keyed by `(seg_hash, extractor)`, for every kind
+(a reverted file or a re-saved transcript reuses it too). When a new revision
 is built, a segment whose `seg_hash` has a cache row with the current `extractor` reuses that output: it is
 re-validated against the new snippets in full (section 8.4: quotes matched again, offsets recomputed, the client
 check, and every `known_id` checked against the entities visible to this segment) at no model cost, and only the
@@ -694,8 +728,10 @@ All of this is pure code and runs the same for every route.
   one row per sentence in `topic_sentence`, with the claims and edges it cites in `topic_cite`, marked derived, never
   evidence.
 - **Access on summaries is per sentence.** At query time a sentence is returned only when **every** claim or edge it
-  cites passes section 11.2 steps 1 and 2 for the request (scope, `exclude`, source state, `as_of`); other sentences
-  of the same topic can still be returned. So a summary written before a source was excluded, revoked or hidden, or
+  cites passes section 11.2 steps 1 and 2 for the request (scope, source state, `as_of`) **and** has no evidence row
+  on a source in the request's `exclude`: a sentence was written from all rows and cannot be split by row, so for
+  sentences `exclude` is strict, unlike for claims and edges (section 11.2 step 1). Other sentences of the same topic
+  can still be returned. So a summary written before a source was excluded, revoked or hidden, or
   one that cites a file in this request's `exclude`, never returns that source's facts. A topic with no passing
   sentence is not returned at all.
 - **Staleness on access change.** When a source changes state (excluded, hidden, deleted, revoked, or back to
@@ -723,7 +759,9 @@ shape, the per-segment overhead, the Codex anchor size, local speed.
 **Assumed typical project** (no real folder was read): 40 past calls with a 45,000-character transcript each (the
 follow-up step already caps transcripts at 60,000, `followup.py:49`) and 4,000 characters of notes; 150 folder
 documents of 12,000 characters of extracted text; 15 site pages of 5,000; 30,000 of project state; half the text in
-Ukrainian. That is 3.87M characters and 678 segments. Per segment: a 1,500-token cacheable prefix, a 500-token
+Ukrainian. That is 3.87M characters and 678 segments (a notes file is one segment, section 8.2; the script counts
+the 15 site pages as one 75,000-character block, 13 segments, where per page it would be 15, a difference under
+0.3%). Per segment: a 1,500-token cacheable prefix, a 500-token
 entity catalog, and output between **500 tokens (typical)** and **2,000 tokens (the per-request cap, section 8.6)**.
 The contract allows 40 entities, 60 claims and 60 relations with quotes up to 300 characters, which would exceed the
 cap; the cap, not the item limits, bounds the output. 40 topic summaries of 6,000 input and 600 output tokens, priced
@@ -842,14 +880,17 @@ search(store, query, *,
        scope,                    # Scope(project_uid, client, others, allow_shared=True) from client_scope.decide/from_sheet
        as_of=None,               # datetime; None = now. Replay passes the call start.
        window=None,              # (from, to) on said_at; None = all time
-       exclude=(),               # source ids or uris excluded for this request (Sources "skip", this call's own files,
-                                 # and the files of a call hidden since the last state-only pass, section 5.1)
+       exclude=(),               # source ids or uris whose evidence rows this request ignores (the PM's per-file
+                                 # skip in Sources, this call's own files, and the files of a hidden call until the
+                                 # state-only pass has applied, section 5.1); section 11.2 step 1
        kinds=None,               # snippet, claim, edge, topic
        mode="prep",              # prep, live, after
        budget=Budget(k=6, chars=14000, ms=1000, hops=1),
        include_suggestions=False,
        query_vec=None) -> Result # items: kind, text, quote, locator, source uri and title, said_at, client, modality,
-                                 # status, origin, confirmations, why (the path: "item 13 -> blocks -> SSO"), score
+                                 # status, origin, confirmations, why (the path: "item 13 -> blocks -> SSO"), score;
+                                 # quotes, said_at, said_by, first/last said and confirmations of a claim or edge come
+                                 # from its evidence rows that pass this request only, never from the cached columns
 entity_card(store, entity_id, *, scope, as_of=None, window=None) -> Card   # claims and edges of one entity, dated
 ask_global(store, query, *, scope, as_of=None, window=None, budget=...) -> GlobalResult  # section 8.7
 ```
@@ -859,20 +900,29 @@ ask_global(store, query, *, scope, as_of=None, window=None, budget=...) -> Globa
 Every query is built in this order, and steps 1 and 2 are SQL `WHERE` clauses on the candidate query itself, never
 filters on a ranked list:
 
-1. **Access**: `source.state = 'active'` (excluded, hidden calls, deleted and revoked never pass); not in
-   `exclude`; the snippet's `client_set` is empty, contains `scope.client`, or has no label in `scope.others`
-   (section 5.3, the `client_scope.filter_text` outcome). A claim or edge passes only when **both** hold:
-   `EXISTS` an evidence row whose snippet passes, and `NOT EXISTS` an evidence row whose snippet fails (a claim with
-   one out-of-scope or revoked quote is dropped, not shown with fewer quotes; a claim with no evidence left never
-   passes). No scope (`decide()` returned None, or a one-client project) passes everything of the project that is
-   not excluded. The same check covers the rows that have no evidence of their own:
+1. **Access**: a snippet passes when its source has `state = 'active'` (excluded, hidden calls, deleted and revoked
+   never pass), its source is not in `exclude`, and its `client_set` is empty, contains `scope.client`, or has no
+   label in `scope.others` (section 5.3, the `client_scope.filter_text` outcome). Two kinds of failing row are
+   treated differently for a claim or an edge:
+   - **Denied** (source state not `active`, or a label in `scope.others`): strict. The claim or edge passes only when
+     `EXISTS` a passing evidence row and `NOT EXISTS` a denied row, so a claim with one out-of-scope or revoked quote
+     is dropped, not shown with fewer quotes.
+   - **Ignored** (source in the request's `exclude`): those rows are left out and the claim or edge passes when a
+     remaining row passes. So G5's "what changed" with this call's own files excluded still sees a fact the call
+     repeated, dated by its earlier sources; a replay with the past call's transcript excluded keeps the earlier
+     facts it touched; skipping one noisy file hides only what nothing else says.
+   - In both cases every returned field of a claim or edge (quotes, `said_at`, `said_by`, first and last said,
+     confirmations, section 7.4) is computed from the passing rows only, never from the cached columns, so a fact is
+     never dated or attributed by a row the request does not see. A claim or edge with no passing row never passes.
+   No scope (`decide()` returned None, or a one-client project) passes everything of the project that is not denied
+   by state or ignored. The same check covers the rows that have no evidence of their own:
    - **Entity**: visible when at least one of its claims or edges passes (with its evidence, as above), or it has a
      deterministic origin (`g1`, `tracker`, `voices`, `pm`) whose source passes and whose `entity.client` is empty
      or `scope.client`. An entity that is not visible is never a match, a graph step end, a catalog entry (section
      8.3) or a `why` path element, and its name is not returned.
    - **Alias**: matched only when its entity is visible and its `client_set` passes like a snippet's.
-   - **Topic summary sentence**: returned only when every claim and edge it cites passes (section 8.7); a topic
-     with no passing sentence is not returned.
+   - **Topic summary sentence**: returned only when every claim and edge it cites passes and none of them has a row
+     on a source in `exclude` (strict for sentences, section 8.7); a topic with no passing sentence is not returned.
 2. **Time** (content time, section 6): with `as_of`, a revision is valid when `valid_from <= as_of` and
    (`valid_to IS NULL` or `valid_to > as_of`); without `as_of`, the active revision (`superseded_at IS NULL`).
    Snippets must sit on a valid revision and have `said_at <= as_of`. A claim or edge is **current** only while it
@@ -895,7 +945,8 @@ filters on a ranked list:
    - a claim or edge is `superseded` only when the superseding claim (or the PM's `supersedes` edge) is dated at or
      before `as_of`, and `rejected` only when the rejecting override has `at <= as_of`; one exception: a PM rejection
      of an extracted claim, edge or alias corrects the store, not the world, so it applies in every replay;
-   - a decision superseded after `as_of` is current in that replay.
+   - a decision superseded after `as_of` (its `supersede` override, section 7.1, has `at > as_of`) is current in
+     that replay.
 3. **Candidates**: FTS5 on snippets and topics; alias match of query words to entities (casefolded, both languages);
    with `query_vec`, cosine over the allowed snippets' vectors.
 4. **Graph step**: from matched entities, `hops` steps over accepted edges (status derived under `as_of`) whose
@@ -911,15 +962,20 @@ filters on a ranked list:
 allowed (preparation is outside the call), budget from the route's per-pass share (`size.per_pass * near_share`
 minus what `auto_sources` already took). The result enters Sources as an "evidence" block with the `why` path visible
 ("linked through item 13 with the Nov 12 technical sync"), and a snapshot (items, quotes, locators, entity cards of
-the call's entities) is written to `.work/<stem>.evidence.json` for the live call and the skill. Same for every route.
+the call's entities) is written to `<AppPaths.support>/evidence/snapshots/<evidence_uid>/<stem>.evidence.json` for the
+live call and the skill (the skill gets the path from the app; G3 wires it). Never under `.work/` or anywhere in the
+project folder: section 3 binds, because the snapshot holds quotes and would sync with Drive. The state-only pass
+deletes every snapshot that cites a source leaving `active`, and "Delete this project's memory" removes the folder.
+Same for every route.
 
 ### 11.4 How G4 live will call it
 
 The normal tip path makes no new network or model call. G4 loads the prep snapshot into memory at call start and
 answers from it. The only store access G2 allows on the live path is `mode="live"`, which:
 
-- opens the SQLite file read-only (`mode=ro` URI), with the WAL readers never waiting on the writer (the worker is
-  stopped anyway during a call, section 8.5);
+- opens the SQLite file read-only (`mode=ro` URI), with the WAL readers never waiting on the writer (the
+  extraction worker is stopped during a call, section 8.5; the short state-only and `override` writes of sections
+  5.1 and 11.6 are WAL transactions a `mode=ro` reader never waits on);
 - refuses `query_vec` (a query embedding is a model call) and any `ask_global`;
 - answers within `budget.ms` (default 150 ms, measured in G0) from FTS5, aliases and one hop; vectors are used only
   between stored rows (the snapshot entities' alias vectors against stored snippet vectors, both computed at ingest),
@@ -936,11 +992,14 @@ the notes touch.
 
 ### 11.6 CLI
 
-`python -m livetips_m0 evidence status|ingest|pass|exclude|search|card|ask|rebuild|vacuum|delete --project-uid ...
---root ...` with JSON output, so the Swift app and the skill use one interface. `pass` and `exclude` take the lists
-the app passes: `--hidden-calls`, `--revoked` (Google file ids and Notion page ids with status `denied` or
-`not_found`) and `--web-dirs` (stored page folders outside call folders). `exclude` is the state-only pass of
-section 5.1: no model, network or embed request.
+`python -m livetips_m0 evidence status|ingest|pass|exclude|override|search|card|ask|rebuild|vacuum|delete
+--project-uid ... --root ...` with JSON output, so the Swift app and the skill use one interface. `pass` and
+`exclude` take the lists the app passes: `--hidden-calls`, `--revoked` (Google file ids and Notion page ids with
+status `denied` or `not_found`) and `--web-dirs` (stored page folders outside call folders). `exclude` is the
+state-only pass of section 5.1: no model, network or embed request. `override --target --key --field --value --at
+--via` writes one `pm_override` row (the supersede click of section 7.1, later the G3 and G5 confirm and reject
+actions); like `exclude` it is a local write only, runs also during a call, and goes through the state-request file
+when a pass holds the lock (section 13.1).
 
 ## 12. Privacy
 
@@ -953,14 +1012,16 @@ section 5.1: no model, network or embed request.
   one preparation does.
 - Hidden calls (section 5.1) are never sent to any model and never searched; hiding a call later starts the
   immediate state-only pass, which moves its sources to `excluded`, and from then on their claims, edges and the
-  topic sentences citing them stop passing the access check. Until that pass has run (a hide during a call), the
-  app passes the hidden call's files in `exclude` on every search. A document that loses access (`denied` or
+  topic sentences citing them stop passing the access check. The pass runs at once, also during a call; only while
+  a full pass holds the project lock is it queued (section 13.1), and until it has applied the app passes the hidden
+  call's files in `exclude` on every search. A document that loses access (`denied` or
   `not_found`) goes the same way to `revoked` (section 5.2, item 6).
 - Vectors come from the bundled local bge-m3 server; nothing is embedded in the cloud.
 - Emails and phone numbers are already scrubbed from site pages (G6); the store keeps text as the reader returns it,
   so the store holds what the project folder holds. Secrets folders skipped by `semantic.py` and `.livetipsignore`
   are skipped by ingest too.
-- "Delete this project's memory" removes the file, its WAL and the lock. Removing a project from Pacenote offers
+- "Delete this project's memory" removes the file, its WAL, the lock and the project's prep snapshots
+  (`evidence/snapshots/<uid>/`, section 11.3). Removing a project from Pacenote offers
   the same. A deleted or revoked source disappears from search at once and its snippets are purged at the next
   vacuum unless the PM keeps history (default: purge revoked, keep deleted local files for 30 days for undo).
 - Telemetry (`usage.py`) logs counts only (`index_pass` with segments, tokens, cost, status), never text, names or
@@ -972,10 +1033,12 @@ section 5.1: no model, network or embed request.
 ### 13.1 Concurrency
 
 - One writer per project: the worker takes `<uid>.lock` (flock) for a pass; ingest from the prep step waits at most
-  2 seconds for it and otherwise reads the last committed state. The state-only pass (hide, unhide, revoke) also
-  waits at most 2 seconds; when a full pass holds the lock, it writes its change to `<uid>.state-request.json` and
-  the running pass applies it in its own transaction before its next segment (it checks between segments anyway).
-  The app keeps the files in `exclude` until `evidence status` shows the change applied.
+  2 seconds for it and otherwise reads the last committed state. The state-only pass (hide, unhide, revoke) and
+  `evidence override` also wait at most 2 seconds; when a full pass holds the lock, they write their change to
+  `<uid>.state-request.json` and the running pass applies it in its own transaction before its next segment (it
+  checks between segments anyway) and again before it exits, whatever its end status (`done`, `ceiling`,
+  `paused_call`, `failed`), so the window is bounded by one segment or one aborted request. The app keeps the files
+  in `exclude` until `evidence status` shows the change applied.
 - One pass at a time across all projects (`evidence/worker.lock`), so the global daily cap (section 9.1) is summed
   without a race.
 - Many readers (prep, the live engine, the skill CLI) use WAL snapshots and never block the writer.
@@ -1055,7 +1118,8 @@ segment (the calibration for section 9), tokens and cost. It is the only G0 run 
 
 **Two revision states for replay gold.** The bench builds the store at run time, so a "file changed on Nov 19" needs
 two states. The fixture holds `fixtures/revisions/<file>.v1` and `.v2` with a sidecar `revisions.yaml` giving each
-state's content time (Nov 12 and Nov 19). The bench ingests v1, then v2, passing the content time explicitly
+state's content time (Nov 12 and Nov 19); the reverted file of section 14.2 item 4 has three states, the third
+(Nov 21) being `.v1` again. The bench ingests v1, then v2, passing the content time explicitly
 (the CLI and the ingest API accept `--valid-from` for tests and the bench only), so the store has two revisions
 with `valid_from` set as in real use, independent of the files' mtimes on the CI machine.
 
@@ -1071,14 +1135,20 @@ New gold (`gold.yaml` version 2, all invented, US names, same two clients) that 
    at least 2 calls or files of 2 series, and none of its quotes shares a content word with the question except the
    start entity.
 2. **Paraphrase and other language**: "Is the login problem still open?" (no "SSO", no "item 13" in the question);
-   a Ukrainian question about the English notes where no word matches, only the entity alias does.
+   a Ukrainian question about the English notes where no word matches, only the entity alias does. FTS5 with
+   `unicode61` has no Ukrainian stemming, so recall in Ukrainian rests on aliases and vectors; the other-language
+   question is reported in the run without vectors too, so that weakness shows instead of hiding behind bge-m3.
 3. **Global**: "What happened with SSO since October?" expects a dated timeline of at least 4 facts from 3 sources
    in order (topic summary plus claims).
 4. **Time replay**: a go-live date changed on Nov 19 in an edited file (the two revision states of section 14.1);
    replayed as of Nov 17 the answer must be the old date and the Nov 19 fact must not appear (future leak); asked
    now, the answer is the new date and the old one appears only in the timeline marked "changed later". The same
    replay also covers state columns: a task the register closes on Nov 19 must be open as of Nov 17, and a decision
-   superseded on Nov 19 must be current as of Nov 17 (section 11.2 step 2).
+   superseded on Nov 19 (a `supersede` override dated Nov 19, written by the bench through `evidence override`,
+   section 7.1) must be current as of Nov 17 (section 11.2 step 2).
+   A second edited file is reverted (section 5.2): a budget figure with text A on Nov 12, B on Nov 19 and A again on
+   Nov 21; as of Nov 17 and asked now the answer is A's figure, as of Nov 20 it is B's, and the revert re-extracts no
+   segment (Index cost metric, section 14.3).
 5. **Modality**: "Did Globex agree to 39 hours?" where 39 hours was only proposed: the answer must carry
    `proposal`; a fact said only in generated notes must not count as confirmed.
 6. **Exclusion and revocation**: one file excluded by the PM, one deleted file, one revoked document and one hidden
@@ -1103,7 +1173,7 @@ New gold (`gold.yaml` version 2, all invented, US names, same two clients) that 
 | Future leaks | items with `said_at` or `summary_at` after `as_of`, and entity status, name, merge or claim and edge status values that come from a row dated after `as_of` (must be 0) |
 | Excluded leaks | items (snippets, claims, edges, entity names, aliases, topic sentences) from excluded, hidden-call, deleted or revoked sources (must be 0) |
 | Store p50 / p95 ms | `search(mode="live")` and `mode="prep"`, small and scale sets |
-| Index cost | segments, tokens (deterministic count from the fixture), re-extracted segments after changing one section of one file (must be that section's segments only; the rest `cached`) |
+| Index cost | segments, tokens (deterministic count from the fixture), re-extracted segments after changing one section of one file (must be that section's segments only; the rest `cached`) and after reverting a file to an earlier text (must be 0) |
 
 Existing columns stay: prep coverage, prep leaks, live answer rate, answer text, live leaks, lookup p50/p95,
 duplicates, wrong identity, item 13 cross-client, false agreed, false proposal.
@@ -1114,7 +1184,9 @@ duplicates, wrong identity, item 13 cross-client, false agreed, false proposal.
    3.5 Flash-Lite) for extraction and the after-call model for topic summaries: $1.06 to $4.15 for a first index,
    typical to cap, in 2 to 5 passes (1 to 2 days at the daily cap); (b) the route's after-call model (Sonnet,
    GPT-6.1 Sol) for both: $7.35 to $19.03, which at the $3.00 daily cap takes **3 to 7 days** to finish. On the Codex
-   plan either option takes 6 to 7 passes over **2 to 3 days** (52% to 68% of a window at 30% a day).
+   plan either option takes 6 to 7 passes over **2 to 3 days** (52% to 68% of a window at 30% a day). These figures
+   are a **lower bound**: they assume one segment per 6,000 characters of a document, and a folder document with
+   many short sections has one segment per section (section 8.2); the real count is shown before the first index.
    **Recommendation: (a)**; G0 `--extract` compares quality and we switch if the cheap model misses too much.
 2. **Consent before spending on a cloud route.** Options: (a) ask once per project before the first full index,
    showing the volume, provider and cost range (section 10), then run increments in the background without asking,
@@ -1149,7 +1221,8 @@ over 2 to 3 days on the Codex plan.
 - **Store size**: about 4,000 snippets for the typical project (3.87M characters / 900), about 8 MB of vectors plus
   text; fine for SQLite, watched with the scale set.
 - **FTS5 or bge-m3 missing on a Mac**: fallbacks keep search working with lower quality; status says so.
-- **Concurrency with the live call**: the worker never runs while `call-active.json` exists; a crash that leaves the
+- **Concurrency with the live call**: the extraction worker never runs while `call-active.json` exists (only the
+  short local state-only and `override` writes do, which make no model, network or embed request); a crash that leaves the
   file stale is caught by the 6-hour and pid checks.
 - **Scope drift**: client labels are computed at ingest; a change in the client list relabels everything (free), and
   the search re-checks labels on every evidence row before ranking.
@@ -1169,7 +1242,8 @@ snapshot file reader, sheets, voice aliases, the state-only pass with hidden cal
 passed lists and the state-request file, `d-`/`r-` ids in `identity.py`, `pm_override` from register events),
 `client_scope.labels(root)`, `lookup.chunks_at` (offsets and client boundaries), slug history for renamed projects,
 `search` / `entity_card` with access (snippets, claims, edges, entities, aliases) and time filters including the
-`as_of` derivation of state columns, the CLI (`exclude`, `--hidden-calls`, `--revoked`, `--web-dirs` and, for tests
+`as_of` derivation of state columns (including `supersede` overrides), the denied and ignored row rules with fields
+from passing rows only, the CLI (`exclude`, `override`, `--hidden-calls`, `--revoked`, `--web-dirs` and, for tests
 and the bench, `--valid-from`).
 
 Acceptance:
@@ -1177,6 +1251,9 @@ Acceptance:
       project root.
 - [ ] Changing one file creates exactly one new revision; touching mtime without content change creates none; a
       deleted file is `deleted` and absent from search; register `migrate`/`rollback` triggers a refold.
+- [ ] Revert: content A, then B, then A again gives three revision rows with their own validity; a replay in each
+      period returns that period's text, and asked now returns A's claims as current (evidence rows on the new
+      snippets), with vectors copied, not embedded again.
 - [ ] Access tests: excluded, hidden call, deleted, revoked (from the `--revoked` list: a Google picked copy by
       `<id16>` and a `_notion/` file by page id), another client's file, another client's line in a shared file, a
       claim with one out-of-scope evidence row, an entity known only from another client's files (no name, alias or
@@ -1184,15 +1261,22 @@ Acceptance:
       that ranks nothing it was not allowed).
 - [ ] `exclude --hidden-calls` makes no model, network or embed request and the hidden call is gone from the next
       `search`; with a full pass holding the lock, the change goes through the state-request file and is applied
-      before the pass's next segment.
+      before the pass's next segment and before the pass exits (also on `paused_call`).
+- [ ] Request `exclude` ignores rows: a claim quoted in an excluded file and in another file is returned with only
+      the other file's quote, and its `said_at`, `said_by` and confirmations come from that row; a claim quoted only
+      in excluded files is not returned; a topic sentence citing it is not returned.
+- [ ] Supersede: `evidence override --field supersede` (built by the test through the CLI, with no store file yet)
+      makes the old decision `superseded` with a `supersedes` edge dated by the override's `at`; the decision is
+      current in a replay before that date.
 - [ ] Client parity: on the G0 fixture, for each scope, the snippets that pass cover exactly the lines
       `client_scope.filter_text` keeps.
 - [ ] Time tests on content time: a first index of files with past content times, replayed as of a past call, sees
       the files valid then; `as_of` before a revision or before a claim returns none of them; a claim whose evidence
       sits only on a replaced revision is not current; a task closed after `as_of` is open, a merge after `as_of` is
       not applied, a decision superseded after `as_of` is current, and a PM rejection applies at every `as_of`.
-- [ ] One edge found in a shared file and in a client file is one row; for the other client's scope it passes only
-      through the shared evidence (and is dropped when it also has a failing row, section 11.2).
+- [ ] One edge found in a shared file and in client A's file is one row; it passes for A and is dropped for client B
+      (denied row, strict); an edge quoted only in shared files passes for both (section 11.2 step 1).
+- [ ] A snippet under a nested subheading of a client heading carries that client's label (heading path).
 - [ ] PM edits from the register and `pm_override` rows on a claim and on an edge survive a rebuild (natural keys).
 - [ ] Purge: after a source is revoked and vacuumed, no claim or edge is left without evidence, and none of its
       facts is returned.
@@ -1206,7 +1290,8 @@ merges on its own without them.)
 ### S2. G0 gold v2, scale set, variants B and C (core)
 
 Scope: `gold.yaml` v2 (section 14.2: at least 6 multi-hop questions, paraphrase and other-language questions, the
-global timeline, the two revision states with a task closed and a decision superseded between them, modality, the
+global timeline, the two revision states with a task closed and a decision superseded between them (the bench
+writes the supersede through `evidence override`), the reverted file's three states, modality, the
 excluded, deleted, revoked and hidden-call cases with a topic summary built before the exclusion), the scale set's
 seeded noise generator, VariantB and VariantC in `run.py` (deterministic part, with and without vectors), the new
 metrics of section 14.3, and the extraction fixture loader keyed by content-only `seg_hash` (the fixture itself is
@@ -1255,12 +1340,14 @@ Acceptance:
       `spend-ledger.jsonl` with job `index`.
 - [ ] Re-running a pass with no changes sends 0 requests; editing one section of a large file (including a short
       section between two others, and the section right above another) sends only that section's segments, the rest
-      are `cached`; a new `extractor` sends every segment again.
+      are `cached`; a new `extractor` sends every segment again; reverting a file to an earlier text sends 0
+      requests; a notes file is cut like a transcript, not per section.
 - [ ] A route whose cached-token count stays 0 is estimated without cache.
 
 G0 gate: C with the extraction fixture: hop answer rate at least 4 of 6 multi-hop questions and at least 2 more than
 B (A and B: expected 0 to 2), paraphrase answer rate not below B in the run with vectors and above B in the run
-without vectors (B also has bge-m3, so with vectors both may already find the paraphrase), modality accuracy 100%,
+without vectors (B also has bge-m3, so with vectors both may already find the paraphrase; the Ukrainian question's
+result without vectors is reported on its own line), modality accuracy 100%,
 derived counted as confirmed 0, all S1 and S2 zeros still 0; `--extract` on one cheap route reports precision,
 recall, its own hop and paraphrase rates, output tokens per segment, catalog tokens, segments per document and cost
 (recorded, not gated; the measured values replace the 500-token output and catalog assumptions in the estimates
@@ -1278,7 +1365,8 @@ Acceptance:
       confirmation.
 - [ ] Only topics whose members changed, or whose cited sources changed state, are re-summarised.
 - [ ] A topic summarised before one of its sources was excluded, revoked or hidden, or asked with that source in
-      `exclude`, returns none of the sentences that cite it and still returns its other sentences.
+      `exclude`, returns none of the sentences that cite it (even when the cited claim also has another passing
+      row) and still returns its other sentences.
 - [ ] `ask_global` with `as_of` never returns a summary written after `as_of`.
 
 G0 gate: global timeline recall at least 75% with correct order on the global gold, future leaks 0, excluded leaks 0
@@ -1291,8 +1379,9 @@ Scope: Swift: `evidence_uid` in `projects.json` with the slug passed on every pa
 (`tracker-snapshot/<uid>.json` in the state folder next to `ai-routes.json`, from the Notion and HubSpot items the
 app already holds), the lists passed to each pass (hidden calls from `history.json`; Google and Notion documents with
 status `denied` or `not_found`; stored page folders under `SheetCLI.stateDir/web` for this project's sheets), the
-state-only pass on hide, unhide and loss of access, with the hidden call's files in `exclude` on every search until
-it has applied, triggers (after notes, folder change debounce, idle hourly, "Index now"), the `index` job in Swift
+state-only pass on hide, unhide and loss of access, at once also during a call, with the hidden call's files in
+`exclude` on every search until it has applied, the supersede click in `CallPage.swift` running `evidence override
+--field supersede` after `decision_notion.py --supersede` returns ok (section 7.1), triggers (after notes, folder change debounce, idle hourly, "Index now"), the `index` job in Swift
 `AIChain` (`allowed`, Settings list, stepping only to the model on this Mac), the settings row with the all-projects
 day cap and the first-index confirmation with the texts of section 10 (en and uk i18n), delete per project, status
 line; docs EN and UK (including that G2 searches stored site pages); CHANGELOG.
@@ -1303,8 +1392,9 @@ Acceptance:
       as orphaned.
 - [ ] `call-active.json` exists for the whole call and is removed after it, including after a crash on the next
       launch.
-- [ ] Hiding a call on Home starts the state-only pass at once (outside a call) or right after the call (during
-      one), and the call's files are in `exclude` of every search until it has applied; a Google document turning
+- [ ] Hiding a call on Home starts the state-only pass at once (also during a call), and the call's files are in
+      `exclude` of every search until it has applied; a supersede click writes the override only after Notion
+      returned ok (pure-logic test on the command builder); a Google document turning
       `denied` does the same with `--revoked`; the Tracker snapshot file is written only from data the app already
       has (no new request; pure-logic tests on the list builders and the writer).
 - [ ] `AIChain` accepts the `index` job and never steps it to another cloud route (pure-logic test).
@@ -1436,7 +1526,8 @@ for k, lo, hi, cap in (("Sonnet $", 8.86, 19.03, 3.0), ("GPT-6.1 Sol $", 7.35, 1
    не рахуються незалежним підтвердженням.
 6. Пошук: доступ, клієнт (PB-70, точна мітка на кожен уривок) і час (`as_of` за часом змісту, статуси й злиття теж
    на момент `as_of`) фільтруються в SQL до ранжування, також для сутностей, аліасів і кожного речення підсумку
-   теми; правки PM за природними ключами переживають перебудову; режим live без нових викликів.
+   теми; виключення на запит лише ігнорує рядки доказів цих файлів; заміну рішення PM записує локально з датою;
+   правки PM за природними ключами переживають перебудову; режим live без нових викликів.
 7. Вартість першого індексу типового проєкту (оцінка, від типового виходу до ліміту 2000 токенів): $1.06-4.15 з
    дешевою моделлю для екстракції і моделлю after для підсумків, $7.35-19.03 на Sonnet або GPT-6.1 Sol (3-7 днів
    за денної стелі), 52-68% 5-годинного вікна Codex (2-3 дні), 5-28 годин локально.
