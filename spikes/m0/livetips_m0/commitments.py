@@ -16,6 +16,8 @@ import threading
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from . import identity as ID
+
 FILE = "commitments.jsonl"
 WORD = re.compile(r"[\w']+", re.U)
 _lock = threading.Lock()
@@ -79,21 +81,46 @@ def read_events(folder) -> List[dict]:
     return out
 
 
+def history_of(item: dict) -> List[dict]:
+    return item.get("history") or [{"id": item.get("id", ""), "call": item.get("call", ""), "text": item.get("text", "")}]
+
+
+def in_call(item: dict, call: str) -> bool:
+    """The item was said on this call (its own add or a later mention linked to it, PB-51)."""
+    return any(call_key(h.get("call")) == call_key(call) for h in history_of(item))
+
+
 def same_slot(item: dict, call: str, owner: str, text: str) -> bool:
-    """The same call, the same owner and a similar text (rules/commitments.yaml > duplicates)."""
-    return (call_key(item.get("call")) == call_key(call) and (item.get("owner") or "me").lower() == (owner or "me").lower()
-            and similar(item["text"], text))
+    """The same call, the same owner and a similar text (rules/commitments.yaml > duplicates). PB-51: a mention of
+    the item on another call that was linked to it counts as its call too."""
+    if (item.get("owner") or "me").lower() != (owner or "me").lower():
+        return False
+    return any(call_key(h.get("call")) == call_key(call) and (similar(item["text"], text) or similar(h.get("text", ""), text))
+               for h in history_of(item))
 
 
-ITEM_KEYS = ("id", "text", "owner", "project", "series", "call", "t", "created", "due", "by", "from")
+ITEM_KEYS = ("id", "text", "owner", "project", "series", "call", "t", "created", "due", "by", "from", "client")
 NOT_DONE = dict(done_at="", done_source="", done_call="")
+LIVE = ("open", "proposal")     # PB-51: a "we will try" item is a proposal, not an agreed open commitment
 
 
 def _apply(it: dict, op: str, e: dict) -> None:
     if op == "done":
         it.update(status="done", done_at=e.get("at", ""), done_source=e.get("source", "manual"), done_call=e.get("call", ""))
     elif op == "reopen":
-        it.update(status="open", **NOT_DONE)
+        it.update(status="proposal" if it.get("modality") == "tentative" else "open", **NOT_DONE)
+    elif op == "tentative":     # PB-51: the item is a "we will try" (migration or the PM)
+        it["modality"] = "tentative"
+        if it["status"] == "open":
+            it["status"] = "proposal"
+    elif op == "agree":         # PB-51: the PM (or a later agreed mention) made the proposal a commitment
+        it["modality"] = "agreed"
+        if it["status"] == "proposal":
+            it["status"] = "open"
+    elif op == "crm_link":      # the Swift fold's HubSpot task link (CRMTaskFlow), read here for the Tracker ID key
+        it.update(crm_task=e.get("crm_task", ""), crm_portal=e.get("crm_portal", ""), notion_note="")
+    elif op == "crm_unlink":
+        it.update(crm_task="", crm_portal="")
     elif op == "drop":
         it["status"] = "dropped"
     elif op == "edit":          # 0.8.7 (rules/commitments.yaml > edit): the PM changed text, owner or due on the call page
@@ -110,19 +137,74 @@ def _add(items: Dict[str, dict], alias: Dict[str, str], e: dict) -> None:
     cid = e.get("id")
     if cid in items or cid in alias:
         return
-    twin = next((i for i in items.values() if i["status"] == "open" and same_slot(i, e.get("call"), e.get("owner"), e.get("text", ""))), None)
+    twin = next((i for i in items.values() if i["status"] in LIVE and same_slot(i, e.get("call"), e.get("owner"), e.get("text", ""))), None)
     if twin:
         alias[cid] = twin["id"]
         return
-    items[cid] = dict({k: e.get(k, "") for k in ITEM_KEYS}, status="open", notion_page="", notion_note="", **NOT_DONE)
+    modality = "tentative" if e.get("modality") == "tentative" else ("agreed" if e.get("modality") == "agreed" else "")
+    items[cid] = dict({k: e.get(k, "") for k in ITEM_KEYS}, status="proposal" if modality == "tentative" else "open",
+                      modality=modality, notion_page="", notion_note="", crm_task="", crm_portal="", ids=[cid],
+                      history=[{"id": cid, "call": e.get("call", ""), "text": e.get("text", ""), "created": e.get("created", "")}],
+                      **NOT_DONE)
+
+
+def root(alias: Dict[str, str], cid: str) -> str:
+    for _ in range(50):
+        if cid not in alias:
+            break
+        cid = alias[cid]
+    return cid
+
+
+def _join(items: Dict[str, dict], alias: Dict[str, str], parked: Dict[str, dict], cid: str, to: str) -> None:
+    """PB-51 op same: item `cid` is item `to` (a Tracker ID, an explicit reference or the PM's confirm). The older
+    item keeps its id, text, owner and status (a PM edit wins); the newer one becomes its alias and its mentions join
+    the history. The newer item is parked as it was, so a split can bring it back."""
+    a, b = root(alias, cid), root(alias, to or "")
+    if a == b or a not in items or b not in items:
+        return
+    src, dst = items.pop(a), items[b]
+    parked[a] = dict(src, ids=list(src["ids"]), history=list(src["history"]))
+    alias[a] = b
+    dst["ids"] = dst["ids"] + [x for x in src["ids"] if x not in dst["ids"]]
+    dst["history"] = dst["history"] + src["history"]
+    if not dst.get("due") and src.get("due") and src["status"] in LIVE:
+        dst["due"] = src["due"]
+    if dst["status"] == "proposal" and src["status"] == "open":
+        dst.update(status="open", modality="agreed")     # an agreed mention makes the proposal a commitment
+    if dst["status"] in LIVE and src["status"] == "done":  # the PM ticked the mention on the later call: the item is done
+        dst.update({k: src[k] for k in ("status", "done_at", "done_source", "done_call")})
+
+
+def _split(items: Dict[str, dict], alias: Dict[str, str], parked: Dict[str, dict], cid: str) -> None:
+    """PB-51 op split: undo a same. The parked item comes back as it was when it was joined."""
+    a = cid if cid in parked else next((k for k, v in parked.items() if cid in v["ids"]), "")
+    if not a or a not in alias:
+        return
+    b = root(alias, a)
+    alias.pop(a)
+    src = parked.pop(a)
+    dst = items.get(b)
+    if dst:
+        gone = set(src["ids"])
+        dst["ids"] = [x for x in dst["ids"] if x not in gone]
+        dst["history"] = [h for h in dst["history"] if h.get("id") not in gone]
+    items[a] = src
 
 
 def fold(events: List[dict]) -> List[dict]:
-    """Items in the order they were added, with status open|done|dropped. A duplicate add (same call, similar
-    text, rules/commitments.yaml > duplicates) points at the first item; later events on it apply to the first."""
+    """Items in the order they were added, with status open|proposal|done|dropped. A duplicate add (same call,
+    similar text, rules/commitments.yaml > duplicates) points at the first item; later events on it apply to the
+    first. PB-51 (rules/commitments.yaml > identity): op same joins an item of another call to an older one (its id
+    stays an alias, its events keep applying), op split undoes that, and the events of a rolled back migration are
+    skipped. Each item lists its ids and its history (the calls that mentioned it)."""
+    rolled = {str(e.get("tag")) for e in events if e.get("op") == "rollback" and e.get("tag")}
     items: Dict[str, dict] = {}
     alias: Dict[str, str] = {}
+    parked: Dict[str, dict] = {}
     for e in events:
+        if e.get("mig") and str(e["mig"]) in rolled:
+            continue
         op, cid = e.get("op"), e.get("id")
         if op == "add":
             _add(items, alias, e)
@@ -130,8 +212,12 @@ def fold(events: List[dict]) -> List[dict]:
             items.pop(cid, None)
             for k in [k for k, v in alias.items() if v == cid or k == cid]:
                 alias.pop(k, None)
-        elif items.get(alias.get(cid, cid)):
-            _apply(items[alias.get(cid, cid)], op, e)
+        elif op == "same":
+            _join(items, alias, parked, cid, e.get("to", ""))
+        elif op == "split":
+            _split(items, alias, parked, cid)
+        elif items.get(root(alias, cid)):
+            _apply(items[root(alias, cid)], op, e)
     return list(items.values())
 
 
@@ -163,8 +249,9 @@ def _neg(s: str) -> str:
 class _CallRecord:
     """The add (and done) events of one call's commitments, skipping what the register already holds."""
 
-    def __init__(self, have: List[dict], call: str, project: str, series: str, created: str, by: str):
+    def __init__(self, have: List[dict], call: str, project: str, series: str, created: str, by: str, client: str = ""):
         self.have, self.call, self.project, self.series, self.created, self.by = have, call, project, series, created, by
+        self.client = client
         self.events: List[dict] = []
 
     def add(self, text, owner: str, due, t, done: bool, replaces: str = "") -> None:
@@ -172,11 +259,15 @@ class _CallRecord:
         if not text:
             return
         cid = make_id(self.call, owner, text)
-        if any(i["id"] == cid or same_slot(i, self.call, owner, text) for i in self.have):
+        if any(i["id"] == cid or cid in (i.get("ids") or []) or same_slot(i, self.call, owner, text) for i in self.have):
             return
         name = Path(self.call).name
         e = {"op": "add", "id": cid, "text": text, "owner": owner, "project": self.project, "series": self.series,
              "call": name, "t": t or "", "created": self.created, "due": str(due or "")[:40], "by": self.by}
+        if self.client:                 # PB-51: the scope of an explicit reference ("item 13" of this client)
+            e["client"] = self.client
+        if ID.is_tentative(text):       # PB-51: "we will try" is a proposal, not an agreed commitment
+            e["modality"] = "tentative"
         if replaces:                    # 0.8.6 > mine: an "on them" item of an earlier call became the PM's
             e["from"] = replaces
             self.events.append({"op": "drop", "id": replaces, "at": self.created})
@@ -198,19 +289,32 @@ def promiser(a: dict) -> str:
 
 
 def record_call(folder, *, call: str, project: str, title: str, actions: List[dict], theirs: List[dict],
-                ticked: Optional[Dict[str, bool]] = None, by: str = "app", replaces: Optional[Dict[str, str]] = None) -> List[dict]:
+                ticked: Optional[Dict[str, bool]] = None, by: str = "app", replaces: Optional[Dict[str, str]] = None,
+                client: str = "", people: Optional[Dict[str, str]] = None) -> List[dict]:
     """End of a call (rules/commitments.yaml > write_when): the PM's actions (owner me) and promises to the PM's
-    side (owner = name). `ticked` = the window's On me ticks, by action id. Returns the events written."""
+    side (owner = name). `ticked` = the window's On me ticks, by action id. PB-51: `client` scopes explicit
+    references, `people` = the voice library's aliases (identity.voice_aliases). Returns the events written."""
     ticked = ticked or {}       # by action id or by norm_text(what)
-    rec = _CallRecord(load(folder), call, project, series_key(project, title), now_iso(), by)
+    people = ID.voice_aliases() if people is None else people
+    ensure_migrated(folder, people)
+    before = read_events(folder)
+    rec = _CallRecord(fold(before), call, project, series_key(project, title), now_iso(), by, client)
     for a in actions or []:
         rec.add(a.get("what"), "me", a.get("due"), a.get("t"), is_ticked(a, ticked),
                 (replaces or {}).get(str(a.get("from") or "")) or "")
     for a in theirs or []:
         if promiser(a):
             rec.add(a.get("what"), promiser(a), a.get("due"), a.get("t"), False)
-    append(folder, rec.events)
-    return rec.events
+    return _write_linked(folder, before, rec.events, people, rec.created, by)
+
+
+def _write_linked(folder, before: List[dict], new: List[dict], people: Optional[Dict[str, str]], at: str, by: str) -> List[dict]:
+    """PB-51: the call's events, then the op same of each new item that is an older item by its Tracker ID or by an
+    explicit reference (link_events). Returns everything written."""
+    ids = [e["id"] for e in new if e.get("op") == "add"]
+    links = link_events(before + new, ids, people, at, by) if ids else []
+    append(folder, new + links)
+    return new + links
 
 
 OWNER_RX = re.compile(r"^\*\*([^*]{1,60}?):?\*\*\s*:?\s*")
@@ -240,26 +344,32 @@ def owner_match(a: str, b: str) -> bool:
     return a == b or (a.split()[:1] == b.split()[:1] and a != "me" and b != "me")
 
 
-def record_notes(folder, *, call: str, notes: str, aliases: Optional[List[str]] = None, by: str = "app") -> List[dict]:
+def record_notes(folder, *, call: str, notes: str, aliases: Optional[List[str]] = None, by: str = "app",
+                 client: str = "", people: Optional[Dict[str, str]] = None) -> List[dict]:
     """0.12.2 (L4, rules/commitments.yaml > write_when): after the call notes are written, their ### Action items
     complete the register. An item with the same owner and a similar text as one this call already has (open, done,
     dropped or edited) is the same commitment: the register keeps its item and only takes the notes' due date when it
-    had none. Owner: me when the notes name the PM (aliases) or nobody, else the name. Returns the events written."""
+    had none. Owner: me when the notes name the PM (aliases) or nobody, else the name. PB-51: the same person also
+    through the voice library (`people`), and a new item that is an older one by its Tracker ID or explicit reference
+    joins it (link_events). Returns the events written."""
     from .callnotes import parse_meeting
     acts = parse_meeting(notes or "").get("actions") or []
     if not acts:
         return []
     names = {x.strip().lower() for x in (aliases or []) if x.strip()} | {"me", "я", "pm"}
     first = {n.split()[0] for n in names if n.split()}
+    people = ID.voice_aliases() if people is None else people
+    ensure_migrated(folder, people)
     events = read_events(folder)
-    have = [i for i in fold(events) if call_key(i.get("call")) == call_key(call)]
+    have = [i for i in fold(events) if in_call(i, call)]
     added = {e["id"]: e.get("text", "") for e in events if e.get("op") == "add" and call_key(e.get("call")) == call_key(call)}
     project = next((i.get("project", "") for i in have if i.get("project")), "")
     series = next((i.get("series", "") for i in have if i.get("series")), "")
     if not series:
         title = re.sub(r"^\d{4}-\d\d-\d\d-\d{4}-", "", Path(call).name.split(".")[0]).replace("-", " ")
         series = series_key(project, title)
-    rec = _CallRecord(have, call, project, series, now_iso(), by)
+    client = client or next((i.get("client", "") for i in have if i.get("client")), "")
+    rec = _CallRecord(have, call, project, series, now_iso(), by, client)
     out: List[dict] = []
     for a in acts:
         tk = notes_task(a.get("text", ""))
@@ -268,10 +378,10 @@ def record_notes(folder, *, call: str, notes: str, aliases: Optional[List[str]] 
             continue
         o = tk["owner"].strip()
         owner = "me" if not o or o.lower() in names or o.lower().split()[0] in first else o[:40]
-        twin = next((i for i in rec.have if owner_match(i.get("owner"), owner)
-                     and (similar(i.get("text", ""), what) or similar(added.get(i.get("id"), ""), what))), None)
+        twin = next((i for i in rec.have if ID.same_person(i.get("owner") or "me", owner, people)
+                     and (similar(i.get("text", ""), what) or any(similar(added.get(x, ""), what) for x in i.get("ids") or [i.get("id")]))), None)
         if twin:
-            if tk["due"] and not twin.get("due") and twin.get("status", "open") == "open":
+            if tk["due"] and not twin.get("due") and twin.get("status", "open") in LIVE:
                 out.append({"op": "edit", "id": twin["id"], "at": rec.created, "due": tk["due"][:40], "source": "notes"})
                 twin["due"] = tk["due"][:40]
             continue
@@ -280,8 +390,7 @@ def record_notes(folder, *, call: str, notes: str, aliases: Optional[List[str]] 
         for e in rec.events[n:]:
             if e.get("op") == "add":
                 e["source"] = "notes"
-    append(folder, rec.events + out)
-    return rec.events + out
+    return _write_linked(folder, events, rec.events + out, people, rec.created, by)
 
 
 def migrate_owners(folder, *, call: str, notes: str, aliases: Optional[List[str]] = None, by: str = "app") -> List[dict]:
@@ -340,9 +449,199 @@ def mark(folder, cid: str, op: str = "done", source: str = "manual", call: str =
     return e
 
 
+# ---------------------------------------------------------------- PB-51 identity across calls (rules/commitments.yaml > identity)
+
+def _rejected(events: List[dict]) -> set:
+    """Pairs the PM said are not the same item (op reject, or op split of a link): never linked or suggested again."""
+    return {frozenset((e.get("id"), e.get("to"))) for e in events
+            if e.get("op") in ("reject", "split") and e.get("id") and e.get("to")}
+
+
+def _is_rejected(rej: set, a: dict, b: dict) -> bool:
+    return any(frozenset((x, y)) in rej for x in a.get("ids") or [a["id"]] for y in b.get("ids") or [b["id"]])
+
+
+def _texts(item: dict) -> List[str]:
+    return [item.get("text", "")] + [h.get("text", "") for h in history_of(item)]
+
+
+def _ref(item: dict) -> str:
+    return next((r for r in (ID.ref_of(t) for t in _texts(item)) if r), "")
+
+
+def _calls(item: dict) -> set:
+    return {call_key(h.get("call")) for h in history_of(item)}
+
+
+def _overlap(a: dict, b: dict) -> float:
+    x, y = words(a.get("text", "")), words(b.get("text", ""))
+    return len(x & y) / max(1, min(len(x), len(y)))
+
+
+def _same_scope(a: dict, b: dict, people: Optional[Dict[str, str]]) -> bool:
+    return (ID.scope_of(a) == ID.scope_of(b) and ID.same_person(a.get("owner") or "me", b.get("owner") or "me", people)
+            and not (_calls(a) & _calls(b)))
+
+
+def link_events(events: List[dict], new_ids: List[str], people: Optional[Dict[str, str]] = None, at: str = "",
+                by: str = "app") -> List[dict]:
+    """The op same events that join the new items to older ones by the first two keys: the same Tracker ID, or the
+    same explicit reference ("item 13") in the same scope for the same person. An older item the PM split from it or
+    rejected is never taken. Several candidates: the most similar text, then the oldest."""
+    items = fold(events)
+    by_id = {x: i for i in items for x in i.get("ids") or [i["id"]]}
+    rej, out, done = _rejected(events), [], set()
+    for nid in new_ids:
+        it = by_id.get(nid)
+        if not it or it["id"] != nid or it["status"] == "dropped" or nid in done:   # a ticked (done) mention still joins
+            continue
+        tid, ref = ID.tracker_id(it), _ref(it)
+        pool = [o for o in items if o["id"] != nid and o["id"] not in new_ids and o["status"] in LIVE
+                and o.get("created", "") <= it.get("created", "") and not _is_rejected(rej, it, o)]
+        hit = [o for o in pool if tid and ID.tracker_id(o) == tid]
+        why = "tracker"
+        if not hit and ref:
+            hit = [o for o in pool if _ref(o) == ref and _same_scope(it, o, people)]
+            why = "ref"
+        if hit:
+            best = sorted(hit, key=lambda o: (-_overlap(it, o), o.get("created", "")))[0]
+            out.append({"op": "same", "id": nid, "to": best["id"], "by": by, "source": why, "at": at or now_iso()})
+            done.add(nid)
+    return out
+
+
+def tracker_links(events: List[dict], at: str = "", by: str = "app") -> List[dict]:
+    """Items that ended up on the same Notion page or HubSpot task (the PM linked both): the newer joins the older."""
+    items, rej, out, first = fold(events), _rejected(events), [], {}
+    for it in sorted(items, key=lambda i: i.get("created", "")):
+        tid = ID.tracker_id(it)
+        if not tid or it["status"] not in LIVE + ("done",):
+            continue
+        if tid in first and not _is_rejected(rej, it, first[tid]):
+            out.append({"op": "same", "id": it["id"], "to": first[tid]["id"], "by": by, "source": "tracker",
+                        "at": at or now_iso()})
+        first.setdefault(tid, it)
+    return out
+
+
+PLAIN = {"the", "and", "for", "with", "from", "about", "this", "that", "our", "their", "them", "his", "her", "your",
+         "send", "share", "give", "get", "make", "will", "can", "need", "back", "over", "out", "into", "him", "all",
+         "надіслати", "надішле", "відправити", "передати", "для", "про", "щодо", "нам", "їм"}
+
+
+def close_text(a: str, b: str, names: set) -> bool:
+    """The suggestion test: at least two content words in common (no plain verbs, no people names) and 60% of the
+    shorter text's content words. "send the pilot timeline to Mike" is not "send Mike the updated rollout checklist"."""
+    x, y = words(a) - PLAIN - names, words(b) - PLAIN - names
+    common = x & y
+    return len(common) >= 2 and len(common) / max(1, min(len(x), len(y))) >= 0.6
+
+
+def suggestions(folder_or_events, people: Optional[Dict[str, str]] = None) -> List[dict]:
+    """The third key: an open item that looks like an open item of an earlier call (the same person, the same scope,
+    a similar text, no other reference). Only a question to the PM ("looks like the task from 12.11, is it the
+    same?"); confirm() makes it a link, reject() keeps them apart for good. Newest item first."""
+    events = folder_or_events if isinstance(folder_or_events, list) else read_events(folder_or_events)
+    items, rej, out = fold(events), _rejected(events), []
+    names = {w for i in items for w in words(i.get("owner", ""))} | {w for v in (people or {}).values() for w in words(v)}
+    for it in sorted(items, key=lambda i: i.get("created", ""), reverse=True):
+        if it["status"] not in LIVE:
+            continue
+        cands = [o for o in items if o["id"] != it["id"] and o["status"] in LIVE and o.get("created", "") < it.get("created", "")
+                 and _same_scope(it, o, people) and not _is_rejected(rej, it, o) and _ref(o) == _ref(it)
+                 and not (ID.tracker_id(o) and ID.tracker_id(it) and ID.tracker_id(o) != ID.tracker_id(it))
+                 and any(close_text(a, b, names) for a in _texts(it) for b in _texts(o))]
+        if cands:
+            o = sorted(cands, key=lambda c: (-_overlap(it, c), c.get("created", "")))[0]
+            day = str(o.get("created", ""))[:10]
+            out.append({"id": it["id"], "to": o["id"], "text": it.get("text", ""), "to_text": o.get("text", ""), "since": day,
+                        "question": "Looks like the task from {}, is it the same?".format(".".join(reversed(day.split("-")[1:])))})
+    return out
+
+
+def confirm(folder, cid: str, to: str) -> dict:
+    """The PM confirmed a suggestion: the two items are one (op same, by pm)."""
+    e = {"op": "same", "id": cid, "to": to, "by": "pm", "source": "pm", "at": now_iso()}
+    append(folder, [e])
+    return e
+
+
+def reject(folder, cid: str, to: str) -> dict:
+    """The PM said the two items are different: never suggested or linked again."""
+    e = {"op": "reject", "id": cid, "to": to, "by": "pm", "at": now_iso()}
+    append(folder, [e])
+    return e
+
+
+def split(folder, cid: str) -> Optional[dict]:
+    """The PM undid a link: the item is its own again, and the pair is never linked again."""
+    events = read_events(folder)
+    link = next((e for e in reversed(events) if e.get("op") == "same" and e.get("id") == cid), None)
+    if not link:
+        return None
+    e = {"op": "split", "id": cid, "to": link.get("to", ""), "by": "pm", "at": now_iso()}
+    append(folder, [e])
+    return e
+
+
+MIGRATION = "g1"
+
+
+def migration_tag(events: List[dict]) -> str:
+    """The tag of the G1 migration this register holds and has not rolled back; "" when none."""
+    rolled = {e.get("tag") for e in events if e.get("op") == "rollback"}
+    return next((e["tag"] for e in reversed(events) if e.get("op") == "migrate" and str(e.get("tag", "")).startswith(MIGRATION)
+                 and e.get("tag") not in rolled), "")
+
+
+def migrate(folder, people: Optional[Dict[str, str]] = None, by: str = "app") -> dict:
+    """PB-51: the G1 identity over the register written before it. Append only, every historical line stays: the "we
+    will try" items become proposals (op tentative), items with the same Tracker ID or the same explicit reference in
+    one scope join the older one (op same; the newer id stays its alias). Every event carries the migration tag, so
+    rollback() undoes all of it; an older app ignores these ops and reads the register as before. Once per register."""
+    events = read_events(folder)
+    if not events or migration_tag(events):
+        return {"tag": migration_tag(events), "events": 0}
+    at = now_iso()
+    tag = "{}-{}".format(MIGRATION, re.sub(r"\D", "", at)[:14])
+    out = [{"op": "migrate", "id": tag, "tag": tag, "at": at, "by": by}]
+    for it in fold(events):
+        if it["status"] == "open" and not it.get("modality") and ID.is_tentative(it.get("text", "")):
+            out.append({"op": "tentative", "id": it["id"], "at": at, "by": by})
+    links = tracker_links(events + out, at, by)
+    for it in sorted(fold(events + out + links), key=lambda i: i.get("created", "")):
+        links += link_events(events + out + links, [it["id"]], people, at, by)     # oldest first, each to an older one
+    out += links
+    for e in out:
+        e["mig"] = tag
+    append(folder, out)
+    return {"tag": tag, "events": len(out), "tentative": sum(1 for e in out if e["op"] == "tentative"),
+            "links": len(links)}
+
+
+def rollback(folder, tag: str = "") -> Optional[dict]:
+    """Undo the G1 migration: one op rollback, after which the register folds exactly as before the migration
+    (links made later on new calls stay)."""
+    tag = tag or migration_tag(read_events(folder))
+    if not tag:
+        return None
+    e = {"op": "rollback", "id": tag, "tag": tag, "at": now_iso()}
+    append(folder, [e])
+    return e
+
+
+def ensure_migrated(folder, people: Optional[Dict[str, str]] = None) -> None:
+    """Run the migration once, before the first write of the G1 code (rolled back registers stay rolled back)."""
+    events = read_events(folder)
+    if events and not any(e.get("op") in ("migrate", "rollback") for e in events):
+        migrate(folder, people)
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["list", "done", "reopen", "drop", "link", "unlink"])
+    ap.add_argument("cmd", choices=["list", "done", "reopen", "drop", "link", "unlink", "suggest", "same", "reject", "split",
+                                    "migrate", "rollback"])
+    ap.add_argument("--to", default="", help="same/reject: the older item")
     ap.add_argument("--page", default="")
     ap.add_argument("folder", type=Path)
     ap.add_argument("id", nargs="?")
@@ -353,8 +652,21 @@ def main(argv=None) -> int:
             if a.all or i["status"] == "open":
                 print(json.dumps(i, ensure_ascii=False))
         return 0
+    if a.cmd in ("suggest", "migrate", "rollback"):
+        res = {"suggest": lambda: suggestions(a.folder, ID.voice_aliases()), "migrate": lambda: migrate(a.folder, ID.voice_aliases()),
+               "rollback": lambda: rollback(a.folder, a.id or "")}[a.cmd]()
+        print(json.dumps(res, ensure_ascii=False))
+        return 0
     if not a.id:
         ap.error("id is required")
+    if a.cmd in ("same", "reject"):
+        if not a.to:
+            ap.error("--to is required")
+        print(json.dumps((confirm if a.cmd == "same" else reject)(a.folder, a.id, a.to), ensure_ascii=False))
+        return 0
+    if a.cmd == "split":
+        print(json.dumps(split(a.folder, a.id), ensure_ascii=False))
+        return 0
     print(json.dumps(mark(a.folder, a.id, a.cmd, notion_page=a.page), ensure_ascii=False))
     return 0
 

@@ -1310,6 +1310,18 @@ The skill and the app follow the same rules, in `rules/agenda.yaml`, `rules/comm
   what is still open in this series ("On you, still open", "Waiting on Dana: ..."). On a later call of the series,
   when someone says an item is done, the tips window shows a quiet "Done?" card: only your Mark done closes it.
   There is no tracker integration: Copy is the export.
+- **One task across calls (GraphRAG G1, PB-51).** When the notes of a later call name a task the register already
+  holds, the engine joins it to the older item instead of adding a new one, in this order: the same Notion page or
+  HubSpot task; the same explicit reference ("item 13", "task #13", "пункт 13") for the same person in the same project
+  and client (without a known client, the same meeting series, so Acme's item 13 and Globex's item 13 stay two items).
+  The older item keeps its text, owner and status, and its history lists every call that mentioned it. A similar
+  task without an ID or a reference is only a suggestion ("Looks like the task from 03.11, is it the same?") until
+  you confirm it; you can also say no or undo a link, and that pair is never joined again. When the engine is given
+  the voice library (`LT_VOICES`), names follow its aliases, so "Mike T." and "Mike Turner" are one person; the app
+  does not pass it yet. A "we will try" promise is a proposal, not an open commitment, and a task ticked done on a
+  later call closes the older item. The first write after the update migrates the register by appending events (no line changes) and
+  `python -m livetips_m0.commitments rollback <live folder>` undoes it. The suggestions are in the engine and its
+  command line (`commitments suggest`, `same`, `reject`, `split`) for now; the app window does not show them yet.
 - **Brief freshness.** Home, Later and the call form compare when the brief was made with the files of the project
   folder (and the folders added in the form): "Brief is 2 days old · 3 changes since". Refresh updates only the
   sections the changed files touch and keeps your edits and the checklist. Nothing is refreshed by itself.

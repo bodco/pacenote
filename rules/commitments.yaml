@@ -6,7 +6,7 @@ format: >-
   JSON lines, append only. Each line is an event; the register is the events folded by id.
   Never rewrite or delete lines: a later event wins.
 events:
-  add: '{"v":1,"op":"add","id":"<id>","text":"<what, max 120 chars>","owner":"me|<name>","project":"<slug>","series":"<series key>","call":"<transcript file name>","t":"HH:MM:SS","created":"<ISO time>","due":"<day or date, or empty>","by":"app|skill|page","from":"<id of the item this one replaces, optional>"}'
+  add: '{"v":1,"op":"add","id":"<id>","text":"<what, max 120 chars>","owner":"me|<name>","project":"<slug>","series":"<series key>","call":"<transcript file name>","t":"HH:MM:SS","created":"<ISO time>","due":"<day or date, or empty>","by":"app|skill|page","from":"<id of the item this one replaces, optional>","client":"<client, optional>","modality":"tentative, optional"}'
   done: '{"v":1,"op":"done","id":"<id>","at":"<ISO time>","source":"manual|detected|notion","call":"<transcript file name, when closed on a call>"}'
   reopen: '{"v":1,"op":"reopen","id":"<id>","at":"<ISO time>"}'
   drop: '{"v":1,"op":"drop","id":"<id>","at":"<ISO time>"}'
@@ -14,6 +14,13 @@ events:
   unlink: '{"v":1,"op":"unlink","id":"<id>","at":"<ISO time>","reason":"removed|undo"}'
   move: '{"v":1,"op":"move","id":"<id>","to":"<project slug>","at":"<ISO time>"}'   # 0.10.1: the call moved to another project; its events were appended to that project's register
   edit: '{"v":1,"op":"edit","id":"<id>","at":"<ISO time>","text":"<new text, optional>","owner":"me|<name>, optional","due":"<new due, optional>"}'
+  same: '{"v":1,"op":"same","id":"<newer id>","to":"<older id>","by":"app|skill|pm","source":"tracker|ref|pm","at":"<ISO time>","mig":"<migration tag, optional>"}'   # PB-51: the newer item is the older one; its id stays an alias
+  split: '{"v":1,"op":"split","id":"<id>","to":"<the item it was joined to>","by":"pm","at":"<ISO time>"}'   # PB-51: the PM undid a same; the pair is never joined again
+  reject: '{"v":1,"op":"reject","id":"<id>","to":"<id>","by":"pm","at":"<ISO time>"}'   # PB-51: the PM said a suggestion is not the same item
+  tentative: '{"v":1,"op":"tentative","id":"<id>","at":"<ISO time>","mig":"<migration tag, optional>"}'   # PB-51: the item is a "we will try" (status proposal)
+  agree: '{"v":1,"op":"agree","id":"<id>","at":"<ISO time>"}'   # PB-51: the PM made a proposal an agreed commitment
+  migrate: '{"v":1,"op":"migrate","id":"<tag>","tag":"g1-<stamp>","at":"<ISO time>","mig":"<tag>"}'   # PB-51: the G1 migration ran
+  rollback: '{"v":1,"op":"rollback","id":"<tag>","tag":"<tag>","at":"<ISO time>"}'   # PB-51: every event with this mig tag is ignored
 id: "c-<first 10 hex characters of sha1 of: call file name without .app, owner, text in lower case>"
 series_key: "<project slug>|<call title in lower case, letters and digits only>"
 owner: >-
@@ -22,6 +29,28 @@ owner: >-
 duplicates: >-
   The app and the skill may record the same call. An add whose call (without .app) is the same and whose text
   shares at least 60% of its words with an open item is the same commitment: keep the first.
+identity: >-
+  PB-51 (GraphRAG G1): one task across calls. A new item is an older open item of the project when, in this order:
+  1) both are the same task in the PM's tracker (the same Notion page or HubSpot task id); 2) both name the same explicit
+  reference ("item 13", "task #13", "пункт 13", "#13") for the same person in the same project AND client (without a
+  known client the meeting series is the scope, so two clients never share an item 13). Then the register appends op
+  same: the older item keeps its id, text, owner and status, the newer id stays its alias, every event on either id
+  applies to the one item, and its history lists every call that mentioned it. 3) Otherwise a similar task of the same
+  person in the same scope from an earlier call is only a suggestion ("Looks like the task from 12.11, is it the same?"):
+  it becomes op same when the PM confirms it, op reject when he says no. A PM action always wins: his edits stay on the
+  item, op split undoes any link, and a split or rejected pair is never joined or suggested again. A person is one id
+  through the voice library (its aliases and Merge into, rules/voices.yaml): "Mike T." and "Mike Turner" are one owner.
+modality: >-
+  PB-51: a "we will try" promise ("try to confirm the list", "we will try", "maybe", "if possible", "спробуємо",
+  "постараюсь", "якщо вийде") is a proposal, not an agreed commitment: the add carries "modality":"tentative" and the
+  item has status proposal (not open, so the Tracker does not list it as owed). An agreed mention on a later call or the
+  PM's op agree makes it open; a "try" on a later call never weakens an agreed item.
+migration: >-
+  PB-51: the first write of the G1 code appends one migration (op migrate with tag g1-<stamp>): op tentative for the
+  open "we will try" items and op same for older items with the same Tracker ID or explicit reference. No line is
+  changed or removed, and every old id resolves to its item. Rollback: op rollback with the tag (commitments rollback
+  <live folder>); the register then folds exactly as before the migration and is not migrated again. An app version
+  before G1 ignores these ops and reads the register as it did.
 write_when: >-
   At the end of the call (state stopped), once: every action of the call picture (owner me) and every promise
   made to the PM's side (owner = the person's name), with the due date when one was named. An item the PM ticked

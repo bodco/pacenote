@@ -33,6 +33,34 @@ What the baseline says:
   becomes a new item (6 duplicates; the rollout checklist is 3 open items after the weekly call), "we will try" stands
   as an open commitment (2), and the Tracker of each call shows the other client's item 13 (4).
 
+## After G1 identity (PB-51, variant A, 2026-11-23)
+
+The same variant A after the G1 change (`commitments` identity across calls). Raw numbers:
+`spikes/m0/bench/g0/results/A-2026-11-23-g1.json` (same fixture and gold hashes as the baseline).
+
+| Target | Duplicates | Suggested | Duplicates if PM confirms | Wrong identity | Item 13 cross-client | False agreed |
+|---|---:|---:|---:|---:|---:|---:|
+| acme-weekly-status-2026-11-17 | 2 | 2 | 0 | 1 | 1 | 0 |
+| globex-weekly-2026-11-18 | 1 | 2 | 0 | 1 | 2 | 0 |
+| acme-technical-sync-2026-11-19 | 0 | 1 | 0 | 0 | 1 | 0 |
+| **All, before (baseline)** | **6** | n/a | n/a | **5** | **4** | **2** |
+| **All, after G1** | **3** | **5** | **0** | **2** | **4** | **0** |
+
+Preparation and live columns did not change (80.0% coverage, 11 prep leaks, 100.0% answer rate, 80.0% answer text,
+4 live leaks); only latency moves between runs.
+
+- **Item 13 joins by its reference, per client.** Mike's "confirm the SSO user mapping for item 13", Sarah's "sample
+  invoice file for item 13" and Emily's "IdP metadata file for item 13" each join their older item; Acme's and
+  Globex's item 13 stay apart.
+- **"We will try" is a proposal.** The migration marks "try to confirm the pilot user list" as a proposal, and Emily's
+  "try to send the IdP metadata" joins the agreed item without weakening it: false agreed 2 to 0.
+- **The rest waits for the PM.** The rollout checklist (3 calls, 3 wordings) and the invoice export mockup have no ID
+  and no reference, so they stay separate items with a suggestion each; once the PM confirms them, duplicates are 0.
+  Suggested counts every open suggestion in the register after the call, so a pair from older calls is counted on
+  each target.
+- **Item 13 cross-client is unchanged (4).** It counts the other client's item 13 in the call's Tracker, which still
+  reads the whole project register; scoping the Tracker belongs to the preparation steps (G3, G5).
+
 ## What is measured
 
 Each target call is replayed on a clean copy of the fixture project, with every file dated by the date in its name
@@ -71,6 +99,7 @@ All data is invented.
 ```sh
 cd spikes/m0
 python3 bench/g0/run.py --variant A          # the table, and results/A-<date>.json
+python3 bench/g0/run.py --variant A --label g1  # results/A-<date>-g1.json, keeps a same-day result
 python3 bench/g0/run.py --compare A C        # the newest result of each variant, metric by metric
 python3 -m pytest -q tests/test_g0_bench.py  # runs the harness, checks the fixture (not the scores)
 ```
