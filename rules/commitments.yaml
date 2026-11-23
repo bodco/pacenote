@@ -30,16 +30,20 @@ duplicates: >-
   The app and the skill may record the same call. An add whose call (without .app) is the same and whose text
   shares at least 60% of its words with an open item is the same commitment: keep the first.
 identity: >-
-  PB-51 (GraphRAG G1): one task across calls. A new item is an older open item of the project when, in this order:
-  1) both are the same task in the PM's tracker (the same Notion page or HubSpot task id); 2) both name the same explicit
-  reference ("item 13", "task #13", "пункт 13", "#13") for the same person in the same project AND client (without a
-  known client the meeting series is the scope, so two clients never share an item 13). Then the register appends op
-  same: the older item keeps its id, text, owner and status, the newer id stays its alias, every event on either id
-  applies to the one item, and its history lists every call that mentioned it. 3) Otherwise a similar task of the same
-  person in the same scope from an earlier call is only a suggestion ("Looks like the task from 12.11, is it the same?"):
-  it becomes op same when the PM confirms it, op reject when he says no. A PM action always wins: his edits stay on the
-  item, op split undoes any link, and a split or rejected pair is never joined or suggested again. A person is one id
-  through the voice library (its aliases and Merge into, rules/voices.yaml): "Mike T." and "Mike Turner" are one owner.
+  PB-51 (GraphRAG G1): one task across calls. A new item is an older open item (or proposal) of the project when, in
+  this order: 1) both are the same task in the PM's tracker (the same Notion page or HubSpot task id); 2) both name the
+  same explicit reference ("item 13", "task #13", "пункт 13"; a bare "#1" is not one) for the same person in the same
+  project AND the same known client. Then the register appends op same: the older item keeps its id, owner and status,
+  the newer id stays its alias, every event on either id applies to the one item, and its history lists every call
+  that mentioned it. 3) Otherwise it is only a suggestion ("Looks like the task from 12.11, is it the same?"): the same
+  reference or a similar task of the same person from an earlier call of the same client, or of the same meeting
+  series when a client is unknown (two clients can both have a "Weekly sync"). It becomes op same when the PM confirms
+  it, op reject when the PM says no. A PM action always wins: the PM's latest edit gives the joined item its text and
+  owner, op split undoes any link and gives each item its own words back, and a split or rejected pair is never joined
+  or suggested again. A person is one id through the voice library (its aliases and Merge into, rules/voices.yaml):
+  "Mike T." and "Mike Turner" are one owner. A link needs that one id; the same first name alone ("Mike Turner" and
+  "Mike Brown") is at most a suggestion. When a call moves to another project, its items leave the joined items of
+  other calls, which stay as they were.
 modality: >-
   PB-51: a "we will try" promise ("try to confirm the list", "we will try", "maybe", "if possible", "спробуємо",
   "постараюсь", "якщо вийде") is a proposal, not an agreed commitment: the add carries "modality":"tentative" and the
@@ -47,10 +51,13 @@ modality: >-
   PM's op agree makes it open; a "try" on a later call never weakens an agreed item.
 migration: >-
   PB-51: the first write of the G1 code appends one migration (op migrate with tag g1-<stamp>): op tentative for the
-  open "we will try" items and op same for older items with the same Tracker ID or explicit reference. No line is
-  changed or removed, and every old id resolves to its item. Rollback: op rollback with the tag (commitments rollback
-  <live folder>); the register then folds exactly as before the migration and is not migrated again. An app version
-  before G1 ignores these ops and reads the register as it did.
+  open "we will try" items and op same for older open items with the same Tracker ID or explicit reference (identity
+  1 and 2). It never closes or reopens an item: done and dropped items take no part. No line is changed or removed,
+  and every old id resolves to its item. One process migrates at a time, and a new tag never repeats an old one.
+  Rollback: op rollback for every migration tag the register holds, or one tag (commitments rollback <live folder>
+  [tag]); the register then folds exactly as before the migration and is not migrated again. An app version before
+  G1 ignores these ops and reads the register as it did. The app's Tracker window does not read same, split,
+  tentative or agree yet: joins and proposals apply to the engine's register and the skill.
 write_when: >-
   At the end of the call (state stopped), once: every action of the call picture (owner me) and every promise
   made to the PM's side (owner = the person's name), with the due date when one was named. An item the PM ticked

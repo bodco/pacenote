@@ -41,6 +41,14 @@ def record(reg, clock, n=3):
         C.record_notes(reg, call=call, notes=notes_of(target, call), aliases=["David"], people={})
 
 
+def confirm_refs(reg):
+    """The PM says yes to every "is it the same?" of an explicit reference (the fixture knows no client, so a
+    reference is only a suggestion)."""
+    for s in C.suggestions(reg, {}):
+        if ID.ref_of(s["text"]):
+            C.confirm(reg, s["id"], s["to"])
+
+
 def open_with(items, *phrases):
     return [i for i in items if i["status"] == "open" and all(p in i["text"].lower() for p in phrases)]
 
@@ -51,7 +59,7 @@ def test_ref_of_reads_an_explicit_reference_in_both_languages():
     assert ID.ref_of("confirm the SSO user mapping for item 13") == "13"
     assert ID.ref_of("Що зараз блокує пункт 13?") == "13"
     assert ID.ref_of("close task #13 today") == "13"
-    assert ID.ref_of("see #13") == "13"
+    assert ID.ref_of("see #13") == ""                         # a bare number sign is not a reference (#1 priority)
     assert ID.ref_of("send 13 items to Mike") == ""            # a count, not a reference
     assert ID.ref_of("item 13 and item 14") == ""              # two items: not one key
     assert ID.ref_of("send the revised rollout checklist") == ""
@@ -89,6 +97,8 @@ def test_scope_is_client_when_known_else_series():
 
 def test_item_13_of_acme_and_of_globex_stay_two_items(reg, clock):
     record(reg, clock)
+    assert not [e for e in C.read_events(reg) if e["op"] == "same" and e.get("by") != "pm"]   # no client: no auto link
+    confirm_refs(reg)
     items = C.load(reg)
     acme = open_with(items, "sso user mapping", "item 13")
     globex = open_with(items, "sample invoice file", "item 13")
@@ -148,24 +158,27 @@ def test_we_will_try_stays_a_proposal(reg, clock):
     assert next(i for i in C.load(reg) if "tax form" in i["text"])["status"] == "open"
 
 
-def test_voice_alias_joins_an_item_13_said_under_another_spelling(reg, clock):
+def test_voice_alias_joins_an_item_13_said_under_another_spelling(tmp_path, clock):
+    C.append(tmp_path, [{"op": "add", "id": "c-m13", "text": "confirm the SSO user mapping for item 13", "owner": "Mike",
+                         "project": "", "series": "|acmeweeklystatus", "call": "2026-11-10-1000-acme-weekly-status.md",
+                         "created": "2026-11-10T10:00:00+00:00", "due": "", "by": "app", "client": "Acme"}])
     clock("2026-11-17T10:00:00+00:00")
     notes = "## Meeting notes\n### Action items\n- [10:01:44] **M. Turner**: confirm the SSO user mapping for item 13\n"
-    ev = C.record_notes(reg, call="2026-11-17-1000-acme-weekly-status.md", notes=notes, aliases=["David"],
-                        people={"m. turner": "Mike"})
+    ev = C.record_notes(tmp_path, call="2026-11-17-1000-acme-weekly-status.md", notes=notes, aliases=["David"],
+                        client="Acme", people={"m. turner": "Mike"})
     assert [e for e in ev if e["op"] == "same"]
-    assert len(open_with(C.load(reg), "sso user mapping")) == 1
+    assert len(open_with(C.load(tmp_path), "sso user mapping")) == 1
 
 
 def test_a_mention_ticked_done_in_the_window_closes_the_older_item(reg, clock):
     C.append(reg, [{"op": "add", "id": "c-plan13", "text": "send the SSO test plan for item 13", "owner": "me", "project": "",
                     "series": "|acmeweeklystatus", "call": "2026-11-10-1000-acme-weekly-status.md",
-                    "created": "2026-11-10T10:00:00+00:00", "due": "", "by": "app"}])
+                    "created": "2026-11-10T10:00:00+00:00", "due": "", "by": "app", "client": "Acme"}])
     clock("2026-11-17T10:30:00+00:00")
     C.ensure_migrated(reg, {})
     ev = C.record_call(reg, call="2026-11-17-1000-acme-weekly-status.app.md", project="", title="Acme weekly status",
                        actions=[{"id": "x", "what": "Send the SSO test plan to Mike for item 13"}], theirs=[],
-                       ticked={"x": True}, people={})
+                       ticked={"x": True}, client="Acme", people={})
     assert [e for e in ev if e["op"] == "same"]
     plan = next(i for i in C.load(reg) if "c-plan13" in i["ids"])
     assert plan["id"] == "c-plan13" and plan["status"] == "done" and len(plan["ids"]) == 2
@@ -186,6 +199,7 @@ def test_pm_reject_and_split_win_over_the_keys(reg, clock):
     sugg = [s for s in C.suggestions(reg, {}) if "final rollout checklist" in s["text"]][0]
     C.reject(reg, sugg["id"], sugg["to"])
     assert not [s for s in C.suggestions(reg, {}) if s["id"] == sugg["id"] and s["to"] == sugg["to"]]
+    confirm_refs(reg)
     mapping = open_with(C.load(reg), "sso user mapping")[0]
     newer = [x for x in mapping["ids"] if x != mapping["id"]][0]
     C.split(reg, newer)
@@ -198,6 +212,7 @@ def test_pm_edit_on_the_older_item_survives_a_link(reg, clock):
     C.append(reg, [{"op": "edit", "id": "c-deb94c8d56", "at": "2026-11-11T09:00:00+00:00",
                     "text": "Mike confirms the SSO group mapping for item 13", "due": "Nov 20"}])
     record(reg, clock, 1)
+    confirm_refs(reg)
     it = open_with(C.load(reg), "sso group mapping")[0]
     assert it["text"] == "Mike confirms the SSO group mapping for item 13" and it["due"] == "Nov 20"
     assert len(it["history"]) == 2
@@ -221,11 +236,14 @@ def test_the_same_tracker_id_is_one_item(tmp_path):
 # ---------------------------------------------------------------- migration and rollback
 
 def historical(tmp_path):
-    """The fixture register plus an item 13 said again on a later weekly (before G1, so it is its own item)."""
+    """The fixture register plus an item 13 said again on a later weekly (before G1, so it is its own item), both
+    linked to the same Notion page by the PM (the Tracker ID key; the fixture knows no client)."""
     shutil.copy(LIVE / C.FILE, tmp_path / C.FILE)
     C.append(tmp_path, [{"op": "add", "id": "c-old13", "text": "confirm the SSO user mapping for item 13", "owner": "Mike",
                          "project": "", "series": "|acmeweeklystatus", "call": "2026-11-14-1000-acme-weekly-status.md",
                          "created": "2026-11-14T10:00:00+00:00", "due": "", "by": "app", "source": "notes"},
+                        {"op": "link", "id": "c-deb94c8d56", "notion_page": "acme-13"},     # both on one Notion page
+                        {"op": "link", "id": "c-old13", "notion_page": "acme-13"},
                         {"op": "done", "id": "c-old13", "at": "2026-11-15T09:00:00+00:00", "source": "manual"},
                         {"op": "reopen", "id": "c-old13", "at": "2026-11-15T09:05:00+00:00"}])
     return tmp_path
@@ -267,3 +285,163 @@ def test_cli_suggest_and_same(reg, clock, capsys):
     s = next(x for x in sugg if "final rollout checklist" in x["text"])
     assert C.main(["same", str(reg), s["id"], "--to", s["to"]]) == 0
     assert json.loads(capsys.readouterr().out)["by"] == "pm"
+
+
+# ---------------------------------------------------------------- fix round 1 (review of PB-51)
+
+def add(cid, text, owner, call, created, series="|weeklysync", client="", project="p"):
+    e = {"op": "add", "id": cid, "text": text, "owner": owner, "project": project, "series": series, "call": call,
+         "created": created, "due": "", "by": "app"}
+    if client:
+        e["client"] = client
+    return e
+
+
+def test_ref_without_a_known_client_is_only_a_suggestion(tmp_path, clock):
+    """Two clients, both meetings titled "Weekly sync", the engine knows no client: never an automatic join."""
+    C.append(tmp_path, [add("c-a13", "Send the SSO mapping for item 13", "Mike", "2026-11-03-1000-weekly-sync.md",
+                            "2026-11-03T10:00:00", project="")])
+    clock("2026-11-10T10:00:00")
+    ev = C.record_notes(tmp_path, call="2026-11-10-1000-weekly-sync.md", aliases=["David"], people={},
+                        notes="## Meeting notes\n### Action items\n- [10:00:40] **Mike**: Export the invoice CSV for item 13\n")
+    assert [e for e in ev if e["op"] == "add"] and not [e for e in ev if e["op"] == "same"]
+    assert len(open_with(C.load(tmp_path), "item 13")) == 2
+    assert [s["to"] for s in C.suggestions(tmp_path, {})] == ["c-a13"]        # the PM is asked, nothing is joined
+
+
+def test_ref_with_two_known_clients_is_neither_a_link_nor_a_suggestion(tmp_path):
+    C.append(tmp_path, [add("c-a13", "Send the SSO mapping for item 13", "Mike", "2026-11-03-1000-weekly-sync.md",
+                            "2026-11-03T10:00:00", client="Acme"),
+                        add("c-g13", "Send the SSO mapping for item 13", "Mike", "2026-11-04-1000-weekly-sync.md",
+                            "2026-11-04T10:00:00", client="Globex")])
+    assert C.link_events(C.read_events(tmp_path), ["c-g13"], {}) == []
+    assert C.suggestions(tmp_path, {}) == []
+
+
+def test_ref_with_the_same_known_client_links(tmp_path):
+    C.append(tmp_path, [add("c-a13", "Send the SSO mapping for item 13", "Mike", "2026-11-03-1000-acme-weekly.md",
+                            "2026-11-03T10:00:00", "|acmeweekly", "Acme"),
+                        add("c-b13", "Confirm the SSO mapping for item 13", "Mike", "2026-11-05-1400-acme-tech.md",
+                            "2026-11-05T14:00:00", "|acmetech", "acme")])
+    assert [e["to"] for e in C.link_events(C.read_events(tmp_path), ["c-b13"], {})] == ["c-a13"]
+
+
+def test_a_bare_number_sign_is_not_a_reference(tmp_path):
+    assert ID.ref_of("Make the SSO rollout our #1 priority") == ""
+    assert ID.ref_of("Keep the billing fix as the #1 priority") == ""
+    C.append(tmp_path, [add("c-p1", "Make the SSO rollout our #1 priority", "me", "2026-11-03-1000-weekly-sync.md",
+                            "2026-11-03T10:00:00", client="Acme"),
+                        add("c-p2", "Keep the billing fix as the #1 priority", "me", "2026-11-10-1000-weekly-sync.md",
+                            "2026-11-10T10:00:00", client="Acme")])
+    assert C.link_events(C.read_events(tmp_path), ["c-p2"], {}) == []
+
+
+def test_same_first_name_is_not_the_same_person_for_a_link(tmp_path):
+    C.append(tmp_path, [add("c-t13", "Send the SSO mapping for item 13", "Mike Turner", "2026-11-03-1000-weekly-sync.md",
+                            "2026-11-03T10:00:00", client="Acme"),
+                        add("c-b13", "Send the SSO mapping for item 13", "Mike Brown", "2026-11-10-1000-weekly-sync.md",
+                            "2026-11-10T10:00:00", client="Acme")])
+    assert C.link_events(C.read_events(tmp_path), ["c-b13"], {}) == []
+    assert [s["to"] for s in C.suggestions(tmp_path, {})] == ["c-t13"]      # only a question to the PM
+    lib = {"mike b.": "Mike Turner"}                                        # the voice library says they are one
+    assert ID.person_id("Mike B.", lib) == ID.person_id("Mike Turner", lib)
+
+
+def test_moving_the_older_call_keeps_the_joined_item_of_another_call(tmp_path):
+    C.append(tmp_path, [add("c-a13", "Send the SSO mapping for item 13", "Mike", "2026-11-03-1000-acme-weekly.md",
+                            "2026-11-03T10:00:00", client="Acme"),
+                        add("c-b13", "Confirm the SSO mapping for item 13", "Mike", "2026-11-10-1000-acme-weekly.md",
+                            "2026-11-10T10:00:00", client="Acme"),
+                        {"op": "same", "id": "c-b13", "to": "c-a13", "by": "app"}])
+    assert [i["id"] for i in C.load(tmp_path)] == ["c-a13"]
+    C.append(tmp_path, [{"op": "move", "id": "c-a13", "to": "other"}])
+    items = C.load(tmp_path)
+    assert [i["id"] for i in items] == ["c-b13"] and items[0]["status"] == "open" and items[0]["ids"] == ["c-b13"]
+
+
+def test_moving_the_newer_call_takes_only_its_mention(tmp_path):
+    C.append(tmp_path, [add("c-a13", "Send the SSO mapping for item 13", "Mike", "2026-11-03-1000-acme-weekly.md",
+                            "2026-11-03T10:00:00", client="Acme"),
+                        add("c-b13", "Confirm the SSO mapping for item 13", "Mike", "2026-11-10-1000-acme-weekly.md",
+                            "2026-11-10T10:00:00", client="Acme"),
+                        {"op": "same", "id": "c-b13", "to": "c-a13", "by": "app"},
+                        {"op": "move", "id": "c-b13", "to": "other"}])
+    items = C.load(tmp_path)
+    assert [i["id"] for i in items] == ["c-a13"] and items[0]["ids"] == ["c-a13"] and len(items[0]["history"]) == 1
+
+
+def test_migration_keeps_a_pm_edit_of_the_newer_item(tmp_path, clock):
+    C.append(tmp_path, [add("c-a13", "Send the mapping for item 13", "Mike", "2026-11-03-1000-acme-weekly.md",
+                            "2026-11-03T10:00:00", client="Acme"),
+                        add("c-b13", "Send the mapping for item 13 again", "Mike", "2026-11-10-1000-acme-weekly.md",
+                            "2026-11-10T10:00:00", client="Acme"),
+                        {"op": "edit", "id": "c-b13", "at": "2026-11-11T09:00:00",
+                         "text": "PM wording: confirm mapping for item 13 with Okta", "due": "Nov 30"}])
+    clock("2026-11-16T08:00:00")
+    assert C.migrate(tmp_path, {})["links"] == 1
+    items = C.load(tmp_path)
+    assert len(items) == 1 and items[0]["text"] == "PM wording: confirm mapping for item 13 with Okta" and items[0]["due"] == "Nov 30"
+    C.split(tmp_path, "c-b13")                                   # undo: each item has its own text again
+    assert {i["id"]: i["text"] for i in C.load(tmp_path)} == {
+        "c-a13": "Send the mapping for item 13", "c-b13": "PM wording: confirm mapping for item 13 with Okta"}
+
+
+def test_migration_never_closes_an_open_item(tmp_path, clock):
+    C.append(tmp_path, [add("c-old", "Send the deck to legal", "me", "2026-11-03-1000-acme-weekly.md", "2026-11-03T10:00:00"),
+                        add("c-new", "Send the deck to finance", "me", "2026-11-10-1000-acme-weekly.md", "2026-11-10T10:00:00"),
+                        {"op": "link", "id": "c-old", "notion_page": "aaaa"}, {"op": "link", "id": "c-new", "notion_page": "aaaa"},
+                        {"op": "done", "id": "c-old", "at": "2026-11-05T10:00:00"}])
+    clock("2026-11-16T08:00:00")
+    C.migrate(tmp_path, {})
+    assert [(i["id"], i["status"]) for i in C.load(tmp_path)] == [("c-old", "done"), ("c-new", "open")]
+
+
+def test_migration_of_a_large_register_is_one_pass(tmp_path, clock):
+    import time
+    ev = []
+    for n in range(1000):
+        day = "2026-{:02d}-{:02d}".format(1 + n // 28 % 12, 1 + n % 28)
+        ev.append(add("c-{}".format(n), "send part {} on subject {} for item {}".format(n, n % 37, n % 50), "Mike",
+                      "{}-{}-acme-weekly.md".format(day, n), "{}T10:{:02d}:00".format(day, n % 60), client="Acme"))
+    C.append(tmp_path, ev)
+    t0 = time.monotonic()
+    C.fold(C.read_events(tmp_path))
+    floor = time.monotonic() - t0
+    clock("2026-12-31T08:00:00")
+    t0 = time.monotonic()
+    res = C.migrate(tmp_path, {})
+    spent = time.monotonic() - t0
+    assert res["links"] > 0
+    assert spent < max(2.0, 6 * floor), (spent, floor)
+
+
+def test_migrate_after_rollback_in_the_same_second_gets_a_new_tag(tmp_path, clock):
+    reg = historical(tmp_path)
+    clock("2026-11-16T08:00:00+00:00")
+    first = C.migrate(reg, {})["tag"]
+    C.rollback(reg)
+    again = C.migrate(reg, {})
+    assert again["tag"] and again["tag"] != first and again["events"] > 0
+    assert C.migration_tag(C.read_events(reg)) == again["tag"]
+
+
+def test_rollback_without_a_tag_undoes_every_migration(tmp_path, clock):
+    reg = historical(tmp_path)
+    before = C.load(reg)
+    clock("2026-11-16T08:00:00+00:00")
+    C.migrate(reg, {})
+    twin = [dict(e, mig=e["mig"] + "x", tag=e["mig"] + "x" if e.get("tag") else None)   # a second process migrated too
+            for e in C.read_events(reg) if e.get("mig")]
+    C.append(reg, [{k: v for k, v in e.items() if v is not None} for e in twin])
+    C.rollback(reg)
+    assert C.load(reg) == before and not C.migration_tag(C.read_events(reg))
+
+
+def test_voice_library_default_path_is_the_apps(tmp_path, monkeypatch):
+    (tmp_path / "voices").mkdir()
+    (tmp_path / "voices" / "voices.json").write_text(json.dumps({"aliases": {"m. t.": "Mike Turner"}}), encoding="utf-8")
+    monkeypatch.delenv("LT_VOICES", raising=False)
+    monkeypatch.setenv("LT_AI_STATE", str(tmp_path / "state" / "ai-routes.json"))
+    assert ID.voice_aliases() == {"m. t.": "Mike Turner"}
+    monkeypatch.setenv("LT_VOICES", "")                         # set but empty: no library
+    assert ID.voice_aliases() == {}

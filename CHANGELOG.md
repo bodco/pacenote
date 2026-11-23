@@ -7,15 +7,20 @@ Pacenote. Earlier versions are described in the commit messages and in
 
 - **One task across calls in the commitments register (GraphRAG G1, PB-51).** A task named again on a later call joins
   the older item instead of becoming a new one when both have the same Notion page or HubSpot task, or the same
-  explicit reference ("item 13", "пункт 13") for the same person in the same project and client (the meeting series
-  when the client is not known), so Acme's item 13 and Globex's item 13 stay two items. A similar task without an ID
-  or a reference is only a suggestion until the PM confirms it; the PM can reject a suggestion or undo a link and that
-  pair is never joined again. Names follow the voice library aliases when the engine is given the library
-  (`LT_VOICES`; the app does not pass it yet). A "we will try" promise is a proposal, not an open commitment. The first write migrates the register by appending events only, and
-  `python -m livetips_m0.commitments rollback <live folder>` undoes it; an older app ignores the new events. On the G0
-  benchmark duplicates went from 6 to 3 (0 once the PM confirms the 5 suggestions), wrong identity from 5 to 2 and
-  "we will try" kept as agreed from 2 to 0: [docs/en/bench/g0-baseline.md](docs/en/bench/g0-baseline.md). The app
-  window does not show the suggestions yet.
+  explicit reference ("item 13", "пункт 13"; not a bare "#1") for the same person in the same project and the same
+  known client. Without a known client (the engine does not know a call's client yet) the same reference in one
+  meeting series is only a suggestion, so Acme's item 13 and Globex's item 13 never merge even when both meetings are
+  called "Weekly sync". A similar task without an ID or a reference is a suggestion too until the PM confirms it; the
+  PM can reject a suggestion or undo a link and that pair is never joined again, and the PM's latest edit gives the
+  joined item its wording. Names follow the aliases of the voice library the app keeps; people who only share a first
+  name are at most a suggestion. A "we will try" promise is a proposal, not an open commitment. The first write
+  migrates the register by appending events only (in about a second for 1000 items, never closing or reopening a
+  task), and `python -m livetips_m0.commitments rollback <live folder>` undoes every migration it holds; an older app
+  ignores the new events, and moving a call to another project no longer hides a task joined from another call. On
+  the G0 benchmark duplicates went from 6 to 5 (0 once the PM confirms the 8 suggestions), wrong identity from 5 to 4
+  and "we will try" kept as agreed from 2 to 0: [docs/en/bench/g0-baseline.md](docs/en/bench/g0-baseline.md). Joins
+  and proposals apply to the engine's register (tips and the skill); the app's Tracker window does not read them or
+  show the suggestions yet.
 
 - **Team/quality: a call context benchmark for GraphRAG (G0).** No change for users. `spikes/m0/bench/g0` replays three
   invented calls (two clients that both have an "item 13") through the current preparation, live lookup and

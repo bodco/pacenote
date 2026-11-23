@@ -1312,16 +1312,20 @@ The skill and the app follow the same rules, in `rules/agenda.yaml`, `rules/comm
   There is no tracker integration: Copy is the export.
 - **One task across calls (GraphRAG G1, PB-51).** When the notes of a later call name a task the register already
   holds, the engine joins it to the older item instead of adding a new one, in this order: the same Notion page or
-  HubSpot task; the same explicit reference ("item 13", "task #13", "пункт 13") for the same person in the same project
-  and client (without a known client, the same meeting series, so Acme's item 13 and Globex's item 13 stay two items).
-  The older item keeps its text, owner and status, and its history lists every call that mentioned it. A similar
-  task without an ID or a reference is only a suggestion ("Looks like the task from 03.11, is it the same?") until
-  you confirm it; you can also say no or undo a link, and that pair is never joined again. When the engine is given
-  the voice library (`LT_VOICES`), names follow its aliases, so "Mike T." and "Mike Turner" are one person; the app
-  does not pass it yet. A "we will try" promise is a proposal, not an open commitment, and a task ticked done on a
-  later call closes the older item. The first write after the update migrates the register by appending events (no line changes) and
-  `python -m livetips_m0.commitments rollback <live folder>` undoes it. The suggestions are in the engine and its
-  command line (`commitments suggest`, `same`, `reject`, `split`) for now; the app window does not show them yet.
+  HubSpot task; the same explicit reference ("item 13", "task #13", "пункт 13"; not a bare "#1") for the same person
+  in the same project and the same known client. The older item keeps its owner and status, and its history lists
+  every call that mentioned it; if you edited the newer one later, your wording wins. Without a known client (the app
+  does not know a call's client yet, and two clients can both have a "Weekly sync"), the same reference in the same
+  meeting series is only a suggestion, like a similar task without an ID or a reference ("Looks like the task from
+  03.11, is it the same?"), until you confirm it; you can also say no or undo a link, and that pair is never joined
+  again. Names follow the aliases of your voice library (Settings > Speakers > Voice library > Names), so "Mike T." and "Mike Turner"
+  are one person; two people who only share a first name are at most a suggestion. A "we will try" promise is a
+  proposal, not an open commitment, and a task ticked done on a later call closes the older item. The first write
+  after the update migrates the register by appending events (no line changes); it never closes or reopens a task,
+  and `python -m livetips_m0.commitments rollback <live folder>` undoes it. For now the joins and proposals apply to
+  the engine's register (what the tips and the skill read), and the suggestions are in its command line
+  (`commitments suggest`, `same`, `reject`, `split`): the app's Tracker window still lists each joined mention and
+  each "we will try" item as open, and does not show the suggestions yet.
 - **Brief freshness.** Home, Later and the call form compare when the brief was made with the files of the project
   folder (and the folders added in the form): "Brief is 2 days old · 3 changes since". Refresh updates only the
   sections the changed files touch and keeps your edits and the checklist. Nothing is refreshed by itself.

@@ -35,27 +35,30 @@ What the baseline says:
 
 ## After G1 identity (PB-51, variant A, 2026-11-23)
 
-The same variant A after the G1 change (`commitments` identity across calls). Raw numbers:
+The same variant A after the G1 change (`commitments` identity across calls, with fix round 1). Raw numbers:
 `spikes/m0/bench/g0/results/A-2026-11-23-g1.json` (same fixture and gold hashes as the baseline).
 
 | Target | Duplicates | Suggested | Duplicates if PM confirms | Wrong identity | Item 13 cross-client | False agreed |
 |---|---:|---:|---:|---:|---:|---:|
-| acme-weekly-status-2026-11-17 | 2 | 2 | 0 | 1 | 1 | 0 |
-| globex-weekly-2026-11-18 | 1 | 2 | 0 | 1 | 2 | 0 |
-| acme-technical-sync-2026-11-19 | 0 | 1 | 0 | 0 | 1 | 0 |
+| acme-weekly-status-2026-11-17 | 3 | 3 | 0 | 2 | 1 | 0 |
+| globex-weekly-2026-11-18 | 2 | 3 | 0 | 2 | 2 | 0 |
+| acme-technical-sync-2026-11-19 | 0 | 2 | 0 | 0 | 1 | 0 |
 | **All, before (baseline)** | **6** | n/a | n/a | **5** | **4** | **2** |
-| **All, after G1** | **3** | **5** | **0** | **2** | **4** | **0** |
+| **All, after G1** | **5** | **8** | **0** | **4** | **4** | **0** |
 
 Preparation and live columns did not change (80.0% coverage, 11 prep leaks, 100.0% answer rate, 80.0% answer text,
 4 live leaks); only latency moves between runs.
 
-- **Item 13 joins by its reference, per client.** Mike's "confirm the SSO user mapping for item 13", Sarah's "sample
-  invoice file for item 13" and Emily's "IdP metadata file for item 13" each join their older item; Acme's and
-  Globex's item 13 stay apart.
-- **"We will try" is a proposal.** The migration marks "try to confirm the pilot user list" as a proposal, and Emily's
-  "try to send the IdP metadata" joins the agreed item without weakening it: false agreed 2 to 0.
-- **The rest waits for the PM.** The rollout checklist (3 calls, 3 wordings) and the invoice export mockup have no ID
-  and no reference, so they stay separate items with a suggestion each; once the PM confirms them, duplicates are 0.
+- **Item 13 is a suggestion, per client.** The engine knows no client of a call (the fixture has none either), and
+  two clients can both have a "Weekly sync", so an explicit reference joins items by itself only when both name the
+  same client. Here the mentions of item 13 wait for the PM as suggestions inside one meeting series; Acme's and
+  Globex's item 13 are never suggested to each other. A first run of this change joined them by the series alone
+  (duplicates 3, wrong identity 2); the review found that two clients with the same meeting title would merge.
+- **"We will try" is a proposal.** The migration marks "try to confirm the pilot user list" as a proposal, and a
+  later "try to send" never weakens an agreed item: false agreed 2 to 0.
+- **The rest waits for the PM too.** The rollout checklist (3 calls, 3 wordings) and the invoice export mockup have
+  no ID and no reference, so they stay separate items with a suggestion each; once the PM confirms the suggestions,
+  duplicates are 0.
   Suggested counts every open suggestion in the register after the call, so a pair from older calls is counted on
   each target.
 - **Item 13 cross-client is unchanged (4).** It counts the other client's item 13 in the call's Tracker, which still

@@ -8,7 +8,9 @@ the network.
   python -m livetips_m0.commitments done <live folder> <id>
 """
 import argparse
+import contextlib
 import datetime as dt
+import functools
 import hashlib
 import json
 import re
@@ -27,6 +29,7 @@ def now_iso() -> str:
     return dt.datetime.now().astimezone().isoformat(timespec="seconds")
 
 
+@functools.lru_cache(maxsize=65536)
 def call_key(call: str) -> str:
     """The call's transcript file name without folders, .md and the app's .app part (app and skill files match)."""
     n = Path(call or "").name
@@ -127,6 +130,8 @@ def _apply(it: dict, op: str, e: dict) -> None:
         for k in ("text", "owner", "due"):
             if k in e and e[k] is not None:
                 it[k] = str(e[k])
+        if e.get("source") != "notes" and (e.get("text") is not None or e.get("owner") is not None):
+            it["edited_at"] = str(e.get("at") or "0")       # PB-51: a PM edit, it wins when the item is joined
     elif op == "link":          # 0.8.6 (rules/notion-tasks.yaml): the item is a task in the PM's Notion
         it.update(notion_page=e.get("notion_page", ""), notion_note="")
     elif op == "unlink":
@@ -143,7 +148,7 @@ def _add(items: Dict[str, dict], alias: Dict[str, str], e: dict) -> None:
         return
     modality = "tentative" if e.get("modality") == "tentative" else ("agreed" if e.get("modality") == "agreed" else "")
     items[cid] = dict({k: e.get(k, "") for k in ITEM_KEYS}, status="proposal" if modality == "tentative" else "open",
-                      modality=modality, notion_page="", notion_note="", crm_task="", crm_portal="", ids=[cid],
+                      modality=modality, notion_page="", notion_note="", crm_task="", crm_portal="", ids=[cid], edited_at="",
                       history=[{"id": cid, "call": e.get("call", ""), "text": e.get("text", ""), "created": e.get("created", "")}],
                       **NOT_DONE)
 
@@ -158,14 +163,20 @@ def root(alias: Dict[str, str], cid: str) -> str:
 
 def _join(items: Dict[str, dict], alias: Dict[str, str], parked: Dict[str, dict], cid: str, to: str) -> None:
     """PB-51 op same: item `cid` is item `to` (a Tracker ID, an explicit reference or the PM's confirm). The older
-    item keeps its id, text, owner and status (a PM edit wins); the newer one becomes its alias and its mentions join
-    the history. The newer item is parked as it was, so a split can bring it back."""
+    item keeps its id, text, owner and status; the newer one becomes its alias and its mentions join the history. A
+    PM edit wins: when the newer item carries the later PM edit, its text and owner go onto the joined item. The newer
+    item is parked as it was (with the older one's own words), so a split brings both back."""
     a, b = root(alias, cid), root(alias, to or "")
     if a == b or a not in items or b not in items:
         return
     src, dst = items.pop(a), items[b]
-    parked[a] = dict(src, ids=list(src["ids"]), history=list(src["history"]))
+    parked[a] = dict(src, ids=list(src["ids"]), history=list(src["history"]),
+                     _dst={k: dst.get(k, "") for k in ("text", "owner", "due", "edited_at")})
     alias[a] = b
+    if (src.get("edited_at") or "") > (dst.get("edited_at") or ""):
+        dst.update({k: src.get(k, "") for k in ("text", "owner", "edited_at")})
+        if src.get("due"):
+            dst["due"] = src["due"]
     dst["ids"] = dst["ids"] + [x for x in src["ids"] if x not in dst["ids"]]
     dst["history"] = dst["history"] + src["history"]
     if not dst.get("due") and src.get("due") and src["status"] in LIVE:
@@ -184,11 +195,14 @@ def _split(items: Dict[str, dict], alias: Dict[str, str], parked: Dict[str, dict
     b = root(alias, a)
     alias.pop(a)
     src = parked.pop(a)
+    was = src.pop("_dst", None)
     dst = items.get(b)
     if dst:
         gone = set(src["ids"])
         dst["ids"] = [x for x in dst["ids"] if x not in gone]
         dst["history"] = [h for h in dst["history"] if h.get("id") not in gone]
+        if was and src.get("edited_at") and dst.get("edited_at") == src["edited_at"]:   # its words came from src
+            dst.update(was)
     items[a] = src
 
 
@@ -209,6 +223,10 @@ def fold(events: List[dict]) -> List[dict]:
         if op == "add":
             _add(items, alias, e)
         elif op == "move":      # 0.10.1 (A2): the item went with its call to another project
+            if cid in parked:   # PB-51: a mention joined to an item of another call leaves alone
+                _split(items, alias, parked, cid)
+            for k in [k for k, v in alias.items() if v == cid and k in parked]:
+                _split(items, alias, parked, k)     # the mentions of other calls joined to it stay as their own items
             items.pop(cid, None)
             for k in [k for k, v in alias.items() if v == cid or k == cid]:
                 alias.pop(k, None)
@@ -478,16 +496,21 @@ def _overlap(a: dict, b: dict) -> float:
     return len(x & y) / max(1, min(len(x), len(y)))
 
 
-def _same_scope(a: dict, b: dict, people: Optional[Dict[str, str]]) -> bool:
-    return (ID.scope_of(a) == ID.scope_of(b) and ID.same_person(a.get("owner") or "me", b.get("owner") or "me", people)
+def _same_scope(a: dict, b: dict, people: Optional[Dict[str, str]], link: bool = False) -> bool:
+    """Two items of different calls that may be one: for a link the same known client and one person id in the
+    voice library; for a suggestion also the same meeting series without a client and the same first name."""
+    scope = ID.scope_match(a, b)
+    return ((scope == "link" if link else bool(scope))
+            and ID.same_person(a.get("owner") or "me", b.get("owner") or "me", people, strict=link)
             and not (_calls(a) & _calls(b)))
 
 
 def link_events(events: List[dict], new_ids: List[str], people: Optional[Dict[str, str]] = None, at: str = "",
                 by: str = "app") -> List[dict]:
     """The op same events that join the new items to older ones by the first two keys: the same Tracker ID, or the
-    same explicit reference ("item 13") in the same scope for the same person. An older item the PM split from it or
-    rejected is never taken. Several candidates: the most similar text, then the oldest."""
+    same explicit reference ("item 13") of the same known client for the same person. Without a known client a
+    reference is only a suggestion (suggestions()). An older item the PM split from it or rejected is never taken,
+    and only an open item or a proposal is a target. Several candidates: the most similar text, then the oldest."""
     items = fold(events)
     by_id = {x: i for i in items for x in i.get("ids") or [i["id"]]}
     rej, out, done = _rejected(events), [], set()
@@ -501,7 +524,7 @@ def link_events(events: List[dict], new_ids: List[str], people: Optional[Dict[st
         hit = [o for o in pool if tid and ID.tracker_id(o) == tid]
         why = "tracker"
         if not hit and ref:
-            hit = [o for o in pool if _ref(o) == ref and _same_scope(it, o, people)]
+            hit = [o for o in pool if _ref(o) == ref and _same_scope(it, o, people, link=True)]
             why = "ref"
         if hit:
             best = sorted(hit, key=lambda o: (-_overlap(it, o), o.get("created", "")))[0]
@@ -510,17 +533,39 @@ def link_events(events: List[dict], new_ids: List[str], people: Optional[Dict[st
     return out
 
 
-def tracker_links(events: List[dict], at: str = "", by: str = "app") -> List[dict]:
-    """Items that ended up on the same Notion page or HubSpot task (the PM linked both): the newer joins the older."""
-    items, rej, out, first = fold(events), _rejected(events), [], {}
-    for it in sorted(items, key=lambda i: i.get("created", "")):
-        tid = ID.tracker_id(it)
-        if not tid or it["status"] not in LIVE + ("done",):
+def migration_links(events: List[dict], people: Optional[Dict[str, str]] = None, at: str = "", by: str = "app") -> List[dict]:
+    """The links of the migration in one pass over one fold (a register of 1000 items in about a second): oldest item
+    first, each joins the first older item with its Tracker ID, else the most similar older item with its reference
+    of the same known client and person (link_events' keys). Only open items and proposals take part, so the
+    migration never closes or reopens anything; a done or dropped item stays as it was."""
+    rej, out = _rejected(events), []
+    by_tid: Dict[str, dict] = {}
+    by_ref: Dict[tuple, List[dict]] = {}
+    for it in sorted(fold(events), key=lambda i: i.get("created", "")):
+        if it["status"] not in LIVE:
             continue
-        if tid in first and not _is_rejected(rej, it, first[tid]):
-            out.append({"op": "same", "id": it["id"], "to": first[tid]["id"], "by": by, "source": "tracker",
-                        "at": at or now_iso()})
-        first.setdefault(tid, it)
+        tid, ref, client = ID.tracker_id(it), _ref(it), str(it.get("client") or "").strip().lower()
+        key = (str(it.get("project") or ""), client, ID.person_id(it.get("owner") or "me", people), ref)
+        mine = _calls(it)
+        hit, why = None, "tracker"
+        if tid and tid in by_tid and not _is_rejected(rej, it, by_tid[tid]):
+            hit = by_tid[tid]
+        elif ref and client:
+            cands = [o for o in by_ref.get(key, []) if not (o["calls"] & mine) and not _is_rejected(rej, it, o)]
+            hit = sorted(cands, key=lambda o: (-_overlap(it, o), o.get("created", "")))[0] if cands else None
+            why = "ref"
+        if hit:
+            out.append({"op": "same", "id": it["id"], "to": hit["id"], "by": by, "source": why, "at": at or now_iso()})
+            hit["calls"] |= mine
+            hit["ids"] = hit["ids"] + it["ids"]
+            if tid:
+                by_tid.setdefault(tid, hit)
+            continue
+        node = dict(it, calls=set(mine), ids=list(it["ids"]))
+        if tid:
+            by_tid.setdefault(tid, node)
+        if ref and client:
+            by_ref.setdefault(key, []).append(node)
     return out
 
 
@@ -538,9 +583,10 @@ def close_text(a: str, b: str, names: set) -> bool:
 
 
 def suggestions(folder_or_events, people: Optional[Dict[str, str]] = None) -> List[dict]:
-    """The third key: an open item that looks like an open item of an earlier call (the same person, the same scope,
-    a similar text, no other reference). Only a question to the PM ("looks like the task from 12.11, is it the
-    same?"); confirm() makes it a link, reject() keeps them apart for good. Newest item first."""
+    """The third key: an open item that looks like an open item of an earlier call (the same person, the same client
+    or, without a client, the same meeting series), by the same explicit reference or a similar text. Only a question
+    to the PM ("looks like the task from 12.11, is it the same?"); confirm() makes it a link, reject() keeps them
+    apart for good. Newest item first."""
     events = folder_or_events if isinstance(folder_or_events, list) else read_events(folder_or_events)
     items, rej, out = fold(events), _rejected(events), []
     names = {w for i in items for w in words(i.get("owner", ""))} | {w for v in (people or {}).values() for w in words(v)}
@@ -550,7 +596,7 @@ def suggestions(folder_or_events, people: Optional[Dict[str, str]] = None) -> Li
         cands = [o for o in items if o["id"] != it["id"] and o["status"] in LIVE and o.get("created", "") < it.get("created", "")
                  and _same_scope(it, o, people) and not _is_rejected(rej, it, o) and _ref(o) == _ref(it)
                  and not (ID.tracker_id(o) and ID.tracker_id(it) and ID.tracker_id(o) != ID.tracker_id(it))
-                 and any(close_text(a, b, names) for a in _texts(it) for b in _texts(o))]
+                 and (_ref(it) or any(close_text(a, b, names) for a in _texts(it) for b in _texts(o)))]
         if cands:
             o = sorted(cands, key=lambda c: (-_overlap(it, c), c.get("created", "")))[0]
             day = str(o.get("created", ""))[:10]
@@ -594,23 +640,47 @@ def migration_tag(events: List[dict]) -> str:
                  and e.get("tag") not in rolled), "")
 
 
+@contextlib.contextmanager
+def _migration_lock(folder):
+    """The app's engine and the skill can both start the migration: one process at a time (a lock file next to the
+    register, released when the process ends)."""
+    p = path_for(folder)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with open(p.parent / ".commitments.lock", "a") as f:
+        try:
+            import fcntl
+            fcntl.flock(f, fcntl.LOCK_EX)
+        except (ImportError, OSError):
+            pass
+        yield
+
+
 def migrate(folder, people: Optional[Dict[str, str]] = None, by: str = "app") -> dict:
     """PB-51: the G1 identity over the register written before it. Append only, every historical line stays: the "we
-    will try" items become proposals (op tentative), items with the same Tracker ID or the same explicit reference in
-    one scope join the older one (op same; the newer id stays its alias). Every event carries the migration tag, so
-    rollback() undoes all of it; an older app ignores these ops and reads the register as before. Once per register."""
+    will try" items become proposals (op tentative), open items with the same Tracker ID or the same explicit
+    reference of one known client join the older one (op same; the newer id stays its alias). Every event carries
+    the migration tag, so rollback() undoes all of it; an older app ignores these ops and reads the register as
+    before. Once per register; a new tag never repeats a tag the register already has."""
+    with _migration_lock(folder):
+        return _migrate(folder, people, by)
+
+
+def _migrate(folder, people: Optional[Dict[str, str]], by: str) -> dict:
     events = read_events(folder)
     if not events or migration_tag(events):
         return {"tag": migration_tag(events), "events": 0}
     at = now_iso()
-    tag = "{}-{}".format(MIGRATION, re.sub(r"\D", "", at)[:14])
+    used = {str(e.get("tag")) for e in events if e.get("tag")}
+    base = tag = "{}-{}".format(MIGRATION, re.sub(r"\D", "", at)[:14])
+    n = 1
+    while tag in used:
+        n += 1
+        tag = "{}-{}".format(base, n)
     out = [{"op": "migrate", "id": tag, "tag": tag, "at": at, "by": by}]
     for it in fold(events):
         if it["status"] == "open" and not it.get("modality") and ID.is_tentative(it.get("text", "")):
             out.append({"op": "tentative", "id": it["id"], "at": at, "by": by})
-    links = tracker_links(events + out, at, by)
-    for it in sorted(fold(events + out + links), key=lambda i: i.get("created", "")):
-        links += link_events(events + out + links, [it["id"]], people, at, by)     # oldest first, each to an older one
+    links = migration_links(events + out, people, at, by)
     out += links
     for e in out:
         e["mig"] = tag
@@ -619,22 +689,28 @@ def migrate(folder, people: Optional[Dict[str, str]] = None, by: str = "app") ->
             "links": len(links)}
 
 
-def rollback(folder, tag: str = "") -> Optional[dict]:
-    """Undo the G1 migration: one op rollback, after which the register folds exactly as before the migration
-    (links made later on new calls stay)."""
-    tag = tag or migration_tag(read_events(folder))
-    if not tag:
-        return None
-    e = {"op": "rollback", "id": tag, "tag": tag, "at": now_iso()}
-    append(folder, [e])
-    return e
+def rollback(folder, tag: str = "") -> List[dict]:
+    """Undo the G1 migration: one op rollback per migration this register holds (two processes may each have
+    migrated), or only `tag`. After it the register folds exactly as before the migration (links made later on new
+    calls stay). Returns the events written."""
+    with _migration_lock(folder):
+        events = read_events(folder)
+        rolled = {e.get("tag") for e in events if e.get("op") == "rollback"}
+        tags = [tag] if tag else [e["tag"] for e in events if e.get("op") == "migrate" and e.get("tag") not in rolled
+                                  and str(e.get("tag", "")).startswith(MIGRATION)]
+        out = [{"op": "rollback", "id": t, "tag": t, "at": now_iso()} for t in dict.fromkeys(tags) if t]
+        append(folder, out)
+    return out
 
 
 def ensure_migrated(folder, people: Optional[Dict[str, str]] = None) -> None:
     """Run the migration once, before the first write of the G1 code (rolled back registers stay rolled back)."""
     events = read_events(folder)
     if events and not any(e.get("op") in ("migrate", "rollback") for e in events):
-        migrate(folder, people)
+        with _migration_lock(folder):
+            events = read_events(folder)
+            if not any(e.get("op") in ("migrate", "rollback") for e in events):
+                _migrate(folder, people, "app")
 
 
 def main(argv=None) -> int:
