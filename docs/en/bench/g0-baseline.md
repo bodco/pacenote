@@ -101,8 +101,8 @@ All data is invented.
 
 ```sh
 cd spikes/m0
-python3 bench/g0/run.py --variant A          # the table, and results/A-<date>.json
-python3 bench/g0/run.py --variant A --label g1  # results/A-<date>-g1.json, keeps a same-day result
+python3 bench/g0/run.py --variant A          # the table, and results/A-<date>.json (-r2, -r3 when it exists)
+python3 bench/g0/run.py --variant A --label g1  # results/A-<date>-g1.json; a saved result is never overwritten
 python3 bench/g0/run.py --compare A C        # the newest result of each variant, metric by metric
 python3 -m pytest -q tests/test_g0_bench.py  # runs the harness, checks the fixture (not the scores)
 ```

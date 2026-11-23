@@ -493,7 +493,11 @@ def misses(res: dict) -> str:
 
 def save(res: dict) -> Path:
     RESULTS.mkdir(parents=True, exist_ok=True)
-    p = RESULTS / "{}-{}{}.json".format(res["variant"], res["date"], "-" + res["label"] if res.get("label") else "")
+    stem = "{}-{}{}".format(res["variant"], res["date"], "-" + res["label"] if res.get("label") else "")
+    p, n = RESULTS / (stem + ".json"), 1
+    while p.exists():           # never overwrite a saved result (a same-day baseline): -r2, -r3 sort after it
+        n += 1
+        p = RESULTS / "{}-r{}.json".format(stem, n)
     p.write_text(json.dumps(res, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
     return p
 

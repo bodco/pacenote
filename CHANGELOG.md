@@ -6,12 +6,14 @@ Pacenote. Earlier versions are described in the commit messages and in
 ## Unreleased
 
 - **One task across calls in the commitments register (GraphRAG G1, PB-51).** A task named again on a later call joins
-  the older item instead of becoming a new one when both have the same Notion page or HubSpot task, or the same
+  the older item instead of becoming a new one when both have the same Notion page or HubSpot task (for now in the
+  register's migration only: a new item gets its page or task later), or the same
   explicit reference ("item 13", "пункт 13"; not a bare "#1") for the same person in the same project and the same
   known client. Without a known client (the engine does not know a call's client yet) the same reference in one
   meeting series is only a suggestion, so Acme's item 13 and Globex's item 13 never merge even when both meetings are
   called "Weekly sync". A similar task without an ID or a reference is a suggestion too until the PM confirms it; the
-  PM can reject a suggestion or undo a link and that pair is never joined again, and the PM's latest edit gives the
+  PM can reject a suggestion or undo a link and that pair is never joined again (an undo gives each item back its own
+  status, due date and done, and what was done on either while joined stays with it), and the PM's latest edit gives the
   joined item its wording. Names follow the aliases of the voice library the app keeps; people who only share a first
   name are at most a suggestion. A "we will try" promise is a proposal, not an open commitment. The first write
   migrates the register by appending events only (in about a second for 1000 items, never closing or reopening a

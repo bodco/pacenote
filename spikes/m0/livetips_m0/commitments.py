@@ -14,6 +14,7 @@ import functools
 import hashlib
 import json
 import re
+import sys
 import threading
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -161,16 +162,17 @@ def root(alias: Dict[str, str], cid: str) -> str:
     return cid
 
 
-def _join(items: Dict[str, dict], alias: Dict[str, str], parked: Dict[str, dict], cid: str, to: str) -> None:
+def _join(items: Dict[str, dict], alias: Dict[str, str], parked: Dict[str, dict], cid: str, to: str, n: int = -1) -> None:
     """PB-51 op same: item `cid` is item `to` (a Tracker ID, an explicit reference or the PM's confirm). The older
     item keeps its id, text, owner and status; the newer one becomes its alias and its mentions join the history. A
     PM edit wins: when the newer item carries the later PM edit, its text and owner go onto the joined item. The newer
-    item is parked as it was (with the older one's own words), so a split brings both back."""
+    item is parked as it was, with `n` (the index of this same) for fold: a move of either call cancels the same like
+    an op split does, and an op split never reaches here (fold skips the same it undoes, _split_pairs)."""
     a, b = root(alias, cid), root(alias, to or "")
     if a == b or a not in items or b not in items:
         return
     src, dst = items.pop(a), items[b]
-    parked[a] = dict(src, ids=list(src["ids"]), history=list(src["history"]),
+    parked[a] = dict(src, ids=list(src["ids"]), history=list(src["history"]), _same=n,
                      _dst={k: dst.get(k, "") for k in ("text", "owner", "due", "edited_at")})
     alias[a] = b
     if (src.get("edited_at") or "") > (dst.get("edited_at") or ""):
@@ -187,15 +189,18 @@ def _join(items: Dict[str, dict], alias: Dict[str, str], parked: Dict[str, dict]
         dst.update({k: src[k] for k in ("status", "done_at", "done_source", "done_call")})
 
 
-def _split(items: Dict[str, dict], alias: Dict[str, str], parked: Dict[str, dict], cid: str) -> None:
-    """PB-51 op split: undo a same. The parked item comes back as it was when it was joined."""
+def _split(items: Dict[str, dict], alias: Dict[str, str], parked: Dict[str, dict], cid: str) -> int:
+    """PB-51: take a joined mention out again. The parked item comes back as it was when it was joined; the older item
+    gets back its own text, owner and due when they came from it. Returns the index of the same it undid (-1 when
+    none), so fold can cancel that same and give the older item back all its own state."""
     a = cid if cid in parked else next((k for k, v in parked.items() if cid in v["ids"]), "")
     if not a or a not in alias:
-        return
+        return -1
     b = root(alias, a)
     alias.pop(a)
     src = parked.pop(a)
     was = src.pop("_dst", None)
+    n = src.pop("_same", -1)
     dst = items.get(b)
     if dst:
         gone = set(src["ids"])
@@ -204,39 +209,70 @@ def _split(items: Dict[str, dict], alias: Dict[str, str], parked: Dict[str, dict
         if was and src.get("edited_at") and dst.get("edited_at") == src["edited_at"]:   # its words came from src
             dst.update(was)
     items[a] = src
+    return n
+
+
+def _split_pairs(events: List[dict], rolled: set) -> set:
+    """PB-51: the indexes of each op split and of the op same it undoes (the latest same of that id before it, as
+    split() writes it). fold skips both, so a link and its undo leave the register as if the link never was."""
+    stack: Dict[str, List[int]] = {}
+    out = set()
+    for n, e in enumerate(events):
+        if e.get("mig") and str(e["mig"]) in rolled:
+            continue
+        if e.get("op") == "same":
+            stack.setdefault(str(e.get("id")), []).append(n)
+        elif e.get("op") == "split" and stack.get(str(e.get("id"))):
+            out.update((stack[str(e.get("id"))].pop(), n))
+    return out
 
 
 def fold(events: List[dict]) -> List[dict]:
     """Items in the order they were added, with status open|proposal|done|dropped. A duplicate add (same call,
     similar text, rules/commitments.yaml > duplicates) points at the first item; later events on it apply to the
     first. PB-51 (rules/commitments.yaml > identity): op same joins an item of another call to an older one (its id
-    stays an alias, its events keep applying), op split undoes that, and the events of a rolled back migration are
-    skipped. Each item lists its ids and its history (the calls that mentioned it)."""
+    stays an alias, its events keep applying), op split cancels that same as if it never happened (each item keeps
+    its own status, modality, due and done, and every event stays with the id it named), and the events of a rolled
+    back migration are skipped. A move of a call cancels the same of its mentions joined across calls the same way
+    (fold runs again without them). Each item lists its ids and its history (the calls that mentioned it)."""
     rolled = {str(e.get("tag")) for e in events if e.get("op") == "rollback" and e.get("tag")}
+    undone = _split_pairs(events, rolled)
+    while True:
+        items, moved = _fold_once(events, rolled, undone)
+        if not moved - undone:
+            return items
+        undone |= moved
+
+
+def _fold_once(events: List[dict], rolled: set, undone: set):
+    """One pass of fold without the events in `undone`. Returns the items and the indexes of the same events a move
+    took apart in this pass."""
+    moved = set()
     items: Dict[str, dict] = {}
     alias: Dict[str, str] = {}
     parked: Dict[str, dict] = {}
-    for e in events:
-        if e.get("mig") and str(e["mig"]) in rolled:
+    for n, e in enumerate(events):
+        if n in undone or (e.get("mig") and str(e["mig"]) in rolled):
             continue
         op, cid = e.get("op"), e.get("id")
         if op == "add":
             _add(items, alias, e)
         elif op == "move":      # 0.10.1 (A2): the item went with its call to another project
             if cid in parked:   # PB-51: a mention joined to an item of another call leaves alone
-                _split(items, alias, parked, cid)
+                moved.add(_split(items, alias, parked, cid))
             for k in [k for k, v in alias.items() if v == cid and k in parked]:
-                _split(items, alias, parked, k)     # the mentions of other calls joined to it stay as their own items
+                moved.add(_split(items, alias, parked, k))  # the mentions of other calls joined to it stay their own
             items.pop(cid, None)
             for k in [k for k, v in alias.items() if v == cid or k == cid]:
                 alias.pop(k, None)
         elif op == "same":
-            _join(items, alias, parked, cid, e.get("to", ""))
+            _join(items, alias, parked, cid, e.get("to", ""), n)
         elif op == "split":
             _split(items, alias, parked, cid)
         elif items.get(root(alias, cid)):
             _apply(items[root(alias, cid)], op, e)
-    return list(items.values())
+    moved.discard(-1)
+    return list(items.values()), moved
 
 
 def load(folder) -> List[dict]:
@@ -650,8 +686,8 @@ def _migration_lock(folder):
         try:
             import fcntl
             fcntl.flock(f, fcntl.LOCK_EX)
-        except (ImportError, OSError):
-            pass
+        except (ImportError, OSError) as err:
+            print("commitments: migration lock not taken ({}), running unlocked".format(err), file=sys.stderr)
         yield
 
 

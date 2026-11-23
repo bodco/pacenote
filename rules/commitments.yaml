@@ -31,7 +31,8 @@ duplicates: >-
   shares at least 60% of its words with an open item is the same commitment: keep the first.
 identity: >-
   PB-51 (GraphRAG G1): one task across calls. A new item is an older open item (or proposal) of the project when, in
-  this order: 1) both are the same task in the PM's tracker (the same Notion page or HubSpot task id); 2) both name the
+  this order: 1) both are the same task in the PM's tracker (the same Notion page or HubSpot task id; a new item gets its page or task only later, so today this
+  key joins items in the migration); 2) both name the
   same explicit reference ("item 13", "task #13", "пункт 13"; a bare "#1" is not one) for the same person in the same
   project AND the same known client. Then the register appends op same: the older item keeps its id, owner and status,
   the newer id stays its alias, every event on either id applies to the one item, and its history lists every call
@@ -39,7 +40,8 @@ identity: >-
   reference or a similar task of the same person from an earlier call of the same client, or of the same meeting
   series when a client is unknown (two clients can both have a "Weekly sync"). It becomes op same when the PM confirms
   it, op reject when the PM says no. A PM action always wins: the PM's latest edit gives the joined item its text and
-  owner, op split undoes any link and gives each item its own words back, and a split or rejected pair is never joined
+  owner, op split undoes any link as if it never was (each item gets back its own words, status, modality, due and done, and
+  an event on either id while they were joined stays with that id), and a split or rejected pair is never joined
   or suggested again. A person is one id through the voice library (its aliases and Merge into, rules/voices.yaml):
   "Mike T." and "Mike Turner" are one owner. A link needs that one id; the same first name alone ("Mike Turner" and
   "Mike Brown") is at most a suggestion. When a call moves to another project, its items leave the joined items of

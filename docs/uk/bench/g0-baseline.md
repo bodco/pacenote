@@ -100,8 +100,8 @@ PB-50. Синтетичний бенчмарк контексту, який Pace
 
 ```sh
 cd spikes/m0
-python3 bench/g0/run.py --variant A          # таблиця і results/A-<date>.json
-python3 bench/g0/run.py --variant A --label g1  # results/A-<date>-g1.json, не перезаписує результат того ж дня
+python3 bench/g0/run.py --variant A          # таблиця і results/A-<date>.json (-r2, -r3, якщо він уже є)
+python3 bench/g0/run.py --variant A --label g1  # results/A-<date>-g1.json; збережений результат не перезаписується
 python3 bench/g0/run.py --compare A C        # найновіший результат кожного варіанта, метрика за метрикою
 python3 -m pytest -q tests/test_g0_bench.py  # запускає обв'язку, перевіряє фікстуру (не оцінки)
 ```

@@ -18,8 +18,11 @@ from typing import Dict, List, Optional
 
 REF_RX = re.compile(r"(?:\b(?:item|task|ticket|point|issue)|(?<!\w)(?:пункт|задач[аіуи]|тікет|питання))\s*(?:№|#|no\.?)?\s*(\d{1,5})\b",
                     re.I | re.U)    # a bare "#1" is not a reference ("our #1 priority"); "task #13" is
-TENTATIVE_RX = re.compile(r"(?<!\w)(?:try to|will try|we'll try|attempt to|maybe|if possible|спроб\w*|постара\w*|"
-                          r"можливо|якщо вийде|по можливості)(?!\w)", re.I | re.U)
+TENTATIVE_RX = re.compile(r"(?<!\w)(?:try to|will try|we'll try|attempt to|maybe(?=\s+\w)|if possible|"
+                          r"спробу(?:ю|єш|є|ємо|єте|ють|вати|ймо)|постара(?:юсь|юся|ємось|ємося|ється|ються|тися|тись)|"
+                          r"(?<!наскільки )можливо|якщо вийде|по можливості)(?!\w)", re.I | re.U)
+# verb forms only ("спробую", not the noun "спробу"); "maybe" before a word ("maybe send", not "the maybe-list");
+# "наскільки можливо" is "as soon as possible", not a "we will try"
 ME = "me"
 
 

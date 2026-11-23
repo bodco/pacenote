@@ -73,6 +73,16 @@ def test_tentative_wording_in_both_languages():
     assert not ID.is_tentative("send the entry list")
 
 
+def test_tentative_wording_does_not_catch_a_real_commitment():
+    assert not ID.is_tentative("Розібрати невдалу спробу входу Mike")      # the noun "спроба", not "we will try"
+    assert not ID.is_tentative("review the failed login attempt")
+    assert not ID.is_tentative("send the maybe-list to Emily")
+    assert not ID.is_tentative("надіслати звіт якнайшвидше, наскільки можливо")
+    assert ID.is_tentative("можливо надішлемо звіт у п'ятницю")
+    assert ID.is_tentative("спробую підтвердити список")
+    assert ID.is_tentative("maybe send the report on Friday")
+
+
 def test_person_id_follows_voice_library_aliases_and_merges(tmp_path):
     lib = tmp_path / "voices.json"       # Settings > Voice library > Merge into wrote "m. t." and "mike t." -> Mike Turner
     lib.write_text(json.dumps({"people": {"Mike Turner": {}}, "aliases": {"m. t.": "Mike Turner", "mike t.": "m. t.",
@@ -206,6 +216,74 @@ def test_pm_reject_and_split_win_over_the_keys(reg, clock):
     assert len(open_with(C.load(reg), "sso user mapping")) == 2
     events = C.read_events(reg)
     assert C.link_events(events, [newer], {}) == []          # the split pair is never linked again
+
+
+def _pair(old_text="fix item 13", new_text="fix item 13", old_mod="", new_due=""):
+    a = {"op": "add", "id": "c-old", "text": old_text, "owner": "me", "project": "p", "client": "acme",
+         "call": "2026-11-03-1000-acme-weekly.md", "created": "2026-11-03T10:00:00"}
+    if old_mod:
+        a["modality"] = old_mod
+    b = {"op": "add", "id": "c-new", "text": new_text, "owner": "me", "project": "p", "client": "acme", "due": new_due,
+         "call": "2026-11-10-1000-acme-weekly.md", "created": "2026-11-10T10:00:00"}
+    return [a, b]
+
+
+def _by_id(events):
+    return {i["id"]: i for i in C.fold(events)}
+
+
+def test_split_after_a_done_mention_gives_the_older_item_back_open():
+    ev = _pair() + [{"op": "done", "id": "c-new", "at": "2026-11-10T10:30:00", "source": "manual"},
+                    {"op": "same", "id": "c-new", "to": "c-old", "by": "app"}]
+    assert _by_id(ev)["c-old"]["status"] == "done"
+    got = _by_id(ev + [{"op": "split", "id": "c-new", "to": "c-old", "by": "pm"}])
+    assert got["c-old"]["status"] == "open" and got["c-old"]["done_at"] == ""
+    assert got["c-new"]["status"] == "done"
+
+
+def test_split_after_an_agreed_mention_gives_the_proposal_back():
+    ev = _pair("try to fix item 13", "fix item 13 by friday", "tentative", "friday") + [
+        {"op": "same", "id": "c-new", "to": "c-old", "by": "app"}]
+    assert _by_id(ev)["c-old"]["status"] == "open"
+    got = _by_id(ev + [{"op": "split", "id": "c-new", "to": "c-old", "by": "pm"}])
+    assert (got["c-old"]["status"], got["c-old"]["modality"], got["c-old"]["due"]) == ("proposal", "tentative", "")
+    assert (got["c-new"]["status"], got["c-new"]["due"]) == ("open", "friday")
+
+
+def test_split_after_the_due_date_was_copied_clears_it():
+    ev = _pair(new_due="Nov 30") + [{"op": "same", "id": "c-new", "to": "c-old", "by": "app"}]
+    assert _by_id(ev)["c-old"]["due"] == "Nov 30"
+    got = _by_id(ev + [{"op": "split", "id": "c-new", "to": "c-old", "by": "pm"}])
+    assert got["c-old"]["due"] == "" and got["c-new"]["due"] == "Nov 30"
+    assert [h["id"] for h in got["c-old"]["history"]] == ["c-old"] and got["c-old"]["ids"] == ["c-old"]
+
+
+def test_events_while_joined_stay_with_the_item_they_named_after_a_split():
+    ev = _pair() + [{"op": "same", "id": "c-new", "to": "c-old", "by": "app"},
+                    {"op": "edit", "id": "c-old", "at": "2026-11-12T09:00:00", "due": "Dec 1"},
+                    {"op": "done", "id": "c-new", "at": "2026-11-12T10:00:00", "source": "manual"},
+                    {"op": "split", "id": "c-new", "to": "c-old", "by": "pm"}]
+    got = _by_id(ev)
+    assert (got["c-old"]["status"], got["c-old"]["due"]) == ("open", "Dec 1")
+    assert got["c-new"]["status"] == "done"
+
+
+def test_moving_a_joined_done_mention_gives_the_older_item_back_open():
+    ev = _pair(new_due="Nov 30") + [{"op": "done", "id": "c-new", "at": "2026-11-10T10:30:00", "source": "manual"},
+                                    {"op": "same", "id": "c-new", "to": "c-old", "by": "app"},
+                                    {"op": "move", "id": "c-new", "to": "other"}]
+    got = _by_id(ev)
+    assert list(got) == ["c-old"]
+    assert (got["c-old"]["status"], got["c-old"]["done_at"], got["c-old"]["due"]) == ("open", "", "")
+    assert got["c-old"]["ids"] == ["c-old"]
+
+
+def test_a_pair_split_and_confirmed_again_is_one_item():
+    ev = _pair() + [{"op": "same", "id": "c-new", "to": "c-old", "by": "app"},
+                    {"op": "split", "id": "c-new", "to": "c-old", "by": "pm"},
+                    {"op": "same", "id": "c-new", "to": "c-old", "by": "pm"}]
+    got = C.fold(ev)
+    assert len(got) == 1 and got[0]["ids"] == ["c-old", "c-new"]
 
 
 def test_pm_edit_on_the_older_item_survives_a_link(reg, clock):

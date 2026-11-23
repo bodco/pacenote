@@ -2,7 +2,7 @@
  "schema": "pacenote.bench.g0/1",
  "variant": "A",
  "date": "2026-11-23",
- "commit": "0565e55",
+ "commit": "9e4e961",
  "fixture_sha": "26d3ec6b228f19a9",
  "gold_sha": "180234bba3fef52c",
  "route": "codex",
@@ -129,17 +129,15 @@
     "answer_text_rate": 50.0,
     "answer_text": 2,
     "leaks": 2,
-    "p50_ms": 0.29,
-    "p95_ms": 0.34,
-    "index_build_ms": 4.4,
-    "cold_ms": 4.3
+    "p50_ms": 0.31,
+    "p95_ms": 0.41,
+    "index_build_ms": 4.9,
+    "cold_ms": 4.9
    },
    "after": {
     "duplicates": 3,
     "wrong_identity": 2,
-    "false_agreed": 0,
-    "suggested": 3,
-    "duplicates_if_confirmed": 0,
+    "false_agreed": 1,
     "item13_cross_client": 1,
     "item13_cross_events": 0,
     "item13_in_tracker": 1,
@@ -172,9 +170,9 @@
       "id": "w-a-user-list",
       "kind": "existing",
       "ok": true,
-      "open_items": 0,
+      "open_items": 1,
       "added": 0,
-      "tentative_open": false
+      "tentative_open": true
      }
     ],
     "events": 3
@@ -270,17 +268,15 @@
     "answer_text_rate": 100.0,
     "answer_text": 3,
     "leaks": 1,
-    "p50_ms": 0.23,
-    "p95_ms": 0.29,
-    "index_build_ms": 4.3,
-    "cold_ms": 4.2
+    "p50_ms": 0.27,
+    "p95_ms": 0.35,
+    "index_build_ms": 7.5,
+    "cold_ms": 4.8
    },
    "after": {
     "duplicates": 2,
     "wrong_identity": 2,
     "false_agreed": 0,
-    "suggested": 3,
-    "duplicates_if_confirmed": 0,
     "item13_cross_client": 2,
     "item13_cross_events": 0,
     "item13_in_tracker": 2,
@@ -406,17 +402,15 @@
     "answer_text_rate": 100.0,
     "answer_text": 3,
     "leaks": 1,
-    "p50_ms": 0.22,
-    "p95_ms": 0.27,
-    "index_build_ms": 4.4,
-    "cold_ms": 4.8
+    "p50_ms": 0.23,
+    "p95_ms": 0.87,
+    "index_build_ms": 7.2,
+    "cold_ms": 4.9
    },
    "after": {
-    "duplicates": 0,
-    "wrong_identity": 0,
-    "false_agreed": 0,
-    "suggested": 2,
-    "duplicates_if_confirmed": 0,
+    "duplicates": 1,
+    "wrong_identity": 1,
+    "false_agreed": 1,
     "item13_cross_client": 1,
     "item13_cross_events": 0,
     "item13_in_tracker": 1,
@@ -424,10 +418,10 @@
      {
       "id": "t-a-idp",
       "kind": "update",
-      "ok": true,
-      "open_items": 1,
-      "added": 0,
-      "tentative_open": false
+      "ok": false,
+      "open_items": 2,
+      "added": 1,
+      "tentative_open": true
      },
      {
       "id": "t-a-cert",
@@ -453,14 +447,12 @@
   "live_total": 10,
   "live_answer_text_rate": 80.0,
   "live_leaks": 4,
-  "lookup_p50_ms": 0.23,
-  "lookup_p95_ms": 0.96,
-  "duplicates": 5,
-  "wrong_identity": 4,
-  "suggested": 8,
-  "duplicates_if_confirmed": 0,
+  "lookup_p50_ms": 0.26,
+  "lookup_p95_ms": 1.14,
+  "duplicates": 6,
+  "wrong_identity": 5,
   "item13_cross_client": 4,
-  "false_agreed": 0
+  "false_agreed": 2
  },
- "seconds": 1.21
+ "seconds": 1.4
 }
