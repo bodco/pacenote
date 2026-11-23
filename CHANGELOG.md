@@ -10,6 +10,37 @@ Pacenote. Earlier versions are described in the commit messages and in
   commitments register, offline and without a model, and prints one table: preparation coverage and scope leaks,
   live answer rate and lookup latency, duplicates, cross-client items and "we will try" items kept as agreed. The
   baseline of the current code and how to rerun it: [docs/en/bench/g0-baseline.md](docs/en/bench/g0-baseline.md).
+- **Research this website (2026-11-22, G6):** a link to a company's site now has a Research this website button in
+  Sources, in Expert and in Quick. It shows a plan first (pages ordered by the call goal and type, 15 pages
+  by default and up to 30, a cost line for your AI route, and the reason for every page left out), then reads the
+  ticked pages one by one with progress and Cancel. Every AI route reads the same stored copy of a page. Copies are
+  kept in the hidden `.work/web/<host>` folder inside the call folder, which Google Drive may sync. The page budget uses
+  square - and + buttons, the cost sentence has its own line, the page list no longer scrolls inside the page, and a line
+  explains why more pages cannot be ticked when the budget is reached. In Quick, the summary line says how many pages
+  of the site were read, and the link field placeholder is shorter. Once a read is finished or cancelled,
+  the panel shows only the result: the plan controls, the page counter and the cost estimate are hidden, and a page that
+  could not be read has an x instead of a tick. Failures to plan a site are worded in your language, and the route name
+  reads as a label in the cost and privacy lines. A redirect is followed only to a page robots.txt allows, two reads of
+  one site no longer stop each other, nothing is read while a call is being recorded (a call that starts stops a read in
+  progress), and if the reader ends early the pages already read are kept with a message and Read again. Planning
+  follows the same redirect rule as reading, and a call that starts also stops a plan in progress; Cancel and a
+  starting call make no further request, even inside a redirect or a robots.txt lookup. Removing a website while it is
+  being planned or read stops the work first. Empty and cut pages are carried from the research into the built report
+  (an empty page is listed and never sent to the model, a cut page is reported as truncated), and a website read
+  automatically at build time follows the same private-address and redirect rules as the crawler. In Quick, the
+  pages read are counted per site. The reason a page is ranked
+  is worded in your language, a private address is reported as such (not as robots.txt), also when it is
+  wrapped in an IPv6 6to4 address, and nothing from
+  researched pages is sent to Pacenote by call sync: every fact the AI wrote while it had those pages (whatever
+  source it names, also after you edit it or remove the page and refresh), the Gaps notes that repeat such a fact,
+  a question for the call made from such a fact (Add question on its gap, or Keep both, ask on the call on its conflict),
+  the meeting goal when the AI wrote it from those pages, their titles, addresses and quotes (only the site name goes),
+  and the sheet's refresh history stay on this Mac. A link to
+  another site found on the pages is suggested under its address; the site's own link text shows only in the
+  suggestion and is never saved as the source's title. Call sync sends every link source without its query, fragment
+  or login, where a token may sit. The plan footer says that Google Drive may sync the copies to colleagues.
+- **Quick prep takes a link (2026-11-22, FB7):** the Sources line of Quick has a Link to add field, so a link no
+  longer needs Expert.
 
 ## 0.27.2 (2026-11-23)
 

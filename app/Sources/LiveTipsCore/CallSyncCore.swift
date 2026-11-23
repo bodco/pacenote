@@ -342,8 +342,98 @@ public enum CallSync {
 
     /// The Meeting Sheet as built for the call, if it is a JSON object under 1 MB.
     public static func sheetBody(_ data: Data?) -> [String: Any]? {
-        guard let d = data, d.count < 1_000_000, let o = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any] else { return nil }
-        return ["sheet": o]
+        guard let d = data, d.count < 1_000_000, let raw = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any] else { return nil }
+        return ["sheet": syncedSheet(raw)]
+    }
+
+    /// PB-37: researched website content stays on this Mac. The upload is built from an allowlist of the keys the app's
+    /// sheet model knows, so refresh history (top-level `gone_facts`, a fact's `was`) and any later key never go out.
+    /// A fact that cites a page of a researched site is left out (its text may repeat the page), and so are the gap
+    /// facts that copy it (`about`) and links to it (`conflict_with`, `superseded_by`, a readiness gap), and the meeting
+    /// goal when its header fact cites such a page (the AI wrote it); a `web_page` source keeps only its site name and state.
+    /// Citations alone are not trusted: a fact the builder marked `from_web` (its model call was given a researched page)
+    /// and a fact citing a source the sheet no longer lists stay local too, and the flag itself never goes out.
+    static func syncedSheet(_ raw: [String: Any]) -> [String: Any] {
+        func only(_ o: [String: Any], _ keys: Set<String>) -> [String: Any] { o.filter { keys.contains($0.key) } }
+        let topKeys = Set(MeetingSheet.CodingKeys.allCases.map(\.rawValue))
+        let blockKeys = Set(SheetBlock.CodingKeys.allCases.map(\.rawValue))
+        let factKeys = Set(SheetFact.CodingKeys.allCases.map(\.rawValue)).subtracting(["from_web"])
+        let sourceKeys = Set(SheetSource.CodingKeys.allCases.map(\.rawValue))
+        let webSourceKeys: Set<String> = ["id", "n", "type", "parent", "access", "used"]
+        var o = only(raw, topKeys)
+        let sources = (o["sources"] as? [[String: Any]]) ?? []
+        let web = Set(sources.filter { ($0["type"] as? String) == "web_page" }.compactMap { $0["id"] as? String })
+        if o["sources"] != nil {
+            o["sources"] = sources.map { s -> [String: Any] in
+                guard (s["type"] as? String) == "web_page" else {
+                    // a link (also one found on a researched page and taken) goes without its query, fragment or login,
+                    // where a token may sit; a title that repeats the link is cut the same way
+                    var k = only(s, sourceKeys)
+                    if let u = k["uri"] as? String {
+                        let bare = bareLink(u)
+                        if (k["title"] as? String) == u { k["title"] = bare }
+                        k["uri"] = bare
+                    }
+                    return k
+                }
+                var w = only(s, webSourceKeys)
+                // a title is required: the site name only; the page's own title and its address (a crawled link's path or
+                // query may carry a token) stay local
+                w["title"] = URLComponents(string: (s["uri"] as? String) ?? "")?.host?.lowercased() ?? ""
+                return w
+            }
+        }
+        let known = Set(sources.compactMap { $0["id"] as? String })
+        var blocks = ((o["blocks"] as? [[String: Any]]) ?? []).map { only($0, blockKeys) }
+        let allFacts = blocks.flatMap { ($0["facts"] as? [[String: Any]]) ?? [] }
+        func researched(_ f: [String: Any]) -> Bool {
+            (f["from_web"] as? Bool) == true
+                || ((f["source_ids"] as? [String]) ?? []).contains(where: { web.contains($0) || !known.contains($0) })
+        }
+        let fromWeb = Set(allFacts.filter(researched).compactMap { $0["id"] as? String })
+        // a readiness gap copies its fact's label and text and points back with `about` (read before the allowlist strips it)
+        func copiesWeb(_ f: [String: Any]) -> Bool { fromWeb.contains((f["about"] as? String) ?? "") }
+        let dropped = fromWeb.union(allFacts.filter(copiesWeb).compactMap { $0["id"] as? String })
+        for bi in blocks.indices {
+            guard let facts = blocks[bi]["facts"] as? [[String: Any]] else { continue }
+            blocks[bi]["facts"] = facts.compactMap { f -> [String: Any]? in
+                if researched(f) || copiesWeb(f) { return nil }
+                return only(f, factKeys)
+            }
+        }
+        if !dropped.isEmpty {
+            for bi in blocks.indices {
+                guard var facts = blocks[bi]["facts"] as? [[String: Any]] else { continue }
+                for fi in facts.indices {
+                    if let cw = facts[fi]["conflict_with"] as? [String] {
+                        let left = cw.filter { !dropped.contains($0) }
+                        facts[fi]["conflict_with"] = left
+                        if left.isEmpty, facts[fi]["status"] as? String == "conflict" { facts[fi]["status"] = "needs_check" }
+                    }
+                    if let sb = facts[fi]["superseded_by"] as? String, dropped.contains(sb) { facts[fi]["superseded_by"] = nil }
+                }
+                blocks[bi]["facts"] = facts
+            }
+            if var r = o["readiness"] as? [String: Any], let gaps = r["gaps"] as? [[String: Any]] {
+                r["gaps"] = gaps.filter { !dropped.contains(($0["fact"] as? String) ?? "") }
+                o["readiness"] = r
+            }
+        }
+        if o["blocks"] != nil { o["blocks"] = blocks }
+        // the Goal header fact cites the researched pages when the AI wrote the goal from them, so with researched pages the
+        // top-level goal goes only next to a kept Goal fact of the same text (a kept old fact says nothing of a new goal)
+        if !web.isEmpty || !fromWeb.isEmpty, let g = o["goal"] as? String {
+            let hg = blocks.flatMap { ($0["facts"] as? [[String: Any]]) ?? [] }.first { $0["id"] as? String == "f-header-goal" }
+            if (hg?["text"] as? String) != g { o.removeValue(forKey: "goal") }
+        }
+        return o
+    }
+
+    /// PB-37: a link as call sync sends it: no query, fragment, user or password (a text that is not a link stays as it is).
+    public static func bareLink(_ s: String) -> String {
+        guard var c = URLComponents(string: s), c.scheme != nil else { return s }
+        c.query = nil; c.fragment = nil; c.user = nil; c.password = nil
+        return c.string ?? s
     }
 
     static func driveID(_ s: String) -> Bool { s.range(of: "^[A-Za-z0-9_-]{10,200}$", options: .regularExpression) != nil }

@@ -14,8 +14,13 @@ CLI (registered in sheet/__main__.py): webplan --request <json>, webfetch --requ
 from __future__ import annotations
 
 import hashlib
+import http.client
+import inspect
+import ipaddress
 import json
+import os
 import re
+import socket
 import time
 import urllib.error
 import urllib.parse
@@ -29,6 +34,8 @@ USER_AGENT = "Pacenote/0.10 (Meeting Sheet; one site at a time, started by a per
 ROBOTS_AGENT = "Pacenote"
 DEFAULT_DEPTH = 2
 DEFAULT_MAX_PAGES = 15
+MAX_PAGES = 30
+EST_PAGE_TOKENS = 1500
 MAX_BYTES = 2_000_000
 EMPTY_CHARS = 200
 
@@ -306,6 +313,39 @@ def _rank(url: str, depth: int, order: int):
     return (depth, pr, order)
 
 
+_CALL_TERMS = {
+    "sales": "about company team leadership people services products product solutions platform cases customers clients portfolio компанія команду команда послуги продукти рішення клієнти кейси",
+    "interview": "team people careers jobs blog команда команду кар'єра кар’єра вакансії блог",
+    "presentation": "products product services cases customers продукти послуги кейси клієнти",
+    "internal": "team people company news команда команду компанія новини",
+}
+
+
+def _terms(text):
+    return set(re.findall(r"[^\W_]+", text.casefold()))
+
+
+def _ranking(url, text, goal, call_type):
+    """(score, why code, matched terms). The code is one of goal / call / section; the panel words it in the person's
+    language (the terms are the person's own words from the goal)."""
+    if not goal.strip():
+        return 0, "section", []
+    terms = _terms(urllib.parse.unquote(urllib.parse.urlsplit(url).path) + " " + text)
+    matches = sorted(terms & _terms(goal))
+    boost = bool(terms & _terms(_CALL_TERMS.get(call_type.casefold(), "")))
+    code = "goal" if matches else ("call" if boost else "section")
+    return 2 * len(matches) + boost, code, matches[:3]
+
+
+def goal_score(url, text, goal, call_type):
+    return _ranking(url, text, goal, call_type)[0]
+
+
+def _why_text(code, terms):
+    """The English line kept in `why_ranked` for the report and logs; the panel uses `why_code` and `why_terms`."""
+    return {"goal": "goal: " + ", ".join(terms), "call": "call type", "start": "start page"}.get(code, "section priority")
+
+
 def links_of(root: Node, base: str):
     """[(normalized url, link text)] in page order, first occurrence only."""
     seen, out = set(), []
@@ -336,12 +376,20 @@ class Body(str):
     cut = 0
 
 
-def read_capped(r, limit: int, total_s: float):
+class Cancelled(FetchError):
+    """The person (or a starting call) stopped the research: no further request is made."""
+    def __init__(self):
+        super().__init__(0, "cancelled")
+
+
+def read_capped(r, limit: int, total_s: float, stop=None):
     """(bytes, cut) from a response: at most `limit` bytes and `total_s` seconds in all (the socket timeout alone lets
     a slow server drip forever); cut = True when the page was longer."""
     deadline = time.time() + total_s
     buf = bytearray()
     while len(buf) <= limit:
+        if stop and stop():
+            raise Cancelled()
         if time.time() > deadline:
             raise FetchError(0, "the page took longer than %d s to load" % int(total_s))
         piece = r.read(min(65536, limit + 1 - len(buf)))
@@ -351,15 +399,111 @@ def read_capped(r, limit: int, total_s: float):
     return bytes(buf[:limit]), len(buf) > limit
 
 
-def http_get(url: str, timeout: float = 15.0, total_s: float = 30.0):
+class AddressRefused(FetchError):
+    def __init__(self):
+        super().__init__(0, "private or non-public address")
+
+
+def _public_address(value):
+    address = ipaddress.ip_address(value)
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
+        address = address.ipv4_mapped
+    elif isinstance(address, ipaddress.IPv6Address) and address.sixtofour:
+        address = address.sixtofour
+    if address.is_loopback and os.environ.get("PACENOTE_TEST_WEB_LOOPBACK") == "1":
+        return True
+    return (address.is_global and not address.is_multicast and not address.is_reserved
+            and not getattr(address, "is_site_local", False))
+
+
+def _connect_public(target, timeout, source_address=None):
+    addresses = socket.getaddrinfo(*target, type=socket.SOCK_STREAM)
+    if not all(_public_address(addr[4][0]) for addr in addresses):
+        raise AddressRefused()
+    # Connect to the validated numeric address while retaining the original hostname for HTTP and TLS.
+    error = OSError("no addresses found")
+    for family, socktype, proto, _, sockaddr in addresses:
+        sock = socket.socket(family, socktype, proto)
+        try:
+            sock.settimeout(timeout)
+            if source_address:
+                sock.bind(source_address)
+            sock.connect(sockaddr)
+            return sock
+        except OSError as exc:
+            sock.close()
+            error = exc
+    raise error
+
+
+def _public_connection(connection_type):
+    def make(host, **kwargs):
+        conn = connection_type(host, **kwargs)
+        conn._create_connection = _connect_public
+        return conn
+    return make
+
+
+def _stopped(req):
+    """A redirect destination carries the cancel check: urllib reads the redirect body after redirect_request, so the
+    last check runs here, right before the destination request."""
+    stop = getattr(req, "_pacenote_stop", None)
+    if stop and stop():
+        raise Cancelled()
+
+
+class _PublicHTTP(urllib.request.HTTPHandler):
+    def http_open(self, req):
+        _stopped(req)
+        return self.do_open(_public_connection(http.client.HTTPConnection), req)
+
+
+class _PublicHTTPS(urllib.request.HTTPSHandler):
+    def https_open(self, req):
+        _stopped(req)
+        return self.do_open(_public_connection(http.client.HTTPSConnection), req, context=self._context)
+
+
+class _SiteRedirect(urllib.request.HTTPRedirectHandler):
+    """Follows a redirect only inside the site, to a page the skip rules and (when `allow` is given) robots.txt accept:
+    a disallowed destination gets no request at all."""
+
+    def __init__(self, allow=None, stop=None):
+        super().__init__()
+        self.allow = allow
+        self.stop = stop
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if self.stop and self.stop():            # Cancel during a redirect: the destination gets no request
+            raise Cancelled()
+        if urllib.parse.urlsplit(newurl).scheme not in ("http", "https") or not same_site(req.full_url, newurl):
+            raise FetchError(code, "redirect leaves the site")
+        if skip_reason(newurl):
+            raise FetchError(code, "redirect points to a skipped page")
+        if self.allow is not None and not self.allow(newurl):
+            raise FetchError(code, "redirect points to a page robots.txt does not allow")
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is not None and self.stop:
+            new._pacenote_stop = self.stop
+        return new
+
+
+def http_get(url: str, timeout: float = 15.0, total_s: float = 30.0, allow=None, stop=None, max_bytes: int = 0):
     """(status, final url, content type, text). Raises FetchError for transport errors (and a page slower than
-    total_s in all). The text is a Body: .cut > 0 when the page was longer than MAX_BYTES."""
+    total_s in all). `allow(url)`: robots.txt check for each redirect destination. `stop()`: true = Cancelled before the request and before each redirect. The text is a Body: .cut > 0 when the page was longer than MAX_BYTES."""
+    target = urllib.parse.urlsplit(url)
+    if target.scheme not in ("http", "https") or not target.hostname or target.username is not None:
+        raise FetchError(0, "expected an HTTP or HTTPS address without credentials")
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "text/html,text/plain;q=0.8,*/*;q=0.1",
                                                "Accept-Language": "en,uk;q=0.8"})
+    if stop and stop():
+        raise Cancelled()
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _PublicHTTP(), _PublicHTTPS(),
+                                             _SiteRedirect(allow, stop))
+        with opener.open(req, timeout=timeout) as r:
             ctype = r.headers.get("Content-Type", "")
-            raw, cut = read_capped(r, MAX_BYTES, total_s)
+            raw, cut = read_capped(r, max_bytes or MAX_BYTES, total_s, stop)
             cs = r.headers.get_content_charset() or "utf-8"
             body = Body(raw.decode(cs, errors="replace"))
             body.cut = len(raw) if cut else 0
@@ -372,11 +516,21 @@ def http_get(url: str, timeout: float = 15.0, total_s: float = 30.0):
         raise FetchError(0, str(e)[:200])
 
 
+def _call(getter, url, **kw):
+    """Calls a page getter with the options it knows (`allow`, `stop`): http_get and test doubles that declare them."""
+    try:
+        known = inspect.signature(getter).parameters
+    except (TypeError, ValueError):
+        known = {}
+    return getter(url, **{k: v for k, v in kw.items() if v is not None and k in known})
+
+
 class Robots:
     """robots.txt per host; 404 = everything allowed, 401/403 = nothing allowed (as urllib.robotparser does)."""
 
-    def __init__(self, getter=http_get):
+    def __init__(self, getter=http_get, stop=None):
         self.getter = getter
+        self.stop = stop
         self.cache = {}
 
     def parser(self, url: str):
@@ -387,7 +541,7 @@ class Robots:
         rp = urllib.robotparser.RobotFileParser(key + "/robots.txt")
         info = {"url": key + "/robots.txt", "found": False}
         try:
-            status, _u, _c, body = self.getter(key + "/robots.txt")
+            status, _u, _c, body = _call(self.getter, key + "/robots.txt", stop=self.stop)
             if status in (401, 403):
                 rp.disallow_all = True
                 info["status"] = status
@@ -397,6 +551,8 @@ class Robots:
             else:
                 rp.allow_all = True
                 info["status"] = status
+        except Cancelled:
+            raise                                   # a stopped lookup is not "no robots.txt": nothing is cached
         except FetchError:
             rp.allow_all = True
             info["status"] = 0
@@ -421,27 +577,42 @@ class Robots:
 # ---------------------------------------------------------------- the plan
 
 def plan(url: str, depth: int = DEFAULT_DEPTH, max_pages: int = DEFAULT_MAX_PAGES, respect_robots: bool = True,
-         getter=http_get) -> dict:
-    """Reads the start page only (if robots.txt allows) and proposes which pages of the same site to read.
+         getter=http_get, *, goal: str = "", call_type: str = "", audience: str = "", route=None, stop=None) -> dict:
+    """Reads the start page only (if robots.txt allows) and proposes which pages of the same site to read. A redirect of the
+    start page follows the same rules as a read (same site, skip rules, robots.txt); `stop()` ends the plan before the next
+    request and raises Cancelled.
 
-    pages: [{url, path, depth, kind, planned, note}] with note = why a page is not planned (sign-in, cart, policy,
+    pages: [{url, path, depth, kind, planned, note, score, why_ranked, est_tokens}] with note = why a page is not planned (sign-in, cart, policy,
     duplicate, robots, file, limit, feed). Depth-2 pages are found while fetching, within the same limits."""
+    # Audience and route are part of the request contract. Ranking uses the goal and call type,
+    # and the fixed per-page estimate is the same across routes.
     start = normalize(url)
     if not start:
         raise ValueError(f"not a web address: {url!r}")
-    depth = max(0, min(int(depth), 3))
-    max_pages = max(1, min(int(max_pages), 30))
-    robots = Robots(getter)
+    depth = max(0, min(int(depth), DEFAULT_DEPTH))
+    max_pages = max(1, min(int(max_pages), MAX_PAGES))
+    robots = Robots(getter, stop)
     out = {"url": start, "domain": domain_of(start), "limits": {"same_site": True, "depth": depth, "max_pages": max_pages,
-           "respect_robots": bool(respect_robots)}, "robots": robots.info(start) if respect_robots else {"checked": False},
+           "respect_robots": bool(respect_robots)}, "robots": {"checked": False},
            "pages": [], "external": [], "found": 0, "planned": 0, "start": {}}
-    if respect_robots and not robots.allowed(start):
-        out["start"] = {"status": "blocked", "note": "robots.txt does not allow this page"}
+    note = skip_reason(start)
+    if respect_robots and not note:
+        out["robots"] = robots.info(start)
+        if not robots.allowed(start):
+            note = "robots"
+    if note:
+        out["start"] = {"status": "blocked", "note": "robots.txt does not allow this page" if note == "robots" else note}
         out["pages"].append({"url": start, "path": urllib.parse.urlsplit(start).path, "depth": 0, "kind": "home",
-                             "planned": False, "note": "robots"})
+                             "planned": False, "note": note, "score": 0, "why_ranked": "start page",
+                             "why_code": "start", "why_terms": [], "est_tokens": EST_PAGE_TOKENS})
         return out
     try:
-        status, final, ctype, body = getter(start)
+        status, final, ctype, body = _call(getter, start, allow=robots.allowed if respect_robots else None, stop=stop)
+    except AddressRefused as e:
+        out["start"] = {"status": "blocked", "note": e.reason, "why": "private"}
+        return out
+    except Cancelled:
+        raise
     except FetchError as e:
         out["start"] = {"status": "error", "note": e.reason}
         return out
@@ -452,7 +623,8 @@ def plan(url: str, depth: int = DEFAULT_DEPTH, max_pages: int = DEFAULT_MAX_PAGE
     root = parse_html(body)
     out["start"] = {"status": "ok", "http": status, "title": title_of(root), "final_url": final}
     pages = [{"url": final, "path": urllib.parse.urlsplit(final).path or "/", "depth": 0, "kind": kind_of(final),
-              "planned": True, "note": ""}]
+              "planned": True, "note": "", "score": 0, "why_ranked": "start page", "why_code": "start", "why_terms": [],
+              "est_tokens": EST_PAGE_TOKENS}]
     seen = {final, start}
     ext_seen = set()
     cand = []
@@ -471,17 +643,20 @@ def plan(url: str, depth: int = DEFAULT_DEPTH, max_pages: int = DEFAULT_MAX_PAGE
             note = "robots"
         if not note and depth < 1:
             note = "limit"
-        cand.append((u, text, note, i))
-    cand.sort(key=lambda c: (c[2] is not None, _rank(c[0], 1, c[3])))
+        score, why_code, why_terms = _ranking(u, text, goal, call_type)
+        cand.append((u, text, note, i, score, why_code, why_terms))
+    cand.sort(key=lambda c: (c[2] is not None, -c[4], _rank(c[0], 1, c[3])))
     left = max_pages - 1
-    for u, text, note, _i in cand:
+    for u, text, note, _i, score, why_code, why_terms in cand:
         planned = note is None and left > 0
         if note is None and not planned:
             note = "limit"
         if planned:
             left -= 1
         pages.append({"url": u, "path": urllib.parse.urlsplit(u).path or "/", "depth": 1, "kind": kind_of(u),
-                      "text": text, "planned": planned, "note": note or ""})
+                      "text": text, "planned": planned, "note": note or "", "score": score,
+                      "why_ranked": _why_text(why_code, why_terms), "why_code": why_code, "why_terms": why_terms,
+                      "est_tokens": EST_PAGE_TOKENS})
     out["pages"] = pages
     out["found"] = len(pages)
     out["planned"] = sum(1 for p in pages if p["planned"])
@@ -507,16 +682,24 @@ def _empty_page(text: str) -> bool:
 
 
 def fetch(the_plan: dict, out_dir=None, delay: float = 1.0, getter=http_get, sleep=time.sleep, start_n: int = 1,
-          id_prefix: str = "w") -> dict:
+          id_prefix: str = "w", progress=None, cancel=None, *, cancel_path=None) -> dict:
     """Reads the planned pages one by one (robots.txt and the limits again at each step), then depth-2 links found on
     them while pages are left. Each read page is a `web_page` source with its own URL; the report lists every page:
-    read / empty / blocked / error / skipped / duplicate, with what was taken."""
+    read / empty / blocked / error / skipped / duplicate, with what was taken.
+    `progress(obj)`: called with {"stage": "start", url, path, n} before a page is fetched and {"stage": "page", row,
+    source} for every row added to the report. `cancel()` or the file `cancel_path`: stop before the next
+    request (checked again after the crawl wait and before a finished response is kept); what was read stays."""
     lim = the_plan.get("limits") or {}
-    depth = int(lim.get("depth", DEFAULT_DEPTH))
-    max_pages = int(lim.get("max_pages", DEFAULT_MAX_PAGES))
+    depth = max(0, min(int(lim.get("depth", DEFAULT_DEPTH)), DEFAULT_DEPTH))
+    max_pages = max(1, min(int(lim.get("max_pages", DEFAULT_MAX_PAGES)), MAX_PAGES))
     respect = bool(lim.get("respect_robots", True))
     start = the_plan.get("url") or ""
-    robots = Robots(getter)
+    cancel_file = Path(cancel_path).expanduser() if cancel_path else None
+
+    def stopped():
+        return bool((cancel and cancel()) or (cancel_file and cancel_file.exists()))
+
+    robots = Robots(getter, stopped)
     queue = [dict(p) for p in the_plan.get("pages") or [] if p.get("planned")]
     report = [dict(p, status="skipped", note=p.get("note") or "not ticked") for p in the_plan.get("pages") or []
               if not p.get("planned")]
@@ -525,32 +708,74 @@ def fetch(the_plan: dict, out_dir=None, delay: float = 1.0, getter=http_get, sle
     ext_seen = {e.get("domain") for e in external}
     hashes = {}
     sources = []
-    read = 0
+    attempted = 0
     out_path = Path(out_dir).expanduser() if out_dir else None
     if out_path:
         out_path.mkdir(parents=True, exist_ok=True)
     wait = max(float(delay), 0.0)
     first = True
+    sent = len(report)      # the pages that were never ticked are not progress
+    by_id = {}
+
+    def flush():
+        nonlocal sent
+        if progress:
+            for r in report[sent:]:
+                progress({"stage": "page", "row": r, "source": by_id.get(r.get("source_id"))})
+        sent = len(report)
+
+    cancelled = False
     while queue:
+        flush()
+        if stopped():
+            cancelled = True
+            break
         p = queue.pop(0)
         url = p["url"]
         row = {"url": url, "path": p.get("path") or urllib.parse.urlsplit(url).path, "depth": p.get("depth", 0),
                "kind": p.get("kind") or kind_of(url)}
-        if read >= max_pages:
+        if attempted >= max_pages:
             report.append(dict(row, status="skipped", note="limit"))
             continue
-        if respect and not robots.allowed(url):
-            report.append(dict(row, status="blocked", note="robots"))
+        why = skip_reason(url) if same_site(url, start) else "outside site"
+        if why:
+            report.append(dict(row, status="skipped", note=why))
             continue
-        if not first:
-            cd = robots.delay(url) if respect else None
-            sleep(max(wait, float(cd or 0)))
-        first = False
         try:
-            status, final, ctype, body = getter(url)
+            if respect and not robots.allowed(url):
+                report.append(dict(row, status="blocked", note="robots"))
+                continue
+            cd = robots.delay(url) if respect and not first else None
+        except Cancelled:                       # Cancel during the robots.txt lookup
+            queue.insert(0, p)
+            cancelled = True
+            break
+        if not first:
+            sleep(max(wait, float(cd or 0)))
+        if stopped():                           # Cancel can arrive during the crawl wait
+            queue.insert(0, p)
+            cancelled = True
+            break
+        first = False
+        attempted += 1
+        if progress:
+            progress({"stage": "start", "url": url, "path": row["path"], "n": attempted})
+        try:
+            status, final, ctype, body = _call(getter, url, allow=robots.allowed if respect else None, stop=stopped)
+        except Cancelled:                       # Cancel inside the request or a redirect: no further request was made
+            queue.insert(0, p)
+            cancelled = True
+            break
+        except AddressRefused as e:
+            report.append(dict(row, status="blocked", note=e.reason, why="private"))
+            continue
         except FetchError as e:
             report.append(dict(row, status="error", note=e.reason))
             continue
+        if stopped():                           # a response that finished after Cancel is not kept
+            queue.insert(0, p)
+            cancelled = True
+            break
         if status >= 400:
             report.append(dict(row, status="error", note=f"HTTP {status}", http=status))
             continue
@@ -559,18 +784,17 @@ def fetch(the_plan: dict, out_dir=None, delay: float = 1.0, getter=http_get, sle
             continue
         page_cut = int(getattr(body, "cut", 0) or 0)       # 0.10.0 (hardening): longer than MAX_BYTES
         root = parse_html(body)
-        title = title_of(root)
+        title, title_cut = scrub_contacts(title_of(root))
         text, cut = scrub_contacts(main_text(root))
         h = hashlib.sha1(re.sub(r"\s+", " ", text).encode("utf-8")).hexdigest()
         if h in hashes and text:
             report.append(dict(row, status="duplicate", note="same text as " + hashes[h], title=title))
             continue
         hashes[h] = url
-        read += 1
         st = "empty" if _empty_page(text) else "read"
         first_line = next((l for l in text.split("\n") if len(l) > 2), "")
         rr = dict(row, status=st, title=title, chars=len(text), tokens=tokens(text),
-                  taken=(first_line[:160] if st == "read" else ""), contacts_removed=cut)
+                  taken=(first_line[:160] if st == "read" else ""), contacts_removed=cut + title_cut)
         sid = f"{id_prefix}{start_n + len(sources)}"
         src = {"id": sid, "n": start_n + len(sources), "type": "web_page", "uri": url, "title": title or url,
                "size_tokens": tokens(text), "chars": len(text), "access": "ok", "used": "full" if st == "read" else "not_used",
@@ -578,6 +802,7 @@ def fetch(the_plan: dict, out_dir=None, delay: float = 1.0, getter=http_get, sle
                "parent_uri": start, "checked_at": _now()}
         if st == "empty":
             src["reason"] = "the page is empty or a placeholder"
+            src["empty"] = True                 # PB-37B: kept in the report, never given to the model
         elif page_cut:
             # 0.10.0 (Meeting Sheet, hardening): never a silent cut
             src["used"] = "truncated"
@@ -588,12 +813,17 @@ def fetch(the_plan: dict, out_dir=None, delay: float = 1.0, getter=http_get, sle
         if out_path:
             base = f"{_slug(domain_of(url))}-{_slug(urllib.parse.urlsplit(url).path or 'home', 40) or 'home'}"
             tp, k = out_path / (base + ".txt"), 2
-            while tp.exists() and any(r.get("file") == str(tp) for r in report):
+            while tp.exists():                      # PB-37B: a stored copy is never overwritten, not even by an earlier run
                 tp, k = out_path / (f"{base}-{k}.txt"), k + 1
-            tp.write_text(f"{title}\n{url}\n\n{text}\n", encoding="utf-8")
+            try:
+                tp.write_text(f"{title}\n{url}\n\n{text}\n", encoding="utf-8")
+            except OSError as e:                    # a failed write is this page's error; the pages read so far stay
+                report.append(dict(row, status="error", note="could not save the page: " + str(e)[:120]))
+                continue
             src["path"] = str(tp)
             rr["file"] = str(tp)
         sources.append(src)
+        by_id[sid] = src
         rr["source_id"] = sid
         report.append(rr)
         # depth 2: links of this page, same site, same rules
@@ -614,10 +844,17 @@ def fetch(the_plan: dict, out_dir=None, delay: float = 1.0, getter=http_get, sle
                     report.append(dict(nrow, status="skipped", note=why))
                     continue
                 queue.append(nrow)
+    flush()
+    if queue:
+        report.extend(dict(p, status="skipped", note="cancelled", path=p.get("path") or urllib.parse.urlsplit(p["url"]).path)
+                      for p in queue)
     summary = {s: sum(1 for r in report if r.get("status") == s) for s in ("read", "empty", "blocked", "error", "skipped", "duplicate")}
     summary["tokens"] = sum(r.get("tokens", 0) for r in report if r.get("status") == "read")
-    return {"url": start, "pages": report, "sources": sources, "external": external, "summary": summary,
-            "user_agent": USER_AGENT, "fetched_at": _now()}
+    res = {"url": start, "pages": report, "sources": sources, "external": external, "summary": summary,
+           "user_agent": USER_AGENT, "fetched_at": _now()}
+    if cancelled:
+        res["cancelled"] = True
+    return res
 
 
 def external_sources(external, start_n: int = 1, id_prefix: str = "x"):
@@ -677,8 +914,8 @@ def _read(path):
 def cli(command: str, request_path=None, argv_url=None) -> int:
     import sys
 
-    def out(obj, code=0):
-        sys.stdout.write(json.dumps(obj, ensure_ascii=False, indent=1) + "\n")
+    def out(obj, code=0, compact=False):
+        sys.stdout.write(json.dumps(obj, ensure_ascii=False, indent=None if compact else 1) + "\n")
         return code
 
     try:
@@ -690,8 +927,14 @@ def cli(command: str, request_path=None, argv_url=None) -> int:
             url = req.get("url") or argv_url
             if not url:
                 return out({"error": "request needs url"}, 3)
-            return out(plan(url, req.get("depth", DEFAULT_DEPTH), req.get("max_pages", DEFAULT_MAX_PAGES),
-                            req.get("respect_robots", True)))
+            cancel_file = Path(req["cancel_path"]).expanduser() if req.get("cancel_path") else None
+            try:
+                return out(plan(url, req.get("depth", DEFAULT_DEPTH), req.get("max_pages", DEFAULT_MAX_PAGES),
+                                req.get("respect_robots", True), goal=req.get("goal") or "",
+                                call_type=req.get("call_type") or "", audience=req.get("audience") or "",
+                                route=req.get("route"), stop=(lambda: cancel_file.exists()) if cancel_file else None))
+            except Cancelled:
+                return out({"error": "cancelled"}, 4)
         if command == "webfetch":
             res = {}
             if req.get("captured"):
@@ -699,16 +942,30 @@ def cli(command: str, request_path=None, argv_url=None) -> int:
             p = req.get("plan") or (_read(req["plan_path"]) if req.get("plan_path") else None)
             if p is None and req.get("url"):
                 p = plan(req["url"], req.get("depth", DEFAULT_DEPTH), req.get("max_pages", DEFAULT_MAX_PAGES),
-                         req.get("respect_robots", True))
+                         req.get("respect_robots", True), goal=req.get("goal") or "",
+                         call_type=req.get("call_type") or "", audience=req.get("audience") or "", route=req.get("route"),
+                         stop=(lambda: Path(req["cancel_path"]).expanduser().exists()) if req.get("cancel_path") else None)
             if p is not None:
-                f = fetch(p, req.get("out_dir"), float(req.get("delay", 1.0)), start_n=int(req.get("start_n", 1)))
+                live = bool(req.get("progress"))
+
+                def line(o):
+                    sys.stdout.write(json.dumps({"progress": o}, ensure_ascii=False) + "\n")
+                    sys.stdout.flush()
+
+                f = fetch(p, req.get("out_dir"), float(req.get("delay", 1.0)), start_n=int(req.get("start_n", 1)),
+                          progress=line if live else None, cancel_path=req.get("cancel_path"))
                 f["suggested"] = external_sources(f["external"])
                 if res:
                     f["captured"] = res
                 res = f
+                if live:
+                    # one line: the last JSON object of stdout is the report
+                    return out(res, compact=True)
             if not res:
                 return out({"error": "request needs plan, plan_path, url or captured"}, 3)
             return out(res)
+    except Cancelled:
+        return out({"error": "cancelled"}, 4)
     except ValueError as e:
         return out({"error": str(e)}, 3)
     return out({"error": f"unknown command {command!r}"}, 2)

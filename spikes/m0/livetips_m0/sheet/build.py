@@ -262,44 +262,35 @@ PAGE_MAX_BYTES = 3_000_000
 
 
 def robots_allowed(url: str, timeout: float = 10.0) -> bool:
-    """0.10.0 (Meeting Sheet, hardening): robots.txt with a timeout (RobotFileParser.read() has none: a silent host
-    hung the build). Unreachable or slow: allowed (the page itself decides); 401/403: not allowed."""
-    import urllib.error
-    import urllib.robotparser as RP
-    u = urlparse(url)
-    rp = RP.RobotFileParser(f"{u.scheme}://{u.netloc}/robots.txt")
+    """0.10.0 (Meeting Sheet, hardening): robots.txt with a timeout. PB-37: the lookup goes through the crawler's
+    public-address connection (web.http_get), so a private or loopback host is never contacted.
+    Unreachable or slow: allowed (the page itself decides); 401/403: not allowed."""
+    from . import web
     try:
-        rq = urllib.request.Request(rp.url, headers={"User-Agent": "Pacenote (meeting sheet; one page the user linked)"})
-        with urllib.request.urlopen(rq, timeout=timeout) as r:
-            from .web import read_capped
-            raw, _cut = read_capped(r, 500_000, timeout)
-        rp.parse(raw.decode("utf-8", "replace").splitlines())
-    except urllib.error.HTTPError as e:
-        return e.code not in (401, 403)
+        return web.Robots(getter=lambda u: web.http_get(u, timeout=timeout, total_s=timeout)).allowed(url)
     except Exception:  # noqa: BLE001
         return True
-    return rp.can_fetch("Pacenote", url)
 
 
 def fetch_page(url: str, timeout: float = 20.0) -> Tuple[str, Optional[str], int]:
     """One page, the user's own link, read once. robots.txt is honoured (with a timeout) until the browser module
     (phase 6) takes this over through sources.web_allowed. 0.10.0 (hardening): the whole read has `timeout` s, and
-    the third value is the bytes read when the page was cut at PAGE_MAX_BYTES (0 = whole page)."""
+    the third value is the bytes read when the page was cut at PAGE_MAX_BYTES (0 = whole page). PB-37: the request
+    uses the crawler's public-address connection and redirect checks (web.http_get)."""
+    from . import web
     allowed = SRC.web_allowed(url)
     if allowed is None:
         allowed = robots_allowed(url)
     if not allowed:
         return "", "the site's robots.txt does not allow automatic reading", 0
     try:
-        from .web import read_capped
-        rq = urllib.request.Request(url, headers={"User-Agent": "Pacenote (meeting sheet; one page the user linked)"})
-        with urllib.request.urlopen(rq, timeout=timeout) as r:
-            ctype = r.headers.get("Content-Type", "")
-            raw, cut = read_capped(r, PAGE_MAX_BYTES, timeout * 2)
+        status, _final, ctype, body = web.http_get(url, timeout=timeout, total_s=timeout * 2, max_bytes=PAGE_MAX_BYTES)
+        if status >= 400:
+            return "", f"cannot open the page: HTTP {status}", 0
         if "html" not in ctype and "text" not in ctype:
             return "", f"not a web page ({ctype.split(';')[0] or 'unknown type'})", 0
-        text = readers.html_text(raw.decode("utf-8", "replace"))
-        return text, None if text.strip() else "the page has no text", (len(raw) if cut else 0)
+        text = readers.html_text(str(body))
+        return text, None if text.strip() else "the page has no text", int(getattr(body, "cut", 0) or 0)
     except Exception as e:  # noqa: BLE001
         return "", f"cannot open the page: {type(e).__name__}", 0
 
@@ -319,9 +310,11 @@ def digest_text(req: dict) -> str:
 
 # ---------------------------------------------------------------- facts
 
-def facts_from(answer: dict, blocks: List[dict], source_ids: set, checked_at: str, pass_n: int = 0) -> Dict[str, List[dict]]:
+def facts_from(answer: dict, blocks: List[dict], source_ids: set, checked_at: str, pass_n: int = 0,
+               from_web: bool = False) -> Dict[str, List[dict]]:
     """The model's facts per block type, cleaned: unknown blocks and source ids dropped, a "found" fact without a
-    known source becomes needs_check (never shown as sourced when it is not)."""
+    known source becomes needs_check (never shown as sourced when it is not). PB-37: from_web marks every fact of a
+    model call that was given a researched page, whatever it cites, so call sync keeps it local."""
     want = {b["type"] for b in blocks if b["type"] not in PR.SKIP_BLOCKS}
     out: Dict[str, List[dict]] = {}
     for t, facts in ((answer or {}).get("blocks") or {}).items():
@@ -359,6 +352,8 @@ def facts_from(answer: dict, blocks: List[dict], source_ids: set, checked_at: st
                 g["as_of"] = str(f["as_of"])[:10]        # 0.10.0 (round 2): the date the source says this was true
             if pass_n:
                 g["pass"] = pass_n
+            if from_web:
+                g["from_web"] = True
             out.setdefault(t, []).append(g)
     return out
 
@@ -375,6 +370,8 @@ def merge_passes(parts: List[Dict[str, List[dict]]]) -> Dict[str, List[dict]]:
                              and norm(x["text"]) == norm(f["text"])), None)
                 if same:
                     same["source_ids"] = list(dict.fromkeys(same["source_ids"] + f["source_ids"]))
+                    if f.get("from_web"):
+                        same["from_web"] = True          # PB-37: researched in any pass stays researched
                     continue
                 if f["status"] != "not_found":
                     k = fact_key(t, f)
@@ -567,7 +564,8 @@ def assign_ids(facts: Dict[str, List[dict]]) -> None:
 HEADER_NOISE = {"auto", "blank", "you", "я", ""}
 
 
-def header_facts(req: dict, src_id: str, checked_at: str, goal: Optional[str] = None) -> List[dict]:
+def header_facts(req: dict, src_id: str, checked_at: str, goal: Optional[str] = None,
+                 goal_sources: Optional[List[str]] = None) -> List[dict]:
     """0.10.2 (Q, v4): no meta lines: the meeting type is not shown, "Our side" only when it names someone, and the
     goal is the sheet's goal (the user's, else the model's "Likely: ..." guess)."""
     m = req.get("meeting") or {}
@@ -587,6 +585,9 @@ def header_facts(req: dict, src_id: str, checked_at: str, goal: Optional[str] = 
     add("Their side", ", ".join(x.get("name", "") + (f" ({x['role']})" if x.get("role") else "")
                                  + (f", {x['company']}" if x.get("company") else "") for x in p.get("theirs") or []))
     add("Goal", (goal if goal is not None else req.get("goal", "")) or "")
+    if out and out[-1]["label"] == "Goal" and goal_sources:
+        out[-1]["source_ids"] = [src_id] + [i for i in goal_sources if i != src_id]   # PB-37: what the goal was written from
+        out[-1]["from_web"] = True
     return out
 
 
@@ -661,10 +662,13 @@ def gap_facts(facts: Dict[str, List[dict]], blocks: List[dict], checked_at: str)
             what = {"conflict": "Sources disagree", "not_found": "Not found", "stale": "Old"}.get(f["status"])
             if not what or t == "questions":
                 continue
-            out.append({"id": "f-gap-" + f["id"][2:], "label": f"{what}: {title.get(t, t)}",
-                        "text": (f.get("label") + ": " if f.get("label") else "") + f["text"], "source_ids": [],
-                        "locator": {}, "checked_at": checked_at, "status": "needs_check", "origin": "readiness",
-                        "about": f["id"]})
+            g = {"id": "f-gap-" + f["id"][2:], "label": f"{what}: {title.get(t, t)}",
+                 "text": (f.get("label") + ": " if f.get("label") else "") + f["text"], "source_ids": [],
+                 "locator": {}, "checked_at": checked_at, "status": "needs_check", "origin": "readiness",
+                 "about": f["id"]}
+            if f.get("from_web"):
+                g["from_web"] = True              # PB-37: the gap copies the researched fact's text
+            out.append(g)
     return out
 
 
@@ -948,6 +952,16 @@ def _wanted(b: dict, only: set) -> bool:
     return not only or b.get("id") in only or b.get("type") in only
 
 
+def keep_cited_sources(blocks: List[dict], srcs: List[dict], old: dict) -> None:
+    """A fact kept from the previous sheet may cite a source this request no longer lists: keep that source."""
+    have = {s["id"] for s in srcs}
+    cited = {i for b in blocks for f in b.get("facts") or [] for i in f.get("source_ids") or []}
+    for os_ in old.get("sources") or []:
+        if os_.get("id") in cited - have:
+            srcs.append(dict(os_, used=os_.get("used") or "full"))
+            have.add(os_["id"])
+
+
 def build(req: dict, refresh: bool = False, emit=say, responder: Optional[Callable[[str, str], str]] = None) -> dict:
     t0 = time.time()
     rules = P.load_rules()
@@ -982,6 +996,7 @@ def build(req: dict, refresh: bool = False, emit=say, responder: Optional[Callab
                             sheet_id=(old or {}).get("id") or req.get("id"))
     except KeyError as e:
         return {"error": str(e).strip("'\""), "code": 3}
+    goal_by_model = False
     if req.get("blocks"):
         lib = rules.get("blocks") or {}
         keep = {b["type"]: b for b in sheet["blocks"]}
@@ -1246,7 +1261,8 @@ def build(req: dict, refresh: bool = False, emit=say, responder: Optional[Callab
         ans = PR.as_json(text)
         if not ans:
             return {"error": "Claude returned no sheet JSON", "code": 5, "route": route}
-        parts.append(facts_from(ans, ask_blocks, src_ids, checked))
+        parts.append(facts_from(ans, ask_blocks, src_ids, checked,
+                                from_web=any(s.get("type") == "web_page" for s in usable)))
         opened = set(meta.get("read") or [])
         for s in usable:
             f = files.get(s["id"])
@@ -1260,6 +1276,7 @@ def build(req: dict, refresh: bool = False, emit=say, responder: Optional[Callab
                 s["used"] = "full"
         if ans.get("goal") and not sheet.get("goal"):
             sheet["goal"] = ans["goal"]
+            goal_by_model = True
         asker.model = meta.get("model") or asker.model
         asker.tokens = meta.get("tokens") or asker.tokens
         asker.usd = meta.get("cost_usd") or 0.0
@@ -1336,9 +1353,12 @@ def build(req: dict, refresh: bool = False, emit=say, responder: Optional[Callab
                     ans = PR.as_json(asker.ask(system, user, OUT_TOKENS))
                     if not ans:
                         raise RuntimeError("the model returned no sheet JSON")
-                    parts.append(facts_from(ans, ask_blocks, src_ids, checked, n if len(passes) > 1 else 0))
+                    given = chunk if not (chunk and isinstance(chunk[0], tuple)) else [c[0] for c in chunk]
+                    parts.append(facts_from(ans, ask_blocks, src_ids, checked, n if len(passes) > 1 else 0,
+                                            from_web=any(s.get("type") == "web_page" for s in given)))
                     if ans.get("goal") and not sheet.get("goal"):
                         sheet["goal"] = ans["goal"]
+                        goal_by_model = True
                     for s in (chunk if not (chunk and isinstance(chunk[0], tuple)) else [c[0] for c in chunk]):
                         if s.get("used") not in ("summarized",) and not s.get("reason", "").startswith("read in"):
                             s["used"] = "full"
@@ -1382,7 +1402,10 @@ def build(req: dict, refresh: bool = False, emit=say, responder: Optional[Callab
     for b in sheet["blocks"]:
         t = b["type"]
         if t == "header":
-            b["facts"] = header_facts(req, "s-meeting", checked, sheet.get("goal"))
+            # PB-37: a goal the model wrote may repeat a researched page, so its fact cites those pages too and call
+            # sync leaves it local (a goal the user typed cites only the meeting)
+            web = [s["id"] for s in srcs if s.get("type") == "web_page"] if goal_by_model else []
+            b["facts"] = header_facts(req, "s-meeting", checked, sheet.get("goal"), web)
         elif t == "gaps":
             b["facts"] = []
         elif b in ask_blocks:
@@ -1402,13 +1425,7 @@ def build(req: dict, refresh: bool = False, emit=say, responder: Optional[Callab
     if gb is not None:
         gb["facts"] = gap_facts(allf, sheet["blocks"], checked)
     if old:
-        # a fact kept from the previous sheet may cite a source this request no longer lists: keep that source
-        have = {s["id"] for s in srcs}
-        cited = {i for b in sheet["blocks"] for f in b.get("facts") or [] for i in f.get("source_ids") or []}
-        for os_ in old.get("sources") or []:
-            if os_.get("id") in cited - have:
-                srcs.append(dict(os_, used=os_.get("used") or "full"))
-                have.add(os_["id"])
+        keep_cited_sources(sheet["blocks"], srcs, old)
     for s in srcs:                       # 0.10.0 (Meeting Sheet, hardening): a cut page is never reported as whole
         cut = s.get("cut")
         if isinstance(cut, dict) and s.get("used") in ("full", "truncated", None):
@@ -1428,6 +1445,9 @@ def build(req: dict, refresh: bool = False, emit=say, responder: Optional[Callab
     if old:
         sheet["refreshed_at"] = checked
         protected = M.protect_edits(old, sheet)
+        # PB-37: an edited fact comes back with its old citations, so its sources are kept after the edits are laid
+        # in (a researched page's record must stay, or call sync could not tell the fact is researched)
+        keep_cited_sources(protected["blocks"], protected["sources"], old)
         d = diff(old, protected)
         sheet = protected
         sheet["gone_facts"] = d.pop("gone_facts")      # the schema's diff.gone holds ids; the texts for the UI here

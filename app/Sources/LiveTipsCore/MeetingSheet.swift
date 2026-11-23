@@ -250,10 +250,13 @@ public struct SheetFact: Codable, Equatable, Identifiable {
     public var diff: DiffMark?
     /// 0.10.0 (Meeting Sheet, round 2): an older value replaced by a newer fact (newer wins); the UI shows "was X".
     public var supersededBy: String? = nil
+    /// PB-37: the model call that wrote this fact was given a researched page; call sync keeps it local whatever it
+    /// cites. A field of the model (not only a key kept on save) so it survives an edit or a move to another block.
+    public var fromWeb: Bool? = nil
     enum CodingKeys: String, CodingKey, CaseIterable {
         case id, label, text, locator, status, origin, value, diff
         case sourceIds = "source_ids", checkedAt = "checked_at", conflictWith = "conflict_with"
-        case supersededBy = "superseded_by"
+        case supersededBy = "superseded_by", fromWeb = "from_web"
     }
     /// A fact Refresh never overwrites (livetips_m0/sheet/merge.py).
     public var isProtected: Bool { status == .edited || origin == .user }

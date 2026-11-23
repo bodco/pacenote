@@ -2481,6 +2481,33 @@ supported**, **Checking access**, and the fix next to it: Connect Google, Connec
 text, Retry, Open in the browser. A link you type into the goal or into "Anything special today?" is offered with
 **Move to Sources** (or Keep as text); it is never moved silently.
 
+**Research this website.** A pasted link to a company's own site (not Google, Notion or LinkedIn) has a **Research
+this website** button on its row, in Expert Sources and in Quick. Without it a pasted page is one source; the button
+reads the site. First it opens the home page and shows a plan, before anything else is read: each page with its path,
+a tick, and the reason when it is left out (sign-in, cart, policy, feed, contact, a file, robots.txt, over the limit,
+same text as another page). Only pages of that site are planned; other sites are shown as suggested sources and are
+never read. The pages are put in order by the goal of the call and its type (a page whose link text
+or path matches the goal comes first; with no goal, the usual order: about, team, product, pricing, customers, news).
+The budget is 15 pages with the home page counted, and the square - and + buttons next to the counter change it (1 to 30); when the budget is reached, a line says to untick a page or raise the number. The plan shows the
+estimated size and a **cost line** for the AI route you chose: tokens and money where the route has a price, and for
+a subscription or account route tokens and the share of one pass, never an invented dollar figure (a local model says
+there is no charge). **Read N pages** reads them one by one with "Reading page 4 of 12: /team"; **Cancel** stops at
+once and keeps the pages already read. Contact pages are never read, emails and phone numbers are removed from the
+text, robots.txt is respected, and Pacenote waits at least a second between requests. Each page ends as read, empty,
+blocked, could not be read, skipped or duplicate; a site that cannot be read leaves the other sources and the build
+intact (a site that needs JavaScript gives empty pages and says so). The pages read appear under the site row in In
+this sheet, each with its own size and tick, and are counted in Size. Every route reads the same stored copy of a
+page, so a page is fetched once, not again at build time. **Where the copies live:** one text file per page in the
+hidden `.work/web/<host>` folder inside the call's folder. The pages are public text, but that folder is part of the
+call folder, which Google Drive or another sync may copy to colleagues. The page text goes to your AI route with
+the other sources; nothing goes to Pacenote servers. Call sync leaves researched pages out of the sheet copy it
+sends: every fact the AI wrote while it had those pages (whatever source it names, also after you edit it or remove the page and refresh), the Gaps notes that repeat such a fact, a question for the call made from such a fact (Add question on its gap, or Keep both, ask on the call on its conflict), the meeting goal when the AI wrote it from those pages, their titles, addresses and quotes stay on this Mac (only the site name goes, so a token in a page link is never sent), and so does the sheet's refresh history. A link to another site found on the pages is suggested under its address; the site's own link text shows only in the suggestion and is never saved as the source's title. Call sync sends every link source without the part after `?` or `#` and without a login in it, where a token may sit.
+
+**A link in Quick.** The Sources line of Quick has a **Link to add** field (a link to Notion, Google Docs, a website or LinkedIn).
+It works as in Expert: the same access check and fixes, and **Research this website** with the same plan, budget and
+cost line shows in place under the row, so you do not have to open Expert. A link typed into "Anything special
+today?" is still only offered with Move to Sources.
+
 Google Docs, Sheets and Slides are read with your Google account as before. Other Drive files (a PDF or a Word file
 behind a `/file/d/` link) are not readable with those permissions: such a source says No access with **Confirm in
 Google**. The button opens Google Picker on that one file (the file from the link is already selected); confirm it

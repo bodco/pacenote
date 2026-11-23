@@ -132,7 +132,12 @@ struct SheetQuickView: View {
 
     // 0.14.0 (D1, Get Ready redesign): three short lines (people, sources, setup), each opens in place with Change.
     // Orange only where something needs you; tokens only in a tooltip.
-    @State private var open: String?
+    /// Shot harness only: the row that starts open (SheetShotsResearch.swift).
+    nonisolated(unsafe) static var shotOpen: String?
+    @State private var open: String? = SheetQuickView.shotOpen
+    @State private var quickLink = ""
+
+    private func addQuickLink() { draft.add(pasted: quickLink); quickLink = "" }
 
     private var setup: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -162,18 +167,26 @@ struct SheetQuickView: View {
     private var sourcesRow: some View {
         let checked = draft.sources.filter(\.checked)
         let bad = checked.filter { ["denied", "unsupported"].contains($0.access) }
-        let line = checked.isEmpty ? L("sheet.ui.quick.noSources") : PeopleSides.summary(checked.map(\.title), first: 3)
+        let pages = checked.filter { $0.parentURI != nil }
+        let titles = checked.isEmpty ? L("sheet.ui.quick.noSources") : PeopleSides.summary(checked.filter { $0.parentURI == nil }.map(\.title), first: 3)
+        // pages counted per site, each with its own domain
+        let perSite = Dictionary(grouping: pages.compactMap(\.parentURI), by: { SiteResearch.host($0) })
+        let line = titles + perSite.keys.sorted().map { " · " + L("sheet.ui.web.pagesOfSite", ["n": "\(perSite[$0]?.count ?? 0)", "domain": $0]) }.joined()
         let problem: String? = checked.isEmpty ? L("sheet.ui.quick.noSourcesSub")
             : bad.isEmpty ? nil : bad.map { $0.title + ": " + ($0.reason ?? SheetLabels.access(source: $0)) }.joined(separator: "; ")
         return summaryRow("sources", L("sheet.ui.row.sources"), line, ok: problem == nil, problem: problem,
                           fixLabel: checked.isEmpty ? L("sheet.ui.quick.add") : (bad.isEmpty ? nil : L("sheet.ui.fix")),
                           fix: { if checked.isEmpty { draft.chooseFiles() } else { draft.mode = .expert; draft.step = 3 } }) {
             VStack(alignment: .leading, spacing: 6) {
-                ForEach(checked) { src in
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(src.title).font(PN.Font.body).foregroundStyle(PN.C.text).lineLimit(1).truncationMode(.middle)
-                        if let f = src.folder { Text(SheetLabels.folderLine(f)).font(PN.Font.caption).foregroundStyle(PN.C.text3).fixedSize(horizontal: false, vertical: true) }
-                    }
+                // PB-37 (G6, FB7): a link field (the same add(pasted:) as Expert) and the same source rows, so the access
+                // fixes and Research this website (plan, budget, cost line) work here in place
+                // every source, ticked or not, as in Expert: an unticked row can be ticked back, and a research panel keeps its Cancel
+                ForEach($draft.sources) { $s in SheetDraftSourceRow(draft: draft, source: $s) }
+                HStack(spacing: 8) {
+                    TextField(L("sheet.ui.quick.linkPh"), text: $quickLink).textFieldStyle(.plain).font(th.homeText(14)).prepField(height: 34)
+                        .onSubmit(addQuickLink).accessibilityLabel(L("sheet.ui.quick.linkLabel"))
+                    Button(L("sheet.ui.add"), action: addQuickLink).buttonStyle(.pnSecondary)
+                        .disabled(quickLink.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
                 Button(L("sheet.quick.addMore")) { draft.chooseFiles() }.buttonStyle(.pnTertiary)
             }
@@ -1141,6 +1154,7 @@ struct SheetSourcesStep: View {
                 HStack(alignment: .firstTextBaseline, spacing: 10) {
                     if let i { Toggle("", isOn: $draft.candidates[i].checked).toggleStyle(.pnCheckbox).labelsHidden().accessibilityLabel(c.title) }
                     (Text(c.title).font(th.homeText(15)).foregroundStyle(PN.C.text)
+                     + Text(c.anchor.map { " · \"\($0)\"" } ?? "").font(th.homeText(13)).foregroundStyle(PN.C.text2)
                      + Text(c.why.isEmpty ? "" : " · " + c.why.joined(separator: " · ")).font(th.homeText(13)).foregroundStyle(PN.C.text3))
                         .lineLimit(2)
                     Spacer(minLength: 8)
@@ -1206,10 +1220,18 @@ struct SheetDraftSourceRow: View {
                 Spacer(minLength: 8)
                 PrepStatusTag(text: SheetLabels.access(source: source), color: color)
                 action
-                Button { draft.sources.removeAll { $0.id == source.id } } label: {
+                Button { draft.removeSource(id: source.id) } label: {
                     Image(systemName: "xmark").font(PN.sys(10, .semibold)).foregroundStyle(PN.C.text3).frame(width: 20, height: 20)
                 }
                 .buttonStyle(.plain).help(L("call.remove")).accessibilityLabel(L("call.remove") + ": " + source.title)
+            }
+            // PB-37 (G6): the pages read from a website, and its research panel
+            if source.type == "web" && source.parentURI == nil {
+                let n = draft.sources.filter { $0.parentURI != nil && $0.parentURI == source.uri }.count
+                if n > 0 { Text(L("sheet.ui.web.pagesRead", ["n": "\(n)"])).font(th.homeText(13)).foregroundStyle(PN.C.text2).padding(.leading, 30) }
+                if let ses = draft.research[source.id] {
+                    SheetSiteResearchPanel(draft: draft, session: ses) { draft.closeResearch(sourceID: source.id) }.padding(.leading, 30)
+                }
             }
             if draft.model.callType == "presentation" && ["pptx", "pdf", "key"].contains(((source.path ?? "") as NSString).pathExtension.lowercased()) {
                 Toggle(L("sheet.ui.s3.isDeck"), isOn: $source.deck).toggleStyle(.pnCheckbox).font(th.homeText(13)).padding(.leading, 30)
@@ -1233,6 +1255,7 @@ struct SheetDraftSourceRow: View {
                 .padding(.leading, 30)
             }
         }
+        .padding(.leading, source.parentURI == nil ? 0 : 30)
         .pageRow(10)
     }
 
@@ -1257,6 +1280,11 @@ struct SheetDraftSourceRow: View {
     private var color: Color { source.access == "ok" ? PN.C.turn : source.access == "pending" ? PN.C.text3 : PN.C.pending }
 
     @ViewBuilder private var action: some View {
+        if source.type == "web" && source.parentURI == nil && draft.research[source.id] == nil {
+            Button(draft.pagesRead(of: source) ? L("sheet.ui.web.again") : L("sheet.ui.web.button")) { draft.researchSite(sourceID: source.id) }.buttonStyle(.pnSecondary)
+                .disabled(SiteResearchSession.callBusy)
+                .fixedSize()      // the label never wraps (the long Ukrainian one): the title takes the cut
+        }
         switch source.fix {
         case "connect_notion", "connect_google": Button(SheetLabels.fix(FixAction(rawValue: source.fix!))) { SettingsWindow.show(tab: "integrations") }.buttonStyle(.pnSecondary)
         // 0.10.0 (Meeting Sheet, Google Picker): Google Picker on this one Drive file; a read copy makes the source ok

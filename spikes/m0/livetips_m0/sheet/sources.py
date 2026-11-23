@@ -164,6 +164,15 @@ def _mtime(path: str) -> Optional[str]:
     return file_date(path).isoformat()
 
 
+def _stored_page_empty(text: str, s: dict) -> bool:
+    """A copy written by web.fetch is "title, URL, blank line, body": empty when the body is empty or a placeholder."""
+    lines = text.split("\n")
+    if len(lines) < 2 or lines[1].strip() != (s.get("uri") or "").strip():
+        return False
+    from . import web
+    return web._empty_page("\n".join(lines[3:]).strip())
+
+
 def check(s: dict, req: dict, texts: Dict[str, str], route: str, windows: dict) -> dict:
     """Fills access, access_reason, fix_action, chars, size_tokens, modified_at of one source (in place) and keeps
     its text in texts[id] for the build. Never raises: a source that cannot be read says why."""
@@ -272,7 +281,27 @@ def check(s: dict, req: dict, texts: Dict[str, str], route: str, windows: dict) 
             s["fix_actions"] = list(LINKEDIN_FIXES)
         elif t in ("web", "web_page"):
             text = s.get("text") or ""
-            if text.strip():
+            stored = os.path.expanduser(s.get("path") or "")
+            if not text.strip() and stored:
+                # PB-37 (G6): a page of a researched site is read from its stored copy on every route, never fetched
+                # again (the text must be the same on every route; the Claude routes get a Read line)
+                if os.path.isfile(stored):
+                    text = readers.read(stored).get("text", "")
+                if text.strip() and (s.get("empty") or _stored_page_empty(text, s)):
+                    # PB-37B: an empty or placeholder page stays in the report, its copy (title and URL only) never
+                    # reaches the model
+                    text = ""
+                    s["access"] = "ok"
+                    s["empty"] = True
+                    s["access_reason"] = "the page is empty or a placeholder"
+                elif text.strip():
+                    s["access"] = "ok"
+                    s["modified_at"] = s.get("modified_at") or _mtime(stored)
+                else:
+                    s["access"] = "denied"
+                    s["access_reason"] = "the stored copy of the page is missing or empty"
+                    s["fix_action"] = "retry"
+            elif text.strip():
                 s["access"] = "ok"
             else:
                 allowed = web_allowed(s.get("uri") or "")

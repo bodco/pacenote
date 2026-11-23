@@ -33,7 +33,10 @@ def test_live_tail_picks_up_appended_lines(tmp_path):
     th = threading.Thread(target=writer)
     th.start()
     cfg = dict(CFG, budget=dict(CFG["budget"], ledger=str(tmp_path / "spend.json")))
-    eng = run(cfg, md, tmp_path / "out", idle_min=0.03, provider=FakeProvider(responder, 0.01, 0.02), max_s=8)
+    # from_start: the file holds only its header; joining at the end lost line 1 when the engine started slower than
+    # the writer's 0.3 s head start on a busy machine (2026-11-22: "assert 2 == 3" in a full run)
+    eng = run(cfg, md, tmp_path / "out", idle_min=0.03, provider=FakeProvider(responder, 0.01, 0.02), max_s=8,
+              from_start=True)
     th.join()
     tips = (tmp_path / "out" / "live-call.app.tips.jsonl").read_text().splitlines()
     assert any(json.loads(t)["level"] == "red" for t in tips)

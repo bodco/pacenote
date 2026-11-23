@@ -144,13 +144,13 @@ def test_h6_a_cut_web_page_is_reported_truncated(tmp_path):
 
 def test_h6_robots_txt_has_a_timeout(monkeypatch):
     from livetips_m0.sheet import build as B
-    import urllib.request
+    from livetips_m0.sheet import web as W
     calls = {}
 
-    def fake_urlopen(rq, timeout=None):
+    def fake_get(url, timeout=None, **kw):
         calls["timeout"] = timeout
-        raise TimeoutError("silent host")
-    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+        raise W.FetchError(0, "silent host")
+    monkeypatch.setattr(W, "http_get", fake_get)
     t = time.time()
     assert B.robots_allowed("https://lumenfield.example/about") is True
     assert calls["timeout"] and calls["timeout"] <= 10 and time.time() - t < 2
@@ -158,22 +158,29 @@ def test_h6_robots_txt_has_a_timeout(monkeypatch):
 
 def test_h6_fetch_page_reports_a_cut(monkeypatch):
     from livetips_m0.sheet import build as B
-    import io
-    import urllib.request
-
-    class R(io.BytesIO):
-        headers = {"Content-Type": "text/html"}
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *a):
-            return False
+    from livetips_m0.sheet import web as W
+    body = W.Body("<p>" + "Northwind " * 500 + "</p>")
+    body.cut = 1000
     monkeypatch.setattr(B.SRC, "web_allowed", lambda url: True)
-    monkeypatch.setattr(B, "PAGE_MAX_BYTES", 1000)
-    monkeypatch.setattr(urllib.request, "urlopen", lambda rq, timeout=None: R(b"<p>" + b"Northwind " * 500 + b"</p>"))
+    monkeypatch.setattr(W, "http_get", lambda url, **kw: (200, url, "text/html", body))
     text, why, cut = B.fetch_page("https://northwind.example/case")
     assert text and why is None and cut == 1000
+
+
+def test_pb37_quick_build_fetch_refuses_private_addresses(monkeypatch):
+    """The Quick-to-build path (robots lookup and the page itself) uses the crawler's public-address connection."""
+    import socket
+    from livetips_m0.sheet import build as B
+    monkeypatch.delenv("PACENOTE_TEST_WEB_LOOPBACK", raising=False)
+    monkeypatch.setattr(B.SRC, "web_allowed", lambda url: None)
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.0.0.5", 80))])
+
+    def no_socket(*a, **k):
+        raise AssertionError("a private address was contacted")
+    monkeypatch.setattr(socket, "socket", no_socket)
+    text, why, cut = B.fetch_page("http://intranet.example/page")
+    assert text == "" and why and cut == 0
+    assert B.robots_allowed("http://intranet.example/page") is True      # unreachable robots.txt: the page check decides
 
 
 def test_h6_silent_claude_is_stopped_with_a_clear_error(tmp_path):

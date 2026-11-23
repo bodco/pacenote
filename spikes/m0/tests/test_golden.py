@@ -11,11 +11,14 @@ import golden_harness as g
 
 def _r(o):
     """Times measured with the real clock (gist_at = tip start + the model's time to the gist) drift by a
-    millisecond on a busy machine; the engine's behaviour is the same (2026-11-03: flaky in a full run)."""
+    millisecond on a busy machine; the engine's behaviour is the same (2026-11-03: flaky in a full run).
+    gist_at and e2e_gist_s are left out: their delta is time.monotonic() (engine.py, tip span), so a loaded machine
+    moves them by more than 5 ms (2026-11-22: red gate); tip_start and seg_end they come from stay pinned."""
     if isinstance(o, float):
         return round(o, 2)
     if isinstance(o, dict):
-        return {k: _r(v) for k, v in o.items() if k != "context_revision" and not (k == "id" and "state" in o and "cur" in o)}  # diagnostic version, not behavior
+        return {k: _r(v) for k, v in o.items() if k not in ("context_revision", "gist_at", "e2e_gist_s")
+                and not (k == "id" and "state" in o and "cur" in o)}  # diagnostic version and real-clock times, not behavior
     if isinstance(o, list):
         return [_r(v) for v in o]
     return o

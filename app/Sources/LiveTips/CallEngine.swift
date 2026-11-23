@@ -161,6 +161,7 @@ final class CallEngine {
         EditLog.callType = String(((request["call_type"] as? String) ?? "").prefix(20))   // 0.9.4: kept with every correction
         if isRunning { return "A call is already running" }
         if let first = problems().first { return first }
+        Task { @MainActor in SiteResearchSession.stopAll() }                    // PB-37: nothing of "Research this website" runs during a call
         verifyCore()
         if let err = ensureAudioHelper() { return err }
         MainActor.assumeIsolated { OutputLanguageModel.stopForCall() }     // PB-32: a call never overlaps Regenerate (its model requests and notes run)

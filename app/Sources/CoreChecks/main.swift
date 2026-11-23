@@ -2488,6 +2488,48 @@ func meetingLaunch096() {
     mn.actions = [MeetingNotes.Item(t: "00:20", text: "Mike sends the proposal")]
     expect(CallSync.decisions(mn).count == 1 && CallSync.tasks(mn).first?["text"] as? String == "Mike sends the proposal", "sync: decisions and tasks")
     expect(CallSync.sheetBody(Data("[1]".utf8)) == nil && CallSync.sheetBody(Data("{\"a\":1}".utf8)) != nil, "sync: sheet is an object")
+    // PB-37: nothing from a researched page reaches the server payload (title, path, fact text, quote, refresh history);
+    // facts from other sources stay, and the page's site name and state stay
+    let webSheet = Data(#"{"sources":[{"id":"w1","n":1,"type":"web_page","uri":"https://example-company.com/team","title":"ZEBRA-TITLE-7731","path":"/tmp/ZEBRA-PATH-7731.txt","why":["ZEBRA-WHY-7731"],"access":"ok","used":"full"},{"id":"s1","n":2,"type":"file","title":"Brief.pdf","access":"ok","used":"full"}],"blocks":[{"id":"b0","type":"gaps","facts":[{"id":"f-gap-1","label":"Sources disagree: Company","text":"ZEBRA-GAPFACT-7731","source_ids":[],"locator":{},"status":"needs_check","origin":"readiness","about":"f1"},{"id":"f-gap-2","label":"Sources disagree: Company","text":"keep-gap-fact","source_ids":[],"locator":{},"status":"needs_check","origin":"readiness","about":"f2"}]},{"id":"b1","type":"company","facts":[{"id":"f1","text":"ZEBRA-FACT-7731","was":"ZEBRA-WAS-7731","source_ids":["w1"],"locator":{"quote":"ZEBRA-QUOTE-7731","url":"https://example-company.com/team"}},{"id":"f2","text":"keep-this","was":"ZEBRA-OLD-7731","source_ids":["s1"],"status":"conflict","conflict_with":["f1"],"locator":{"quote":"keep-quote"}}],"zebra_block":"ZEBRA-BLOCK-7731"}],"gone_facts":[{"id":"f0","text":"ZEBRA-GONE-7731"}],"readiness":{"state":"almost","gaps":[{"id":"g1","fact":"f1","text":"ZEBRA-GAP-7731"},{"id":"g2","text":"keep-gap"}]},"zebra_later":"ZEBRA-LATER-7731"}"#.utf8)
+    let webJSON = String(data: CallSync.json(CallSync.sheetBody(webSheet) ?? [:]), encoding: .utf8) ?? ""
+    expect(!webJSON.contains("ZEBRA") && webJSON.contains("keep-this") && webJSON.contains("keep-quote") && webJSON.contains("keep-gap")
+           && webJSON.contains("Brief.pdf") && webJSON.contains("example-company.com"), "sync: researched page content stays local")
+    let webBlocks = ((CallSync.sheetBody(webSheet)?["sheet"] as? [String: Any])?["blocks"] as? [[String: Any]]) ?? []
+    let webGaps = (webBlocks.first?["facts"] as? [[String: Any]]) ?? []
+    expect(webGaps.count == 1 && webGaps[0]["id"] as? String == "f-gap-2" && webJSON.contains("keep-gap-fact"),
+           "sync: a readiness gap that copies a researched fact stays local, other gaps go")
+    let webFacts = (webBlocks.dropFirst().first?["facts"] as? [[String: Any]]) ?? []
+    expect(webFacts.count == 1 && (webFacts[0]["conflict_with"] as? [String]) == [] && webFacts[0]["status"] as? String == "needs_check",
+           "sync: a dropped researched fact leaves no dangling link")
+    let webSrc = ((CallSync.sheetBody(webSheet)?["sheet"] as? [String: Any])?["sources"] as? [[String: Any]])?.first
+    expect(webSrc?["title"] as? String == "example-company.com" && webSrc?["path"] == nil && webSrc?["uri"] == nil
+           && !webJSON.contains("/team"), "sync: a researched page keeps a title, its site name only")
+    // PB-37 (round 10): a page address found by the crawler can carry a token in its query; no part of it beyond the site goes
+    let tokSheet = Data(#"{"sources":[{"id":"w1","n":1,"type":"web_page","uri":"https://example-company.com/ZEBRA-PATH?token=ZEBRA-TOKEN-7731&sig=ZEBRA-SIG","parent":"w0","title":"t","access":"ok","used":"full"}],"blocks":[]}"#.utf8)
+    let tokJSON = String(data: CallSync.json(CallSync.sheetBody(tokSheet) ?? [:]), encoding: .utf8) ?? ""
+    expect(!tokJSON.contains("ZEBRA") && !tokJSON.contains("token") && tokJSON.contains("example-company.com"),
+           "sync: a researched page address and its query stay local")
+    // PB-37: a goal the AI wrote from researched pages (its header fact cites them) stays local in both copies; a typed goal goes
+    func goalSheet(_ cites: String, fact: String = "GOAL-7731") -> Data {
+        Data(#"{"goal":"GOAL-7731","sources":[{"id":"s-meeting","n":1,"type":"calendar","title":"Meeting","access":"ok","used":"full"},{"id":"w1","n":2,"type":"web_page","uri":"https://example-company.com/","title":"t","access":"ok","used":"full"}],"blocks":[{"id":"b0","type":"header","facts":[{"id":"f-header-goal","label":"Goal","text":"\#(fact)","source_ids":[\#(cites)],"locator":{},"status":"found"}]}]}"#.utf8)
+    }
+    // a refresh that kept the user's old Goal fact (protect_edits) next to a new goal the AI wrote: the new goal stays local
+    let goalKept = String(data: CallSync.json(CallSync.sheetBody(goalSheet(#""s-meeting""#, fact: "OLD-GOAL")) ?? [:]), encoding: .utf8) ?? ""
+    expect(!goalKept.contains("GOAL-7731") && goalKept.contains("OLD-GOAL"), "sync: a new goal next to a kept old Goal fact stays local")
+    let goalWeb = String(data: CallSync.json(CallSync.sheetBody(goalSheet(#""s-meeting","w1""#)) ?? [:]), encoding: .utf8) ?? ""
+    let goalTyped = String(data: CallSync.json(CallSync.sheetBody(goalSheet(#""s-meeting""#)) ?? [:]), encoding: .utf8) ?? ""
+    expect(!goalWeb.contains("GOAL-7731") && goalWeb.contains("example-company.com"), "sync: a goal written from researched pages stays local")
+    expect(goalTyped.components(separatedBy: "GOAL-7731").count == 3, "sync: a typed goal goes in both copies")
+    // PB-37 (round 8): citations are not trusted: a fact the builder marked from_web goes nowhere even when it cites only a
+    // file or nothing, its gap copy stays too, a fact citing a source record the refresh lost stays local, and the flag never goes
+    let provSheet = Data(#"{"goal":"GOAL-PROV","sources":[{"id":"s1","n":1,"type":"file","title":"Brief.pdf","access":"ok","used":"full"},{"id":"w1","n":2,"type":"web_page","uri":"https://example-company.com/","title":"t","access":"ok","used":"full"}],"blocks":[{"id":"b0","type":"header","facts":[{"id":"f-header-goal","label":"Goal","text":"GOAL-PROV","source_ids":["s-meeting"],"locator":{},"status":"found","from_web":true}]},{"id":"b1","type":"company","facts":[{"id":"f1","text":"ZEBRA-WRONGCITE","source_ids":["s1"],"locator":{"quote":"ZEBRA-WRONGQUOTE"},"status":"found","origin":"model","from_web":true},{"id":"f2","text":"ZEBRA-NOCITE","source_ids":[],"locator":{},"status":"needs_check","origin":"model","from_web":true},{"id":"f3","text":"ZEBRA-LOSTSRC","source_ids":["w9"],"locator":{"quote":"ZEBRA-LOSTQUOTE"},"status":"edited","origin":"model"},{"id":"f4","text":"keep-file-fact","source_ids":["s1"],"locator":{},"status":"found","origin":"model"}]},{"id":"b2","type":"gaps","facts":[{"id":"f-gap-2","label":"Not found: Company","text":"ZEBRA-NOCITE-GAP","source_ids":[],"locator":{},"status":"needs_check","origin":"readiness","about":"f2","from_web":true}]}]}"#.utf8)
+    let provJSON = String(data: CallSync.json(CallSync.sheetBody(provSheet) ?? [:]), encoding: .utf8) ?? ""
+    expect(!provJSON.contains("ZEBRA") && !provJSON.contains("GOAL-PROV") && !provJSON.contains("from_web") && provJSON.contains("keep-file-fact"),
+           "sync: a fact from a model call given researched pages stays local whatever it cites")
+    var provFact = try? JSONDecoder().decode(SheetFact.self, from: Data(#"{"id":"f1","text":"x","source_ids":[],"status":"found","origin":"model","from_web":true}"#.utf8))
+    provFact?.text = "edited by the user"
+    let provRound = provFact.flatMap { try? JSONEncoder().encode($0) }.flatMap { try? JSONDecoder().decode(SheetFact.self, from: $0) }
+    expect(provRound?.fromWeb == true, "sheet: the from_web flag survives an edit and an app save")
     var rm = RecordingMeta(); var rp = RecordingMeta.Part(file: "v.mp4", kind: "video", started: Date())
     rp.driveID = "1AbcDEFghijkLMNOPqrs"; rp.driveLink = "https://drive.google.com/file/d/1AbcDEFghijkLMNOPqrs/view"; rp.driveKind = "shared_drive"; rp.bytes = 10
     var bad = rp; bad.driveLink = "https://evil.example/x"
@@ -2789,6 +2831,60 @@ func meetingSheetUI0100() {
     expect(SheetEdit.closeGap(&g, gapID: "gap-no_open_conflicts-f-size-site", action: .markChecked, now: "n") && g.fact(id: "f-size-site")?.status == .edited, "gap: mark checked")
     expect(SheetEdit.closeGap(&g, gapID: "gap-qualification_complete-budget", action: .addQuestion, now: "n", question: "Budget?") && g.readiness?.state == .ready
            && g.block(.questions)?.facts.contains { $0.text == "Budget?" && $0.origin == .user } == true, "gap: add question, then ready")
+    // PB-37 (round 8): a question copied from the gap of a researched fact quotes it, so it is marked and stays local
+    var gw = base
+    for bi in gw.blocks.indices { for fi in gw.blocks[bi].facts.indices where gw.blocks[bi].facts[fi].id == "f-size-site" { gw.blocks[bi].facts[fi].fromWeb = true } }
+    let qBeforeWeb = Set(gw.block(.questions)?.facts.map(\.id) ?? [])
+    expect(SheetEdit.closeGap(&gw, gapID: "gap-no_open_conflicts-f-size-site", action: .addQuestion, now: "n")
+           && gw.block(.questions)?.facts.first { !qBeforeWeb.contains($0.id) }?.fromWeb == true, "gap: a question from a researched fact's gap is marked")
+    expect(g.block(.questions)?.facts.first { $0.text == "Budget?" }?.fromWeb == nil, "gap: a typed question is not marked")
+    // PB-37 (round 9): the UI always passes its own wording (the gap text, or both conflicting facts' text), so provenance
+    // follows the facts, not a nil question, and the call sync payload leaves those questions out
+    func syncJSON(_ s: MeetingSheet) -> String {
+        String(data: CallSync.json(CallSync.sheetBody(try? JSONEncoder().encode(s)) ?? [:]), encoding: .utf8) ?? ""
+    }
+    // f-size-site cites the researched page s1 in the fixture; gq cites a folder file instead and carries only the flag
+    func citing(_ s: MeetingSheet, _ src: String, fromWeb: Bool?) -> MeetingSheet {
+        var s = s
+        for bi in s.blocks.indices { for fi in s.blocks[bi].facts.indices where s.blocks[bi].facts[fi].id == "f-size-site" {
+            s.blocks[bi].facts[fi].sourceIds = [src]; s.blocks[bi].facts[fi].fromWeb = fromWeb } }
+        return s
+    }
+    var gq = citing(base, "s4", fromWeb: true)
+    let researchedBase = base
+    let gapText = gq.readiness?.gaps?.first { $0.id == "gap-no_open_conflicts-f-size-site" }?.text ?? ""
+    expect(SheetEdit.closeGap(&gq, gapID: "gap-no_open_conflicts-f-size-site", action: .addQuestion, now: "n", question: "QMARK-GAP Ask on the call: " + gapText)
+           && gq.block(.questions)?.facts.first { $0.text.hasPrefix("QMARK-GAP") }?.fromWeb == true, "gap: a worded question from a researched fact's gap is marked")
+    expect(!syncJSON(gq).contains("QMARK-GAP") && syncJSON(gq).contains("\"blocks\""), "sync: a worded question from a researched fact's gap stays local")
+    var kq = researchedBase
+    let bothText = (kq.fact(id: "f-size-site")?.text ?? "") + " / " + (kq.fact(id: "f-size-li")?.text ?? "")
+    expect(SheetEdit.settle(&kq, factID: "f-size-li", .keepBoth, now: "n", question: "QMARK-BOTH Which is right: " + bothText)
+           && kq.block(.questions)?.facts.first { $0.text.hasPrefix("QMARK-BOTH") }?.fromWeb == true, "conflict: keep both with a researched fact marks the question")
+    expect(!syncJSON(kq).contains("QMARK-BOTH"), "sync: a keep-both question quoting a researched fact stays local")
+    var kp = citing(base, "s4", fromWeb: nil)
+    expect(SheetEdit.settle(&kp, factID: "f-size-li", .keepBoth, now: "n", question: "QMARK-PLAIN Which is right?")
+           && kp.block(.questions)?.facts.first { $0.text.hasPrefix("QMARK-PLAIN") }?.fromWeb == nil && syncJSON(kp).contains("QMARK-PLAIN"),
+           "conflict: keep both without researched facts syncs the question")
+    // PB-37 (round 9): a suggested link is saved under its host and path; the researched site's anchor text never becomes its title
+    expect(SiteResearch.suggestedTitle("https://partner.example/case-studies/?ref=nav") == "partner.example/case-studies"
+           && SiteResearch.suggestedTitle("https://partner.example") == "partner.example" && SiteResearch.suggestedTitle("not a url") == "not a url",
+           "web: a suggested link's title is its host and path")
+    var sg = base
+    if let x = try? JSONDecoder().decode(SheetSource.self, from: Data(#"{"id":"x1","n":99,"type":"web","uri":"https://partner.example/case-studies","title":"t","access":"ok","used":"full"}"#.utf8)) {
+        var x = x; x.title = SiteResearch.suggestedTitle(x.uri ?? ""); sg.sources.append(x)
+    }
+    expect(syncJSON(sg).contains("\"title\":\"partner.example\\/case-studies\"") || syncJSON(sg).contains("\"title\":\"partner.example/case-studies\""),
+           "sync: a taken suggested link goes out under its address as title")
+    // PB-37 (round 10): a taken link keeps its query locally (it is read with it) but sync sends it without query, fragment or login
+    var sq = base
+    if let x = try? JSONDecoder().decode(SheetSource.self, from: Data(#"{"id":"x2","n":98,"type":"web","uri":"https://bob:ZEBRA-PW@partner.example/case?token=ZEBRA-TOKEN-7731#ZEBRA-FRAG","title":"https://bob:ZEBRA-PW@partner.example/case?token=ZEBRA-TOKEN-7731#ZEBRA-FRAG","access":"ok","used":"full"}"#.utf8)) {
+        sq.sources.append(x)
+    }
+    let sqJSON = syncJSON(sq)
+    expect(!sqJSON.contains("ZEBRA") && sqJSON.contains("partner.example") && sq.sources.last?.uri?.contains("ZEBRA-TOKEN") == true,
+           "sync: a taken link's query, fragment and login stay local")
+    expect(CallSync.bareLink("not a url") == "not a url" && CallSync.bareLink("https://docs.google.com/document/d/abc/edit?usp=sharing") == "https://docs.google.com/document/d/abc/edit",
+           "sync: a bare link keeps scheme, host and path")
     expect(SheetEdit.setOwner(&g, factID: "f-overview", owner: "Mike Carter") && g.fact(id: "f-overview")?.value?.owner == "Mike Carter", "gap: owner")
     expect(SheetEdit.addFact(&g, blockType: .agenda, text: "Kick-off", now: "n") != nil && g.block(.agenda)?.facts.first?.status == .edited, "fact: added into a new block")
     // export
@@ -6167,5 +6263,130 @@ func outputLanguageS1() {
     expect(!CallLanguage.followUpMayWrite(busy: true, hasDraft: false, replacingDraft: true), "outlang follow-up: never while one runs")
 }
 outputLanguageS1()
+/// PB-37 (G6, subtask C): Research this website: the plan from a fixture of the sidecar contract (spec section 7),
+/// ticks and the budget, the cost line, the report and the child sources.
+func siteResearchPB37C() {
+    var rows: [[String: Any]] = [["url": "https://example-company.com/", "path": "/", "depth": 0, "kind": "home", "planned": true, "note": "", "est_tokens": 1500]]
+    for i in 1...19 {
+        rows.append(["url": "https://example-company.com/p\(i)", "path": "/p\(i)", "depth": 1, "kind": "page", "planned": true, "note": "",
+                     "score": Double(20 - i), "why_code": i == 1 ? "goal" : "section", "why_terms": i == 1 ? ["team"] : [], "est_tokens": 1000 + i])
+    }
+    rows.append(["url": "https://example-company.com/login", "path": "/login", "depth": 1, "kind": "page", "planned": false, "note": "sign-in"])
+    rows.append(["url": "https://example-company.com/old", "path": "/old", "depth": 1, "kind": "page", "planned": false, "note": "limit"])
+    let json: [String: Any] = ["url": "https://example-company.com/", "domain": "example-company.com",
+        "limits": ["depth": 2, "max_pages": 30, "respect_robots": true], "start": ["status": "ok", "http": 200],
+        "pages": rows, "external": [["url": "https://other.example.org/x", "domain": "other.example.org", "text": "Partner", "why": "linked"]]]
+    guard var plan = SitePlan(json: json) else { expect(false, "site plan: parse"); return }
+    expect(plan.budget == 15 && plan.tickedCount == 15 && plan.pages[0].ticked && plan.pages[14].ticked && !plan.pages[15].ticked, "site plan: 15 ticked by default, in the sidecar's order")
+    expect(plan.reason(plan.pages[16]) == "limit" && plan.reason(plan.pages[20]) == "sign-in" && plan.reason(plan.pages[21]) == "limit" && plan.reason(plan.pages[0]) == nil, "site plan: the reason of each page left out")
+    expect(plan.pages[1].whyCode == "goal" && plan.pages[1].whyTerms == ["team"] && plan.pages[1].score == 19 && plan.pages[0].estTokens == 1500, "site plan: score, why and tokens kept")
+    plan.toggle("https://example-company.com/p16")
+    expect(plan.tickedCount == 15 && !plan.pages[16].ticked, "site plan: a page over the budget cannot be ticked")
+    plan.toggle("https://example-company.com/p3")
+    plan.toggle("https://example-company.com/login")
+    expect(plan.tickedCount == 14 && !plan.pages[3].ticked, "site plan: untick works, a skipped page stays off")
+    plan.setBudget(30)
+    expect(plan.budget == 30 && plan.tickedCount == 20 && !plan.pages[20].ticked, "site plan: budget 30 ticks every planned page")
+    plan.setBudget(99)
+    expect(plan.budget == 30, "site plan: the budget stops at 30")
+    plan.setBudget(0)
+    expect(plan.budget == 1 && plan.tickedCount == 1, "site plan: the budget is at least 1")
+    plan.setBudget(5)
+    let fp = plan.fetchPlan()
+    let fl = fp["limits"] as? [String: Any]
+    let planned = (fp["pages"] as? [[String: Any]] ?? []).filter { $0["planned"] as? Bool == true }.count
+    expect(planned == 5 && fl?["max_pages"] as? Int == 5 && fl?["depth"] as? Int == 2, "site plan: webfetch plans only the ticked pages, the limit is their count")
+    let rq = SiteResearch.planRequest(url: "https://example-company.com", goal: "intro", callType: "sales", audience: "client", route: "api")
+    expect(rq["max_pages"] as? Int == 30 && rq["goal"] as? String == "intro" && rq["call_type"] as? String == "sales" && rq["audience"] as? String == "client" && rq["route"] as? String == "api" && rq["respect_robots"] as? Bool == true, "site plan: webplan request fields")
+    let fr = SiteResearch.fetchRequest(plan: plan, outDir: "/tmp/w", cancelPath: "/tmp/w/.cancel")
+    expect(fr["out_dir"] as? String == "/tmp/w" && fr["cancel_path"] as? String == "/tmp/w/.cancel" && fr["plan"] != nil && fr["progress"] as? Bool == true, "site plan: webfetch request fields (one call, progress lines)")
+    expect(SiteResearch.progressStart(["progress": ["stage": "start", "path": "/team", "n": 2]])?.path == "/team" && SiteResearch.progressStart(["progress": ["stage": "start", "path": "/team", "n": 2]])?.n == 2 && SiteResearch.progressStart(["progress": ["stage": "page"]]) == nil && SiteResearch.progressStart(["summary": [:]]) == nil, "site plan: the current page from a progress line")
+
+    var blocked = json
+    blocked["start"] = ["status": "blocked", "note": "robots.txt does not allow this page"]
+    expect(SitePlan(json: blocked)?.startStatus == "blocked" && SitePlan(json: ["error": "x"]) == nil, "site plan: a blocked start and an error answer")
+
+    // the cost line: dollars where the route has a price, tokens and window share otherwise, never an invented price
+    expect(SiteResearch.cost(tokens: 15000, route: "api", window: 200_000) == .dollars(tokens: 15000, usd: 0.03), "site cost: api in dollars")
+    expect(SiteResearch.cost(tokens: 15000, route: "local", window: 64_000) == .free(tokens: 15000), "site cost: local is free")
+    expect(SiteResearch.cost(tokens: 20000, route: "code", window: 200_000) == .window(tokens: 20000, percent: 10), "site cost: an account route shows the window share")
+    expect(SiteResearch.cost(tokens: 20000, route: "agy", window: 1_000_000) == .window(tokens: 20000, percent: 2) && SiteResearch.inputPrice(route: "codex") == nil, "site cost: no dollar figure for a subscription")
+
+    expect(SiteResearch.errorKind("the site did not answer in 30 s") == .timeout && SiteResearch.errorKind("HTTP 503") == .http("503") && SiteResearch.errorKind("no addresses found") == .other, "site error kinds: timeout, http code, other (never the raw string)")
+
+    // the report of webfetch and the child sources
+    let rep: [String: Any] = ["url": "https://example-company.com/",
+        "sources": [["id": "w1", "type": "web_page", "uri": "https://example-company.com/", "path": "/tmp/w/home.txt", "title": "Home", "size_tokens": 800,
+                     "why": ["page of example-company.com"], "parent_uri": "https://example-company.com/", "used": "full"],
+                    ["id": "w2", "type": "web_page", "uri": "https://example-company.com/team", "path": "/tmp/w/team.txt", "title": "Team", "size_tokens": 600,
+                     "why": ["page of example-company.com (team)"], "used": "full"],
+                    ["id": "w3", "type": "web_page", "uri": "https://example-company.com/soon", "path": "/tmp/w/soon.txt", "title": "Soon", "size_tokens": 20,
+                     "used": "not_used", "reason": "the page is empty or a placeholder"]],
+        "suggested": [["uri": "https://other.example.org/x", "title": "Partner", "type": "web"]],
+        "summary": ["read": 2, "empty": 1, "blocked": 0, "error": 0, "skipped": 4, "duplicate": 0, "tokens": 1400],
+        "pages": [["url": "https://example-company.com/team", "status": "read", "note": ""]]]
+    let privStart = SitePlan(json: ["url": "http://10.0.0.1/", "start": ["status": "blocked", "note": "private or non-public address", "why": "private"]])
+    expect(privStart?.startStatus == "blocked" && privStart?.startWhy == "private" && SitePlan(json: blocked)?.startWhy == "", "site plan: a private address is its own start reason, not robots.txt")
+    expect(SiteResearch.isPrivateRefusal(state: "blocked", note: "private or non-public address") && !SiteResearch.isPrivateRefusal(state: "blocked", note: "robots"), "site report: a private refusal is not a robots.txt block")
+    guard let report = SiteReadReport(json: rep) else { expect(false, "site report: parse"); return }
+    expect(report.children.count == 3 && report.usable.count == 2 && report.tokens == 1400 && report.counts["skipped"] == 4, "site report: children, usable pages, counts")
+    expect(report.children[1].parentURI == "https://example-company.com/" && report.children[1].why == ["page of example-company.com (team)"], "site report: the parent defaults to the site, why kept")
+    expect(report.suggested.first?.url == "https://other.example.org/x" && report.suggested.first?.domain == "other.example.org", "site report: other sites are suggested, not read")
+    expect(SiteReadReport(json: ["error": "boom"]) == nil, "site report: an error answer is no report")
+    let flags = SiteReadReport(json: ["url": "https://example-company.com/", "sources": [
+        ["id": "w1", "uri": "https://example-company.com/a", "path": "/tmp/w/a.txt", "title": "A", "used": "truncated",
+         "cut": ["read_bytes": 2_000_000, "limit_bytes": 2_000_000]],
+        ["id": "w2", "uri": "https://example-company.com/b", "path": "/tmp/w/b.txt", "title": "B", "used": "not_used", "empty": true]]])
+    expect(flags?.children[0].cutRead == 2_000_000 && flags?.children[0].cutLimit == 2_000_000 && flags?.children[0].empty == false
+           && flags?.children[1].empty == true && flags?.children[1].cutRead == nil, "site report: empty and cut states are kept for the build")
+
+    // PB-37C fix: the start page child has the site's URL; it must stay a build source, the site row must not
+    let site = "https://example-company.com/"
+    let srcRows: [(id: String, uri: String?, parent: String?)] = [("s", site, nil), ("c", site, site), ("t", "https://example-company.com/team", site), ("o", "https://other.example.org/", nil)]
+    let among = srcRows.map { (uri: $0.uri, parentURI: $0.parent) }
+    let built = srcRows.filter { SiteResearch.hasPagesRead(uri: $0.uri, parentURI: $0.parent, among: among) == false }.map { $0.id }
+    expect(built == ["c", "t", "o"], "site research: the start page child is built, the read site row is not, an unread site stays")
+    expect(SiteResearch.hasPagesRead(uri: site, parentURI: nil, among: [(uri: site, parentURI: site)]) && !SiteResearch.hasPagesRead(uri: site, parentURI: nil, among: [(uri: site, parentURI: nil)]), "site research: a one-page run counts as read")
+
+    // the sidecar ended before its report: what was read comes from the progress lines
+    let pl: [[String: Any]] = [
+        ["progress": ["stage": "start", "path": "/", "n": 1]],
+        ["progress": ["stage": "page", "row": ["url": site, "status": "read", "tokens": 10], "source": ["uri": site, "path": "/tmp/w/a.txt", "size_tokens": 10]]],
+        ["progress": ["stage": "page", "row": ["url": site + "about-us", "status": "duplicate", "note": "same text as " + site], "source": NSNull()]]]
+    let salv = SiteReadReport(progress: pl, url: site)
+    expect(salv?.children.count == 1 && salv?.counts["read"] == 1 && salv?.counts["duplicate"] == 1 && salv?.tokens == 10 && salv?.states[site + "about-us"]?.state == "duplicate", "site report: rebuilt from progress lines")
+    expect(SiteReadReport(progress: [pl[0]], url: site) == nil, "site report: no page reported, no report")
+
+    // one source per page: the same page written two ways is one key
+    expect(SiteResearch.key("https://www.Example-Company.com/team/#x") == SiteResearch.key("https://example-company.com/team") && SiteResearch.key("https://example-company.com/") == "example-company.com", "site research: page key ignores www, case, fragment and slash")
+}
+// PB-37 (G6): the shot staging of the research panel is static: no process, no timer, no network, no sidecar call, no wait
+func siteResearchShotStaticPB37() {
+    let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let dir = repo.appendingPathComponent("app/Sources/LiveTips")
+    let staging = (try? String(contentsOf: dir.appendingPathComponent("SheetShotsResearch.swift"), encoding: .utf8)) ?? ""
+    expect(staging.contains("SiteResearchSession("), "research shots: the staging file is found")
+    for bad in ["Process(", "Timer", "SheetCLI", "URLSession", "asyncAfter", "DispatchQueue", "Task {", ".loadPlan(", ".read(", ".researchSite(", ".readPages(", ".cancel("] {
+        expect(!staging.contains(bad), "research shots: the staging has no \(bad)")
+    }
+    let spin = (try? String(contentsOf: dir.appendingPathComponent("BrandComponents.swift"), encoding: .utf8)) ?? ""
+    expect(spin.contains("paused: still") && spin.contains("SheetShots.active"), "research shots: the spinner is paused in shot mode (no display-link redraws)")
+}
+// PB-37 (G6) fix round 2: one cancel file per read, a call stops and blocks the research, a sidecar that ended without its report keeps the pages
+func siteResearchRobustPB37() {
+    let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let dir = repo.appendingPathComponent("app/Sources/LiveTips")
+    let ses = (try? String(contentsOf: dir.appendingPathComponent("SheetSiteResearch.swift"), encoding: .utf8)) ?? ""
+    expect(ses.contains("webfetch-\\(UUID().uuidString.prefix(8)).cancel") && !ses.contains("appendingPathComponent(\".cancel\")"), "research: each read has its own cancel file (never the shared .cancel of the site folder)")
+    expect(ses.contains("static func stopAll()") && ses.contains("callBusy"), "research: a call stops outstanding reads and blocks new ones")
+    expect(ses.contains("partialFailed = !cancelling") && ses.contains("sheet.ui.web.partialFailed"), "research: a sidecar that ended without its report keeps the pages and says so")
+    let call = (try? String(contentsOf: dir.appendingPathComponent("CallEngine.swift"), encoding: .utf8)) ?? ""
+    expect(call.contains("SiteResearchSession.stopAll()"), "research: starting a call stops the reads")
+}
+siteResearchRobustPB37()
+siteResearchShotStaticPB37()
+siteResearchPB37C()
 print("core checks: \(passed) passed, \(failures) failed")
 exit(failures == 0 ? 0 : 1)
