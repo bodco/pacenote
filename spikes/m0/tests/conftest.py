@@ -1,5 +1,8 @@
+import os
 import sys
 from pathlib import Path
+
+os.environ.setdefault("LT_VOICES", "")   # PB-51: never the PM's own voice library (identity.voices_path)
 
 HERE = Path(__file__).absolute()   # not resolve(): mutation testing links the tree and must import its own copy
 sys.path.insert(0, str(HERE.parents[1]))          # spikes/m0

@@ -71,6 +71,19 @@ def test_same_owner_or_another_call_is_left_alone(tmp_path):
     assert sorted(i["owner"] for i in other) == ["Speaker 2", "Speaker 3", "me"]
 
 
+def test_a_we_will_try_proposal_follows_the_new_name_too(tmp_path):
+    """PB-51: a "we will try" item is a proposal, not open; Rewrite notes still gives it the new owner (no twin)."""
+    old, new = (OLD.replace("send the test accounts", "try to send the test accounts"),
+                NEW.replace("send the test accounts", "try to send the test accounts"))
+    C.record_notes(tmp_path, call=CALL, notes=old, aliases=["Mike Johnson"])
+    assert [i["status"] for i in C.load(tmp_path) if "try" in i["text"]] == ["proposal"]
+    C.migrate_owners(tmp_path, call=CALL, notes=new, aliases=["Mike Johnson"])
+    C.record_notes(tmp_path, call=CALL, notes=new, aliases=["Mike Johnson"])
+    items = C.load(tmp_path)
+    assert [(i["owner"], i["status"]) for i in items if "try" in i["text"]] == [("David Kim", "proposal")]
+    assert len(items) == 3
+
+
 def test_rewrite_flag_writes_the_full_notes_over_the_old_ones(tmp_path, monkeypatch):
     md = tmp_path / CALL
     md.write_text("# Live transcript\n[10:00:00] Me: hi\n", encoding="utf-8")

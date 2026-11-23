@@ -11,7 +11,9 @@ app runs today and measures what the engine assembles BEFORE the model:
   live     lookup.snippets over the background FolderIndex, as engine._project_snippets runs it without lt and without
            the model's extra queries; the expected source in the top N = answer rate; p50/p95 of the warm lookup
   after    commitments.record_notes with the call's notes into the register; duplicates of an existing item, items of
-           the other client's "item 13" in the call's Tracker, "we will try" items that stand as open commitments
+           the other client's "item 13" in the call's Tracker, "we will try" items that stand as open commitments.
+           Since G1 (PB-51) record_notes first migrates the fixture register once (as the app does on its first write),
+           and the identity suggestions it leaves to the PM are counted, with the duplicates left if the PM confirms all
 
   python3 bench/g0/run.py --variant A            # prints the table, writes results/A-<date>.json (never over an existing one; --tag x: A-<date>-x.json)
   python3 bench/g0/run.py --compare A C          # the newest result of each, metric by metric
@@ -230,8 +232,11 @@ class VariantA:
         return LK.snippets(question, sheet=sheet, roots=[str(root)], k=6, queries=[], budget_chars=14000,
                            max_seconds=1.0, exclude_prefix=exclude_prefix, index=index)
 
-    def after_call(self, live: Path, call: str, notes: str, aliases: List[str]) -> List[dict]:
-        return CM.record_notes(str(live), call=call, notes=notes, aliases=aliases)
+    def after_call(self, live: Path, call: str, notes: str, aliases: List[str], sheet: Optional[dict] = None) -> List[dict]:
+        """engine.write_register: the call's client is the scope the sheet keeps (PB-70), "" when none."""
+        client = (CS.from_sheet(sheet) or {}).get("client") or ""
+        return CM.record_notes(str(live), call=call, notes=notes, aliases=aliases, people={},   # not this Mac's voices
+                               client=client)
 
 
 def variant(name: str):
@@ -308,21 +313,29 @@ def run_live(v, t: dict, gold: dict, root: Path, sheet: Optional[dict]) -> dict:
             "_samples": samples}
 
 
+def matching(items: List[dict], match: List[str], status: str) -> List[dict]:
+    return [i for i in items if i.get("status") == status and all(has_phrase(i.get("text", ""), [m]) for m in match)]
+
+
 def open_matching(items: List[dict], match: List[str]) -> List[dict]:
-    return [i for i in items if i.get("status") == "open" and all(has_phrase(i.get("text", ""), [m]) for m in match)]
+    return matching(items, match, "open")
 
 
-def run_after(v, t: dict, gold: dict, root: Path) -> dict:
+def run_after(v, t: dict, gold: dict, root: Path, sheet: Optional[dict] = None) -> dict:
     live = root / "live"
     notes = (FIX / t["dir"] / t["call"].replace(".md", ".notes.md")).read_text(encoding="utf-8")
     before = {i["id"] for i in CM.load(str(live))}
     with clock(t["start"] + "+00:00"):
-        events = v.after_call(live, t["call"], notes, list(gold["aliases"]))
+        events = v.after_call(live, t["call"], notes, list(gold["aliases"]), sheet)
     items = CM.load(str(live))
     by_id = {i["id"]: i for i in items}
     added = {e["id"] for e in events if e.get("op") == "add"}
     touched = {e["id"] for e in events if e.get("op") != "add"}
-    rows, dups, wrong, false_agreed = [], 0, 0, 0
+    rows, dups, wrong, false_agreed, false_proposal = [], 0, 0, 0, 0
+    reg = CM.read_events(str(live))
+    sugg = CM.suggestions(reg)          # G1: what the PM is asked ("is it the same?"); confirming all of them:
+    confirmed = CM.fold(reg + [{"op": "same", "id": x["id"], "to": x["to"], "by": "pm"} for x in sugg])
+    dups_confirmed = sum(max(0, len(open_matching(confirmed, a["match"])) - 1) for a in t["after_call"])
     for a in t["after_call"]:
         m = open_matching(items, a["match"])
         old = [i for i in m if i["id"] in before]
@@ -336,15 +349,19 @@ def run_after(v, t: dict, gold: dict, root: Path) -> dict:
             ok = len(m) <= 1
         tentative_open = a.get("modality") == "tentative" and bool(new if a["kind"] != "existing" else m)
         false_agreed += int(tentative_open)
+        firm = 0 if a.get("modality") == "tentative" else len(matching(items, a["match"], "proposal"))
+        false_proposal += firm      # PB-51: an agreed task read as "we will try" leaves every owed list
         wrong += int(not ok)
         rows.append({"id": a["id"], "kind": a["kind"], "ok": ok, "open_items": len(m), "added": len(new),
-                     "tentative_open": tentative_open})
+                     "tentative_open": tentative_open, "firm_as_proposal": firm})
     other = [c for c in gold["clients"] if c != t["client"]]
     cross_events = sum(1 for i in touched if client_of_series((by_id.get(i) or {}).get("series", ""), gold) in other)
     tr = TR.collect({"project": {"root": str(root)}, "today": t["start"][:10]})
     cross_tracker = sum(1 for x in tr["on_me"] + tr["waiting"]
                         if has_phrase(x["text"], ["item 13"]) and client_of_series(x.get("series", ""), gold) in other)
-    return {"duplicates": dups, "wrong_identity": wrong, "false_agreed": false_agreed,
+    return {"duplicates": dups, "wrong_identity": wrong, "false_agreed": false_agreed, "false_proposal": false_proposal,
+            "suggested": len(sugg),
+            "duplicates_if_confirmed": dups_confirmed,
             "item13_cross_client": cross_events + cross_tracker, "item13_cross_events": cross_events,
             "item13_in_tracker": cross_tracker, "items": rows, "events": len(events)}
 
@@ -405,9 +422,10 @@ def run(variant_name: str = "A", gold_path: Path = GOLD) -> dict:
         for t in sorted(gold["targets"], key=lambda x: x["start"]):
             root = fresh_copy(Path(tmp), gold)           # each target call on its own clean copy
             prep = run_prep(v, t, gold, root, site)
-            live = run_live(v, t, gold, root, prep.pop("_sheet"))
+            sheet = prep.pop("_sheet")
+            live = run_live(v, t, gold, root, sheet)
             samples += live.pop("_samples")
-            after = run_after(v, t, gold, root)
+            after = run_after(v, t, gold, root, sheet)
             out["targets"].append({"id": t["id"], "client": t["client"], "prep": prep, "live": live, "after": after})
         out["blocked_connections"] = len(blocked)
     out["totals"] = totals(out["targets"], samples)
@@ -428,8 +446,11 @@ def totals(targets: List[dict], samples: List[float]) -> dict:
             "lookup_p50_ms": quantile(samples, 0.5), "lookup_p95_ms": quantile(samples, 0.95),
             "duplicates": sum(x["after"]["duplicates"] for x in targets),
             "wrong_identity": sum(x["after"]["wrong_identity"] for x in targets),
+            "suggested": sum(x["after"].get("suggested", 0) for x in targets),
+            "duplicates_if_confirmed": sum(x["after"].get("duplicates_if_confirmed", x["after"]["duplicates"]) for x in targets),
             "item13_cross_client": sum(x["after"]["item13_cross_client"] for x in targets),
-            "false_agreed": sum(x["after"]["false_agreed"] for x in targets)}
+            "false_agreed": sum(x["after"]["false_agreed"] for x in targets),
+            "false_proposal": sum(x["after"].get("false_proposal", 0) for x in targets)}
 
 
 def git_head() -> str:
@@ -446,8 +467,10 @@ COLUMNS = [("Prep coverage", "prep_coverage", "%"), ("Prep leaks", "prep_leaks",
            ("Live answer rate", "live_answer_rate", "%"), ("Answer text in top", "live_answer_text_rate", "%"),
            ("Live leaks", "live_leaks", ""),
            ("Lookup p50 ms", "lookup_p50_ms", ""), ("Lookup p95 ms", "lookup_p95_ms", ""),
-           ("Duplicates", "duplicates", ""), ("Wrong identity", "wrong_identity", ""),
-           ("Item 13 cross-client", "item13_cross_client", ""), ("False agreed", "false_agreed", "")]
+           ("Duplicates", "duplicates", ""), ("Suggested", "suggested", ""),
+           ("Duplicates if PM confirms", "duplicates_if_confirmed", ""), ("Wrong identity", "wrong_identity", ""),
+           ("Item 13 cross-client", "item13_cross_client", ""), ("False agreed", "false_agreed", ""),
+           ("False proposal", "false_proposal", "")]
 
 
 def row_of(x: dict) -> dict:
@@ -455,8 +478,10 @@ def row_of(x: dict) -> dict:
             "live_answer_rate": x["live"]["answer_rate"], "live_answer_text_rate": x["live"]["answer_text_rate"],
             "live_leaks": x["live"]["leaks"],
             "lookup_p50_ms": x["live"]["p50_ms"], "lookup_p95_ms": x["live"]["p95_ms"],
-            "duplicates": x["after"]["duplicates"], "wrong_identity": x["after"]["wrong_identity"],
-            "item13_cross_client": x["after"]["item13_cross_client"], "false_agreed": x["after"]["false_agreed"]}
+            "duplicates": x["after"]["duplicates"], "suggested": x["after"].get("suggested"),
+            "duplicates_if_confirmed": x["after"].get("duplicates_if_confirmed"), "wrong_identity": x["after"]["wrong_identity"],
+            "item13_cross_client": x["after"]["item13_cross_client"], "false_agreed": x["after"]["false_agreed"],
+            "false_proposal": x["after"].get("false_proposal")}
 
 
 def fmt(v, unit: str) -> str:
@@ -507,14 +532,15 @@ def newest(name: str) -> dict:
     p = Path(name)
     if p.is_file():
         return json.loads(p.read_text(encoding="utf-8"))
-    found = sorted(RESULTS.glob("{}-*.json".format(name)))
+    found = sorted(RESULTS.glob("{}-*.json".format(name)), key=lambda f: f.stem)     # a labeled same-day result is newer
     if not found:
         raise SystemExit("no results for variant {} in {}".format(name, RESULTS.name))
     return json.loads(found[-1].read_text(encoding="utf-8"))
 
 
-LOWER_IS_BETTER = {"prep_leaks", "live_leaks", "lookup_p50_ms", "lookup_p95_ms", "duplicates", "wrong_identity",
-                   "item13_cross_client", "false_agreed"}
+LOWER_IS_BETTER = {"prep_leaks", "live_leaks", "lookup_p50_ms", "lookup_p95_ms", "duplicates", "duplicates_if_confirmed",
+                   "wrong_identity",
+                   "item13_cross_client", "false_agreed", "false_proposal"}
 
 
 def compare(a: dict, b: dict) -> str:
@@ -550,7 +576,8 @@ def regen_register(gold_path: Path = GOLD) -> Path:
         m = re.match(r"^(\d{4}-\d\d-\d\d)-(\d\d)(\d\d)-", call)
         day = "{}T{}:{}:00+00:00".format(m.group(1), m.group(2), m.group(3))
         with clock(day):
-            CM.record_notes(str(live), call=call, notes=n.read_text(encoding="utf-8"), aliases=list(gold["aliases"]))
+            CM.record_notes(str(live), call=call, notes=n.read_text(encoding="utf-8"), aliases=list(gold["aliases"]),
+                            people={})
     return reg
 
 
@@ -559,7 +586,8 @@ def main(argv=None) -> int:
     ap.add_argument("--variant", choices=VARIANTS, default="A")
     ap.add_argument("--compare", nargs=2, metavar=("X", "Y"), help="variants (or result files) to compare")
     ap.add_argument("--no-save", action="store_true", help="print only, write no results file")
-    ap.add_argument("--tag", default="", help="suffix of the results file name (A-<date>-<tag>.json)")
+    ap.add_argument("--tag", "--label", dest="tag", default="",
+                    help="suffix of the results file name (A-<date>-<tag>.json, keeps a same-day result)")
     ap.add_argument("--regen-register", action="store_true")
     a = ap.parse_args(argv)
     if a.regen_register:
@@ -569,6 +597,8 @@ def main(argv=None) -> int:
         print(compare(newest(a.compare[0]), newest(a.compare[1])))
         return 0
     res = run(a.variant)
+    if a.tag:
+        res["label"] = re.sub(r"[^\w.-]", "", a.tag)
     print(table(res))
     m = misses(res)
     if m:

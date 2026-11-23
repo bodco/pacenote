@@ -42,6 +42,55 @@ stays 4: it counts the register after the call and a Tracker collected without t
 Raw numbers: `spikes/m0/bench/g0/results/A-2026-11-23-pb70.json`. The harness now allows the fixture's loopback page
 (`PACENOTE_TEST_WEB_LOOPBACK`): since PB-37 the Acme status page on 127.0.0.1 was refused and its fact dropped out.
 
+## After G1 identity (PB-51, variant A, 2026-11-23)
+
+The same variant A after the G1 change (`commitments` identity across calls; measured at commit `080c330`, the totals are unchanged through fix round 6). G1 was built before PB-70, so the 11 prep and 4 live leaks below are the
+pre-PB-70 numbers; the merged code is in the next section. Raw numbers:
+`spikes/m0/bench/g0/results/A-2026-11-23-g1.json` (same fixture and gold hashes as the baseline).
+
+| Target | Duplicates | Suggested | Duplicates if PM confirms | Wrong identity | Item 13 cross-client | False agreed |
+|---|---:|---:|---:|---:|---:|---:|
+| acme-weekly-status-2026-11-17 | 3 | 3 | 0 | 2 | 1 | 0 |
+| globex-weekly-2026-11-18 | 2 | 3 | 0 | 2 | 2 | 0 |
+| acme-technical-sync-2026-11-19 | 0 | 2 | 0 | 0 | 1 | 0 |
+| **All, before (baseline)** | **6** | n/a | n/a | **5** | **4** | **2** |
+| **All, after G1** | **5** | **8** | **0** | **4** | **4** | **0** |
+
+Preparation and live columns did not change (80.0% coverage, 11 prep leaks, 100.0% answer rate, 80.0% answer text,
+4 live leaks); only latency moves between runs.
+
+- **Item 13 is a suggestion, per client.** The engine knew no client of a call before PB-70 (the fixture has none either), and
+  two clients can both have a "Weekly sync", so an explicit reference joins items by itself only when both name the
+  same client. Here the mentions of item 13 wait for the PM as suggestions inside one meeting series; Acme's and
+  Globex's item 13 are never suggested to each other. A first run of this change joined them by the series alone
+  (duplicates 3, wrong identity 2); the review found that two clients with the same meeting title would merge.
+- **"We will try" is a proposal.** The migration marks "try to confirm the pilot user list" as a proposal, and a
+  later "try to send" never weakens an agreed item: false agreed 2 to 0.
+- **The rest waits for the PM too.** The rollout checklist (3 calls, 3 wordings) and the invoice export mockup have
+  no ID and no reference, so they stay separate items with a suggestion each; once the PM confirms the suggestions,
+  duplicates are 0.
+  Suggested counts every open suggestion in the register after the call, so a pair from older calls is counted on
+  each target.
+- **Item 13 cross-client is unchanged (4).** It counts the other client's item 13 in the call's Tracker, which still
+  reads the whole project register; scoping the Tracker belongs to the preparation steps (G3, G5).
+
+## After PB-70 and G1 together (variant A, 2026-11-23)
+
+Both changes on one branch (main `db3c2be` with PB-51 merged). The register now takes a call's client from the client
+scope its preparation decided (PB-70), so two calls both called "Weekly sync" but scoped to two clients never join or
+suggest each other's item 13. Raw numbers: `spikes/m0/bench/g0/results/A-2026-11-23-g1-pb70.json`.
+
+| Run | Prep coverage | Prep leaks | Live answer rate | Answer text in top | Live leaks | Duplicates | Suggested | Duplicates if PM confirms | Wrong identity | Item 13 cross-client | False agreed |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| Baseline (A) | 80.0% | 11 | 100.0% | 80.0% | 4 | 6 | n/a | n/a | 5 | 4 | 2 |
+| After PB-70 | 80.0% | 0 | 100.0% | 80.0% | 0 | 6 | n/a | n/a | 5 | 4 | 2 |
+| After G1 (before PB-70) | 80.0% | 11 | 100.0% | 80.0% | 4 | 5 | 8 | 0 | 4 | 4 | 0 |
+| **After PB-70 and G1** | **80.0%** | **0** | **100.0%** | **80.0%** | **0** | **5** | **8** | **0** | **4** | **4** | **0** |
+
+The two changes add up without moving each other's numbers: the fixture's older register items have no client, so
+the after-call columns are G1's, and the preparation and live columns are PB-70's. Item 13 cross-client stays 4 for
+the reason given above.
+
 ## What is measured
 
 Each target call is replayed on a clean copy of the fixture project, with every file dated by the date in its name
@@ -59,6 +108,7 @@ Each target call is replayed on a clean copy of the fixture project, with every 
 | Wrong identity | expected items where the register did not do the expected thing (update the existing item, or add one new item) |
 | Item 13 cross-client | events of the call on the other client's items, plus the other client's item 13 in the call's Tracker |
 | False agreed | a "we will try" item that stands in the register as an open commitment |
+| False proposal | a firm expected item that stands in the register as a "we will try" proposal (added in PB-51 fix round 3; 0 on every target, and the fixture has no firm task with a trailing "maybe" yet, so unit tests cover that wording) |
 
 Matching rule: both sides lower case, whitespace collapsed, a phrase matches on word boundaries.
 
@@ -80,7 +130,7 @@ All data is invented.
 ```sh
 cd spikes/m0
 python3 bench/g0/run.py --variant A          # the table, and results/A-<date>.json (-2, -3... if it exists)
-python3 bench/g0/run.py --variant A --tag x  # the same, saved as results/A-<date>-x.json
+python3 bench/g0/run.py --variant A --tag x  # the same, saved as results/A-<date>-x.json (--label x too); never overwritten
 python3 bench/g0/run.py --compare A C        # the newest result of each variant, metric by metric
 python3 -m pytest -q tests/test_g0_bench.py  # runs the harness, checks the fixture (not the scores)
 ```

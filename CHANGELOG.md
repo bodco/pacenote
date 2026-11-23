@@ -14,6 +14,30 @@ Pacenote. Earlier versions are described in the commit messages and in
   add by hand is always read, and when the client is not clear nothing is hidden, in the preparation and during the
   call alike. Not yet scoped: the tools of the optional call agent. On the G0 benchmark: facts of the other client in
   the preparation 11 -> 0, in the live search 4 -> 0, with the same coverage.
+- **One task across calls in the commitments register (GraphRAG G1, PB-51).** A task named again on a later call joins
+  the older item instead of becoming a new one when both have the same Notion page or HubSpot task in the same
+  project and not of two different known clients (for now in the register's migration only: a new item gets its page
+  or task later), or the same explicit reference ("item 13", "пункт 13"; not a bare "#1") for the same person in the
+  same project and the same known client; an item's client comes from every mention joined into it, so an item that
+  already holds an Acme mention never joins or is suggested for Globex's task. A call's client is the one its
+  preparation decided (PB-70 client scope), so two calls both called "Weekly sync" but scoped to Acme and to Globex
+  never join or suggest each other's item 13. Without a known client the same reference in one meeting series is only
+  a suggestion, so Acme's item 13 and Globex's item 13 never merge even when both meetings are
+  called "Weekly sync". A similar task without an ID or a reference is a suggestion too until the PM confirms it; the
+  PM can reject a suggestion or undo a link and that pair is never joined again (an undo gives each item back its own
+  status, due date and done, and what was done on either while joined stays with it), and the PM's latest edit gives the
+  joined item its wording. Names follow the aliases of the voice library the app keeps; people who only share a first
+  name are at most a suggestion. A "we will try" promise is a proposal, not an open commitment; "try to", "maybe" and
+  "if possible" count only when they open the task ("send the deck by Friday, maybe earlier" and "fix the crash when
+  users try to export" stay agreed, and so does quoted text such as "fix the 'try to login' banner"), and `python -m livetips_m0.commitments agree <live folder>
+  <id>` makes a proposal open (Rewrite notes moves a proposal to the renamed speaker like an open task). The first write
+  migrates the register by appending events only (in about a second for 1000 items, never closing or reopening a
+  task), and `python -m livetips_m0.commitments rollback <live folder>` undoes every migration it holds; an older app
+  ignores the new events, and moving a call to another project no longer hides a task joined from another call. On
+  the G0 benchmark duplicates went from 6 to 5 (0 once the PM confirms the 8 suggestions), wrong identity from 5 to 4
+  and "we will try" kept as agreed from 2 to 0: [docs/en/bench/g0-baseline.md](docs/en/bench/g0-baseline.md). Joins
+  and proposals apply to the engine's register (tips and the skill); the app's Tracker window does not read them or
+  show the suggestions yet.
 - **Team/quality: a call context benchmark for GraphRAG (G0).** No change for users. `spikes/m0/bench/g0` replays three
   invented calls (two clients that both have an "item 13") through the current preparation, live lookup and
   commitments register, offline and without a model, and prints one table: preparation coverage and scope leaks,

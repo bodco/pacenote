@@ -2960,10 +2960,15 @@ class Engine:
             return []
         sit = self.fix_onme(self.situation or {})
         m = self.meta()
+        try:                        # PB-51 x PB-70: the register's client is the call's client scope ("" = not sure)
+            client = str((self._client_scope() or {}).get("client") or "")
+        except Exception:  # noqa: BLE001
+            client = ""
         return register.record_call(self.register_dir, call=self.cfg["call_file"], project=m.get("project", ""),
                                     title=self.cfg.get("title") or m.get("title", ""), actions=sit.get("actions") or [],
                                     theirs=sit.get("theirs") or [], ticked=self.onme_ticked, by="app",
-                                    replaces={"mine{}".format(m["n"]): m["from_id"] for m in getattr(self, "onme_mine", []) if m.get("from_id")})
+                                    replaces={"mine{}".format(m["n"]): m["from_id"] for m in getattr(self, "onme_mine", []) if m.get("from_id")},
+                                    client=client)
 
     def final_wrapup(self) -> Optional[dict]:
         """P2 (26.10): at the end, the window gets what the call picture holds: decisions, what is on the PM,

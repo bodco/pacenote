@@ -1311,6 +1311,29 @@ The skill and the app follow the same rules, in `rules/agenda.yaml`, `rules/comm
   what is still open in this series ("On you, still open", "Waiting on Dana: ..."). On a later call of the series,
   when someone says an item is done, the tips window shows a quiet "Done?" card: only your Mark done closes it.
   There is no tracker integration: Copy is the export.
+- **One task across calls (GraphRAG G1, PB-51).** When the notes of a later call name a task the register already
+  holds, the engine joins it to the older item instead of adding a new one, in this order: the same Notion page or
+  HubSpot task in the same project, never for two different known clients (for now only when the register is
+  migrated: a new item gets its page or task later); the same explicit reference ("item 13", "task #13", "пункт 13"; not a bare "#1") for the same person
+  in the same project and the same known client. An item's client comes from every mention joined into it, so an
+  item that already holds an Acme mention is never joined to or suggested for Globex's task. The older item keeps its owner and status, and its history lists
+  every call that mentioned it; if you edited the newer one later, your wording wins. Without a known client (the app
+  does not know a call's client yet, and two clients can both have a "Weekly sync"), the same reference in the same
+  meeting series is only a suggestion, like a similar task without an ID or a reference ("Looks like the task from
+  03.11, is it the same?"), until you confirm it; you can also say no or undo a link, and that pair is never joined
+  again. An undo gives each item back its own status, due date and done, and what you did on either while they
+  were joined stays with that one. Names follow the aliases of your voice library (Settings > Speakers > Voice library > Names), so "Mike T." and "Mike Turner"
+  are one person; two people who only share a first name are at most a suggestion. A "we will try" promise is a
+  proposal, not an open commitment (a task that opens with "try to", "we will try", "maybe" or "if possible"; "send
+  the deck by Friday, maybe earlier" and "fix the crash when users try to export" stay agreed, and so does quoted
+  text), and `python -m livetips_m0.commitments agree
+  <live folder> <id>` makes a proposal open (Rewrite notes moves a proposal to the renamed speaker like an open
+  task); a task ticked done on a later call closes the older item. The first write
+  after the update migrates the register by appending events (no line changes); it never closes or reopens a task,
+  and `python -m livetips_m0.commitments rollback <live folder>` undoes it. For now the joins and proposals apply to
+  the engine's register (what the tips and the skill read), and the suggestions are in its command line
+  (`commitments suggest`, `same`, `reject`, `split`): the app's Tracker window still lists each joined mention and
+  each "we will try" item as open, and does not show the suggestions yet.
 - **Brief freshness.** Home, Later and the call form compare when the brief was made with the files of the project
   folder (and the folders added in the form): "Brief is 2 days old · 3 changes since". Refresh updates only the
   sections the changed files touch and keeps your edits and the checklist. Nothing is refreshed by itself.
