@@ -466,6 +466,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Ends the live call; a recorder the app does not own any more is finished as an orphan (the tips show Call ended).
     @MainActor
     func endCallNow() {
+        MeetingEndWatch.shared.noteManualEnd()       // 0.27.2: why the call did not stop by itself, in app.log
         let owned = CallEngine.shared.isRunning
         CallEngine.shared.stop()
         guard let t = tips else { return }

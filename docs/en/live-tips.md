@@ -1327,7 +1327,9 @@ The skill and the app follow the same rules, in `rules/agenda.yaml`, `rules/comm
   recording do not count; a call with no meeting app (in person) is never stopped. Since 2026-11-17 this also works
   when you record the call (screen, video with sound or sound only) or run the macOS screen recording: the system
   service that captures the sound no longer looks like a meeting app. Settings > Integrations > Mac Calendar
-  > "Stop the call when the meeting ends" (on by default).
+  > "Stop the call when the meeting ends" (on by default). Since 0.27.2 app.log says what it saw: which app held the
+  microphone, when it let go, the question and the stop, and, when you press End call yourself, why the call had not
+  stopped yet (no meeting app held the microphone, or one still holds it).
 
 ### 14.1e After the call: call page, follow-up email, memory, series, statistics, risks, rehearsal (0.8)
 

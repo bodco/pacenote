@@ -3,6 +3,17 @@
 Pacenote. Earlier versions are described in the commit messages and in
 [docs/en/live-tips.md](docs/en/live-tips.md), section 14.
 
+## 0.27.2 (2026-11-23)
+
+- **End call shows that it is working (2026-11-23):** after End call the window only changed the status word, and the
+  End call button stayed as it was. Now the button reads Ending… with a spinner in the Pacenote look and cannot be
+  pressed again, the status line has the same spinner, and the compact card shows it too, until the call has ended.
+- **The Speakers chevron is no longer under the close button (2026-11-23):** in the side panel the close cross sat on
+  the Speakers bar's chevron, so opening the speakers was hard to hit. The bar now keeps that corner free, as the tabs do.
+- **Why a call did not stop by itself, in app.log (2026-11-23):** Stop the call when the meeting ends now writes what it
+  saw (the app holding the microphone, when it let go, the question, the stop), and End call pressed by hand writes why
+  the call had not stopped yet. It decides exactly as before.
+
 ## 0.27.1 (2026-11-23)
 
 - **The HubSpot key list includes Leads when you use them (2026-11-23):** Settings > Integrations > HubSpot listed ten

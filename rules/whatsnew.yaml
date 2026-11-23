@@ -297,3 +297,9 @@ items:
     title_uk: "Усі scope HubSpot в одному списку"
     body_en: "Settings > Integrations > HubSpot lists every scope the key needs, and adds the two Leads scopes when Leads are on. Copy list copies them all, and Test checks them."
     body_uk: "Settings > Integrations > HubSpot показує всі scope, потрібні ключу, і додає два scope для Leads, коли Leads увімкнено. Copy list копіює їх усі, а Test їх перевіряє."
+  - id: fixes_0272
+    version: 0.27.2
+    title_en: "End call shows it is working"
+    title_uk: "End call показує, що працює"
+    body_en: "After End call the button reads Ending… with a spinner until the call has ended. The Speakers chevron in the side panel is no longer under the close button."
+    body_uk: "Після End call кнопка показує Завершую… зі спінером, доки дзвінок не завершиться. Шеврон Speakers у бічній панелі більше не ховається під кнопкою закриття."
