@@ -33,7 +33,8 @@ Owner decisions this spec implements (D57, 21.11 and 23.11):
 
 Pacenote picks context by recency and by series, not by what the call is about:
 
-- `auto_sources` takes the last 3 earlier calls of the same series (`sheet/sources.py` `previous_calls(...)[:3]`),
+- `auto_sources` takes the last 3 earlier calls of the same series (`sheet/sources.py`: `previous_calls(live,
+  title, 8)` filtered to calls before this one and not of another client, then `[:3]`),
   the Tracker, project state and folder files from the last 7 days (`FOLDER_DAYS=7`) up to the per-pass budget.
 - The live lookup (`engine._project_snippets` -> `lookup.snippets` over the in-memory BM25 `FolderIndex`) finds
   words, not things. A question in other words or in the other language finds the right file only by luck.
@@ -105,6 +106,7 @@ a key. G2 adds one:
 | `transcript` | `live/<YYYY-MM-DD>-<slug>/<stem>.md` (and the flat layout) | text | primary | rel path + line range + `[HH:MM:SS]` timestamp of the first line | yes, after the call ends |
 | `notes` | `<stem>.notes.md`, `.app.notes.md` | text | derived (model-written); a line the PM edited is `pm` | rel path + heading + line range | yes, marked derived |
 | `brief`, `sheet` | `.brief.md`, `.sheet.md`, `.sheet.json` | text / JSON | derived | rel path + block id or line range | no (deterministic facts only) |
+| `link_sidecar` | `<stem>.notion.json` next to a call (`notion_links.py`: `{"decisions": {key: {"id", "url"}}, "risks": {...}, "tasks": {...}}`, the key is `notion_links.norm(text)`) | JSON | pm / deterministic (a key file, not a claim source) | rel path + kind + key | no; it only adds `notion:<page id>` aliases to the `d-`, `r-` and task entities of that call (section 7.1) and has no snippets |
 | `register` | `live/commitments.jsonl` | `commitments.fold()` | pm / deterministic | rel path + event line number + event id | no |
 | `tracker` | the Notion and HubSpot tasks the app already holds in Swift (`CRMTasks.swift`, `OrgRegisters.swift`), exported by the app to a snapshot file (section 5.2, item 5) | snapshot file | primary (system of record) | `notion:<page id>` or `crm:<portal>:<task>` + field | no |
 | `project_state` | `pacenote/decisions.md`, `_notion/... Current State.md`, `pacenote/answer-cards.md` | text | primary (decisions) / derived (Current State is written by a skill) | rel path + heading + line range | yes |
@@ -118,17 +120,20 @@ every task.
 
 **Hidden calls.** A call the PM hid on Home (`CallHistory.Record.hidden`, `HomeData.swift:274`, kept in
 `history.json` in Application Support) is never extracted and never searched, like `rules/decisions.yaml` says
-for decisions ("Never for a hidden call"). Its transcript, notes, brief and sheet get `source.state = excluded` with
+for decisions ("Never for a hidden call"). Its transcript, notes, brief, sheet and `<stem>.notion.json` sidecar get
+`source.state = excluded` with
 `state_reason = "hidden call"`. The worker cannot read `history.json` itself, so the app passes the list of hidden
 call files with each pass (S5). Hiding or unhiding a call starts an **immediate state-only pass** (`evidence
 exclude --hidden-calls ...`): it only sets `source.state` and marks the topics that cite those sources `stale`
 (section 8.7), makes no model, network or embed request and takes well under a second, so the call stops being
 searchable at once. It is a local SQLite write only, so it runs at once **also during a call** (the live path reads
 the file `mode=ro` through WAL and is never blocked, section 11.4); it is not the extraction worker that section 8.5
-keeps out of calls. The only window left is a full pass holding the project lock (outside a call): the change then
-goes through the state-request file (section 13.1), and until `evidence status` shows it applied, every `search` the
-app or the skill starts passes the hidden call's files in `exclude` (section 11.1), so nothing quoted from them is
-returned in between. Unhiding moves the sources back to `active`.
+keeps out of calls. When a full pass holds the project lock (outside a call), the change is appended to the
+state-request log (section 13.1) and applied by the pass; until then every `search` (the app's, the skill's, any
+CLI caller's) reads the log itself and treats the sources of a pending hide or revoke as **denied**, exactly as
+after it applies (section 11.2 step 1). So the result is the same before and after the request applies, nothing
+quoted from the hidden call is returned in between, and no caller has to remember to pass the files in `exclude`.
+Unhiding moves the sources back to `active`; a pending unhide changes nothing until it applies (the safe side).
 
 The docs say a page under `.work/web` is "not searched"; with the flag on, G2 changes that for the store (the pages
 stay out of the folder lookup and the call files list). S5 updates the docs EN and UK.
@@ -151,8 +156,10 @@ No content hashing exists in the app today (`file_day` uses the date in the name
    it does while the earlier revision is kept, which is the common case) hits the segment cache (section 8.2), which writes
    the evidence rows onto the new snippets at no model cost (`run_item.status = cached`, then `extract_state =
    done`). Without those rows every claim of the A text would count as history (section 11.2 step 2).
-4. The register is append-only: the store keeps the byte offset of the last read line and reads only new lines. An
-   `op migrate` or `op rollback` line (G1) triggers a full refold of the register.
+4. The register is append-only: the store keeps the byte offset of the last read line and the `sha256` of the
+   bytes before it, and reads only new lines. The file sits in the Drive-synced folder, so it can be replaced under
+   the store: when the file is smaller than the offset, or the hash of its first `offset` bytes differs, the store
+   does a full refold. An `op migrate` or `op rollback` line (G1) also triggers a full refold.
 5. The Tracker: the worker makes no Notion or HubSpot request (section 12). The app writes what it already fetched
    for its own Tracker view to `tracker-snapshot/<evidence_uid>.json` in the state folder next to `ai-routes.json`
    (`LT_AI_STATE` is the path of that file, `routing.default_state_path()`) (items with id, text, status,
@@ -239,7 +246,8 @@ CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 
 CREATE TABLE source (
   id            INTEGER PRIMARY KEY,
-  kind          TEXT NOT NULL,          -- file, transcript, notes, brief, sheet, register, tracker, project_state, web_page
+  kind          TEXT NOT NULL,          -- file, transcript, notes, brief, sheet, link_sidecar, register, tracker,
+                                        -- project_state, web_page
   uri           TEXT NOT NULL UNIQUE,   -- rel path, notion:<id>, crm:<portal>:<task>, https://...
   title         TEXT,
   origin        TEXT NOT NULL,          -- primary, derived, pm
@@ -287,7 +295,7 @@ CREATE VIRTUAL TABLE snippet_fts USING fts5(text, heading, content='snippet', co
   tokenize='unicode61 remove_diacritics 2');
 
 CREATE TABLE entity (
-  id          TEXT PRIMARY KEY,         -- c-<sha1:10> (G1 commitment), d-/r-<sha1:10>, person:<casefold>, me,
+  id          TEXT PRIMARY KEY,         -- c-<sha1:10> (G1 commitment), d-/r-<sha1(dedupe key):10>, person:<casefold>, me,
                                         -- client:<slug>, e-<sha1(type|norm name):10> (section 7.1)
   type        TEXT NOT NULL,            -- person, client, task, decision, risk, topic, document, system, call, date_event
   name        TEXT NOT NULL,            -- cache of the current name (section 11.2 step 2 derives it under as_of)
@@ -306,7 +314,7 @@ CREATE TABLE alias (
   alias_norm  TEXT NOT NULL,            -- casefolded, whitespace collapsed
   entity_id   TEXT NOT NULL REFERENCES entity(id) ON DELETE CASCADE,
   lang        TEXT,                     -- en, uk, ''
-  origin      TEXT NOT NULL,            -- voices, g1, tracker, llm, pm
+  origin      TEXT NOT NULL,            -- voices, g1, tracker, notion (notion:<page id> from a link sidecar), llm, pm
   status      TEXT NOT NULL,            -- confirmed, suggested, rejected
   client_set  TEXT NOT NULL DEFAULT '', -- labels of the snippets the alias was found in; filtered like a snippet
   vec         BLOB,
@@ -369,16 +377,26 @@ CREATE TABLE pm_override (              -- PM edits; always applied last, never 
   id         INTEGER PRIMARY KEY,
   target     TEXT NOT NULL,             -- entity, claim, edge, alias
   target_key TEXT NOT NULL,             -- natural key, stable across a rebuild (never an integer row id):
-                                        --   entity: its id; alias: alias_norm|entity_id;
+                                        --   entity: its id, or an alias key (notion:<page id>) resolved through
+                                        --   `alias` whenever overrides are applied or read; alias: alias_norm|entity_id;
                                         --   claim: claim.nkey;
                                         --   edge: src_id|rel|dst_id
   field      TEXT NOT NULL,             -- status, name, merge, split, reject, confirm, value, supersede
-                                        -- (supersede: target entity d-<old>, value d-<new>, section 7.1)
+                                        -- (supersede: target notion:<old page id>, value notion:<new page id>,
+                                        -- both resolved through `alias`, section 7.1)
   value      TEXT,
   at         TEXT NOT NULL,
   via        TEXT NOT NULL              -- register, app, skill
 );
 CREATE INDEX pm_override_target ON pm_override(target, target_key);
+
+CREATE TABLE state_request (           -- hide, unhide, revoke and override requests from the log (section 13.1)
+  request_id  TEXT PRIMARY KEY,         -- UUID minted by the app (or the CLI caller) when it appends the request
+  kind        TEXT NOT NULL,            -- hidden_calls, revoked, override
+  payload     TEXT NOT NULL,            -- JSON, the same arguments as the CLI command
+  received_at TEXT NOT NULL,
+  applied_at  TEXT NOT NULL             -- a row exists only once the request is applied
+);
 
 CREATE TABLE topic (
   id           INTEGER PRIMARY KEY,
@@ -475,24 +493,44 @@ Notes on the schema:
 - **Tasks**: the G1 commitment id (`c-<sha1>`), with every alias id in `ids` and `history` from `commitments.fold()`.
   G1's `same`, `split`, `reject` and `edit` events are applied as they are, the store never decides a task merge on
   its own.
-- **Decisions and risks**: G1 has no id for them, but the app already keys them. G2 adds `d-` and `r-` ids in this
-  order: the Notion page id kept in `<stem>.notion.json` (`{"decisions": {key: {"id", "url"}}, "risks": {...}}`)
-  when the item was sent to Notion; otherwise the dedupe key of `rules/decisions.yaml` (the call file plus the
-  normalised text), hashed; then, across calls, the G1 key functions (`identity.tracker_id`, `ref_of`,
-  `scope_match`) propose a join as a suggestion only. New code in `identity.py`, owned by S1.
+- **Decisions and risks**: G1 has no id for them, but the app already keys them. G2 adds `d-` and `r-` ids that
+  **never change once minted**:
+  - A decision or risk of a call: always `d-<sha1(call file | notion_links.norm(text)):10>` (`r-` for a risk), the
+    dedupe key of `rules/decisions.yaml`, which is exactly the key `notion_links.put(md, "decisions", text, ...)`
+    writes into `<stem>.notion.json`. The id does not depend on whether the item was sent to Notion, so the
+    after-call pass (which ingests the notes before the PM clicks "Add to Notion") and every later pass give the same
+    entity, and its claims (whose `nkey` holds `subject_id`) never split.
+  - The Notion page id is an **alias**, like `identity.tracker_id` for tasks: ingesting `<stem>.notion.json` (the
+    `link_sidecar` kind, section 5.1) adds `alias_norm = notion:<page id>` with `origin = notion` and `status =
+    confirmed` to the entity of the same key. A sidecar key with no matching item in the call's notes (the PM edited
+    the text after sending) creates the `d-` entity from the sidecar key alone, named by the key, so the alias always
+    has an entity. For `tasks`, the alias goes to the register item of that call whose `norm(text)` equals the key;
+    with none it is skipped (tasks already carry `notion:` links through `identity.tracker_id`).
+  - A line of `pacenote/decisions.md` (the Notion register snapshot, `decision_notion.parse_snapshot`: date, title,
+    stated by, area; no page id and no call file) is keyed `d-<sha1("decisions.md" | date | notion_links.norm(title)):10>`.
+    Its title is the Notion title, which the PM can edit, so joining it to a call's `d-` id is a **suggestion only**
+    (`same_as`, through the G1 key functions `identity.ref_of` and `scope_match` plus the date), never a merge.
+  - Across calls, the G1 key functions (`identity.tracker_id`, `ref_of`, `scope_match`) propose joins as suggestions
+    only. New code in `identity.py`, owned by S1.
 - **Superseded decisions**: the PM's click (`CallPage.swift`, which runs `decision_notion.py --supersede`, line 278)
   only updates Notion today; nothing on the Mac records it (the click counts usage, and `pacenote/decisions.md` lists
   active decisions only). The worker makes no Notion request (section 12), so G2 adds a local, dated record: after
-  `--supersede` returns ok, the app runs `evidence override --target entity --key d-<old> --field supersede --value
-  d-<new> --at <now> --via app` (section 11.6), which writes one `pm_override` row. Both ids map directly: a decision
-  sent to Notion has the `d-` id of its Notion page id, and `--supersede` and `--new` are those page ids. The
-  `status = superseded` of the old decision and the `supersedes` edge (new -> old, `origin = pm`) are both derived
-  from that row, with its `at` as their date (section 11.2 step 2). The write is local SQLite only (no model, network
-  or embed request), so it runs at once, also during a call, like the state-only pass; with the flag on and no store
-  file yet, it creates the store first (free), so a click before the first pass is not lost. Known limits: a
-  supersede clicked before the flag was on, or with the flag off, is not recorded; a supersede of a decision never
-  written from Pacenote (no `<stem>.notion.json` entry, so no local `d-` entity) stays an orphaned override that
-  applies if that decision is ever ingested (section 6); a decision that disappears from
+  `--supersede` returns ok, the app runs `evidence override --target entity --key notion:<old page id> --field
+  supersede --value notion:<new page id> --at <now> --via app` (section 11.6), which writes one `pm_override` row.
+  `--supersede` and `--new` are Notion page ids, so the row keeps them as **alias keys**: `target_key` and `value`
+  are resolved through the `notion:` aliases (above) every time overrides are applied and read, never once at write
+  time. So the override lands on the call-keyed `d-` entity that holds the claims, whichever order the notes, the
+  sidecar and the click arrive in; before `override` applies its row it ingests every changed `*.notion.json`
+  sidecar (deterministic, free, the `(mtime, size)` pre-check of section 5.2), and a key that still resolves to
+  nothing stays an orphaned override that applies as soon as the sidecar with that page id is ingested (section 6).
+  The `status = superseded` of the old decision and the `supersedes` edge (new -> old, `origin = pm`) are both
+  derived from that row, with its `at` as their date (section 11.2 step 2); without a resolved new decision the old
+  one is still `superseded`, just without the edge. The write is local SQLite only (no model, network or embed
+  request), so it runs at once, also during a call, like the state-only pass; with the flag on and no store file yet,
+  it creates the store first (free), so a click before the first pass is not lost. Known limits: a supersede clicked
+  before the flag was on, or with the flag off, is not recorded; a supersede of a decision never written from
+  Pacenote (no `<stem>.notion.json` entry with that page id) stays orphaned unless that page id appears in a sidecar
+  later; a decision that disappears from
   `pacenote/decisions.md` is never treated as superseded. A superseded decision is never returned as current; it is
   shown only in timelines and entity cards. Extraction never sets `superseded` on its own.
 - **People**: `identity.person_id` (the voice library aliases, `me` for the PM), as `person:<casefold>`.
@@ -655,7 +693,8 @@ Every item passes these checks, in this order, and a failure drops the item (cou
 the whole segment:
 
 1. JSON parses and matches `rules/evidence_schema.json`. A parse failure gets one repair retry with the error; a
-   second failure marks the segment `invalid` (it is retried on the next rules or route change only).
+   second failure marks the segment `invalid` (it is retried on the next rules or route change only). A reply cut
+   at the output cap is not repaired but split (section 8.6).
 2. Types, relations, predicates and modality are from the enums in `rules/evidence.yaml`.
 3. The quote, after whitespace collapse and case fold, is a substring of the segment's own snippets, and the line
    range covers it. Offsets are recomputed by the store; the model's offsets are never trusted.
@@ -708,8 +747,13 @@ All of this is pure code and runs the same for every route.
   code. Section 15, question 1 asks the owner about this default.
 - **Output cap**: every extraction request sets a per-request output limit of 2,000 tokens (`max_tokens` on api
   and code, the equivalent field on openai, gemini and codex, `num_predict` on local), from `rules/evidence.yaml`
-  (`max_output_tokens`). A reply cut at the cap fails JSON parsing and gets the repair retry (section 8.4), which
-  asks for fewer items. Topic summaries use a cap of 800 tokens. These caps make the ceiling a hard bound (section
+  (`max_output_tokens`). A reply cut at the cap (the provider's stop reason says so, or the JSON ends early) is
+  not repaired by asking for fewer items, which would silently drop facts: the segment is split in two at a snippet
+  boundary and each half is sent under the same cap, down to one snippet. Once every part validates, their merged
+  output is stored in `segment_cache` under the **parent** `seg_hash` (with the summed tokens), so the next pass,
+  whose segmenter yields the unsplit segment again, hits the cache instead of re-sending and re-splitting it. A single snippet still cut at the cap gets the one repair retry (section 8.4) asking for the items that
+  fit; it is marked `truncated` in `run_item.error` and counted in `evidence status`, so the loss is visible. Each split request goes through the
+  ceiling check like any other. Topic summaries use a cap of 800 tokens. These caps make the ceiling a hard bound (section
   9.1).
 - Fallback to local (Ollama, `num_ctx` 65536, `127.0.0.1:11434`): when the chosen route is not connected, is capped
   by `cost.ProviderCaps`, or the pass ceiling is reached and the PM turned on local overflow (a setting, off by
@@ -864,7 +908,8 @@ Settings > AI, a new row under the routes (only when the flag is on):
   characters. On Claude key (Haiku reads, Sonnet writes topic summaries): about $1.24 to $1.74, in 2 passes. On your
   ChatGPT plan: about 52% to 68% of a 5-hour limit, in 6 to 7 passes over 2 to 3 days. On this Mac: 5 to 28 hours,
   free. Your files are sent only to the AI you chose
-  for this job." Buttons: "Start", "Use this Mac only", "Not now". The range comes from the estimate with typical
+  for this job." When the indexing provider is not the one used for preparation, one more line: "Your project files
+  have so far gone only to <prep provider>; indexing sends them to <index provider>." Buttons: "Start", "Use this Mac only", "Not now". The range comes from the estimate with typical
   output and with the output cap; after S3 calibration the typical end uses the measured output per segment.
 - After a pass, in the same row: "Done: 230 parts, 0.9M tokens, $0.29 (estimate was $0.31)". A stopped pass says
   why: "Stopped at your $1.00 ceiling", "Paused: a call started", "Local model not installed".
@@ -881,8 +926,9 @@ search(store, query, *,
        as_of=None,               # datetime; None = now. Replay passes the call start.
        window=None,              # (from, to) on said_at; None = all time
        exclude=(),               # source ids or uris whose evidence rows this request ignores (the PM's per-file
-                                 # skip in Sources, this call's own files, and the files of a hidden call until the
-                                 # state-only pass has applied, section 5.1); section 11.2 step 1
+                                 # skip in Sources, this call's own files); section 11.2 step 1. Hidden and revoked
+                                 # sources are never passed here: they are denied by state, or by a pending request
+                                 # in the state-request log (section 13.1)
        kinds=None,               # snippet, claim, edge, topic
        mode="prep",              # prep, live, after
        budget=Budget(k=6, chars=14000, ms=1000, hops=1),
@@ -904,7 +950,8 @@ filters on a ranked list:
    never pass), its source is not in `exclude`, and its `client_set` is empty, contains `scope.client`, or has no
    label in `scope.others` (section 5.3, the `client_scope.filter_text` outcome). Two kinds of failing row are
    treated differently for a claim or an edge:
-   - **Denied** (source state not `active`, or a label in `scope.others`): strict. The claim or edge passes only when
+   - **Denied** (source state not `active`, a source named by a pending hide or revoke in the state-request log,
+     section 13.1, or a label in `scope.others`): strict. The claim or edge passes only when
      `EXISTS` a passing evidence row and `NOT EXISTS` a denied row, so a claim with one out-of-scope or revoked quote
      is dropped, not shown with fewer quotes.
    - **Ignored** (source in the request's `exclude`): those rows are left out and the claim or edge passes when a
@@ -998,23 +1045,29 @@ the notes touch.
 status `denied` or `not_found`) and `--web-dirs` (stored page folders outside call folders). `exclude` is the
 state-only pass of section 5.1: no model, network or embed request. `override --target --key --field --value --at
 --via` writes one `pm_override` row (the supersede click of section 7.1, later the G3 and G5 confirm and reject
-actions); like `exclude` it is a local write only, runs also during a call, and goes through the state-request file
-when a pass holds the lock (section 13.1).
+actions); like `exclude` it is a local write only and runs also during a call. Both take `--request-id` (a UUID the
+caller mints); when a pass holds the lock they append the request to the state-request log instead (section 13.1).
+Applying the same `request_id` twice is a no-op, so a caller may always re-send. `status` lists the applied request
+ids (`--request-id <id>` asks about one).
 
 ## 12. Privacy
 
 - The store is one SQLite file per project in `~/Library/Application Support/LiveTips/evidence/`, never in the
   project folder, never synced by Drive, never sent to the Pacenote server (call sync, D27 and D47 unchanged).
-- Model requests go only to the route the PM chose for the `index` job (or local). The same provider already
-  receives these files during preparation; G2 adds no new destination. The worker itself makes no Notion, HubSpot
-  or web request: the Tracker comes from the snapshot file the app writes (section 5.2, item 5), site pages from
+- Model requests go only to the route the PM chose for the `index` job (or local). The `index` route defaults to
+  the `after` route (section 8.6), which receives transcripts and notes today; folder files, project state and site
+  pages go today only to the `prep` route. When the `index` route's provider differs from `prep`'s, indexing sends
+  those files to a provider that has not seen them before, so the first-index confirmation (section 10) names that
+  provider in that case. G2 adds no destination the PM did not choose for some job. The worker itself makes no
+  Notion, HubSpot or web request: the Tracker comes from the snapshot file the app writes (section 5.2, item 5), site pages from
   what G6 already stored. The first full index asks before it starts (section 10) because it sends more text than
   one preparation does.
 - Hidden calls (section 5.1) are never sent to any model and never searched; hiding a call later starts the
   immediate state-only pass, which moves its sources to `excluded`, and from then on their claims, edges and the
   topic sentences citing them stop passing the access check. The pass runs at once, also during a call; only while
-  a full pass holds the project lock is it queued (section 13.1), and until it has applied the app passes the hidden
-  call's files in `exclude` on every search. A document that loses access (`denied` or
+  a full pass holds the project lock is it appended to the state-request log (section 13.1), and every `search`,
+  including the skill's, treats a pending hide as denied, so there is no window. A document that loses access
+  (`denied` or
   `not_found`) goes the same way to `revoked` (section 5.2, item 6).
 - Vectors come from the bundled local bge-m3 server; nothing is embedded in the cloud.
 - Emails and phone numbers are already scrubbed from site pages (G6); the store keeps text as the reader returns it,
@@ -1034,11 +1087,23 @@ when a pass holds the lock (section 13.1).
 
 - One writer per project: the worker takes `<uid>.lock` (flock) for a pass; ingest from the prep step waits at most
   2 seconds for it and otherwise reads the last committed state. The state-only pass (hide, unhide, revoke) and
-  `evidence override` also wait at most 2 seconds; when a full pass holds the lock, they write their change to
-  `<uid>.state-request.json` and the running pass applies it in its own transaction before its next segment (it
-  checks between segments anyway) and again before it exits, whatever its end status (`done`, `ceiling`,
-  `paused_call`, `failed`), so the window is bounded by one segment or one aborted request. The app keeps the files
-  in `exclude` until `evidence status` shows the change applied.
+  `evidence override` also wait at most 2 seconds for it.
+- **State-request log.** When a full pass holds the lock, those commands append one JSON line
+  (`{"request_id", "kind", "payload", "at"}`) to `<support>/evidence/<uid>.state-requests.jsonl`, append-only, under
+  a short separate flock `<uid>.state-requests.lock` (held only for the append or a compaction, never across a
+  model request), so two requests during one pass are two lines and neither overwrites the other.
+  - Applying: every writer that takes the project lock (a pass or a state-only command) first applies every line
+    whose `request_id` has no `state_request` row, in file order, each in one transaction that also writes its
+    `state_request` row. A pass also does this between segments and before it exits, whatever its end status
+    (`done`, `ceiling`, `paused_call`, `failed`). A pass killed with SIGKILL leaves no end status, but flock is
+    released with the process, so the next writer applies the lines it left. Lines whose ids are applied are dropped
+    by a compaction under both locks at the end of a pass.
+  - Reading: `search`, `entity_card`, `ask_global` and the snapshot loaders (section 11.3) read the unapplied lines
+    (a small file, read once per call) and treat the sources of a pending hide or revoke as denied (section 11.2
+    step 1) and drop snapshot items citing them. A pending unhide, un-revoke or `override` has no effect until it
+    applies.
+  - Retry: the app keeps the ids it sent until `evidence status` lists them as applied, and re-sends any id not
+    listed after the pass ends (or at the next launch); a re-sent id that is already applied is a no-op.
 - One pass at a time across all projects (`evidence/worker.lock`), so the global daily cap (section 9.1) is summed
   without a race.
 - Many readers (prep, the live engine, the skill CLI) use WAL snapshots and never block the writer.
@@ -1055,6 +1120,7 @@ when a pass holds the lock (section 13.1).
 | Call starts | the request in flight is aborted, the segment stays `pending`, `paused_call`, section 8.5 |
 | Corrupt SQLite (`PRAGMA quick_check` fails at open) | the file is moved to `<uid>.corrupt-<stamp>.sqlite`, a fresh store is built deterministically (free), extraction starts again under the ceiling; the PM sees one line saying so |
 | Disk full | the transaction rolls back, the pass ends `failed`, nothing half-written |
+| Pass killed (SIGKILL, crash) | flock is released with the process; the run row stays `running` and the next pass marks it `failed`; unapplied lines of the state-request log are applied by the next writer before anything else (section 13.1), and readers treat pending hides and revokes as denied meanwhile |
 | FTS5 missing | fallback search (section 6), noted in status |
 | Embed server down | vectors stay NULL, search works without them |
 
@@ -1077,11 +1143,14 @@ them `pending` (it costs money, so it is never automatic).
   new slug with the same uid) and normalises an item's `project` to the uid through it before any G1 key function
   runs. The register itself is not rewritten. **Folder moved** through Settings: same uid; `root_hint` updated;
   source uris are relative so nothing is re-read (hashes are equal). A folder re-added as a new project gets a new
-  uid and a new store; the old one is listed in status as orphaned and deleted after confirmation.
+  uid and a new store; the old one is listed in status as orphaned and deleted after confirmation. The same holds
+  for a config import: `Projects.merge(imported:)` matches by slug, so S5 makes it keep the `evidence_uid` of the
+  project it matches; an import whose slug changed adds a new project (today's behaviour, unchanged) and falls under
+  the orphan handling above. "Rename keeps the uid" therefore means a rename inside the app.
 - **Vacuum** (weekly, outside calls, and right after a source is revoked): purge snippets of superseded revisions
   nobody cites, purged sources, then, in the same transaction, every claim and edge left with no evidence row and
   every `segment_cache` row whose `seg_hash` no segment of a remaining revision has, or whose `extractor` is not the
-  current one and is older than 30 days; old `run_item` rows (keep 90 days); then `VACUUM`.
+  current one and is older than 30 days; old `run_item` and `state_request` rows (keep 90 days); then `VACUUM`.
 
 ## 14. G0: how the store is measured
 
@@ -1095,7 +1164,10 @@ them `pending` (it costs money, so it is never automatic).
 
 B and C use **the same candidate sources and the same candidate signals**: both run with stored vectors and the
 same `query_vec` setting (the bench runs both twice, without and with vectors, and reports both pairs), so the
-difference B to C is the graph and nothing else.
+difference B to C is the graph and nothing else. `offline()` in `run.py` allows loopback, so for the run with
+vectors the bench starts the bundled `embed_server.py` itself when the bge-m3 model folder is present (and stops it
+at the end); without the model folder (CI) the with-vectors pair is recorded as `skipped` with the reason, and gates
+that name the run with vectors are not evaluated in that run (they are evaluated on a machine with the model).
 
 The bench makes no model call and blocks every host (`run.py`). Variant C therefore uses a **checked-in extraction
 fixture**: `bench/g0/fixtures/extract/<seg_hash>.json`, written once by a real extraction run on a cheap route
@@ -1104,7 +1176,10 @@ so a prompt or rules change does not invalidate it: C still replays it, and the 
 `extractor` differs from the current one. Re-recording (a paid run) is a deliberate step, needed only when a gold
 file's text changes or the contract changes the output shape. The fixture is the **raw validated model output**: a hand review may
 only delete items that are wrong (each deletion listed with its reason in the same file), never add or edit one, so
-what C finds is what the model found. C replays the fixture through the same validator (section 8.4).
+what C finds is what the model found. C replays the fixture through the same validator (section 8.4). C reports
+**fixture hits and misses** (segments with and without a fixture file for their `seg_hash`): a change to the
+chunker, the segmenter or the client labels changes `seg_hash`, and without this count C would quietly lose its
+extraction and fall back to B. Any miss on the small gold set fails the C run as "fixture stale".
 
 The scale set's noise generator writes, with the same seed, the extraction output of each noise document next to it
 (entities and claims built from the template it filled). That output is perfect by construction, so the scale set
@@ -1144,8 +1219,10 @@ New gold (`gold.yaml` version 2, all invented, US names, same two clients) that 
    replayed as of Nov 17 the answer must be the old date and the Nov 19 fact must not appear (future leak); asked
    now, the answer is the new date and the old one appears only in the timeline marked "changed later". The same
    replay also covers state columns: a task the register closes on Nov 19 must be open as of Nov 17, and a decision
-   superseded on Nov 19 (a `supersede` override dated Nov 19, written by the bench through `evidence override`,
-   section 7.1) must be current as of Nov 17 (section 11.2 step 2).
+   superseded on Nov 19 (a `supersede` override dated Nov 19, written by the bench through `evidence override
+   --key notion:<page id>`, section 7.1) must be current as of Nov 17 (section 11.2 step 2). The fixture holds the
+   two decisions' `<stem>.notion.json` sidecars with invented page ids, and the bench ingests the notes first and
+   the sidecars after, as in real use, so the override must land on the call-keyed `d-` entity.
    A second edited file is reverted (section 5.2): a budget figure with text A on Nov 12, B on Nov 19 and A again on
    Nov 21; as of Nov 17 and asked now the answer is A's figure, as of Nov 20 it is B's, and the revert re-extracts no
    segment (Index cost metric, section 14.3).
@@ -1172,6 +1249,7 @@ New gold (`gold.yaml` version 2, all invented, US names, same two clients) that 
 | Modality accuracy | modality questions with the expected modality; derived-only facts counted as confirmed (must be 0) |
 | Future leaks | items with `said_at` or `summary_at` after `as_of`, and entity status, name, merge or claim and edge status values that come from a row dated after `as_of` (must be 0) |
 | Excluded leaks | items (snippets, claims, edges, entity names, aliases, topic sentences) from excluded, hidden-call, deleted or revoked sources (must be 0) |
+| Fixture hits / misses | C only: segments with and without a fixture file for their `seg_hash` (misses must be 0 on the small set) |
 | Store p50 / p95 ms | `search(mode="live")` and `mode="prep"`, small and scale sets |
 | Index cost | segments, tokens (deterministic count from the fixture), re-extracted segments after changing one section of one file (must be that section's segments only; the rest `cached`) and after reverting a file to an earlier text (must be 0) |
 
@@ -1239,7 +1317,11 @@ regresses, its new columns meet the bar.
 Scope: `livetips_m0/evidence/` (schema, migrations, store open/lock and the global worker lock, ingest per source
 type with change detection and client labels, deterministic entities and claims from the register, the Tracker
 snapshot file reader, sheets, voice aliases, the state-only pass with hidden calls and revoked documents from the
-passed lists and the state-request file, `d-`/`r-` ids in `identity.py`, `pm_override` from register events),
+passed lists and the append-only state-request log with request ids (apply at start, between segments and at
+exit; readers deny pending hides and revokes), `d-`/`r-` ids from the dedupe key in `identity.py` with `notion:`
+aliases from `<stem>.notion.json` and `decisions.md` lines keyed by date and title, `pm_override` from register
+events with alias-key resolution), the segmenter of section 8.2 (deterministic, free, next to `chunks_at`, so S2's
+fixture loader can compute `seg_hash`),
 `client_scope.labels(root)`, `lookup.chunks_at` (offsets and client boundaries), slug history for renamed projects,
 `search` / `entity_card` with access (snippets, claims, edges, entities, aliases) and time filters including the
 `as_of` derivation of state columns (including `supersede` overrides), the denied and ignored row rules with fields
@@ -1260,14 +1342,21 @@ Acceptance:
       graph step through it): none returned, and each case is filtered in the SQL candidate query (checked by a test
       that ranks nothing it was not allowed).
 - [ ] `exclude --hidden-calls` makes no model, network or embed request and the hidden call is gone from the next
-      `search`; with a full pass holding the lock, the change goes through the state-request file and is applied
-      before the pass's next segment and before the pass exits (also on `paused_call`).
+      `search`; with a full pass holding the lock, two requests during that pass are two log lines and both are
+      applied before the pass's next segment and before the pass exits (also on `paused_call`); a pass killed with
+      SIGKILL leaves its lines for the next writer, which applies them first; a re-sent `request_id` is a no-op;
+      while a hide is pending, `search` (with no `exclude` from the caller, as the skill calls it) returns nothing
+      of the hidden call (including the name of a decision known only from its `<stem>.notion.json`), and the same claim gives the same result before and after the request applies.
 - [ ] Request `exclude` ignores rows: a claim quoted in an excluded file and in another file is returned with only
       the other file's quote, and its `said_at`, `said_by` and confirmations come from that row; a claim quoted only
       in excluded files is not returned; a topic sentence citing it is not returned.
-- [ ] Supersede: `evidence override --field supersede` (built by the test through the CLI, with no store file yet)
-      makes the old decision `superseded` with a `supersedes` edge dated by the override's `at`; the decision is
-      current in a replay before that date.
+- [ ] Decision ids: a decision ingested from the notes before `<stem>.notion.json` exists keeps the same `d-` id
+      after the sidecar is written, with one entity, its claims unsplit and a `notion:<page id>` alias; a
+      `decisions.md` line with the same title is only a `same_as` suggestion to it.
+- [ ] Supersede: `evidence override --key notion:<old> --field supersede --value notion:<new>` (built by the test
+      through the CLI, once with no store file yet and once before the sidecar is ingested) makes the call-keyed old
+      decision `superseded` with a `supersedes` edge dated by the override's `at`; the decision is current in a
+      replay before that date.
 - [ ] Client parity: on the G0 fixture, for each scope, the snippets that pass cover exactly the lines
       `client_scope.filter_text` keeps.
 - [ ] Time tests on content time: a first index of files with past content times, replayed as of a past call, sees
@@ -1291,11 +1380,13 @@ merges on its own without them.)
 
 Scope: `gold.yaml` v2 (section 14.2: at least 6 multi-hop questions, paraphrase and other-language questions, the
 global timeline, the two revision states with a task closed and a decision superseded between them (the bench
-writes the supersede through `evidence override`), the reverted file's three states, modality, the
+writes the supersede through `evidence override --key notion:...`, with the decisions' `<stem>.notion.json`
+sidecars in the fixture), the reverted file's three states, modality, the
 excluded, deleted, revoked and hidden-call cases with a topic summary built before the exclusion), the scale set's
 seeded noise generator, VariantB and VariantC in `run.py` (deterministic part, with and without vectors), the new
-metrics of section 14.3, and the extraction fixture loader keyed by content-only `seg_hash` (the fixture itself is
-recorded in S3).
+metrics of section 14.3, the embed server start for the run with vectors (or `skipped` without the model
+folder), and the extraction fixture loader keyed by content-only `seg_hash` from the S1 segmenter, with fixture hit
+and miss counts (the fixture itself is recorded in S3).
 
 Acceptance:
 - [ ] `run.py --variant A|B|C` runs offline on the small and the scale set, blocks every host, and writes the new
@@ -1303,6 +1394,8 @@ Acceptance:
 - [ ] Every gold v2 question states which variant is expected to pass it and why, so a later gain is attributable.
 - [ ] The future-leak metric counts entity and claim state values from after `as_of`; the excluded-leak metric
       counts entity names, aliases and topic sentences.
+- [ ] C reports fixture hits and misses; changing the chunker on a test copy turns hits into misses and fails the
+      run as "fixture stale".
 - [ ] The scale set is reproducible (same seed, same bytes) and its generated extraction is marked so no hop or
       paraphrase gate uses it.
 
@@ -1312,11 +1405,11 @@ leaks 0, quote validity 100%, evidence recall for register and Tracker facts 100
 
 ### S3. LLM extraction, validation, routing, ceiling (core)
 
-Scope: `rules/evidence.yaml`, `rules/evidence_schema.json`, generated `skill_evidence.md` and the skill copy; segmenter,
+Scope: `rules/evidence.yaml`, `rules/evidence_schema.json`, generated `skill_evidence.md` and the skill copy;
 prompt builder with cacheable prefix and the client-filtered catalog, validator (section 8.4, with the unanchored
 `hedge_anywhere` words), the `index` routing job on all six routes with local fallback (Python `routing.JOBS` and
-the `chain` entry of `rules/ai.yaml`), the per-request output cap, segments that never cross a heading and the
-segment cache keyed by `(seg_hash, extractor)`, the worker (`evidence pass`) with the call-active check and the abort
+the `chain` entry of `rules/ai.yaml`), the per-request output cap with the split retry (section 8.6), the
+segment cache (on the S1 segmenter) keyed by `(seg_hash, extractor)`, the worker (`evidence pass`) with the call-active check and the abort
 of a request in flight, the pass, project-day and all-projects-day ceilings (USD, percent read after every request,
 minutes), estimates priced per request on the model that sends it, run accounting, the extraction fixture for G0
 (raw model output, deletions only, keyed by content) and `--extract <route>` with output-per-segment, catalog-size
@@ -1345,8 +1438,8 @@ Acceptance:
 - [ ] A route whose cached-token count stays 0 is estimated without cache.
 
 G0 gate: C with the extraction fixture: hop answer rate at least 4 of 6 multi-hop questions and at least 2 more than
-B (A and B: expected 0 to 2), paraphrase answer rate not below B in the run with vectors and above B in the run
-without vectors (B also has bge-m3, so with vectors both may already find the paraphrase; the Ukrainian question's
+B (A and B: expected 0 to 2), fixture misses 0 on the small set, paraphrase answer rate not below B in the run with vectors (evaluated where the
+model folder is present; `skipped` in CI) and above B in the run without vectors (B also has bge-m3, so with vectors both may already find the paraphrase; the Ukrainian question's
 result without vectors is reported on its own line), modality accuracy 100%,
 derived counted as confirmed 0, all S1 and S2 zeros still 0; `--extract` on one cheap route reports precision,
 recall, its own hop and paraphrase rates, output tokens per segment, catalog tokens, segments per document and cost
@@ -1379,21 +1472,22 @@ Scope: Swift: `evidence_uid` in `projects.json` with the slug passed on every pa
 (`tracker-snapshot/<uid>.json` in the state folder next to `ai-routes.json`, from the Notion and HubSpot items the
 app already holds), the lists passed to each pass (hidden calls from `history.json`; Google and Notion documents with
 status `denied` or `not_found`; stored page folders under `SheetCLI.stateDir/web` for this project's sheets), the
-state-only pass on hide, unhide and loss of access, at once also during a call, with the hidden call's files in
-`exclude` on every search until it has applied, the supersede click in `CallPage.swift` running `evidence override
---field supersede` after `decision_notion.py --supersede` returns ok (section 7.1), triggers (after notes, folder change debounce, idle hourly, "Index now"), the `index` job in Swift
+state-only pass on hide, unhide and loss of access, at once also during a call, each with a `--request-id` kept
+until `evidence status` lists it applied and re-sent otherwise (section 13.1), the supersede click in
+`CallPage.swift` running `evidence override --key notion:<old> --field supersede --value notion:<new>` after `decision_notion.py --supersede` returns ok (section 7.1), triggers (after notes, folder change debounce, idle hourly, "Index now"), the `index` job in Swift
 `AIChain` (`allowed`, Settings list, stepping only to the model on this Mac), the settings row with the all-projects
 day cap and the first-index confirmation with the texts of section 10 (en and uk i18n), delete per project, status
 line; docs EN and UK (including that G2 searches stored site pages); CHANGELOG.
 
 Acceptance:
 - [ ] Flag off: no store file is created, no worker runs, no setting is shown (test and `swift build`).
-- [ ] Project rename and folder change keep the uid; re-adding a folder creates a new uid and lists the old store
-      as orphaned.
+- [ ] Project rename and folder change in the app keep the uid; `Projects.merge(imported:)` keeps the uid of the
+      project it matches by slug; an import whose slug changed, and a folder removed and re-added, create a new uid
+      and list the old store as orphaned (section 13.4).
 - [ ] `call-active.json` exists for the whole call and is removed after it, including after a crash on the next
       launch.
-- [ ] Hiding a call on Home starts the state-only pass at once (also during a call), and the call's files are in
-      `exclude` of every search until it has applied; a supersede click writes the override only after Notion
+- [ ] Hiding a call on Home starts the state-only pass at once (also during a call) with a request id, and an id
+      not listed as applied after the pass is re-sent (pure-logic test on the request tracker); a supersede click writes the override only after Notion
       returned ok (pure-logic test on the command builder); a Google document turning
       `denied` does the same with `--revoked`; the Tracker snapshot file is written only from data the app already
       has (no new request; pure-logic tests on the list builders and the writer).
@@ -1519,14 +1613,16 @@ for k, lo, hi, cap in (("Sonnet $", 8.86, 19.03, 3.0), ("GPT-6.1 Sol $", 7.35, 1
 3. Спершу детерміновані звʼязки (реєстр, знімок Tracker від застосунку, люди, шити), потім LLM-екстракція з усіх
    джерел у фоні, ніколи під час дзвінка (файл `call-active.json`; запит у польоті переривається), інкрементально з
    кешем на сегмент за змістом (сегмент не перетинає заголовок); приховані дзвінки і документи без доступу
-   виключаються одразу окремим проходом без моделі й ніколи не йдуть у модель.
+   виключаються одразу окремим проходом без моделі (під час повного проходу запит з id дописується в журнал, а пошук
+   уже вважає ці джерела закритими) й ніколи не йдуть у модель.
 4. Контракт промпту і схема виходу в `rules/evidence.yaml` і `rules/evidence_schema.json`, спільні зі скілом;
    валідатор перевіряє дослівність цитат, клієнта, модальність, правки PM.
 5. Модальність: proposal / expectation / confirmation / statement, мапінг зі значень G1; підсумки й нотатки ніколи
    не рахуються незалежним підтвердженням.
 6. Пошук: доступ, клієнт (PB-70, точна мітка на кожен уривок) і час (`as_of` за часом змісту, статуси й злиття теж
    на момент `as_of`) фільтруються в SQL до ранжування, також для сутностей, аліасів і кожного речення підсумку
-   теми; виключення на запит лише ігнорує рядки доказів цих файлів; заміну рішення PM записує локально з датою;
+   теми; виключення на запит лише ігнорує рядки доказів цих файлів; id рішення завжди з ключа дедупу, id сторінки
+   Notion лише аліас; заміну рішення PM записує локально з датою;
    правки PM за природними ключами переживають перебудову; режим live без нових викликів.
 7. Вартість першого індексу типового проєкту (оцінка, від типового виходу до ліміту 2000 токенів): $1.06-4.15 з
    дешевою моделлю для екстракції і моделлю after для підсумків, $7.35-19.03 на Sonnet або GPT-6.1 Sol (3-7 днів
