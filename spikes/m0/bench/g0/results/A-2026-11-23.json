@@ -2,7 +2,7 @@
  "schema": "pacenote.bench.g0/1",
  "variant": "A",
  "date": "2026-11-23",
- "commit": "9e4e961",
+ "commit": "ee4bb2b",
  "fixture_sha": "26d3ec6b228f19a9",
  "gold_sha": "180234bba3fef52c",
  "route": "codex",
@@ -58,19 +58,14 @@
       "from": "docs/acme release plan 2026-11-14"
      }
     ],
-    "leaks": [
-     "gx-export",
-     "gx-sample",
-     "gx-budget",
-     "gx-csv"
-    ],
+    "leaks": [],
     "passes": 1,
     "size": {
      "state": "fits",
-     "total_tokens": 888,
+     "total_tokens": 736,
      "per_pass": 250000
     },
-    "context_chars": 3952,
+    "context_chars": 3291,
     "error": null
    },
    "live": {
@@ -94,14 +89,11 @@
       "ok": true,
       "answer_in_top": false,
       "top": [
-       "docs/globex/item-13-invoice-export-2026-11-13.md",
        "docs/acme/item-13-sso-user-mapping.md",
-       "live/2026-11-04-globex-weekly/2026-11-04-1100-globex-weekly.notes.md"
+       "live/2026-11-12-acme-technical-sync/2026-11-12-1400-acme-technical-sync.notes.md",
+       "live/2026-11-12-acme-technical-sync/2026-11-12-1400-acme-technical-sync.md"
       ],
-      "leaks": [
-       "docs/globex/item-13-invoice-export-2026-11-13.md",
-       "live/2026-11-04-globex-weekly/2026-11-04-1100-globex-weekly.notes.md"
-      ]
+      "leaks": []
      },
      {
       "q": "How many users are in the pilot?",
@@ -128,11 +120,11 @@
     ],
     "answer_text_rate": 50.0,
     "answer_text": 2,
-    "leaks": 2,
-    "p50_ms": 0.31,
-    "p95_ms": 0.41,
-    "index_build_ms": 4.9,
-    "cold_ms": 4.9
+    "leaks": 0,
+    "p50_ms": 2.04,
+    "p95_ms": 2.31,
+    "index_build_ms": 4.5,
+    "cold_ms": 6.5
    },
    "after": {
     "duplicates": 3,
@@ -212,18 +204,14 @@
       "from": "docs/globex SOW summary (old file)"
      }
     ],
-    "leaks": [
-     "ac-sso",
-     "ac-checklist",
-     "ac-golive"
-    ],
+    "leaks": [],
     "passes": 1,
     "size": {
      "state": "fits",
-     "total_tokens": 716,
+     "total_tokens": 424,
      "per_pass": 250000
     },
-    "context_chars": 3229,
+    "context_chars": 2089,
     "error": null
    },
    "live": {
@@ -237,12 +225,10 @@
       "answer_in_top": true,
       "top": [
        "docs/globex/item-13-invoice-export-2026-11-13.md",
-       "docs/acme/item-13-sso-user-mapping.md",
-       "live/2026-11-04-globex-weekly/2026-11-04-1100-globex-weekly.notes.md"
+       "live/2026-11-04-globex-weekly/2026-11-04-1100-globex-weekly.notes.md",
+       "live/2026-11-04-globex-weekly/2026-11-04-1100-globex-weekly.md"
       ],
-      "leaks": [
-       "docs/acme/item-13-sso-user-mapping.md"
-      ]
+      "leaks": []
      },
      {
       "q": "How many hours are left on the Globex budget?",
@@ -267,11 +253,11 @@
     ],
     "answer_text_rate": 100.0,
     "answer_text": 3,
-    "leaks": 1,
-    "p50_ms": 0.27,
-    "p95_ms": 0.35,
-    "index_build_ms": 7.5,
-    "cold_ms": 4.8
+    "leaks": 0,
+    "p50_ms": 1.34,
+    "p95_ms": 1.44,
+    "index_build_ms": 4.2,
+    "cold_ms": 5.4
    },
    "after": {
     "duplicates": 2,
@@ -345,19 +331,14 @@
       "from": "docs/acme release plan 2026-11-14"
      }
     ],
-    "leaks": [
-     "gx-export",
-     "gx-sample",
-     "gx-budget",
-     "gx-csv"
-    ],
+    "leaks": [],
     "passes": 1,
     "size": {
      "state": "fits",
-     "total_tokens": 828,
+     "total_tokens": 676,
      "per_pass": 250000
     },
-    "context_chars": 3739,
+    "context_chars": 3078,
     "error": null
    },
    "live": {
@@ -371,12 +352,10 @@
       "answer_in_top": true,
       "top": [
        "live/2026-11-12-acme-technical-sync/2026-11-12-1400-acme-technical-sync.md",
-       "docs/globex/item-13-invoice-export-2026-11-13.md",
-       "docs/acme/item-13-sso-user-mapping.md"
+       "docs/acme/item-13-sso-user-mapping.md",
+       "live/2026-11-12-acme-technical-sync/2026-11-12-1400-acme-technical-sync.notes.md"
       ],
-      "leaks": [
-       "docs/globex/item-13-invoice-export-2026-11-13.md"
-      ]
+      "leaks": []
      },
      {
       "q": "When does the staging certificate expire?",
@@ -401,11 +380,11 @@
     ],
     "answer_text_rate": 100.0,
     "answer_text": 3,
-    "leaks": 1,
-    "p50_ms": 0.23,
-    "p95_ms": 0.87,
-    "index_build_ms": 7.2,
-    "cold_ms": 4.9
+    "leaks": 0,
+    "p50_ms": 1.39,
+    "p95_ms": 1.7,
+    "index_build_ms": 4.5,
+    "cold_ms": 6.1
    },
    "after": {
     "duplicates": 1,
@@ -441,18 +420,18 @@
   "prep_coverage": 80.0,
   "prep_found": 16,
   "prep_total": 20,
-  "prep_leaks": 11,
+  "prep_leaks": 0,
   "live_answer_rate": 100.0,
   "live_answered": 10,
   "live_total": 10,
   "live_answer_text_rate": 80.0,
-  "live_leaks": 4,
-  "lookup_p50_ms": 0.26,
-  "lookup_p95_ms": 1.14,
+  "live_leaks": 0,
+  "lookup_p50_ms": 1.56,
+  "lookup_p95_ms": 2.29,
   "duplicates": 6,
   "wrong_identity": 5,
   "item13_cross_client": 4,
   "false_agreed": 2
  },
- "seconds": 1.4
+ "seconds": 1.26
 }
