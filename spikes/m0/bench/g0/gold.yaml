@@ -1,0 +1,130 @@
+# PB-50 GraphRAG G0: the expected facts of the synthetic benchmark (fixtures/northpoint, invented data only).
+#
+# Matching rule (run.py > has_phrase): both sides lower case, whitespace collapsed, a phrase matches on word
+# boundaries; a fact is present when ANY of its phrases is present.
+#
+# prep_facts:     must reach the preparation context (the ## Sources of the packed prompt, within the route's budget).
+# forbidden:      facts of the OTHER client; each one present in this call's context is a scope leak.
+# live_questions: asked during the call; `expect` = file path fragments (relative to the project root) that count as
+#                 the right source in the top results; `answer` = phrase a top passage should hold (reported apart).
+# after_call:     what the call's notes should do to the commitments register.
+#                 kind update = an item that already exists must be updated, not added again;
+#                 kind new = a new item; kind existing = an item already in the register before the call;
+#                 modality tentative = "we will try": must not be an open agreed commitment.
+#                 match = phrases that ALL appear in the item text.
+
+project: northpoint
+aliases: [David]          # the PM (owner "me" in the register)
+route: codex              # the packed route whose window is the budget
+preset: client_sync
+top: 3                    # live: the expected source must be in the top N results
+
+# undated fixture files get this mtime (YYYY-MM-DD, noon local); dated names use the date in the name
+file_dates:
+  pacenote/decisions.md: 2026-11-12
+  _notion/Northpoint Current State.md: 2026-11-14
+  docs/acme/item-13-sso-user-mapping.md: 2026-10-14
+  docs/globex/globex-sow-summary.md: 2026-09-30
+  live/commitments.jsonl: 2026-11-12
+
+clients:
+  acme: {path_tag: acme, series: [acmeweeklystatus, acmetechnicalsync]}
+  globex: {path_tag: globex, series: [globexweekly]}
+
+invariants:
+  item13:                 # the same label, two meanings, two clients
+    acme: {file: live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.notes.md, any: ["sso user mapping"]}
+    globex: {file: live/2026-11-04-globex-weekly/2026-11-04-1100-globex-weekly.notes.md, any: ["invoice export to csv"]}
+  cross_series:           # item 13 means one thing in the weekly series and another in the technical series
+    weekly: {file: live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.notes.md, any: ["waiting for client confirmation"]}
+    technical: {file: live/2026-11-12-acme-technical-sync/2026-11-12-1400-acme-technical-sync.notes.md, any: ["blocks the sso integration"]}
+  mixed_language: {file: live/2026-11-12-acme-technical-sync/2026-11-12-1400-acme-technical-sync.md, any: ["пункт 13"]}
+  repeated_task:          # the same task in two calls, different wording
+    - {file: live/2026-11-03-acme-weekly-status/2026-11-03-1000-acme-weekly-status.notes.md, any: ["updated rollout checklist"]}
+    - {file: live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.notes.md, any: ["revised rollout checklist"]}
+  we_will_try: {file: live/2026-11-03-acme-weekly-status/2026-11-03-1000-acme-weekly-status.md, any: ["we will try"]}
+
+forbidden:
+  acme:                   # Globex facts: a leak when they show up in an Acme call
+    - {id: gx-export, any: ["invoice export"]}
+    - {id: gx-sample, any: ["sample invoice file"]}
+    - {id: gx-budget, any: ["120 hours", "39 hours"]}
+    - {id: gx-csv, any: ["csv only"]}
+  globex:                 # Acme facts: a leak when they show up in the Globex call
+    - {id: ac-sso, any: ["sso"]}
+    - {id: ac-checklist, any: ["rollout checklist"]}
+    - {id: ac-golive, any: ["december 8"]}
+    - {id: ac-freeze, any: ["change freeze"]}
+
+targets:
+  - id: acme-weekly-status-2026-11-17
+    client: acme
+    title: Acme weekly status
+    start: "2026-11-17T10:00:00"
+    theirs: [{name: Mike, company: Acme}]
+    dir: targets/acme-weekly-status-2026-11-17
+    call: 2026-11-17-1000-acme-weekly-status.md
+    prep_facts:
+      - {id: w-item13-waiting, any: ["waiting for client confirmation"], from: "weekly 2026-11-10 notes"}
+      - {id: w-item13-blocks-sso, any: ["blocks the sso integration"], from: "technical 2026-11-12 notes (cross-series)"}
+      - {id: w-freeze, any: ["change freeze from december 15"], from: "weekly 2026-10-20 notes (4th call back)"}
+      - {id: w-golive, any: ["go-live date of december 8", "go-live stays on december 8"], from: "weekly 2026-11-10, decisions"}
+      - {id: w-pilot-60, any: ["60 users"], from: "weekly 2026-10-27 notes"}
+      - {id: w-checklist, any: ["rollout checklist"], from: "weekly notes, register"}
+      - {id: w-user-list-maybe, any: ["pilot user list"], from: "weekly 2026-11-03 notes"}
+      - {id: w-rehearsal, any: ["rehearsal: december 3"], from: "docs/acme release plan 2026-11-14"}
+    live_questions:
+      - {q: "When does the Acme change freeze start?", expect: ["2026-10-20-1000-acme-weekly-status"], answer: "december 15"}
+      - {q: "Where are we with item 13?", expect: ["2026-11-10-1000-acme-weekly-status", "2026-11-12-1400-acme-technical-sync", "docs/acme/item-13"], answer: "waiting for client confirmation"}
+      - {q: "How many users are in the pilot?", expect: ["2026-10-27-1000-acme-weekly-status"], answer: "60 users"}
+      - {q: "Чого ми чекаємо від служби безпеки Acme?", expect: ["2026-11-10-1000-acme-weekly-status"], answer: "waiting for client confirmation"}
+    after_call:
+      - {id: w-a-checklist, kind: update, owner: me, match: ["rollout checklist"]}
+      - {id: w-a-mapping, kind: update, owner: Mike, match: ["sso user mapping", "item 13"]}
+      - {id: w-a-rehearsal, kind: new, owner: me, match: ["go-live rehearsal"]}
+      - {id: w-a-user-list, kind: existing, owner: Mike, match: ["pilot user list"], modality: tentative}
+
+  - id: globex-weekly-2026-11-18
+    client: globex
+    title: Globex weekly
+    start: "2026-11-18T11:00:00"
+    theirs: [{name: Sarah, company: Globex}]
+    dir: targets/globex-weekly-2026-11-18
+    call: 2026-11-18-1100-globex-weekly.md
+    prep_facts:
+      - {id: g-item13-export, any: ["invoice export to csv"], from: "globex 2026-11-04 notes"}
+      - {id: g-hours-left, any: ["39 hours are left", "39 left"], from: "globex 2026-11-11"}
+      - {id: g-csv-only, any: ["csv only"], from: "globex 2026-11-11 notes, decisions"}
+      - {id: g-sample-file, any: ["sample invoice file"], from: "globex 2026-11-04 notes, register"}
+      - {id: g-net-30, any: ["net 30"], from: "docs/globex SOW summary (old file)"}
+    live_questions:
+      - {q: "What is item 13?", expect: ["globex"], answer: "invoice export"}
+      - {q: "How many hours are left on the Globex budget?", expect: ["2026-11-11-1100-globex-weekly"], answer: "39"}
+      - {q: "What are the payment terms?", expect: ["docs/globex/globex-sow-summary"], answer: "net 30"}
+    after_call:
+      - {id: g-a-sample, kind: update, owner: Sarah, match: ["sample invoice file", "item 13"]}
+      - {id: g-a-mockup, kind: update, owner: me, match: ["invoice export mockup"]}
+
+  - id: acme-technical-sync-2026-11-19
+    client: acme
+    title: Acme technical sync
+    start: "2026-11-19T14:00:00"
+    theirs: [{name: Emily, company: Acme}]
+    dir: targets/acme-technical-sync-2026-11-19
+    call: 2026-11-19-1400-acme-technical-sync.md
+    web: true             # the Acme status page, served by the harness on 127.0.0.1
+    prep_facts:
+      - {id: t-item13-blocks-sso, any: ["blocks the sso integration"], from: "technical 2026-11-12 notes"}
+      - {id: t-item13-waiting, any: ["waiting for client confirmation"], from: "weekly 2026-11-10 notes (cross-series)"}
+      - {id: t-cert, any: ["expires on november 30"], from: "technical 2026-11-05 transcript (no notes)"}
+      - {id: t-saml, any: ["saml, not oidc", "saml not oidc"], from: "technical 2026-11-12, decisions"}
+      - {id: t-okta, any: ["okta"], from: "technical 2026-11-05 transcript"}
+      - {id: t-site-sso, any: ["planned for december 8"], from: "the Acme status page (local site)"}
+      - {id: t-rehearsal, any: ["rehearsal: december 3"], from: "docs/acme release plan 2026-11-14"}
+    live_questions:
+      - {q: "Що зараз блокує пункт 13?", expect: ["2026-11-12-1400-acme-technical-sync"], answer: "idp"}
+      - {q: "When does the staging certificate expire?", expect: ["2026-11-05-1400-acme-technical-sync"], answer: "november 30"}
+      - {q: "Do we use SAML or OIDC for SSO?", expect: ["2026-11-12-1400-acme-technical-sync", "pacenote/decisions.md"], answer: "saml"}
+    after_call:
+      - {id: t-a-idp, kind: update, owner: Emily, match: ["idp metadata"], modality: tentative}
+      - {id: t-a-cert, kind: new, owner: me, match: ["staging certificate"]}

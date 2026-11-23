@@ -3,6 +3,14 @@
 Pacenote. Earlier versions are described in the commit messages and in
 [docs/en/live-tips.md](docs/en/live-tips.md), section 14.
 
+## Unreleased
+
+- **Team/quality: a call context benchmark for GraphRAG (G0).** No change for users. `spikes/m0/bench/g0` replays three
+  invented calls (two clients that both have an "item 13") through the current preparation, live lookup and
+  commitments register, offline and without a model, and prints one table: preparation coverage and scope leaks,
+  live answer rate and lookup latency, duplicates, cross-client items and "we will try" items kept as agreed. The
+  baseline of the current code and how to rerun it: [docs/en/bench/g0-baseline.md](docs/en/bench/g0-baseline.md).
+
 ## 0.27.0 (2026-11-23)
 
 - **Gemini now requires an API key.** Pacenote removed Google account sign-in through Antigravity CLI because
