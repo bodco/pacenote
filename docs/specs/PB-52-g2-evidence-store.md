@@ -104,7 +104,7 @@ a key. G2 adds one:
 |---|---|---|---|---|---|
 | `file` | project folder files (the `folder_files` rules: skip `live`, `_notion`, `meeting-sheet`, hidden, generated, sidecars, older `-vN`) | `sheet/readers.py` (text, md, html, pdf with page marks, docx, pptx, xlsx, doc/rtf/odt/pages) | primary | rel path + char range + page (pdf) or sheet/slide | yes |
 | `transcript` | `live/<YYYY-MM-DD>-<slug>/<stem>.md` (and the flat layout) | text | primary | rel path + line range + `[HH:MM:SS]` timestamp of the first line | yes, after the call ends |
-| `notes` | `<stem>.notes.md`, `.app.notes.md` | text | derived (model-written); a line the PM edited is `pm` | rel path + heading + line range | yes, marked derived |
+| `notes` | `<stem>.notes.md`, `.app.notes.md` | text | derived (model-written), for the whole file: the app has no per-line signal of a PM edit, and PM task edits reach `pm` through the register (section 7.3) | rel path + heading + line range | yes, marked derived |
 | `brief`, `sheet` | `.brief.md`, `.sheet.md`, `.sheet.json` | text / JSON | derived | rel path + block id or line range | no (deterministic facts only) |
 | `link_sidecar` | `<stem>.notion.json` next to a call (`notion_links.py`: `{"decisions": {key: {"id", "url"}}, "risks": {...}, "tasks": {...}}`, the key is `notion_links.norm(text)`) | JSON | pm / deterministic (a key file, not a claim source) | rel path + kind + key | no; it only adds `notion:<page id>` aliases to the `d-`, `r-` and task entities of that call (section 7.1) and has no snippets |
 | `register` | `live/commitments.jsonl` | `commitments.fold()` | pm / deterministic | rel path + event line number + event id | no |
@@ -119,7 +119,7 @@ local commitments registers (`CM.load`) that the `register` kind already reads, 
 every task.
 
 **Hidden calls.** A call the PM hid on Home (`CallHistory.Record.hidden`, `HomeData.swift:274`, kept in
-`history.json` in Application Support) is never extracted and never searched, like `rules/decisions.yaml` says
+`history.json` in Application Support) has its files never extracted and never searched, like `rules/decisions.yaml` says
 for decisions ("Never for a hidden call"). Its transcript, notes, brief, sheet and `<stem>.notion.json` sidecar get
 `source.state = excluded` with
 `state_reason = "hidden call"`. The worker cannot read `history.json` itself, so the app passes the list of hidden
@@ -134,6 +134,12 @@ CLI caller's) reads the log itself and treats the sources of a pending hide or r
 after it applies (section 11.2 step 1). So the result is the same before and after the request applies, nothing
 quoted from the hidden call is returned in between, and no caller has to remember to pass the files in `exclude`.
 Unhiding moves the sources back to `active`; a pending unhide changes nothing until it applies (the safe side).
+
+Only the call's own files are excluded. Register events whose `call` is the hidden call stay `active`: the app's
+Tracker keeps showing a hidden call's tasks today (`HomeData.swift:290` filters only the Home list), and the store
+matches it. So a task first said in a hidden call stays searchable as a register item (its text, owner, due,
+status), while the transcript and notes quotes behind it do not. The G0 hidden-call fact (section 14.2 item 6) is
+therefore one that is not in the register.
 
 The docs say a page under `.work/web` is "not searched"; with the flag on, G2 changes that for the store (the pages
 stay out of the folder lookup and the call files list). S5 updates the docs EN and UK.
@@ -245,14 +251,43 @@ keeps for that scope.
 One file per project, `PRAGMA journal_mode=WAL`, `foreign_keys=ON`, `user_version` = schema version. All times are
 UTC ISO strings. Two clocks, used for different things:
 
-- **Content time** (`revision.valid_from`, `snippet.said_at`, `claim.said_at`): when the content was said or
-  written. Transcript and its notes: the call start (plus the line's offset for `said_at`). File: the newer of the
-  date in its name and the mtime of that revision (the `file_day` rule of `sheet/sources.py:752`, applied per
-  revision with the mtime recorded at ingest, not the file's current mtime). Tracker item: `last_edited`. Register
-  event: its `at`. Replay (section 11.2) runs on content time only.
-- **Observation time** (`revision.observed_at`, `source.first_seen`): when Pacenote first saw it. Audit and
-  "new since the last pass" only; never a replay filter (on a first index every revision would be observed "now",
-  and a replay of an older call would see no files at all).
+- **Content time** has two parts, and replay (section 11.2) runs on them only. All of them are full UTC date and
+  time values (`2026-11-19T14:05:31Z`), never a day: a day would start every revision of a file edited after a
+  call on the call day at midnight, before the call.
+  - **`revision.valid_from`: since when this text existed.** Revision 1 of a source:
+    - transcript: the call start (its lines are gated one by one by `said_at` below);
+    - every other file-backed kind (notes, brief, sheet, project state, file, site page, copies): the later of the
+      mtime recorded at ingest and the date in its name taken at 00:00 local time of the Mac at ingest, converted to
+      UTC. This is the `file_day` rule of `sheet/sources.py:752` with the time kept (`file_day` returns a day). Call
+      notes are written after the call ends, so their revision 1 starts after the call, not at the call start: a
+      replay of that call never sees its own notes, and a notes file the PM edited before the first index starts at
+      the edit (the safe side, see the known limit in section 11.2 step 2);
+    - Tracker item: `last_edited`; register event: its `at`. These two are dated per item on every pass, never by a
+      file mtime or `observed_at`; the rule for revision 2 and later below does not apply to them.
+    **The call start** is the transcript header line `- Start: YYYY-MM-DD HH:MM:SS` (`- Початок:` in a Ukrainian
+    window), which the recorder writes in the Mac's local time without a zone (`transcriber.py:5318` and `:5326`);
+    the worker reads it from the transcript, not from `history.json`, and converts it with the Mac's time zone at
+    ingest. A replay "as of a call" uses the same value as `as_of`. A transcript without that header (an old or hand-made file) falls back to the date in its folder
+    or file name at 00:00 local, and its lines then keep their own clock times on that date.
+    Revision 2 and later of a file-backed kind: the mtime recorded at ingest when it is later than the previous revision's
+    `valid_from` (and not later than `observed_at`; a future mtime from a skewed clock is cut to `observed_at`);
+    otherwise `observed_at`. The fallback covers a file restored from a backup or a sync with an older mtime: the
+    change happened at some point up to `observed_at`, so `observed_at` never shows it too early, and `valid_to` of
+    the previous revision (= this `valid_from`) never goes backwards or gives it an empty validity.
+  - **`snippet.said_at`: when the snippet's content was said or written.** Transcript lines: the line's `[HH:MM:SS]`,
+    which is a local clock time (`transcriber.hhmmss`), not an offset, on the call start's date (the next date once
+    the clock goes past midnight, seen as a time lower than the line before), converted to UTC like the call start;
+    on every revision (a transcript re-saved with renamed speakers does not redate its lines). Every other kind has no per-line time: a snippet whose text equals a snippet of an earlier revision
+    of the same source (the same match that copies its vector, section 5.2 item 3) keeps that snippet's `said_at`;
+    any other snippet gets its revision's `valid_from`, so a snippet is dated by the revision its text first
+    appeared in. A line the PM added to the notes three days after the call is dated at the edit, and an unchanged
+    line keeps its earlier date. A notes snippet is therefore dated when the notes were written (minutes after the
+    call), not at the moment in the call it describes; the transcript rows of the same claim carry that moment.
+  - `claim.said_at` is a cache of the earliest passing evidence row's snippet `said_at` (section 11.2).
+- **Observation time** (`revision.observed_at`, `source.first_seen`): when Pacenote first saw it. Audit, "new since
+  the last pass", and the one fallback above for revision 2 and later. It is never the content time of a revision
+  1 (on a first index every revision would be observed "now", and a replay of an older call would see no files at
+  all).
 
 ```sql
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -279,7 +314,7 @@ CREATE TABLE revision (
   source_id      INTEGER NOT NULL REFERENCES source(id) ON DELETE CASCADE,
   content_hash   TEXT NOT NULL,         -- sha256 of normalised text
   mtime          REAL, size INTEGER, chars INTEGER,
-  valid_from     TEXT NOT NULL,         -- content time of this revision (see above); replay filter
+  valid_from     TEXT NOT NULL,         -- UTC date and time since when this text existed (see above); replay filter
   valid_to       TEXT,                  -- valid_from of the next revision; NULL = current content
   observed_at    TEXT NOT NULL,         -- audit only
   superseded_at  TEXT,                  -- observation time of the next revision; NULL = active revision
@@ -735,7 +770,7 @@ All of this is pure code and runs the same for every route.
 - A call in progress is a file the app writes: `call-active.json` (`{"started_at", "pid"}`) in the state folder next
   to `ai-routes.json` (`LT_AI_STATE` is the path of that file, not a folder), created at call start and removed at the
   end. This is the one path for it; it is not next to `embed-server.json`, which `semantic.py` (`launcher_path`, line
-  85) reads from `<root>/state/` or `LT_EMBED_LAUNCHER`. A file older than 6 hours or with a dead pid is stale. The
+  80) reads from `<root>/state/` or `LT_EMBED_LAUNCHER`. A file older than 6 hours or with a dead pid is stale. The
   worker checks it before every segment and before every model request, and **watches it while a request is in
   flight** (a 1-second poll on a side thread). When it appears during a request, the worker aborts that request at
   once: it closes the HTTP connection on api, openai and gemini (Ollama stops generating when its client disconnects,
@@ -750,12 +785,12 @@ All of this is pure code and runs the same for every route.
 
 ### 8.6 Routing
 
-- A new routing job `index` joins `JOBS = ("prep", "tips", "after")`. Its route defaults to the route of `after`
+- A new routing job `evidence` joins `JOBS = ("prep", "tips", "after")` (not `index`, which would be confused with `rules/index.yaml` and the `lt index` folder index `.livetips-index`; not `memory`, which is `memory.py`). Its route defaults to the route of `after`
   and can be set separately in Settings; `LT_AI_ROUTE` works as for other jobs, but the general fallback chain
   (`CHAIN_DEFAULT`) is not used: extraction falls back only to `local`, never to another cloud route. The job still
   has to exist everywhere jobs are listed, so Settings can show it and the chain code does not reject it: Python
-  `routing.JOBS`, Swift `AIChain` (`AIChain.allowed(route, job: "index")`, `Components.afterRemovingLocal`) and the
-  `chain` entry of `rules/ai.yaml`, which states that `index` steps only to the model on this Mac (S5 for Swift, S3
+  `routing.JOBS`, Swift `AIChain` (`AIChain.allowed(route, job: "evidence")`, `Components.afterRemovingLocal`) and the
+  `chain` entry of `rules/ai.yaml`, which states that `evidence` steps only to the model on this Mac (S5 for Swift, S3
   for Python and the rules).
 - Model per route: the cheaper model of each route for extraction (api `haiku-5-5`, openai `gpt-6-luna`, gemini
   `gemini-3.5-flash-lite`, codex `codex/default`, code with its smallest model, local `LT_LOCAL_MODEL` or
@@ -782,7 +817,7 @@ All of this is pure code and runs the same for every route.
 - **Topics**: deterministic communities over accepted edges and co-mentions (entities cited by the same snippet),
   weighted, by label propagation with a fixed seed and a size cap of 40 entities, per client label (a topic never
   mixes two clients; shared entities may sit in both). Pure Python, no graph library.
-- **Summary**: per topic whose `member_hash` changed, one model request on the `index` route's summary model with the
+- **Summary**: per topic whose `member_hash` changed, one model request on the `evidence` route's summary model with the
   topic's accepted claims and edges (with dates, modality, quotes) up to 6000 tokens; the output must cite claim ids
   and is validated like section 8.4 (every sentence cites at least one claim; uncited sentences are dropped). Stored
   one row per sentence in `topic_sentence`, with the claims and edges it cites in `topic_cite`, marked derived, never
@@ -828,7 +863,10 @@ entity catalog, and output between **500 tokens (typical)** and **2,000 tokens (
 The contract allows 40 entities, 60 claims and 60 relations with quotes up to 300 characters, which would exceed the
 cap; the cap, not the item limits, bounds the output. 40 topic summaries of 6,000 input and 600 output tokens, priced
 in the table on the same model as extraction (summaries on the `after` model are added below the table). A typical week after the first index: 3 calls, 10 changed documents, 5,000
-characters of state, 6 topics: 272,000 characters, 48 segments. Every figure is a range "typical to cap"; the
+characters of state, 6 topics: 272,000 characters, 48 segments. Every figure is a range "typical to cap", where
+"cap" means **one request per segment** answered at the full output cap. It is not a true maximum: a reply cut at
+the cap is re-sent as two halves, each allowed up to the cap (section 8.6), so a segment can cost more than one
+cap. The per-request ceiling check (section 9.1) still bounds what a pass spends; the
 real output per segment is calibrated in S3 (G0 `--extract`) before S5 shows any number to the PM.
 
 **Prompt cache on api Haiku.** The table assumes the provider caches the 1,500-token prefix. Anthropic documents a
@@ -897,7 +935,7 @@ What the numbers say:
   day's passes, 360 minutes on local), also a setting. The worker sums today's `run` rows before every pass and
   before every request; at the daily cap the pass ends with `status = ceiling` and the row says "daily".
 - **Global daily cap across projects**: with N projects the per-project cap alone allows N times the spend in a day.
-  One more cap sums today's `index` spend of all projects per route from `spend-ledger.jsonl` (job `index`), which is
+  One more cap sums today's `evidence` spend of all projects per route from `spend-ledger.jsonl` (job `evidence`), which is
   shared by all projects; default the same $3.00, 30% of the 5-hour window or 360 minutes on local, a setting. A
   pass stops at whichever of the three caps (pass, project day, all projects day) comes first. Only one pass runs at
   a time across all projects (a global worker lock next to the per-project lock), so two projects never race past the
@@ -909,7 +947,7 @@ What the numbers say:
   percent is read back from the account after every request and can overshoot by at most one request.
 - Plan routes also stop when the 5-hour window is above 80% used (the same `near_share` idea as prep), so indexing
   never eats the limit the PM needs for the next preparation.
-- Spend is written to the existing `spend-ledger.jsonl` with job `index`.
+- Spend is written to the existing `spend-ledger.jsonl` with job `evidence`.
 
 ## 10. Settings and cost text (text only, Design later)
 
@@ -919,7 +957,7 @@ Settings > AI, a new row under the routes (only when the flag is on):
   who and what they mention, with quotes. It never runs during a call."
 - Per project: "Indexed 412 of 678 parts. Last pass: Nov 23, 14:10, 1.2M tokens, $0.31 on Claude key (Haiku).
   Next pass: about 48 parts and 6 topic summaries, about $0.14 to $0.18." On plan routes: "about 4% of your 5-hour ChatGPT limit". On
-  local: "about 25 minutes on this Mac, free".
+  local: "about 0.5 to 2 hours on this Mac, free" (the weekly local row of section 9: 0.4 to 2.1 hours).
 - Controls: "Index now", "Pause", the route ("Use for indexing: same as after the call / <route list>"), the ceiling
   ("Stop each pass at $1.00 / 10% of the 5-hour limit / 120 minutes on this Mac", "and each day at $3.00 / 30% /
   360 minutes", and for all projects together "Never more than $3.00 / 30% / 360 minutes a day for all projects"),
@@ -1003,9 +1041,16 @@ filters on a ranked list:
    the timeline marked "changed later", `search` does not return it as current. Topic summaries need
    `summary_at <= as_of` (a summary written later never appears in a replay, even if its claims are old; so a replay
    of a call older than the first index gets claims and timelines but no topic summaries). `observed_at` is never
-   used here. `window` narrows on `said_at`. Known limit: a file with only one revision whose content time is after
-   the replayed call is not visible in that replay even if part of it existed earlier (the safe side: a coverage
-   loss, never a leak); from its second revision on, replay is exact.
+   used here except as the revision 2 fallback of section 6. `window` narrows on `said_at`. Both checks compare full
+   UTC times, so a file edited on the day of a call but after the call started is not visible in a replay of that
+   call (its new revision starts at the edit, not at midnight), and notes edited after a call are not visible in a
+   replay of any call between the two.
+   Known limit (coverage loss, never a leak): the store sees a file only from the first pass on, so revision 1 is
+   whatever the file held then. A file or notes file edited after a call and first ingested after that edit has
+   revision 1 starting at the edit, and a replay of that call does not see it even though most of it existed
+   earlier. The same holds when a Drive re-sync or a copy to a new Mac rewrites mtimes before the first index: every
+   single-revision file (notes included) is dated at the sync, and a replay of an older call sees only transcripts
+   and register events. From the second revision a pass observes, replay is exact to the mtime.
    **State columns under `as_of`.** The "now" caches (`entity.name`, `entity.status`, `entity.merged_into`,
    `claim.status`, `edge.status`, section 6) are not read in a replay; they are derived from rows dated at or before
    `as_of`:
@@ -1082,15 +1127,16 @@ ids (`--request-id <id>` asks about one).
 
 - The store is one SQLite file per project in `~/Library/Application Support/LiveTips/evidence/`, never in the
   project folder, never synced by Drive, never sent to the Pacenote server (call sync, D27 and D47 unchanged).
-- Model requests go only to the route the PM chose for the `index` job (or local). The `index` route defaults to
+- Model requests go only to the route the PM chose for the `evidence` job (or local). The `evidence` route defaults to
   the `after` route (section 8.6), which receives transcripts and notes today; folder files, project state and site
-  pages go today only to the `prep` route. When the `index` route's provider differs from `prep`'s, indexing sends
+  pages go today only to the `prep` route. When the `evidence` route's provider differs from `prep`'s, indexing sends
   those files to a provider that has not seen them before, so the first-index confirmation (section 10) names that
   provider in that case. G2 adds no destination the PM did not choose for some job. The worker itself makes no
   Notion, HubSpot or web request: the Tracker comes from the snapshot file the app writes (section 5.2, item 5), site pages from
   what G6 already stored. The first full index asks before it starts (section 10) because it sends more text than
   one preparation does.
-- Hidden calls (section 5.1) are never sent to any model and never searched; hiding a call later starts the
+- The files of a hidden call (section 5.1) are never sent to any model and never searched; its register events
+  stay searchable as register items, as the app's Tracker shows them today (section 5.1). Hiding a call later starts the
   immediate state-only pass, which moves its sources to `excluded`, and from then on their claims, edges and the
   topic sentences citing them stop passing the access check. The pass runs at once, also during a call; only while
   a full pass holds the project lock is it appended to the state-request log (section 13.1), and every `search`,
@@ -1109,7 +1155,7 @@ ids (`--request-id <id>` asks about one).
   unless the PM keeps history (default: purge revoked, keep deleted local files for 30 days for undo). The purge of
   a deleted source changes no search result: its rows were already ignored, and a claim left with no evidence was
   already not returned.
-- Telemetry (`usage.py`) logs counts only (`index_pass` with segments, tokens, cost, status), never text, names or
+- Telemetry (`usage.py`) logs counts only (`evidence_pass` with segments, tokens, cost, status), never text, names or
   paths.
 - Tests and the benchmark use invented data only.
 
@@ -1172,8 +1218,9 @@ them `pending` (it costs money, so it is never automatic).
 - **Project renamed**: same uid, so the store is kept. But register items and Tracker items carry the `project`
   slug, and G1's `scope_match` and the Tracker scope compare it, so items written before and after a rename would
   not join. The store keeps every slug the project ever had in `meta` (`slug_history`, appended when the app passes a
-  new slug with the same uid) and normalises an item's `project` to the uid through it before any G1 key function
-  runs. The register itself is not rewritten. **Folder moved** through Settings: same uid; `root_hint` updated;
+  new slug with the same uid) and normalises every register event's `project` to the uid through it **before**
+  `commitments.fold()` runs (fold joins items by scope itself, so normalising after it would still split an item
+  across the rename) and before any other G1 key function. The register itself is not rewritten. **Folder moved** through Settings: same uid; `root_hint` updated;
   source uris are relative so nothing is re-read (hashes are equal). A folder re-added as a new project gets a new
   uid and a new store; the old one is listed in status as orphaned and deleted after confirmation. The same holds
   for a config import: `Projects.merge(imported:)` matches by slug, so S5 makes it keep the `evidence_uid` of the
@@ -1230,10 +1277,14 @@ segment (the calibration for section 9), tokens and cost. It is the only G0 run 
 
 **Two revision states for replay gold.** The bench builds the store at run time, so a "file changed on Nov 19" needs
 two states. The fixture holds `fixtures/revisions/<file>.v1` and `.v2` with a sidecar `revisions.yaml` giving each
-state's content time (Nov 12 and Nov 19); the reverted file of section 14.2 item 4 has three states, the third
-(Nov 21) being `.v1` again. The bench ingests v1, then v2, passing the content time explicitly
-(the CLI and the ingest API accept `--valid-from` for tests and the bench only), so the store has two revisions
-with `valid_from` set as in real use, independent of the files' mtimes on the CI machine.
+state's content time as a full UTC date and time (Nov 12 and Nov 19); the reverted file of section 14.2 item 4 has
+three states, the third (Nov 21) being `.v1` again. For these the bench ingests v1, then v2, passing the content time
+explicitly (the CLI and the ingest API accept `--valid-from <UTC date and time>` for tests and the bench only), so
+the store has two revisions with `valid_from` set as in real use, independent of the files' mtimes on the CI
+machine. The two **same-day and notes cases** of item 4 instead test the content-time rule itself (section 6): the
+bench copies each state into its temp folder, sets the mtime from `revisions.yaml` with `os.utime`, and runs a
+normal pass without `--valid-from`, so the rule that turns mtimes into `valid_from` and `said_at` is what is
+measured.
 
 ### 14.2 Why harder gold
 
@@ -1263,10 +1314,22 @@ New gold (`gold.yaml` version 2, all invented, US names, same two clients) that 
    A second edited file is reverted (section 5.2): a budget figure with text A on Nov 12, B on Nov 19 and A again on
    Nov 21; as of Nov 17 and asked now the answer is A's figure, as of Nov 20 it is B's, and the revert re-extracts no
    segment (Index cost metric, section 14.3).
+   Two cases test the mtime rule of section 6 (mtimes set with `os.utime`, no `--valid-from`, section 14.1):
+   - **Notes edited after the call**: call X on Nov 12 at 15:00 UTC, its notes revision 1 with mtime Nov 12 16:10
+     holding a staffing figure "4 engineers"; call Y on Nov 14 at 15:00; the PM edits the notes on Nov 15 at
+     09:00 to "6 engineers" (revision 2). Replayed as of call Y's start, the answer is "4 engineers" and "6
+     engineers" is a future leak; as of call X's start neither appears (the notes did not exist yet); asked now,
+     "6 engineers" is current and dated Nov 15. Under the old rule (every notes revision at the call start)
+     revision 2 starts Nov 12 15:00 and the replay as of Y returns "6 engineers".
+   - **File edited later on the call day**: a folder file with revision 1 at mtime Nov 19 08:30 UTC ("pilot in
+     January") and revision 2 at mtime Nov 19 16:45 ("pilot in March"); a call on Nov 19 at 12:00. Replayed as of
+     that call, the answer is "January" and "March" is a future leak. Under the old day rule both revisions start
+     at Nov 19 00:00, revision 1 has an empty validity and the replay returns "March".
 5. **Modality**: "Did Globex agree to 39 hours?" where 39 hours was only proposed: the answer must carry
    `proposal`; a fact said only in generated notes must not count as confirmed.
 6. **Exclusion and revocation**: one file excluded by the PM, one deleted file, one revoked document and one hidden
-   call (its transcript and notes), each with a unique fact; none may ever appear, neither as a snippet nor as a
+   call (its transcript and notes; its fact is not a register item, since register events of a hidden call stay
+   searchable, section 5.1), each with a unique fact; none may ever appear, neither as a snippet nor as a
    claim, edge, entity name, alias or topic summary sentence. The topic summary that cites the fact is built
    **before** the exclusion, so the per-sentence filter of section 8.7 is what the gold tests. The bench passes the
    revoked document through `--revoked` and the hidden call through `--hidden-calls`, the same way the app does
@@ -1278,6 +1341,31 @@ New gold (`gold.yaml` version 2, all invented, US names, same two clients) that 
 7. **Scale**: a seeded noise generator adds about 2 MB of plausible project text (40 extra documents, 10 extra
    calls) so that ranking and latency are measured with distractors; the 10 KB set stays as the "small" set.
 
+**Which gate evaluates which gold.** Every gold v2 row carries `needs: S2 | S3 | S4`, the first sub-task whose
+code lets **C** answer it. A and B need no extraction and are evaluated on every row in every run, so the baseline
+the S3 gate compares against ("at least 2 more than B") and the claim that A cannot pass by word match are
+measured from S2 on. For C, a run before that sub-task records the row as `not_evaluated` with the missing part
+named; it is never counted as passed or failed, and C's rates and zeros of section 14.3 are computed over its
+evaluated rows only (the results JSON lists the counts of both).
+
+| Gold (section 14.2) | Part | Evaluated from |
+|---|---|---|
+| 4 Time replay | snippets per period, the two mtime cases, register task state, supersede override, revert snippets | S2 |
+| 6 Exclusion and revocation | snippets, register facts, entity names and aliases from deterministic sources; deleted and moved shared facts held by the register or a second register-backed source | S2 |
+| 7 Scale | ranking, latency, leaks | S2 |
+| 1 Cross-series and multi-hop | all | S3 (extraction fixture) |
+| 2 Paraphrase and other language | all | S3 |
+| 4 Time replay | file claims current or "changed later", revert re-extracts no segment | S3 |
+| 5 Modality | all | S3 |
+| 6 Exclusion and revocation | claims, edges, entity names and aliases from extracted facts; the deleted file's fact shared with another file | S3 |
+| 3 Global | all | S4 |
+| 4 Time replay | `summary_at` after `as_of` | S4 |
+| 6 Exclusion and revocation | the topic sentence summarised before the exclusion | S4 |
+
+**Gold freeze.** Gold v2 is frozen when S2 merges: its `sha256` is written to every results JSON, and the S3
+extraction fixture records the gold hash it was recorded against. The S3 gate fails when the two differ, so the gold
+is never tuned to what the model happened to find; a later gold change is a new version with a new fixture run.
+
 ### 14.3 New metrics (added to the results JSON, A and B report them too)
 
 | Metric | Meaning |
@@ -1288,7 +1376,7 @@ New gold (`gold.yaml` version 2, all invented, US names, same two clients) that 
 | Evidence recall | gold facts returned as a claim or edge with a valid quote and locator |
 | Quote validity | returned quotes that are verbatim at their locator (must be 100%) |
 | Modality accuracy | modality questions with the expected modality; derived-only facts counted as confirmed (must be 0) |
-| Future leaks | items with `said_at` or `summary_at` after `as_of`, and entity status, name, merge or claim and edge status values that come from a row dated after `as_of` (must be 0) |
+| Future leaks | items with `said_at` or `summary_at` after `as_of`, items that sit on a revision with `valid_from` after `as_of`, and entity status, name, merge or claim and edge status values that come from a row dated after `as_of` (must be 0) |
 | Excluded leaks | items (snippets, claims, edges, entity names, aliases, topic sentences) from excluded, hidden-call or revoked sources, and snippets or facts stated only by deleted sources (must be 0) |
 | Shared facts kept | gold facts stated by a deleted or moved source and also by another source that are still answered (must be 100%) |
 | Fixture hits / misses | C only: segments with and without a fixture file for their `seg_hash` (misses must be 0 on the small set) |
@@ -1368,11 +1456,20 @@ exit; readers deny pending hides and revokes), `d-`/`r-` ids from the dedupe key
 aliases from `<stem>.notion.json` and `decisions.md` lines keyed by date and title, `pm_override` from register
 events with alias-key resolution), the segmenter of section 8.2 (deterministic, free, next to `chunks_at`, so S2's
 fixture loader can compute `seg_hash`),
-`client_scope.labels(root)`, `lookup.chunks_at` (offsets and client boundaries), slug history for renamed projects,
+`client_scope.labels(root)`, `lookup.chunks_at` (offsets and client boundaries), snippet vectors at ingest through
+the bundled `embed_server.py` with the copy of a text-equal snippet's vector (sections 5.2 item 3 and 7.6), content
+time with full UTC `valid_from` and `said_at` (section 6), the write path `store.apply_extraction(revision_id,
+items)` that S3 calls after validation (it writes `entity`, `alias`, `claim`, `edge` and `evidence` rows for
+already validated items; S1 tests feed it hand-written items, which is how S1 tests claims and edges from files
+without any model or segment cache), slug history for renamed projects,
 `search` / `entity_card` with access (snippets, claims, edges, entities, aliases) and time filters including the
 `as_of` derivation of state columns (including `supersede` overrides), the denied and ignored row rules with fields
 from passing rows only, the CLI (`exclude`, `override`, `--hidden-calls`, `--revoked`, `--web-dirs` and, for tests
 and the bench, `--valid-from`).
+
+Every acceptance item below runs on S1 code alone: claims and edges of files come from `apply_extraction` with
+hand-written items; nothing here needs the segment cache (S3) or topics (S4), and the checks that do are listed
+under S3 and S4.
 
 Acceptance:
 - [ ] The store is created only under `<support>/evidence/<uid>.sqlite`; a test asserts nothing is written under the
@@ -1381,15 +1478,24 @@ Acceptance:
       deleted file is `deleted` and its snippets and unique facts are absent from search; register
       `migrate`/`rollback` triggers a refold.
 - [ ] Deleted is ignored, not denied: a claim quoted in a deleted file and in another file is returned with only the
-      other file's quote, dated and attributed by that row; a topic sentence citing it is not returned until the
-      re-summarise. A claim quoted in a revoked file and in another file is not returned (denied). The test fails if
-      `deleted` is put in the denied class.
+      other file's quote, dated and attributed by that row. A claim quoted in a revoked file and in another file is
+      not returned (denied). The test fails if `deleted` is put in the denied class.
 - [ ] Move: a file moved with unchanged content (a test runs `call_layout.migrate` on a flat call) keeps its source
-      id, revisions, evidence and overrides, only `uri` changes, no segment is re-extracted and no search between the
-      two passes loses a fact; two identical new files for one vanished path are not a move (deleted plus two new).
+      id, revisions, snippets, vectors, evidence rows and overrides, only `uri` changes, no new revision is built and
+      no search between the two passes loses a fact; two identical new files for one vanished path are not a move
+      (deleted plus two new).
 - [ ] Revert: content A, then B, then A again gives three revision rows with their own validity; a replay in each
-      period returns that period's text, and asked now returns A's claims as current (evidence rows on the new
-      snippets), with vectors copied, not embedded again.
+      period returns that period's snippets, and the third revision's snippets copy the vectors of the first (the
+      embed server stub counts 0 requests for them).
+- [ ] Content time (each fails on the old rule): (1) notes with revision 1 at mtime Nov 12 16:10 and revision 2 at
+      mtime Nov 15 09:00, call X on Nov 12 at 15:00 and call Y on Nov 14 at 15:00: as of Y the store returns revision
+      1's line and not revision 2's, as of X neither (the old rule started both at X's start); (2) a file with
+      revision 1 at Nov 19 08:30 and revision 2 at Nov 19 16:45, replayed as of Nov 19 12:00: revision 1 only (the
+      day rule started both at midnight); (3) a revision 2 whose mtime is older than revision 1's `valid_from` gets
+      `observed_at`, and revision 1 keeps a non-empty validity; (4) a mtime after `observed_at` is cut to it; (5) a
+      notes line unchanged between revisions keeps its `said_at`, a new line gets revision 2's `valid_from`; a
+      transcript re-saved with renamed speakers keeps every line's `said_at`; (6) `valid_from` and `said_at` are
+      stored with time of day, never as a day.
 - [ ] Access tests: excluded, hidden call, a deleted file's unique fact, revoked (from the `--revoked` list: a Google picked copy by
       `<id16>` and a `_notion/` file by page id), another client's file, another client's line in a shared file, a
       claim with one out-of-scope evidence row, an entity known only from another client's files (no name, alias or
@@ -1403,7 +1509,7 @@ Acceptance:
       of the hidden call (including the name of a decision known only from its `<stem>.notion.json`), and the same claim gives the same result before and after the request applies.
 - [ ] Request `exclude` ignores rows: a claim quoted in an excluded file and in another file is returned with only
       the other file's quote, and its `said_at`, `said_by` and confirmations come from that row; a claim quoted only
-      in excluded files is not returned; a topic sentence citing it is not returned.
+      in excluded files is not returned.
 - [ ] Decision ids: a decision ingested from the notes before `<stem>.notion.json` exists keeps the same `d-` id
       after the sidecar is written, with one entity, its claims unsplit and a `notion:<page id>` alias; a
       `decisions.md` line with the same title is only a `same_as` suggestion to it.
@@ -1454,15 +1560,22 @@ Acceptance:
 - [ ] The scale set is reproducible (same seed, same bytes) and its generated extraction is marked so no hop or
       paraphrase gate uses it.
 
-G0 gate: B and C (deterministic part) on the small and scale sets: prep and live leaks 0, future leaks 0, excluded
-leaks 0, quote validity 100%, evidence recall for register and Tracker facts 100%; A's columns unchanged;
-`mode="live"` p95 on the scale set at most 150 ms.
+- [ ] Every gold v2 row has `needs`; A and B are evaluated on every row; for C, a run without S3 or S4 code records
+      items 1, 2, 3 and 5 and the S3 and S4 parts of items 4 and 6 (section 14.2 table) as `not_evaluated`, and C's
+      rates are computed without them.
+- [ ] The two mtime cases of item 4 run through `os.utime` and a normal pass, not `--valid-from`; the results JSON
+      holds the gold `sha256`.
+
+G0 gate: B on every row and C (deterministic part) over the rows marked `needs: S2` (section 14.2 table), on the
+small and scale sets: prep and live leaks 0, future leaks 0 (including both mtime cases), excluded leaks 0, quote validity 100%,
+evidence recall for register and Tracker facts 100%; A's columns unchanged; `mode="live"` p95 on the scale set at
+most 150 ms.
 
 ### S3. LLM extraction, validation, routing, ceiling (core)
 
 Scope: `rules/evidence.yaml`, `rules/evidence_schema.json`, generated `skill_evidence.md` and the skill copy;
 prompt builder with cacheable prefix and the client-filtered catalog, validator (section 8.4, with the unanchored
-`hedge_anywhere` words), the `index` routing job on all six routes with local fallback (Python `routing.JOBS` and
+`hedge_anywhere` words), the `evidence` routing job on all six routes with local fallback (Python `routing.JOBS` and
 the `chain` entry of `rules/ai.yaml`), the per-request output cap with the split retry (section 8.6), the
 segment cache (on the S1 segmenter) keyed by `(seg_hash, extractor)`, the worker (`evidence pass`) with the call-active check and the abort
 of a request in flight, the pass, project-day and all-projects-day ceilings (USD, percent read after every request,
@@ -1485,14 +1598,19 @@ Acceptance:
       the project-day or the all-projects-day cap when that request returns the full cap (a fake provider always
       answering at the cap never exceeds a USD ceiling; two projects together never exceed the global cap);
       `est_usd`/`usd`, `pct_before`/`pct_after` and `seconds` are filled per route kind; spend goes to
-      `spend-ledger.jsonl` with job `index`.
+      `spend-ledger.jsonl` with job `evidence`.
 - [ ] Re-running a pass with no changes sends 0 requests; editing one section of a large file (including a short
       section between two others, and the section right above another) sends only that section's segments, the rest
       are `cached`; a new `extractor` sends every segment again; reverting a file to an earlier text sends 0
-      requests; a notes file is cut like a transcript, not per section.
+      requests and asked now returns A's claims as current, written by the segment cache onto the third revision's
+      snippets; a file moved with `call_layout.migrate` between two passes sends 0 requests; a notes file is cut like
+      a transcript, not per section.
+- [ ] The extraction fixture records the gold v2 `sha256` it was recorded against; a run whose current gold hash
+      differs fails as "gold changed".
 - [ ] A route whose cached-token count stays 0 is estimated without cache.
 
-G0 gate: C with the extraction fixture: hop answer rate at least 4 of 6 multi-hop questions and at least 2 more than
+G0 gate: C with the extraction fixture, over the rows marked `needs: S2` or `S3` and with the fixture's gold hash
+equal to the current one: hop answer rate at least 4 of 6 multi-hop questions and at least 2 more than
 B (A and B: expected 0 to 2), fixture misses 0 on the small set, paraphrase answer rate not below B in the run with vectors (evaluated where the
 model folder is present; `skipped` in CI) and above B in the run without vectors (B also has bge-m3, so with vectors both may already find the paraphrase; the Ukrainian question's
 result without vectors is reported on its own line), modality accuracy 100%,
@@ -1515,10 +1633,14 @@ Acceptance:
 - [ ] A topic summarised before one of its sources was excluded, revoked or hidden, or asked with that source in
       `exclude`, returns none of the sentences that cite it (even when the cited claim also has another passing
       row) and still returns its other sentences.
+- [ ] A sentence citing a claim with one evidence row in a deleted file and one in another file is not returned
+      until the topic is re-summarised (ignored rows are strict for sentences, section 8.7), and after the
+      re-summarise the new sentence is returned; the same holds for a claim whose file is in the request's `exclude`.
 - [ ] `ask_global` with `as_of` never returns a summary written after `as_of`.
 
-G0 gate: global timeline recall at least 75% with correct order on the global gold, future leaks 0, excluded leaks 0
-(including topic sentences), everything from S1, S2 and S3 unchanged.
+G0 gate: every gold v2 row evaluated (no `not_evaluated` left); global timeline recall at least 75% with correct
+order on the global gold, future leaks 0, excluded leaks 0 (including topic sentences), everything from S1, S2 and
+S3 unchanged.
 
 ### S5. App integration: flag, project uid, scheduler, settings and cost text
 
@@ -1529,7 +1651,7 @@ app already holds), the lists passed to each pass (hidden calls from `history.js
 status `denied` or `not_found`; stored page folders under `SheetCLI.stateDir/web` for this project's sheets), the
 state-only pass on hide, unhide and loss of access, at once also during a call, each with a `--request-id` kept
 until `evidence status` lists it applied and re-sent otherwise (section 13.1), the supersede click in
-`CallPage.swift` running `evidence override --key notion:<old> --field supersede --value notion:<new>` after `decision_notion.py --supersede` returns ok (section 7.1), triggers (after notes, folder change debounce, idle hourly, "Index now"), the `index` job in Swift
+`CallPage.swift` running `evidence override --key notion:<old> --field supersede --value notion:<new>` after `decision_notion.py --supersede` returns ok (section 7.1), triggers (after notes, folder change debounce, idle hourly, "Index now"), the `evidence` job in Swift
 `AIChain` (`allowed`, Settings list, stepping only to the model on this Mac), the settings row with the all-projects
 day cap and the first-index confirmation with the texts of section 10 (en and uk i18n), delete per project, status
 line; docs EN and UK (including that G2 searches stored site pages); CHANGELOG.
@@ -1546,7 +1668,7 @@ Acceptance:
       returned ok (pure-logic test on the command builder); a Google document turning
       `denied` does the same with `--revoked`; the Tracker snapshot file is written only from data the app already
       has (no new request; pure-logic tests on the list builders and the writer).
-- [ ] `AIChain` accepts the `index` job and never steps it to another cloud route (pure-logic test).
+- [ ] `AIChain` accepts the `evidence` job and never steps it to another cloud route (pure-logic test).
 - [ ] The cost text before and after a pass shows the numbers from the `run` row as a range (typical to cap), using
       the S3-calibrated output per segment (pure-logic tests on the formatter); screenshots only through the harness
       gate (L33).
@@ -1674,8 +1796,9 @@ for k, lo, hi, cap in (("Sonnet $", 8.86, 19.03, 3.0), ("GPT-6.1 Sol $", 7.35, 1
    валідатор перевіряє дослівність цитат, клієнта, модальність, правки PM.
 5. Модальність: proposal / expectation / confirmation / statement, мапінг зі значень G1; підсумки й нотатки ніколи
    не рахуються незалежним підтвердженням.
-6. Пошук: доступ, клієнт (PB-70, точна мітка на кожен уривок) і час (`as_of` за часом змісту, статуси й злиття теж
-   на момент `as_of`) фільтруються в SQL до ранжування, також для сутностей, аліасів і кожного речення підсумку
+6. Пошук: доступ, клієнт (PB-70, точна мітка на кожен уривок) і час (`as_of` за часом змісту з точністю до секунди
+   в UTC: ревізія 2 і далі від mtime, а не від дня чи початку дзвінка, тож пізніша правка не потрапляє в реплей;
+   статуси й злиття теж на момент `as_of`) фільтруються в SQL до ранжування, також для сутностей, аліасів і кожного речення підсумку
    теми; виключення на запит і видалений файл лише ігнорують рядки доказів цих файлів (факт, який підтверджує
    інше джерело, лишається), а прихований дзвінок, документ без доступу і чужий клієнт закривають твердження
    повністю; переміщений файл з тим самим вмістом зберігає своє джерело; id рішення завжди з ключа дедупу, id сторінки
@@ -1687,7 +1810,9 @@ for k, lo, hi, cap in (("Sonnet $", 8.86, 19.03, 3.0), ("GPT-6.1 Sol $", 7.35, 1
 8. Стеля на прохід, на день для проєкту і на день для всіх проєктів разом у долари, відсотки ліміту або хвилини,
    показ вартості до і після, вимикач і видалення.
 9. G0: варіанти B і C з однаковими кандидатами, фікстура екстракції як сирий вихід моделі, складніший еталон (6+
-   питань на кілька кроків, перефразування, глобальні, реплей у часі, модальність, виключення, масштаб).
+   питань на кілька кроків, перефразування, глобальні, реплей у часі з двома випадками за mtime, модальність,
+   виключення, масштаб); еталон заморожується з хешем до запису фікстури.
 10. Розбиття: S1 сховище і пошук, S2 еталон G0 v2 і варіанти B/C, S3 екстракція і стеля, S4 теми і глобальні
-    питання, S5 інтеграція в застосунок;
+    питання, S5 інтеграція в застосунок; кожен рядок еталону позначає, з якого S його оцінюють, і кожен S
+    перевіряється лише своїм кодом;
     2 питання до Bohdan: яка модель читає джерела, згода перед першим хмарним індексом.
