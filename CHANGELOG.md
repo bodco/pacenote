@@ -42,11 +42,13 @@ Pacenote. Earlier versions are described in the commit messages and in
   translator answered. When the saved transcript is replaced at the end of the call, the pane reloads the new file
   (by its identity, also when it is longer) instead of adding it again or reading it from the old offset, and the tips
   engine keeps each row's own id and speaker when one speaker's translated line matches another speaker's words in
-  the same second (rows already read are matched by their place in the file, also when the engine joined mid-call).
-  Belarusian or Bulgarian heard on a call whose main language is Ukrainian is marked and translated (the model answers
-  SAME when it was Ukrainian after all); Ukrainian heard as Russian still stays unmarked. A translation that is still
-  in another language of the same script (a French paraphrase instead of English) is not used: the next route is
-  asked, else the line stays marked.
+  the same second (rows already read are matched by their place in the file, also when the engine joined mid-call,
+  and a row from before the join never gives its id to a later row with the same words).
+  Belarusian or Bulgarian heard on a call is marked and translated into the call's main language, Ukrainian or
+  English, also when Whisper wrote it in Cyrillic on an English call (the model answers SAME when it was Ukrainian
+  after all); Ukrainian heard as Russian still stays unmarked. A translation that is still in another language of the
+  same script (a French paraphrase instead of English), or only keeps part of the original ("Bonne soirée" for
+  "Passez une bonne soirée"), is not used: the next route is asked, else the line stays marked.
 
 ## 0.26.4 (2026-11-20)
 

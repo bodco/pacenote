@@ -234,6 +234,12 @@ class LiveRun:
                 with md.open("rb") as f:                # pos is in bytes: never count a row appended after it
                     head = f.read(self.t_md.pos).decode("utf-8", errors="replace")
                 self.rows_seen = sum(1 for raw in head.split("\n")[:-1] if parse_line(raw, 0, cfg["me_label"]))
+        self.read_seqs = set()                       # PB-30: seqs of the rows already read as lines
+        if self.rows_seen:
+            # the skipped rows are consumed: their seqs too (review round 7: S1's skipped "Bonjour" translated to "Hello"
+            # took the seq of S2's unread "Hello"). The writer publishes a row event just before it appends the row,
+            # so the first row events in the sidecar are the rows already in the file, in the same order.
+            self.read_seqs.update(self.skipped_seqs(self.t_tm.path, self.t_tm.pos, self.rows_seen))
         self.timing, self.pending, self.n = {}, [], 0
         self.rows = {}                               # PB-30: "row" events (written by the recorder's writer): {(t, ch): [event]}
         self.unseq = []                              # PB-30: fed lines whose "row" event had not arrived yet
@@ -243,7 +249,6 @@ class LiveRun:
         self.fed_rows = {}                           # PB-30: (t, ch, text) -> lines fed for it
         self.tr_events = {}                          # PB-30: (t, ch, translated text) -> "translated" events not matched to a row yet
         self.row_seqs = {}                           # PB-30: (t, ch, text) -> seqs of the rows the writer appended, in order
-        self.read_seqs = set()                       # PB-30: seqs of the rows already read as lines
         self.read_unknown = {}                       # PB-30: (t, ch, text) -> lines read before their row event
         self.last_new = self.t0 = time.monotonic()
         self.last_touch = 0.0
@@ -280,6 +285,26 @@ class LiveRun:
                 self.timing.setdefault((r.get("t"), r.get("ch")), []).append(r)
             except ValueError:
                 pass
+
+    @staticmethod
+    def skipped_seqs(path: Path, pos: int, n: int) -> list:
+        """The seqs of the first `n` row events in the timing sidecar up to byte `pos` (the rows skipped on joining)."""
+        seqs = []
+        try:
+            with path.open("rb") as f:
+                head = f.read(pos).decode("utf-8", errors="replace")
+        except OSError:
+            return seqs
+        for raw in head.split("\n")[:-1]:
+            try:
+                r = json.loads(raw)
+            except ValueError:
+                continue
+            if isinstance(r, dict) and r.get("event") == "row" and r.get("seq") is not None:
+                seqs.append(r["seq"])
+                if len(seqs) >= n:
+                    break
+        return seqs
 
     @staticmethod
     def row_key(t, ch, text) -> tuple:

@@ -843,10 +843,11 @@ class Whisper:
             foreign = foreign or "ru"
         elif not (foreign or script_mismatch(text, lang)):
             return text, lang, None
-        if russian or foreign not in CYRILLIC_LANGS + (None,):
+        if russian or foreign not in ("ru", None):
             # the line is meant to be in the language it was decoded in (the main one), whatever script Whisper wrote:
-            # French heard with English dominant can come out in Ukrainian letters; it is tagged and translated to
-            # English. Clean Ukrainian heard as "ru" keeps its own tag: it is a language of the set, kept as spoken.
+            # French or Belarusian heard with English dominant can come out in Ukrainian letters; it is tagged and
+            # translated to English (review round 7: Belarusian went to Ukrainian). Clean Ukrainian heard as "ru" keeps
+            # its own tag: it is a language of the set, kept as spoken.
             lang = language if language in self.langs else main
         # a line still in a foreign script after the redo stays as Whisper wrote it and is marked (translated_from,
         # "und" when the language is unknown); the background translation then writes it in the tagged language

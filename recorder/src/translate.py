@@ -7,7 +7,7 @@ there). The recorder writes the marked line at once (translated_from set). A wor
    never audio; the route settings, the auto-switch and the spend ledger are the engine's own).
 The permission is per launch: the app sets LT_TRANSLATE_ROUTE=1 in the recorder's environment only for a call that may
 use the AI; without it the command is ignored whatever config.json says, and only the local model is used.
-No route, a timeout, a bad answer or an answer that only repeats the text: the marked line stays as it is (the route and
+No route, a timeout, a bad answer or an answer that only repeats the text or a part of it: the marked line stays as it is (the route and
 a failure category are logged, never the text). A model that finds the text already in the target language answers
 SAME: the line stays and no further route is asked. `submit()` never blocks; each request has a
 deadline of its own; the queue is bounded (the oldest waiting line is dropped, so it stays marked).
@@ -49,6 +49,15 @@ def _key(text: str) -> str:
 def unchanged(new: str, text: str) -> bool:
     """The answer only repeats the text: nothing was translated."""
     return _key(new) == _key(text)
+
+
+def copied(new: str, text: str) -> bool:
+    """The answer is only words of the text, in the same order: a part of it kept in the source language ("Bonne
+    soirée" for "Passez une bonne soirée"), not a translation (review round 7)."""
+    src = [k for k in map(_key, str(text).split()) if k]
+    it = iter(src)
+    out = [k for k in map(_key, str(new).split()) if k]
+    return bool(out) and all(w in it for w in out)
 
 
 def is_same(out: str) -> bool:
@@ -140,6 +149,8 @@ class Translator:
             return "same"
         if unchanged(out, text):
             return "answer repeats the text"
+        if copied(out, text):
+            return "answer copies part of the text"
         if not self.accept(out, dst):
             return "answer not in the target language"
         return "ok"
@@ -211,7 +222,8 @@ class TranslateWorker(threading.Thread):
                 self.busy = True
             try:
                 new = self.translate(job["text"], job["src"], job["dst"])
-                if new and not unchanged(new, job["text"]) and self.accept(new, job["dst"]):
+                if (new and not unchanged(new, job["text"]) and not copied(new, job["text"])
+                        and self.accept(new, job["dst"])):
                     self.apply(job, new)
                     self.done += 1
                 else:
