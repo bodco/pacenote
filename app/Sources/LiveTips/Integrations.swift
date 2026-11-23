@@ -172,6 +172,7 @@ final class CRMService: ObservableObject {
     static let shared = CRMService()
     enum State: Equatable { case idle, testing, ok(String), failed(String) }
     @Published var state: State = .idle
+    @Published var unverifiedScopes: [String] = []     // H6: probes of the last check that failed for another reason than 403
     var store: SecretStore { SecretStore(service: Bundle.main.bundleIdentifier ?? "io.github.example.livetips") }
 
     var connected: Bool { store.has(.hubspotKey) }     // 0.8.7.1: presence only, no Keychain prompt
@@ -179,7 +180,9 @@ final class CRMService: ObservableObject {
     /// A connector built for one job; nil without a key.
     func connector() -> CRMConnector? {
         guard let k = store.get(.hubspotKey) else { return nil }
-        return HubSpotConnector(transport: URLSessionTransport(key: k), ownerId: SettingsWindow.model.config.crm.ownerId)
+        let hs = HubSpotConnector(transport: URLSessionTransport(key: k), ownerId: SettingsWindow.model.config.crm.ownerId)
+        hs.sync = SettingsWindow.model.config.crm.sync     // H6: field mapping
+        return hs
     }
 
     func test() {
@@ -188,20 +191,18 @@ final class CRMService: ObservableObject {
         Task {
             do {
                 let a = try await c.testConnection()
+                // the scopes the key lacks show up as 403 on a read (H6: every read-provable scope, CRMScopeCheck)
+                var missing: [String] = [], unverified: [String] = []
+                if let hs = c as? HubSpotConnector { (missing, unverified) = await CRMScopeCheck.check(hs) }
+                unverifiedScopes = unverified
+                // 0.8.7 (I6.2): the owner is picked by the user's email until the PM chooses one
+                let picked = SettingsWindow.model.config.crm.ownerAuto ? (try? await c.owners()).flatMap { CRMOwner.pick($0, emails: Self.ownEmails) } : nil
+                // H6: only the fields the test owns, read fresh, so a switch changed during the test is kept
                 var cfg = SettingsWindow.model.config
                 cfg.crm.account = a.portal
                 cfg.crm.lastTest = ISO8601DateFormatter().string(from: Date())
-                cfg.crm.missingScopes = []
-                // the scopes the key lacks show up as 403 on a read of each object
-                for (scope, path) in [("crm.objects.deals.read", "/crm/v3/objects/deals?limit=1"),
-                                      ("crm.objects.contacts.read", "/crm/v3/objects/contacts?limit=1"),
-                                      ("crm.objects.companies.read", "/crm/v3/objects/companies?limit=1")] {
-                    if let hs = c as? HubSpotConnector, (try? await hs.call("GET", path)) == nil { cfg.crm.missingScopes.append(scope) }
-                }
-                // 0.8.7 (I6.2): the owner is picked by the user's email until the PM chooses one
-                if cfg.crm.ownerAuto, let os = try? await c.owners(), let o = CRMOwner.pick(os, emails: Self.ownEmails) {
-                    cfg.crm.ownerId = o.id; cfg.crm.ownerName = o.name
-                }
+                cfg.crm.missingScopes = missing
+                if let o = picked, cfg.crm.ownerAuto { cfg.crm.ownerId = o.id; cfg.crm.ownerName = o.name }
                 SettingsWindow.model.config = cfg
                 state = .ok(a.user.isEmpty ? a.portal : a.portal + ", " + a.user)
             } catch {
@@ -313,6 +314,7 @@ struct HubSpotPage: View {
             }
             if g == "tasks" { HubSpotTasksSection(model: model) }      // PB-17
             if g == "qual" { qualification }
+            if g == "sync" { HubSpotSyncSection(model: model, owners: owners) }   // H6 (HubSpotSync.swift)
         }
         .formStyle(.grouped).toggleStyle(.pnSwitch)
         }

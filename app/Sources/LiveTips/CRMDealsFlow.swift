@@ -23,9 +23,15 @@ extension CRMCallLogger {
     /// The Call write with the deal move (`CRMCallDeal.write`), in turn with Auto and Relink; the ids, the associations
     /// and the deal are read from <base>.crm.json when the turn comes, and stored only while the link still names the
     /// write's portal and call key (PB-58 fix round 8).
-    static func writeWithDeal(_ entry: CRMCallLog, base: String, link: CRMLink, connector c: CRMConnector) async throws -> CRMCallDeal.Move {
-        try await CRMCallDeal.write(entry, connector: c, fallback: (target(link), link.callDealId),
-                                    load: { CRMLink.load(base: base).map { (target($0), $0.callDealId) } },
+    /// H6 (PB-62): `allowed` is asked when the turn comes (Auto); a Retry's `bound` portal pins the target of the
+    /// fallback and of the link read at the turn (CRMSyncLog.retryTarget); `attempt` keeps the portal the turn was
+    /// checked against, for the sync line.
+    static func writeWithDeal(_ entry: CRMCallLog, base: String, link: CRMLink, connector c: CRMConnector,
+                              allowed: @escaping () async -> Bool = { true }, bound: String? = nil,
+                              attempt: CRMSyncLog.Attempt = CRMSyncLog.Attempt()) async throws -> CRMCallDeal.Move {
+        try await CRMCallDeal.write(entry, connector: c, fallback: (CRMSyncLog.retryTarget(bound: bound, target(link)), link.callDealId),
+                                    allowed: allowed, checked: attempt.record,
+                                    load: { CRMLink.load(base: base).map { (CRMSyncLog.retryTarget(bound: bound, target($0)), $0.callDealId) } },
                                     save: { id, managed in var d = CRMLink.load(base: base) ?? link; d.callId = id; d.callDealId = managed; d.save(base: base) })
     }
 }

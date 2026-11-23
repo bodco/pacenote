@@ -594,6 +594,12 @@ public final class CRMTaskFlow {
         if relinkNeeded { relinkNeeded = false; notify(.relinkCall) }            // once for the call
         guard !made.isEmpty else { return }
         let at = portal
+        // H6 (PB-62): one line per new task in the call's sync log. No revision, so the log offers no Undo for it: the
+        // toast's Undo below is the one that also unlinks the Tracker item. A log that cannot be saved is said.
+        let stem = file.hasSuffix(".md") ? String(file.dropLast(3)) : file
+        if !CRMSyncLog.append(made.map { CRMSyncEntry(object: "tasks", action: "create", source: "auto", hubspotId: $0, fields: ["hs_task_subject"], portal: at) }, stem: stem) {
+            error = "HubSpot: the call's sync log could not be saved; the tasks were made."
+        }
         notify(.added(made.count, undo: { [weak self] in Task { await self?.undoAdds(made, folder: folder, at: at) } }))
     }
 

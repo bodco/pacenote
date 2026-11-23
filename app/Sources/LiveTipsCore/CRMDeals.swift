@@ -419,11 +419,15 @@ public enum CRMCallDeal {
     /// leaves nothing outside Undo and a retry picks up from there. Before the new deal is added, the Call's deal
     /// associations are read, so a deal that was already there (a person added it in HubSpot) is not counted as added
     /// and Undo leaves it.
+    /// H6 (PB-62): the same hooks as `CRMCallSync.log`: `allowed` is asked when the turn comes (Auto rechecks its
+    /// switch; off by then, nothing is sent), `checked` hears the portal the write is checked against, for the sync line.
     public static func write(_ entry: CRMCallLog, connector c: CRMConnector, queue: CRMCallQueue = .shared,
                              fallback: (target: CRMCallTarget, managed: String),
+                             allowed: @escaping () async -> Bool = { true }, checked: @escaping (String) -> Void = { _ in },
                              load: @escaping () -> (target: CRMCallTarget, managed: String)?,
                              save: @escaping (_ callId: String, _ managed: String) -> Void) async throws -> Move {
         try await queue.run(entry.key) {
+            guard await allowed() else { throw CRMError(code: CRMCallSync.notAllowedCode, message: "", scope: "auto") }
             let loaded = load()
             let stored = loaded ?? fallback
             let t = stored.target
@@ -431,6 +435,7 @@ public enum CRMCallDeal {
             guard t.callKey == entry.key, t.portalId == fallback.target.portalId else {
                 throw CRMError(code: CRMPortal.mismatchCode, message: "This call was linked again while it was written. Try again.", scope: "portal")
             }
+            checked(t.portalId)
             try await CRMPortal.verify(link: t.portalId, connector: c)
             var savedOnce = false
             // the link still names the portal and call key of this write (a link that shows up or goes away is a change)
@@ -495,8 +500,9 @@ public enum CRMCallDeal {
     /// mismatch throws); a "callDeal" row takes the added deal off the Call and associates the removed one again
     /// (`restored` gets the row, to store its managed deal back). Returns how many rows failed.
     public static func undo(_ items: [CRMUndoItem], portal: String, connector c: CRMConnector,
+                            check: (CRMUndoItem) async throws -> Void = { _ in }, result: (CRMUndoItem, Error?) -> Void = { _, _ in },
                             deleted: (CRMUndoItem) -> Void = { _ in }, restored: (CRMUndoItem) -> Void = { _ in }) async throws -> Int {
-        let r = await CRMUndo.run(items, portal: portal, connector: c)
+        let r = await CRMUndo.run(items, portal: portal, connector: c, check: check, result: result)
         if let e = r.error { throw e }
         for it in r.undone {
             if it.type == "callDeal" { restored(it) }

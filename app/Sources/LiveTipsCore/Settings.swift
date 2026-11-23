@@ -504,6 +504,7 @@ public struct CRMSettings: Codable, Equatable {
     public var autoCreateLeads = false     // H3: the same for a Lead; only with proposeLeads
     public var qualification: [String: [String: String]] = [:]   // method -> criterion -> deal property name ("" = don't write)
     public var tasks = CRMTasksSettings()  // PB-17 (rules/hubspot-tasks.yaml): the PM's HubSpot tasks, off by default
+    public var sync = CRMSyncSettings()      // H6: Auto per object, field and owner mapping (CRMSync.swift)
     public init() {}
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -528,6 +529,7 @@ public struct CRMSettings: Codable, Equatable {
         autoCreateLeads = (try? c.decode(Bool.self, forKey: .autoCreateLeads)) ?? false
         qualification = (try? c.decode([String: [String: String]].self, forKey: .qualification)) ?? [:]
         tasks = (try? c.decode(CRMTasksSettings.self, forKey: .tasks)) ?? CRMTasksSettings()
+        sync = (try? c.decode(CRMSyncSettings.self, forKey: .sync)) ?? CRMSyncSettings()
     }
 }
 

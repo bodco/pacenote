@@ -380,7 +380,7 @@ extension HubSpotConnector: CRMPeopleConnector {
         if !domain.isEmpty, let co = try await findCompany(domain: domain, name: "") { return CRMCreated(id: co.id, created: false) }
         var props: [String: Any] = ["name": name]       // no owner: Pacenote never sets the owner of a company (spec section 7)
         if !domain.isEmpty { props["domain"] = domain }
-        let r = try await call("POST", "/crm/v3/objects/companies", ["properties": props])
+        let r = try await call("POST", "/crm/v3/objects/companies", ["properties": sync.mapped(.contacts, props)])     // H6: field mapping, domain fixed
         return CRMCreated(id: (r["id"] as? String) ?? "", created: true)
     }
 
@@ -392,7 +392,7 @@ extension HubSpotConnector: CRMPeopleConnector {
         if !n.first.isEmpty { props["firstname"] = n.first }
         if !n.last.isEmpty { props["lastname"] = n.last }
         if !role.isEmpty { props["jobtitle"] = role }
-        var body: [String: Any] = ["properties": props]
+        var body: [String: Any] = ["properties": sync.mapped(.contacts, props)]      // H6: field mapping, email fixed
         if !companyId.isEmpty {
             body["associations"] = [["to": ["id": companyId], "types": [["associationCategory": "HUBSPOT_DEFINED", "associationTypeId": Self.contactToCompany]]]]
         }

@@ -82,18 +82,21 @@ enum CRMPeopleFlow {
     }
 
     /// After the call, without a click, for the objects whose own Auto switch is on. Needs a linked call. Returns the
-    /// new link and the failure (an analytics code only: Auto has no window).
-    static func auto(file: String, link l: CRMLink, connector c: CRMConnector, name: String, callWritten: Bool) async -> (CRMLink, CRMError?) {
-        let cfg = SettingsWindow.model.config.crm
-        guard let pc = c as? CRMPeopleConnector, let res = await match(file: file, link: l, connector: pc, name: name) else { return (l, nil) }
+    /// new link, what was created (H6: one sync log line each), the create HubSpot refused (`failure`) and a lookup
+    /// that failed (`problem`, nothing written).
+    static func auto(file: String, link l: CRMLink, connector c: CRMConnector, name: String, callWritten: Bool) async
+        -> (link: CRMLink, made: [CRMUndoItem], failure: CRMError?, problem: CRMError?) {
+        guard let pc = c as? CRMPeopleConnector, let res = await match(file: file, link: l, connector: pc, name: name) else { return (l, [], nil, nil) }
         let m: CRMPeopleMatch
-        switch res { case .success(let v): m = v; case .failure(let e): return (l, e) }
+        switch res { case .success(let v): m = v; case .failure(let e): return (l, [], nil, e) }
+        // H6: the switches are read after the lookup, right before the writes, so one turned off meanwhile writes nothing;
         // each kind only with its own switch; Lead Auto never creates a contact (the lead waits for it)
+        let cfg = SettingsWindow.model.config.crm
         let chosen = CRMPeople.autoChosen(m.proposals, contacts: cfg.autoCreateContacts, companies: cfg.autoCreateCompanies,
                                           leads: cfg.autoCreateLeads && cfg.proposeLeads)
         let base = file.hasSuffix(".md") ? String(file.dropLast(3)) : file
         let (n, r) = await commit(chosen, match: (m.company, m.companies, m.contacts), link: l, base: base, callWritten: callWritten, connector: pc)
-        return (n, r.failure ?? (cfg.autoCreateLeads ? m.problem : nil))
+        return (n, r.created.map { CRMUndoItem($0.type, $0.id) }, r.failure, cfg.autoCreateLeads ? m.problem : nil)
     }
 
     /// The click path only: a ticked lead's new contact is created with it, the PM's tick covers both (a company only

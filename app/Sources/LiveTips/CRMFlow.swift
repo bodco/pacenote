@@ -133,9 +133,15 @@ enum CRMCallLogger {
     /// H2: writes the Call through the per-call queue; the stored id, portal and associations are read from
     /// <base>.crm.json when the turn comes, and the new id is stored only if the link still names that portal and call
     /// key when HubSpot answers (fix round 8: a Relink to another portal in between keeps its own ids).
-    static func write(_ entry: CRMCallLog, base: String, link: CRMLink, connector c: CRMConnector) async throws -> CRMCallResult {
-        try await CRMCallSync.log(entry, connector: c, fallback: target(link),
-                                  load: { CRMLink.load(base: base).map(target) },
+    /// H6: `allowed` is asked when the turn comes; a Retry's `bound` portal (the failed line's) must still be the link's,
+    /// else nothing is sent (CRMSyncLog.retryPortal). `attempt` keeps the portal the turn was checked against, for the
+    /// sync line. The app writes the Call with its deal move (`writeWithDeal`, the same hooks); this one is the plain write.
+    static func write(_ entry: CRMCallLog, base: String, link: CRMLink, connector c: CRMConnector,
+                      allowed: @escaping () async -> Bool = { true }, bound: String? = nil,
+                      attempt: CRMSyncLog.Attempt = CRMSyncLog.Attempt()) async throws -> CRMCallResult {
+        try await CRMCallSync.log(entry, connector: c, fallback: CRMSyncLog.retryTarget(bound: bound, target(link)),
+                                  allowed: allowed, checked: attempt.record,
+                                  load: { CRMLink.load(base: base).map { CRMSyncLog.retryTarget(bound: bound, target($0)) } },
                                   save: { id in var d = CRMLink.load(base: base) ?? link; d.callId = id; d.save(base: base) })
     }
 
@@ -163,25 +169,77 @@ enum CRMCallLogger {
 
     @MainActor static func auto(_ file: String) {
         let cfg = SettingsWindow.model.config.crm
-        let base = file.hasSuffix(".md") ? String(file.dropLast(3)) : file
         let people = cfg.autoCreateContacts || cfg.autoCreateCompanies || (cfg.autoCreateLeads && cfg.proposeLeads)      // H3: per-object switches
-        guard (cfg.autoLogCall && cfg.writeCall) || people, var l = CRMLink.load(base: base), let c = CRMService.shared.connector() else { return }
+        guard cfg.autoWrites(.calls) || people else { return }
+        Task { _ = await run(file, source: "auto") }
+    }
+
+    /// Logs the Call now (Auto, or Retry in the sync log) and records the result in the call's sync log (H6). Auto also
+    /// creates the people of its H3 switches first, so the Call gets them, each with its own sync line. Both go through
+    /// the per-call queue with Apply; Auto asks its Call switch again when its turn comes. Retry passes the failed
+    /// line's `portal`: the Call goes out only while that is still the link's and the key's portal.
+    /// Returns the error line ("" when written, or when Auto was turned off meanwhile and nothing was sent) and whether
+    /// the sync log lines were saved.
+    @MainActor static func run(_ file: String, source: String, portal bound: String? = nil) async -> (line: String, saved: Bool) {
+        let r = await send(file, source: source, bound: bound)
+        // Auto's result and its Retry live in the sync log, and Auto has no window: an unsaved line gets a notice
+        if source == "auto" && !r.saved {
+            let result = r.line.isEmpty ? L("crm.updated", ["crm": "HubSpot"]) : r.line
+            NoticeCenter.shared.post(L("crm.log.autoNotice", ["call": CallPageView.title(file), "result": CRMSyncRecorder.status(result, saved: false)]), level: .warning)
+        }
+        return r
+    }
+
+    @MainActor private static func send(_ file: String, source: String, bound: String?) async -> (line: String, saved: Bool) {
+        let base = file.hasSuffix(".md") ? String(file.dropLast(3)) : file
+        guard var l = CRMLink.load(base: base), let c = CRMService.shared.connector() else { return (L("crm.update.noLink"), true) }
         l = keyed(base: base, l)     // H3: before the people write, so it queues with an open window's Apply and Relink
-        let callAuto = cfg.autoLogCall && cfg.writeCall
-        Task {
-            do {
-                if people {     // before the Call, so it gets them; nothing is created into another portal's link
+        var saved = true
+        if source == "auto" {
+            let cfg = SettingsWindow.model.config.crm
+            if cfg.autoCreateContacts || cfg.autoCreateCompanies || (cfg.autoCreateLeads && cfg.proposeLeads) {
+                // before the Call, so it gets them; nothing is created into another portal's link (the Call below checks
+                // the portal again and refuses the same way)
+                do {
                     try await CRMPortal.verify(link: l.portalId, connector: c)
-                    let (nl, problem) = await CRMPeopleFlow.auto(file: file, link: l, connector: c, name: "", callWritten: callAuto)
-                    l = nl
-                    if let e = problem { report(e) }     // the Call below is still logged with what was made
-                }
-                guard callAuto, let entry = log(file: file, link: &l) else { return }
-                _ = try await writeWithDeal(entry, base: base, link: l, connector: c)    // a link from another portal is not written; H4: the Call follows the deal
-                UsageLog.log("update_crm", ["fields": 0, "call": 1])
-            } catch {
-                report((error as? CRMCallDeal.Partial)?.cause ?? error)
+                    let a = await CRMPeopleFlow.auto(file: file, link: l, connector: c, name: "", callWritten: cfg.autoWrites(.calls))
+                    l = a.link
+                    // one line per person made; a create HubSpot refused gets a failed line (a relink meanwhile: Relink, no line)
+                    let refused = a.failure.flatMap { $0.scope == "portal" ? nil : $0.message }
+                    saved = CRMSyncRecorder.people(a.made, failed: refused, stem: base, source: source, portal: l.portalId, connector: c)
+                    if let e = a.failure ?? a.problem { report(e) }     // the Call below is still logged with what was made
+                } catch { report(error) }
             }
+            guard SettingsWindow.model.config.crm.autoWrites(.calls) else { return ("", saved) }
+        }
+        guard let entry = log(file: file, link: &l) else { return (L("crm.update.noLink"), saved) }    // log() stores a new call key at once
+        let allowed: () async -> Bool = source == "auto" ? { await MainActor.run { SettingsWindow.model.config.crm.autoWrites(.calls) } } : { true }
+        // the portal the write was checked against when its turn came, never the link read again after the request:
+        // a relink while it was out must not move the line (and its Retry) to the new portal
+        let attempt = CRMSyncLog.Attempt()
+        let revision = { (id: String) in (c as? HubSpotConnector)?.revision(type: "calls", id: id) ?? "" }
+        do {
+            // a link from another portal is not written; H4: the Call follows the deal
+            let w = try await writeWithDeal(entry, base: base, link: l, connector: c, allowed: allowed, bound: bound, attempt: attempt)
+            UsageLog.log("update_crm", ["fields": 0, "call": 1])
+            saved = CRMSyncRecorder.call(w.call, deal: w.undoItem, log: entry, stem: base, source: source, revision: revision(w.call.id), portal: attempt.portal) && saved
+            return ("", saved)
+        } catch let e as CRMError where e.code == CRMCallSync.notAllowedCode && e.scope == "auto" {
+            return ("", saved)       // the switch was turned off while the write waited: nothing sent, nothing logged
+        } catch let e as CRMError where bound != nil && e.code == CRMPortal.mismatchCode {
+            return (L("crm.log.otherPortal"), saved)     // Retry for another portal: nothing sent, the line stays as it is
+        } catch {
+            // H4: the Call was written, then a step of its deal move failed: what was written gets its lines first
+            if let p = error as? CRMCallDeal.Partial {
+                saved = CRMSyncRecorder.call(p.move.call, deal: p.move.undoItem, log: entry, stem: base, source: source,
+                                             revision: revision(p.move.call.id), portal: attempt.portal) && saved
+            }
+            let cause = (error as? CRMCallDeal.Partial)?.cause ?? error
+            let msg = (cause as? CRMError)?.message ?? cause.localizedDescription
+            // the portal this write was meant for, so its Retry goes nowhere else ("" when the turn never came: no Retry target)
+            saved = CRMSyncRecorder.failed("calls", stem: base, source: source, error: msg, portal: attempt.portal) && saved
+            report(cause)
+            return (msg, saved)
         }
     }
 
@@ -304,9 +362,9 @@ struct CRMCallRow: View {
 @MainActor
 enum CRMUpdateWindow {
     static var window: NSWindow?
-    static func show(file: String) {
+    static func show(file: String, only: Set<String>? = nil, portal: String? = nil) {
         let w = window ?? NSWindow(contentViewController: NSHostingController(rootView: AnyView(EmptyView())))
-        let hc = NSHostingController(rootView: Localized { CRMUpdateView(file: file) })
+        let hc = NSHostingController(rootView: Localized { CRMUpdateView(file: file, only: only, retryPortal: portal) })
         hc.sizingOptions = []      // 0.8.7.1: the window grew to 1572 pt and Apply was below the screen
         w.contentViewController = hc
         w.tabbingMode = .disallowed
@@ -321,6 +379,8 @@ enum CRMUpdateWindow {
 
 struct CRMUpdateView: View {
     let file: String
+    var only: Set<String>? = nil         // H6: Retry in the sync log ticks only the rows that failed
+    var retryPortal: String? = nil       // H6: and writes only to the portal of the failed line (CRMSyncLog.retryPortal)
     @ObservedObject var crm = CRMService.shared
     @State private var plan: CRMUpdatePlan? = nil
     @State private var link: CRMLink? = nil
@@ -330,6 +390,7 @@ struct CRMUpdateView: View {
     @State private var status = ""
     @State private var undo: [CRMUndoItem] = []
     @State private var undoPortal = ""     // H2: the portal the Apply wrote to; Undo checks it before any change
+    @State private var undoRevisions: [String: String] = [:]    // H6: "type/id" -> updatedAt of this Apply's write
     @State private var undoUntil: Date? = nil
     @State private var meetingLog: CRMMeetingLog? = nil      // H5 (CRMTimelineFlow.swift)
     @State private var emailLog: CRMEmailLog? = nil
@@ -362,6 +423,7 @@ struct CRMUpdateView: View {
             } else {
                 Text(L("crm.update.noLink")).foregroundStyle(PN.C.text3)
             }
+            CRMSyncLogView(file: file, stem: base)       // H6: what was written, when, the result; Retry and Undo
             if !meetingPick.isEmpty {       // H5: the PM says which Meeting gets the notes; nothing was written to one yet
                 VStack(alignment: .leading, spacing: 6) {
                     Text(L("crm.meeting.pick")).font(PN.Font.caption).foregroundStyle(PN.C.text3).fixedSize(horizontal: false, vertical: true)
@@ -414,6 +476,7 @@ struct CRMUpdateView: View {
             let at = plan?.rows.firstIndex { $0.id == "transcript" } ?? plan?.rows.count ?? 0      // the transcript row stays last
             plan?.rows.insert(contentsOf: CRMTimelineLogger.rows(meeting: meetingLog, email: emailLog), at: at)
         }
+        if let only, var p = plan { for i in p.rows.indices { p.rows[i].on = only.contains(p.rows[i].id) }; plan = p }    // H6: a Retry
         if let l = link, !needsRelink {      // H3: reads HubSpot, writes nothing; another portal gets no email and the call needs Relink
             Task {
                 var nl = await people.load(file: file, link: l, name: "")
@@ -439,7 +502,8 @@ struct CRMUpdateView: View {
             p.rows.removeAll { $0.id == "deal" }
             if !dm.suggestions.isEmpty || dm.myStages.count > 1 {
                 let at = p.rows.firstIndex { $0.id == "task" || $0.id == "transcript" } ?? p.rows.endIndex
-                p.rows.insert(.init(id: "deal", title: "deal", detail: "", on: SettingsWindow.model.config.crm.writeDeal), at: at)
+                // H6: a Retry ticks the deal row only when the deal was the failed line
+                p.rows.insert(.init(id: "deal", title: "deal", detail: "", on: only.map { $0.contains("deal") } ?? SettingsWindow.model.config.crm.writeDeal), at: at)
             }
             plan = p
         }
@@ -463,25 +527,37 @@ struct CRMUpdateView: View {
             var done: [CRMUndoItem] = []
             var fields = 0
             var extra = ""
+            var sending = ""       // H6: the object whose request is out, so a failed sync line names it and no other
+            // H6: HubSpot's updatedAt of each object as Pacenote wrote it, for both Undo paths
+            func revisions() -> [String: String] {
+                Dictionary(done.map { ($0.type + "/" + $0.id, (c as? HubSpotConnector)?.revision(type: $0.type, id: $0.id) ?? "") }, uniquingKeysWith: { a, _ in a })
+            }
+            let source = only == nil ? "click" : "retry"
             do {
-                try await CRMPortal.verify(link: l.portalId, connector: c)     // H2: nothing goes to another portal's ids
+                // H2: nothing goes to another portal's ids; H6: a Retry only to the failed line's portal, still the link's
+                try await CRMPortal.verify(link: retryPortal.map { CRMSyncLog.retryPortal(bound: $0, link: l.portalId) } ?? l.portalId, connector: c)
                 // H3: the ticked people first, so the Call (and the note and task) are associated with them
                 let callWritten = p.rows.first(where: { $0.id == "call" })?.on == true && p.callLog != nil
+                sending = "contacts"
                 let (nl, made, problem) = await people.apply(link: l, connector: c, base: base, callWritten: callWritten)
                 done += made
+                sending = ""
                 if nl != l {
                     l = nl; link = nl
                     var again = nl
                     if p.callLog != nil, let entry = CRMCallLogger.log(file: file, link: &again) { p.callLog = entry }     // the participants line
                 }
-                if let e = problem { throw e.scope == "portal" ? e : CRMError(code: 0, message: e.message) }    // a relink meanwhile: the window offers Relink
+                if let e = problem { sending = "contacts"; throw e.scope == "portal" ? e : CRMError(code: 0, message: e.message) }    // a relink meanwhile: the window offers Relink
                 let refs = CRMCallLogger.refs(l)
                 if p.rows.first(where: { $0.id == "note" })?.on == true {
+                    sending = "notes"
                     let id = try await c.createNote(text: p.note, associations: refs); done.append(CRMUndoItem("notes", id))
                 }
                 if p.rows.first(where: { $0.id == "call" })?.on == true, let entry = p.callLog {
+                    sending = "calls"
                     let w: CRMCallDeal.Move
-                    do { w = try await CRMCallLogger.writeWithDeal(entry, base: base, link: l, connector: c) }    // in turn with Auto
+                    // in turn with Auto and Retry; H6: a Retry writes only to the failed line's portal
+                    do { w = try await CRMCallLogger.writeWithDeal(entry, base: base, link: l, connector: c, bound: retryPortal) }
                     catch let e as CRMCallDeal.Partial {     // the old deal could not be taken off: what was written stays in Undo
                         done.append(CRMUndoItem("calls", e.move.call.id, e.move.call.old))
                         if let u = e.move.undoItem { done.append(u) }
@@ -495,8 +571,12 @@ struct CRMUpdateView: View {
                 }
                 if let w = c as? CRMTimelineWriter {
                     // H5: in turn with Auto, with the stored ids and associations read from <base>.crm.json when the turn comes
-                    let t = await CRMTimelineLogger.apply(w, connector: c, meeting: meetingLog, email: emailLog, base: base, link: link ?? l, refs: refs) { id in p.rows.first(where: { $0.id == id })?.on == true }
+                    let on = { (id: String) in p.rows.first(where: { $0.id == id })?.on == true }
+                    let t = await CRMTimelineLogger.apply(w, connector: c, meeting: meetingLog, email: emailLog, base: base, link: link ?? l, refs: refs) { on($0) }
                     done += t.undo
+                    // H6: the Meeting goes first; once it was written (or waits for a pick), a failure is the Email's
+                    let meetingDone = !on("meeting") || meetingLog == nil || !t.pick.isEmpty || t.undo.contains { $0.type == "meetings" }
+                    sending = meetingDone && on("email") && emailLog != nil ? "emails" : "meetings"
                     if link?.portalId == t.portal {     // a Relink while this was pending: its ids and pick are the old portal's
                         link?.meetingId = t.link.meetingId; link?.emailId = t.link.emailId; link?.emailOurs = t.link.emailOurs
                         meetingPick = t.pick; pickPortal = t.portal        // the pick block below says what is waiting
@@ -504,20 +584,40 @@ struct CRMUpdateView: View {
                     if !t.pick.isEmpty { extra = " " + L("crm.meeting.waiting") }
                     if let e = t.error { throw e }
                 }
-                if p.rows.first(where: { $0.id == "deal" })?.on == true, !l.dealId.isEmpty, l.dealId != "none", !dealFields.isEmpty {
+                // H6: deal fields that the mapping sets to Don't write are not a write (no request, no log line)
+                let sync = SettingsWindow.model.config.crm.sync
+                if p.rows.first(where: { $0.id == "deal" })?.on == true, !l.dealId.isEmpty, l.dealId != "none", !dealFields.isEmpty,
+                   !sync.mapped(.deals, dealFields).isEmpty {
+                    sending = "deals"
                     let old = try await c.updateDeal(id: l.dealId, fields: dealFields); done.append(CRMUndoItem("deals", l.dealId, old)); fields = dealFields.count
                 }
                 if p.rows.first(where: { $0.id == "task" })?.on == true, let t = p.task {
+                    sending = "tasks"
                     let id = try await c.createTask(subject: t.subject, due: t.due, associations: refs); done.append(CRMUndoItem("tasks", id))
                 }
                 UsageLog.log("update_crm", ["fields": fields])
-                undo = done; undoPortal = l.portalId; undoUntil = Date().addingTimeInterval(8); applied = true
-                status = L("crm.updated", ["crm": c.providerName]) + extra
-                DispatchQueue.main.asyncAfter(deadline: .now() + 8.2) { if let u = undoUntil, u <= Date() { undoUntil = nil } }     // a kept batch has its own 8 s
+                let revs = revisions()
+                let saved = CRMSyncRecorder.applied(plan: p, portal: l.portalId, done: done, error: nil, failed: nil, stem: base, source: source, revisions: revs)
+                undo = done; undoPortal = l.portalId; undoRevisions = revs
+                undoUntil = Date().addingTimeInterval(CRMSyncLog.applyUndoSeconds); applied = true
+                status = CRMSyncRecorder.status(L("crm.updated", ["crm": c.providerName]) + extra, saved: saved)
+                // a kept batch has its own 8 s
+                DispatchQueue.main.asyncAfter(deadline: .now() + CRMSyncLog.applyUndoSeconds + 0.2) { if let u = undoUntil, u <= Date() { undoUntil = nil } }
             } catch {
-                undo = done; undoPortal = l.portalId; undoUntil = done.isEmpty ? nil : Date().addingTimeInterval(8)
-                needsRelink = (error as? CRMError)?.code == CRMPortal.mismatchCode
-                status = needsRelink ? L("crm.relink.needed") : ((error as? CRMError)?.message ?? error.localizedDescription)
+                let revs = revisions()
+                undo = done; undoPortal = l.portalId; undoRevisions = revs
+                undoUntil = done.isEmpty ? nil : Date().addingTimeInterval(CRMSyncLog.applyUndoSeconds)
+                let cause = (error as? CRMCallDeal.Partial)?.cause ?? error
+                let mismatch = (cause as? CRMError)?.code == CRMPortal.mismatchCode
+                needsRelink = mismatch && retryPortal == nil
+                status = mismatch ? (retryPortal == nil ? L("crm.relink.needed") : L("crm.log.otherPortal")) : ((error as? CRMError)?.message ?? error.localizedDescription)
+                // a portal mismatch sent nothing for its row (Relink, not Retry, is the way on, so no failed line), but
+                // rows written before it (a note before a Call relinked meanwhile) still get their lines (fix round 9)
+                if !mismatch || !done.isEmpty {
+                    let saved = CRMSyncRecorder.applied(plan: p, portal: l.portalId, done: done, error: mismatch ? nil : status, failed: mismatch ? nil : sending,
+                                                        stem: base, source: source, revisions: revs)
+                    status = CRMSyncRecorder.status(status, saved: saved)
+                }
                 AnalyticsTracker.shared.error("crm", Analytics.errorCode(message: status), provider: "hubspot")   // S5: code only
             }
             busy = false
@@ -534,20 +634,32 @@ struct CRMUpdateView: View {
         Task {
             let t = await CRMTimelineLogger.apply(w, connector: c, meeting: m, email: nil, base: base, link: l, refs: CRMCallLogger.refs(l)) { $0 == "meeting" }
             // an open Undo of another portal is not joined: each record is undone only in the portal it was written in
-            if (undoUntil ?? .distantPast) <= Date() || (!t.portal.isEmpty && undoPortal != t.portal) { undo = [] }
+            if (undoUntil ?? .distantPast) <= Date() || (!t.portal.isEmpty && undoPortal != t.portal) { undo = []; undoRevisions = [:] }
             if !t.undo.isEmpty { undoPortal = t.portal }
             undo += t.undo
             if link?.portalId == t.portal { link?.meetingId = t.link.meetingId; meetingPick = t.pick; pickPortal = t.portal }   // not after a Relink meanwhile
+            // H6: the Meeting's sync line; a refusal before any request (relinked, a pick of another portal) gets none
+            let code = (t.error as? CRMError)?.code
+            let refusedEarly = code == CRMPortal.mismatchCode || code == CRMTimelineSync.stalePickCode
+            var saved = true
+            // HubSpot's revision of each record written, as Apply keeps it, so the log can undo a picked Meeting too
+            let revs = Dictionary(t.undo.map { ($0.type + "/" + $0.id, (c as? HubSpotConnector)?.revision(type: $0.type, id: $0.id) ?? "") }, uniquingKeysWith: { a, _ in a })
+            undoRevisions.merge(revs) { _, b in b }
+            if let pl = plan, !t.undo.isEmpty || (t.error != nil && !refusedEarly) {
+                let msg = t.error.map { ($0 as? CRMError)?.message ?? $0.localizedDescription }
+                saved = CRMSyncRecorder.applied(plan: pl, portal: t.portal.isEmpty ? l.portalId : t.portal, done: t.undo, error: msg,
+                                                failed: refusedEarly ? nil : "meetings", stem: base, source: "click", revisions: revs)
+            }
             if let e = t.error {
-                let code = (e as? CRMError)?.code
                 needsRelink = code == CRMPortal.mismatchCode
                 if code == CRMTimelineSync.stalePickCode { meetingPick = []; pickPortal = "" }
                 status = needsRelink ? L("crm.relink.needed") : code == CRMTimelineSync.stalePickCode ? L("crm.meeting.stale")
                     : ((e as? CRMError)?.message ?? e.localizedDescription)
             } else { status = L("crm.updated", ["crm": c.providerName]) }
+            status = CRMSyncRecorder.status(status, saved: saved)
             if !t.undo.isEmpty {
-                undoUntil = Date().addingTimeInterval(8)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 8.2) { if let u = undoUntil, u <= Date() { undoUntil = nil } }
+                undoUntil = Date().addingTimeInterval(CRMSyncLog.applyUndoSeconds)
+                DispatchQueue.main.asyncAfter(deadline: .now() + CRMSyncLog.applyUndoSeconds + 0.2) { if let u = undoUntil, u <= Date() { undoUntil = nil } }
             }
             busy = false
         }
@@ -572,7 +684,7 @@ struct CRMUpdateView: View {
             }) ?? (nil, L("crm.notConnected"))
             busy = false
             if nl != nil {
-                meetingPick = []; pickPortal = ""; undo = []; undoPortal = ""; undoUntil = nil
+                meetingPick = []; pickPortal = ""; undo = []; undoPortal = ""; undoRevisions = [:]; undoUntil = nil
                 needsRelink = false; load(); status = L("crm.relink.done")
             } else { status = e }
         }
@@ -584,29 +696,21 @@ struct CRMUpdateView: View {
     /// a Meeting or Email gets its old fields back (a new one is deleted), a Meeting whose notes changed in HubSpot after
     /// Apply keeps them and that is said. In turn with the call's writes and Relink: Undo reads a Meeting's notes before
     /// it writes them back, and the stored ids go never between another write's read and save.
+    /// H6: each record is changed only inside the Undo window and, when it has one, while HubSpot still has the revision
+    /// of this Apply's write (rule 6, CRMSyncLog.undoCheck); each undone or failed record gets a sync log line.
     func runUndo() {
-        guard let c = crm.connector() else { return }
-        let items = undo, portal = undoPortal; undo = []; undoUntil = nil
+        guard let c = crm.connector(), let deadline = undoUntil, deadline > Date() else { undo = []; undoUntil = nil; return }
+        let items = undo, portal = undoPortal, revs = undoRevisions; undo = []; undoUntil = nil
         let base = base, key = CRMCallLogger.keyed(base: base, link ?? CRMLink()).callKey
+        let o = CRMUndoOutcomes()
         Task {
-            let r = (try? await CRMCallSync.relink(key: key) { () async -> (undone: [CRMUndoItem], failed: Int, kept: Int, deleted: [CRMUndoItem], error: CRMError?) in
-                let r = await CRMUndo.run(items, portal: portal, connector: c)
-                guard r.error == nil else { return r }
-                // on disk, only in the link of the portal Undo ran in, without overwriting an id another write stored
-                for it in r.undone where it.type == "callDeal" {      // H4: the deal Pacenote managed before the move
-                    if var d = CRMLink.load(base: base), d.portalId == portal, d.callId == it.id { d.callDealId = it.old["managed"] ?? ""; d.save(base: base) }
-                }
-                for it in r.deleted {
-                    if ["calls", "meetings", "emails"].contains(it.type) { CRMTimelineLogger.forget(type: it.type, id: it.id, portal: portal, base: base) }
-                    if ["contacts", "companies", "leads"].contains(it.type), let d = CRMLink.load(base: base), d.portalId == portal {     // H3
-                        await CRMPeopleFlow.forget(type: it.type, id: it.id, in: d).save(base: base)
-                    }
-                }
-                return r
-            }) ?? ([], 0, 0, [], CRMError(code: 0, message: L("crm.notConnected")))
+            let r = await CRMCallLogger.undo(items, portal: portal, base: base, key: key, connector: c,
+                                             check: CRMSyncLog.undoCheck(revision: { revs[$0.type + "/" + $0.id] ?? "" }, deadline: deadline, connector: c),
+                                             result: { it, err in o.record(it, err, stem: base, source: "click") })
             if let e = r.error {
-                undo = items; undoPortal = portal; undoUntil = Date().addingTimeInterval(8)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 8.2) { if let u = undoUntil, u <= Date() { undoUntil = nil } }
+                // H3: another portal (or none readable) changed nothing and the batch is kept for another 8 s
+                undo = items; undoPortal = portal; undoRevisions = revs; undoUntil = Date().addingTimeInterval(CRMSyncLog.applyUndoSeconds)
+                DispatchQueue.main.asyncAfter(deadline: .now() + CRMSyncLog.applyUndoSeconds + 0.2) { if let u = undoUntil, u <= Date() { undoUntil = nil } }
                 status = e.code == CRMPortal.mismatchCode ? L("crm.undo.otherPortal", ["crm": c.providerName]) : e.message
                 return
             }
@@ -619,11 +723,54 @@ struct CRMUpdateView: View {
                 }
                 if ["contacts", "companies", "leads"].contains(it.type), let l = link { link = CRMPeopleFlow.forget(type: it.type, id: it.id, in: l) }
             }
-            // 0.8.7.1: a failed undo is said, not hidden behind "Undone"; H5: notes kept in a Meeting are said too
-            status = r.failed > 0 ? L("crm.undoFailed", ["n": "\(r.failed)", "crm": c.providerName])
+            // 0.8.7.1: a failed undo is said, not hidden behind "Undone"; H5: notes kept in a Meeting are said too;
+            // H6: a record refused (window passed, changed in HubSpot) says why
+            let line = r.failed > 0
+                ? (o.refused.map { CRMSyncRecorder.undoError($0) + (r.failed > 1 ? " " + L("crm.undoFailed", ["n": "\(r.failed)", "crm": c.providerName]) : "") }
+                   ?? L("crm.undoFailed", ["n": "\(r.failed)", "crm": c.providerName]))
                 : r.kept > 0 ? L("crm.undoKept", ["n": "\(r.kept)", "crm": c.providerName]) : L("crm.undone")
+            status = CRMSyncRecorder.status(line, saved: o.saved)
             if r.failed == 0 { applied = false }
         }
+    }
+}
+
+/// H6: what one Undo heard from its records: the first refusal (window passed, changed in HubSpot; no log line, nothing
+/// was changed) and whether every undo line was saved. A record H5 kept (CRMUndoConflict) gets no line either.
+@MainActor
+final class CRMUndoOutcomes {
+    var refused: Error? = nil
+    var saved = true
+    func record(_ it: CRMUndoItem, _ err: Error?, stem: String, source: String) {
+        if err is CRMUndoConflict { return }
+        let code = (err as? CRMError)?.code
+        if code == CRMSyncLog.expiredCode || code == CRMSyncLog.changedCode { refused = refused ?? err; return }
+        saved = CRMSyncRecorder.undo(it.type, it.id, stem: stem, error: err.map { CRMSyncRecorder.undoError($0) }, source: source) && saved
+    }
+}
+
+extension CRMCallLogger {
+    /// H6: the one Undo of written records for both paths (Apply's 8 seconds in Update HubSpot, the sync log's day): in
+    /// the call's turn with its writes and Relink, through CRMUndo.run with `check` before each record; then, only in the
+    /// link of the portal Undo ran in, the stored ids of what was deleted go (H3, H5) and a reversed deal move stores its
+    /// managed deal back (H4), without overwriting an id another write stored.
+    static func undo(_ items: [CRMUndoItem], portal: String, base: String, key: String, connector c: CRMConnector,
+                     check: @escaping (CRMUndoItem) async throws -> Void, result: @escaping (CRMUndoItem, Error?) -> Void) async
+        -> (undone: [CRMUndoItem], failed: Int, kept: Int, deleted: [CRMUndoItem], error: CRMError?) {
+        (try? await CRMCallSync.relink(key: key) { () async -> (undone: [CRMUndoItem], failed: Int, kept: Int, deleted: [CRMUndoItem], error: CRMError?) in
+            let r = await CRMUndo.run(items, portal: portal, connector: c, check: check, result: result)
+            guard r.error == nil else { return r }
+            for it in r.undone where it.type == "callDeal" {      // H4: the deal Pacenote managed before the move
+                if var d = CRMLink.load(base: base), d.portalId == portal, d.callId == it.id { d.callDealId = it.old["managed"] ?? ""; d.save(base: base) }
+            }
+            for it in r.deleted {
+                if ["calls", "meetings", "emails"].contains(it.type) { CRMTimelineLogger.forget(type: it.type, id: it.id, portal: portal, base: base) }
+                if ["contacts", "companies", "leads"].contains(it.type), let d = CRMLink.load(base: base), d.portalId == portal {     // H3
+                    await CRMPeopleFlow.forget(type: it.type, id: it.id, in: d).save(base: base)
+                }
+            }
+            return r
+        }) ?? ([], 0, 0, [], CRMError(code: 0, message: L("crm.notConnected")))
     }
 }
 extension CRMDeal: Identifiable {}

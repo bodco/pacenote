@@ -177,7 +177,8 @@ decides, the service key stays the only path.
    presses Apply, and Undo works for 8 seconds. The only automatic write is the Auto switch for the Call
    (Settings > Integrations > HubSpot > "Log the call in HubSpot automatically after it ends"), off by default, per
    installation. Auto writes only the Call. Notes, deal fields and tasks stay behind a click. Every other automatic
-   write needs its own switch, also off by default. **Meetings and Emails have no Auto switch (H5)**: both are rows of
+   write needs its own switch, also off by default: the switches of Settings > Integrations > HubSpot > Sync, read
+   through `CRMSettings.autoWrites` (section 13), one per object. Notes have no switch (decision 9). **Meetings and Emails have no Auto switch (H5)**: both are rows of
    Update HubSpot behind Apply and Undo. The Meeting row is ticked by default; the Email row is never ticked for the PM,
    because it records an email the PM says was sent, and Pacenote cannot know that.
 2. **Transcript text is never sent** to the Call, the Task, the Deal or any field. The note may carry it only when the
@@ -307,8 +308,8 @@ is shown on the card. Behavior to keep and to define:
    --adopt-prep`) never carries a link: a call started without `crm_base` (another start path) stays unlinked, and
    its Summary never goes to another customer's records.
 2. The call ends. If Auto is on and the call is linked in the portal of the current key (section 8), Pacenote waits for the call page's notes (about 2.5 minutes),
-   then logs the Call. No review and no Undo in this path; the switch is the consent. The PM sees it in HubSpot and in
-   the call's Update HubSpot window (Call row, ticked).
+   then logs the Call. No review in this path; the switch is the consent. The PM sees it in HubSpot and in the call's
+   Update HubSpot window (Call row, ticked, and a line in the sync log, where Undo works for a day, section 13).
 3. Otherwise the PM opens Update HubSpot on the call page: the Call row is ticked by default (Settings can untick it),
    Apply writes, Undo works for 8 seconds.
 4. A re-run (Apply again later) updates the same Call, keyed by the stored Call id and `hs_call_external_id`; the one
@@ -344,7 +345,7 @@ is shown on the card. Behavior to keep and to define:
 
 ## 11. Known gaps and not verified yet (before release)
 
-- Auto has no place to show an error (rule 5 says "where the action was"). A failed Auto log is recorded only as an analytics error code; the Call is then logged by Update HubSpot. Auto does nothing for a call that has no CRM link or no history record 150 seconds after the call ended.
+- Auto shows its errors in the call's sync log (H6, section 13) with Retry; the analytics error code is still recorded. Auto does nothing for a call that has no CRM link or no history record 150 seconds after the call ended.
 - The link back is the Notion page; a call without a Notion page has only the `Pacenote call id` line in the Call.
 - HubSpot search is not instant after a create: a create that timed out may not be found at once, and the next run
   (Apply or Auto) finds it by the Pacenote call id.
@@ -372,6 +373,11 @@ is shown on the card. Behavior to keep and to define:
 - H5: an email is matched when HubSpot's logged text holds the first 200 characters of the draft (spaces and case
   ignored). An email the PM changed after copying the draft is not matched, and a second email engagement is created.
 - H5: the follow-up draft is kept only in memory, so the Email row exists only once a draft was written in this session of the app.
+- H6: that the `updatedAt` in HubSpot's answer to a create or update is the one a later read returns, and that it does
+  not move by itself after the write (HubSpot recalculations). If it moves, Undo from the sync log refuses ("changed in
+  HubSpot") more often than needed; it never undoes over a change. Not verified either: whether a v4 association
+  change (H3 people on a Call, the H4 deal move, H5 associations) moves the `updatedAt` of the Call or the record; if it
+  does, Undo of such a write refuses the same way.
 
 ## 12. Contacts, companies and leads (H3, PB-59)
 
@@ -426,3 +432,120 @@ H3 asked for both behind their own switches, so they are built that way. Turn th
 portal without Sales Hub Leads answers 403 or 404, the 409 message format ("Existing ID: n") on contacts, that a contact
 created with a company association (type 1) is accepted with the ten scopes, and `hs_additional_emails` (a second email
 of the same person is matched by name only).
+
+## 13. Sync settings, field and owner mapping, sync log (H6, PB-62)
+
+Code: `app/Sources/LiveTipsCore/CRMSync.swift` (model and API), `app/Sources/LiveTips/HubSpotSync.swift` (Settings
+group and the log view). Settings > Integrations > HubSpot > **Sync** has four parts.
+
+### Settings API for the other branches
+
+Read the settings only through these calls on `CRMSettings` (`SettingsWindow.model.config.crm` in the app). Stored in
+`CRMSettings.sync` (`CRMSyncSettings`); every key has a default, so an old settings file decodes with everything off.
+
+| Call | Returns |
+|---|---|
+| `autoWrites(_ o: CRMObject) -> Bool` | whether `o` may be written without a click. `CRMObject`: `calls`, `tasks`, `contacts` (contacts and companies), `deals`, `meetings`. All false by default. One source per object: `calls` is the H2 switch (`autoLogCall && writeCall`), `contacts` the H3 ones (`autoCreateContacts || autoCreateCompanies`; Leads keep their own switch), `tasks` the PB-17 after-call switch (`tasks.autoAdd`), `deals` its own stored switch (no writer yet), `meetings` always false (rule 1: never automatic) |
+| `setAutoWrites(_ o:, _ on:)` | sets it (for `calls`, also ticks `writeCall`; for `contacts`, both H3 switches; for `meetings`, nothing) |
+| `property(_ o:, _ specProperty:) -> String` | the HubSpot property the spec property (section 3) is written to; `""` = Don't write. Fixed properties (`CRMObject.fixed`: dedupe keys, owner, statuses) always come back unchanged. A stored target that is reserved or already used by another field resolves to the field's default |
+| `mapped(_ o:, _ props:) -> [String: Any]` | a property dictionary renamed by the mapping, Don't write dropped. Inputs that are not mappable keep their names and win: a mapped field never overwrites one of them or another mapped field. `HubSpotConnector.sync` applies it to the Call, Update HubSpot's follow-up task, the deal fields and H3's new contacts and companies. Tasks in Tracker (PB-17) and Meetings (H5) are not mapped: Pacenote reads their properties back (the task subject, Pacenote's block of the meeting notes), so `CRMObject.meetings` has no mappable field |
+| `sync.canTarget(_ o:, _ specProperty:, _ target:) -> Bool` | whether a field may be mapped to `target`: never a reserved property (`CRMSyncSettings.reserved`: the object's fixed ones, `hubspot_owner_id`, `hs_call_external_id`, `hs_object_id`, HubSpot's create and change dates, the default property of another field) or what another field already writes. The picker offers only these and `setProperty` refuses the rest |
+| `CRMCallSync.log(..., fallback:, allowed:, checked:, load:, save:)` and `CRMCallDeal.write(...)` | the writers of a call's Call (the app uses `CRMCallDeal.write`, the Call with its deal move, H4): a queue per call id (Relink takes the same turns, `CRMCallSync.relink`), the link (`CRMCallTarget`: Call id, portal, call id, associations) read when the turn comes and required to name the portal the entry was made for, the portal checked. Auto passes `allowed`, which asks `autoWrites(.calls)` again when its turn starts; off by then, nothing is sent and nothing is logged. `checked` hears the portal the write was checked against, for the sync line |
+| `ownerId(forPacenoteUser email:, ownEmails:, owners:) -> String` | the HubSpot owner for a Pacenote user: the mapping in Sync; for the user of this Mac (one of `ownEmails`, or an empty email) the owner from Matching (`ownerId`); else the HubSpot owner with the same email; else `""` (leave `hubspot_owner_id` out, section 7) |
+| `CRMSyncLog.append(_ entries:, stem:) -> Bool` | adds lines to the call's sync log; `CRMSyncLog.recordUndo(...)` for an Undo. `false` = the file was not saved: say so next to the HubSpot result, never instead of it. A log file that is there but cannot be read or decoded (`CRMSyncLog.read` gives nil, `unreadable(stem:)` is true) is never written over: both return `false` and leave its bytes as they are |
+| `CRMUndo.run(_ items:, portal:, connector:, check:, result:)` | the one Undo of written records (`CRMCallSync.undo` and `CRMCallDeal.undo` forward to it; the app runs it in the call's turn, `CRMCallLogger.undo`): the portal first (a mismatch sends nothing), then `check` before each record (`CRMSyncLog.undoCheck`), then delete, `restoreCall`, `restoreDeal`, the H4 deal move back or the H5 restore |
+| `CRMSyncLog.undoCheck(revision:, deadline:, connector:)` | the check both Undo paths pass: the window for every record; HubSpot's `updatedAt` equal to the write's revision (`guardUndo`) for every record that has one. No revision to compare, so the window only: a deal move of the Call (`callDeal`, associations), a Meeting (H5 reads its notes again and keeps them when Pacenote's block changed; HubSpot rewrites the notes' markup, which moves the revision) and a record whose Undo only takes off associations Pacenote added (an Email HubSpot logged). A missing revision on any other record refuses before any read |
+| `CRMScopeCheck.blocking(_ o:, missing:)` | the scopes an Auto switch needs (`CRMObject.scopes`: the reads its write path makes, then the write scopes) that the last check found missing |
+
+Rules for a branch that adds an automatic write: check `autoWrites(o)` at the moment of writing (not at start; behind
+a queue, when the turn comes), write only the objects of its own switch, map properties with `mapped`, set the owner
+with `ownerId(forPacenoteUser:)`, and append one log line per object (ok or failed, with the one-line error, and
+`revision` = HubSpot's `updatedAt` from the answer to the write, `HubSpotConnector.revision(type:id:)`, and `portal` =
+the portal the write was checked against, so Undo is possible). A failed line names the object whose request failed,
+never one that was skipped. Transcript text is never an input.
+
+### Auto per object
+
+One switch per `CRMObject`, all off by default, each the switch of the branch that writes the object: Calls (H2),
+Contacts and companies (H3; the Sync switch sets both, Leads keep their own switch in Reads and writes), Tasks (PB-17,
+the PM's open commitments after a call). Deals are stored and shown with "not written automatically yet". Meetings are
+never automatic (rule 1, decision 6): the switch is shown off and cannot be turned on. Notes have no switch (decision
+9). Each switch names the scope it needs when the last check found it missing. H3 Auto reads its switches after the
+lookup, right before its creates; the Call's switch is asked again when its turn in the queue comes.
+
+### Field mapping
+
+Per object, each mappable field (`CRMObject.defaultFields`, the spec's properties in section 3) can go to another
+writable HubSpot property of that object (listed from `/crm/v3/properties/<object>`) or to Don't write. Only the
+overrides are stored; "Back to defaults" clears them. Fixed: Call `hs_timestamp`, `hs_call_status`,
+`hs_call_disposition`, `hs_call_external_id`, `hubspot_owner_id`; Task `hs_timestamp`, `hs_task_status`,
+`hubspot_owner_id`; Contact `email`, Company `domain`; Deal `dealstage` (written only when typed). Meetings have no
+mappable field. A field can never be mapped onto a fixed property, `hubspot_owner_id`, `hs_call_external_id`, another
+field's default property, or a property another field already writes (`canTarget`); a settings file edited by hand
+with such a mapping is ignored on write (the field goes to its default). Qualification fields keep their own mapping
+(Qualification group); a deal field mapped onto a property a qualification field writes goes to its default instead.
+
+### Owner mapping
+
+The first row is the user of this Mac and is the same setting as Matching > Owner. Other Pacenote users are added by
+email and mapped to a HubSpot owner (default: the owner with the same email). Deal, contact and company owners are
+never changed (section 7).
+
+### Sync log
+
+One file per call, `<stem>.crm-log.json` next to `<stem>.crm.json`, at most 200 lines. A line: time, object
+(`calls`, `notes`, `tasks`, `deals`, `contacts`, `companies`, `leads`, `meetings`, `emails`, `callDeal`), action
+(`create`, `update`, `undo`), source (`click`, `auto`, `retry`, `log`), HubSpot id, the portal id, the property names
+written, the old values an update replaced (H5 keeps its Undo record under `pacenote.*` keys), ok or the one-line
+error, undone, and the revision (HubSpot's `updatedAt` from the answer to the write). Lines come from Apply (people,
+the note, the Call and its deal move, the Meeting and the Email, deal fields, the task), the Meeting pick, Auto (the H3
+people and the Call), Retry, both Undo paths, and the PB-17 after-call tasks (no revision, so their Undo stays the
+notice's, which also unlinks the Tracker item). When an Apply fails, its failed line is the object whose request was
+out (`CRMApply.run` is the tested model; the app's Apply keeps the same rule with H3 to H5); a row that sent nothing,
+such as a deal whose fields are all Don't write, gets no line. Property names and the old values Undo needs (local,
+next to the call); never transcript text, never the key. Shown at the bottom of the call's Update HubSpot window.
+
+- **Retry** on a failed line until a later write of the same object succeeds. A Call is written again at once with its
+  deal move (it never makes a second Call, section 6). A note, deal fields, a task, the Meeting or the Email reopen
+  Update HubSpot with only that row ticked, so the PM still reviews and presses Apply; a person (H3 proposals are not
+  rows of the plan) reopens it with nothing ticked, for the PM to tick. Every line keeps the portal its write was meant
+  for (a failed one too), and both Retry paths write only there: when the write goes out, the call's link must still
+  name that portal and the key must belong to it (`CRMSyncLog.retryTarget` pins the portal of the entry and of the
+  link read at the turn, then `CRMPortal.verify`). After a reconnect or Relink to another portal, or for a line
+  without a portal, Retry sends nothing and says so; the PM writes again with Update HubSpot.
+- The Call id a write returns belongs to the portal that write was checked against: it is stored only while the link
+  still names that portal and call id (section 8, one writer at a time), so a Relink never leaves the old portal's id
+  on the new link for the next write to trust. A write whose link was relinked before its turn sends nothing; its
+  failed line names no portal, so it has no Retry.
+- If Auto's line cannot be saved to the log, a notice says so (Auto has no window to show it in). If the PB-17 after-call
+  tasks' lines cannot be saved, the Tasks line in Tracker says so.
+- **Undo** on the latest good write of an object, within 24 hours (`CRMSyncLog.logUndoSeconds`; Apply's own Undo stays
+  8 seconds, `applyUndoSeconds`). The click reads the log from disk again and rechecks the window and that no later
+  write of the object exists (the button may be stale). Then `undoCheck` runs right before the record changes: HubSpot's
+  `updatedAt` must be exactly the revision kept at write time; any later change, or a revision missing or unreadable
+  on either side, refuses and says so (rule 6). A line without a revision (for example a Call found again after a
+  create with no answer, a deal move, or a PB-17 after-call task) offers no Undo. A created object is deleted (a
+  Meeting Pacenote created only while it holds just Pacenote's block, H5); an updated Call or deal gets its old
+  values back on exactly the properties written (`restoreCall`, `restoreDeal`), never through today's field mapping.
+- Both Undo paths (Apply's 8 seconds and the log's 24 hours) are one: `CRMCallLogger.undo`, in the call's turn with
+  its writes and Relink, through `CRMUndo.run`, then the stored ids of what was deleted go and a reversed deal move
+  stores its managed deal back, only in the link of the portal Undo ran in. The key's portal must be the one written
+  to (a line without a portal, from before this check, offers no Undo). A refused record is left as it is and the line
+  says why; it adds no undo line to the log (nor does a Meeting H5 kept).
+- Undo in Update HubSpot (also exact-property), Auto and Retry write log lines too. If the log file cannot be saved,
+  the window says so next to the HubSpot result (the HubSpot write is not undone by that).
+- Apply, Auto and Retry of the Call all go through the per-call queue. The Pacenote call id is stored in
+  `<stem>.crm.json` before any request, so the three paths use one key.
+- Deal fields that the mapping sets to Don't write are not a write: Apply sends nothing for them and logs no line.
+
+### Live check
+
+Test (Connection) and the Sync group run one read per read-provable scope (`CRMScopeCheck.probes`: contacts,
+companies and deals objects, owners, the three schemas). Only a 403 marks a scope missing; a probe that failed another
+way (network, server error) is shown separately as "Check not complete" with its scopes, so a connected account with
+an incomplete check does not look fully verified (`CRMScopeCheck.check` returns both lists). The Sync group checks
+again when opened, at most every five minutes, and has Check now. Write scopes cannot be proved without writing; a
+missing one shows as the one-line 403 error of the first write and in the sync log.
+
+Decision for the owner (H6): **the Undo window of the sync log.** *Recommend: 24 hours with the exact revision
+check; shorter if a PM finds a day too long.*

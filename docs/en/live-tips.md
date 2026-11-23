@@ -1799,6 +1799,29 @@ was searched or written: after Relink to another account they are dropped, and a
 never writes to the new one, even when an id there is the same. Relink and Undo wait until a write of the same
 call that is still running has finished, so that write's ids never end up in the new link. No transcript text is sent.
 
+**Sync settings and the sync log.** Settings > Integrations > HubSpot > Sync checks the key when you open it (and with
+Check now) and lists any scope a read proves missing; write scopes show up on the first write. **Write
+automatically** has one switch per object, all off by default. Calls, Contacts and companies, and Tasks are the same
+switches as Log the call automatically, the two Create the call's missing ... switches and Add my commitments to
+HubSpot tasks automatically, so each object has one switch. Deals are kept for when Pacenote writes them, and
+Meetings are never written automatically. Notes are never automatic. **Field mapping** sends each Pacenote field to
+HubSpot's own property by default, or to another property you choose, or nowhere (Don't write); ids, the owner and
+statuses are fixed. It applies to the Call, the follow-up task of Update HubSpot, the deal fields and new contacts and
+companies; tasks in Tracker and Meetings keep HubSpot's own properties, because Pacenote reads them back. **Owner
+mapping** shows your own owner (the same as Matching) and lets you add other Pacenote users by email with their
+HubSpot owner. Each call's Update HubSpot window ends with a **Sync log**: what was written (the note, the Call and its
+deal, people, the Meeting, the Email, deal fields, tasks), when, by Apply, Auto or Retry, and the result. A failed line
+has Retry (a Call is written again at once; a note, deal fields, a task, the Meeting or the Email reopen Update HubSpot
+with only that row ticked; people reopen it so you tick them there). Retry writes only to the HubSpot account the
+failed write was meant for: after you connect another account or Relink the call, it sends nothing and says so. The
+latest write of a record has Undo for 24 hours, unless someone changed it in HubSpot after Pacenote wrote it; a
+Meeting keeps its own check of Pacenote's block. Tasks added after a call keep their Undo in the notice, because it
+also unlinks the Tracker item. Neither Undo (this one or the 8 seconds after Apply) changes anything after its time
+has passed, after an edit in HubSpot, or when the key now belongs to another HubSpot account. If the log cannot be
+saved, the window says so next to the HubSpot result. If the log file cannot be read, Pacenote keeps it as it is, adds
+no lines to it and says so in the window. The log keeps property names and the old values Undo needs; never
+transcript text, never the key.
+
 **What Pacenote can do.** Help > What Pacenote can do lists every feature with Try it and how often you used it
 (from the local usage log, Settings > General > Data). For the first 14 days it is also a card on Home.
 

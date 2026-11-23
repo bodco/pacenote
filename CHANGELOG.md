@@ -172,6 +172,29 @@ Pacenote. Earlier versions are described in the commit messages and in
   they never write to a record of the new account with the same id. Relink and Undo wait until a write of the
   same call that is still running has finished, so that write's ids never end up in the new link and never overwrite it.
 
+- **HubSpot sync settings and a sync log per call (H6).** Settings > Integrations > HubSpot has a new Sync group: a
+  live check of the key and its scopes, one Write automatically switch per object (all off by default), field mapping
+  with HubSpot's own properties as defaults, and owner mapping from Pacenote users to HubSpot owners. Calls, Contacts
+  and companies, and Tasks are the existing switches (the Call, the H3 contact and company switches, and the after-call
+  tasks switch), so each object has one switch; Deals are kept for later, and Meetings are never written
+  automatically. Field mapping applies to the Call, the follow-up task of Update HubSpot, the deal fields and new
+  contacts and companies; tasks in Tracker and Meetings keep HubSpot's own properties, because Pacenote reads them
+  back. Update HubSpot now ends with the call's sync log: what was written (the note, the Call and its deal, people,
+  the Meeting, the Email, deal fields, tasks), when and the result, with Retry for a failed write and Undo of the
+  latest write for 24 hours unless the record was changed in HubSpot since. Auto, Retry and Apply of the Call take
+  turns, and Auto writes nothing if you turned it off while it waited. A field cannot be mapped onto the Call's dedupe
+  id, an owner, a status or a property another field writes. Undo restores exactly the properties that were written
+  and only while HubSpot shows no change after Pacenote's write (a Meeting keeps its own check of Pacenote's block).
+  Both Undo buttons (right after Apply and in the log) go the same way, change nothing once their time has passed,
+  after an edit in HubSpot, or when the key now belongs to another HubSpot account. When an Apply fails, the log names
+  the record whose request failed, so Retry reopens that row (a deal whose fields are all set to Don't write is
+  skipped, not blamed). If the sync log itself cannot be saved, Update HubSpot says so next to the HubSpot result, and
+  for Auto a notice says so. A sync log file that cannot be read is kept as it is, never replaced by the new lines,
+  and the window says so. A note written before a Call that was relinked during the same Apply keeps its line in the
+  log. Retry writes only to the HubSpot account the failed write was meant for: after you connect another account or
+  Relink the call, even while that write was still being sent, it sends nothing and says so. When HubSpot does not
+  answer a scope probe, the live check says the check is not complete instead of showing everything as fine.
+
 ## 0.26.4 (2026-11-20)
 
 - **A new organization project includes the person who made it (2026-11-20):** in New project > start a new
