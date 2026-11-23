@@ -18,11 +18,16 @@ from typing import Dict, List, Optional
 
 REF_RX = re.compile(r"(?:\b(?:item|task|ticket|point|issue)|(?<!\w)(?:пункт|задач[аіуи]|тікет|питання))\s*(?:№|#|no\.?)?\s*(\d{1,5})\b",
                     re.I | re.U)    # a bare "#1" is not a reference ("our #1 priority"); "task #13" is
-TENTATIVE_RX = re.compile(r"(?<!\w)(?:try to|will try|we'll try|attempt to|maybe(?=\s+\w)|if possible|"
-                          r"спробу(?:ю|єш|є|ємо|єте|ють|вати|ймо)|постара(?:юсь|юся|ємось|ємося|ється|ються|тися|тись)|"
-                          r"(?<!наскільки )можливо|якщо вийде|по можливості)(?!\w)", re.I | re.U)
-# verb forms only ("спробую", not the noun "спробу"); "maybe" before a word ("maybe send", not "the maybe-list");
-# "наскільки можливо" is "as soon as possible", not a "we will try"
+TENTATIVE_RX = re.compile(r"(?<!\w)(?:try to|will try|we'll try|attempt to|"
+                          r"спробу(?:ю|єш|є|ємо|єте|ють|вати|ймо)|постара(?:юсь|юся|ємось|ємося|ється|ються|тися|тись))(?!\w)",
+                          re.I | re.U)
+# verb forms only ("спробую", not the noun "спробу"), anywhere in the text
+HEDGE_RX = re.compile(r"^\W*(?:maybe|if possible|можливо|якщо вийде|по можливості)(?![\w-])", re.I | re.U)
+# a weak hedge counts only when it opens the item ("maybe send the report"): after the task ("send the SOW by Friday,
+# maybe earlier", "send the deck if possible") it softens the date, the task stays agreed
+QUOTED_RX = re.compile(r"(?<!\w)(?:'[^'\n]*'|\"[^\"\n]*\"|‘[^’\n]*’|“[^”\n]*”|«[^»\n]*»|„[^“”\n]*[“”])(?!\w)", re.U)
+# quoted text is a name or a label ("fix the 'try to login' banner"), not the speaker's promise; an apostrophe inside a
+# word ("we'll", "Dana's", "п'ятниця") opens no quote
 ME = "me"
 
 
@@ -34,8 +39,10 @@ def ref_of(text: str) -> str:
 
 
 def is_tentative(text: str) -> bool:
-    """A "we will try" promise ("try to confirm the list", "спробуємо надіслати"): a proposal, not an agreed task."""
-    return bool(TENTATIVE_RX.search(text or ""))
+    """A "we will try" promise ("try to confirm the list", "спробуємо надіслати", "maybe send the report"): a proposal,
+    not an agreed task. A trailing "maybe earlier" or "if possible" and quoted text do not count."""
+    text = QUOTED_RX.sub(" ", text or "")
+    return bool(TENTATIVE_RX.search(text) or HEDGE_RX.search(text))
 
 
 def tracker_id(item: dict) -> str:

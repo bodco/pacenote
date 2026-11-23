@@ -523,3 +523,40 @@ def test_voice_library_default_path_is_the_apps(tmp_path, monkeypatch):
     assert ID.voice_aliases() == {"m. t.": "Mike Turner"}
     monkeypatch.setenv("LT_VOICES", "")                         # set but empty: no library
     assert ID.voice_aliases() == {}
+
+
+# ---------------------------------------------------------------- fix round 3 (review of PB-51)
+
+def test_a_trailing_hedge_or_a_quoted_try_keeps_a_firm_task():
+    assert not ID.is_tentative("Send Dana the SOW by Friday, maybe earlier")
+    assert not ID.is_tentative("Send the deck by Friday if possible")
+    assert not ID.is_tentative("Fix the 'try to login' banner")
+    assert not ID.is_tentative('Rename the "we will try" label')
+    assert not ID.is_tentative("надіслати звіт у п'ятницю, можливо раніше")
+    assert not ID.is_tentative("надіслати презентацію до п'ятниці, по можливості")
+    assert not ID.is_tentative("виправити банер «спробуємо ще раз»")
+    assert ID.is_tentative("If possible, send the deck by Friday")
+    assert ID.is_tentative("We will try to send Dana's list by Friday")      # an apostrophe is not a quote
+    assert ID.is_tentative("Maybe: send the deck")
+    assert ID.is_tentative("якщо вийде, надішлемо звіт у п'ятницю")
+
+
+def test_migration_keeps_a_firm_task_with_a_trailing_hedge_open(tmp_path):
+    C.append(tmp_path, [add("c-firm", "Send the deck by Friday if possible", "me", "2026-11-14-1000-weekly-sync.md",
+                            "2026-11-14T10:00:00+00:00")])
+    C.ensure_migrated(tmp_path, {})
+    item = next(i for i in C.load(tmp_path) if i["id"] == "c-firm")
+    assert item["status"] == "open" and not item.get("modality")
+
+
+def test_cli_agree_makes_a_proposal_open(tmp_path, capsys):
+    C.append(tmp_path, [add("c-try", "try to confirm the pilot user list", "Mike", "2026-11-14-1000-weekly-sync.md",
+                            "2026-11-14T10:00:00+00:00")])
+    C.ensure_migrated(tmp_path, {})
+    assert next(i for i in C.load(tmp_path) if i["id"] == "c-try")["status"] == "proposal"
+    assert C.main(["agree", str(tmp_path), "c-try"]) == 0
+    assert json.loads(capsys.readouterr().out)["op"] == "agree"
+    item = next(i for i in C.load(tmp_path) if i["id"] == "c-try")
+    assert (item["status"], item["modality"]) == ("open", "agreed")
+    assert C.main(["list", str(tmp_path)]) == 0
+    assert "c-try" in capsys.readouterr().out                               # back in the owed list

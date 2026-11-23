@@ -223,7 +223,7 @@ class VariantA:
                            max_seconds=1.0, exclude_prefix=exclude_prefix, index=index)
 
     def after_call(self, live: Path, call: str, notes: str, aliases: List[str]) -> List[dict]:
-        return CM.record_notes(str(live), call=call, notes=notes, aliases=aliases)
+        return CM.record_notes(str(live), call=call, notes=notes, aliases=aliases, people={})   # not this Mac's voices
 
 
 def variant(name: str):
@@ -300,8 +300,12 @@ def run_live(v, t: dict, gold: dict, root: Path, sheet: Optional[dict]) -> dict:
             "_samples": samples}
 
 
+def matching(items: List[dict], match: List[str], status: str) -> List[dict]:
+    return [i for i in items if i.get("status") == status and all(has_phrase(i.get("text", ""), [m]) for m in match)]
+
+
 def open_matching(items: List[dict], match: List[str]) -> List[dict]:
-    return [i for i in items if i.get("status") == "open" and all(has_phrase(i.get("text", ""), [m]) for m in match)]
+    return matching(items, match, "open")
 
 
 def run_after(v, t: dict, gold: dict, root: Path) -> dict:
@@ -314,7 +318,7 @@ def run_after(v, t: dict, gold: dict, root: Path) -> dict:
     by_id = {i["id"]: i for i in items}
     added = {e["id"] for e in events if e.get("op") == "add"}
     touched = {e["id"] for e in events if e.get("op") != "add"}
-    rows, dups, wrong, false_agreed = [], 0, 0, 0
+    rows, dups, wrong, false_agreed, false_proposal = [], 0, 0, 0, 0
     reg = CM.read_events(str(live))
     sugg = CM.suggestions(reg)          # G1: what the PM is asked ("is it the same?"); confirming all of them:
     confirmed = CM.fold(reg + [{"op": "same", "id": x["id"], "to": x["to"], "by": "pm"} for x in sugg])
@@ -332,15 +336,18 @@ def run_after(v, t: dict, gold: dict, root: Path) -> dict:
             ok = len(m) <= 1
         tentative_open = a.get("modality") == "tentative" and bool(new if a["kind"] != "existing" else m)
         false_agreed += int(tentative_open)
+        firm = 0 if a.get("modality") == "tentative" else len(matching(items, a["match"], "proposal"))
+        false_proposal += firm      # PB-51: an agreed task read as "we will try" leaves every owed list
         wrong += int(not ok)
         rows.append({"id": a["id"], "kind": a["kind"], "ok": ok, "open_items": len(m), "added": len(new),
-                     "tentative_open": tentative_open})
+                     "tentative_open": tentative_open, "firm_as_proposal": firm})
     other = [c for c in gold["clients"] if c != t["client"]]
     cross_events = sum(1 for i in touched if client_of_series((by_id.get(i) or {}).get("series", ""), gold) in other)
     tr = TR.collect({"project": {"root": str(root)}, "today": t["start"][:10]})
     cross_tracker = sum(1 for x in tr["on_me"] + tr["waiting"]
                         if has_phrase(x["text"], ["item 13"]) and client_of_series(x.get("series", ""), gold) in other)
-    return {"duplicates": dups, "wrong_identity": wrong, "false_agreed": false_agreed, "suggested": len(sugg),
+    return {"duplicates": dups, "wrong_identity": wrong, "false_agreed": false_agreed, "false_proposal": false_proposal,
+            "suggested": len(sugg),
             "duplicates_if_confirmed": dups_confirmed,
             "item13_cross_client": cross_events + cross_tracker, "item13_cross_events": cross_events,
             "item13_in_tracker": cross_tracker, "items": rows, "events": len(events)}
@@ -428,7 +435,8 @@ def totals(targets: List[dict], samples: List[float]) -> dict:
             "suggested": sum(x["after"].get("suggested", 0) for x in targets),
             "duplicates_if_confirmed": sum(x["after"].get("duplicates_if_confirmed", x["after"]["duplicates"]) for x in targets),
             "item13_cross_client": sum(x["after"]["item13_cross_client"] for x in targets),
-            "false_agreed": sum(x["after"]["false_agreed"] for x in targets)}
+            "false_agreed": sum(x["after"]["false_agreed"] for x in targets),
+            "false_proposal": sum(x["after"].get("false_proposal", 0) for x in targets)}
 
 
 def git_head() -> str:
@@ -447,7 +455,8 @@ COLUMNS = [("Prep coverage", "prep_coverage", "%"), ("Prep leaks", "prep_leaks",
            ("Lookup p50 ms", "lookup_p50_ms", ""), ("Lookup p95 ms", "lookup_p95_ms", ""),
            ("Duplicates", "duplicates", ""), ("Suggested", "suggested", ""),
            ("Duplicates if PM confirms", "duplicates_if_confirmed", ""), ("Wrong identity", "wrong_identity", ""),
-           ("Item 13 cross-client", "item13_cross_client", ""), ("False agreed", "false_agreed", "")]
+           ("Item 13 cross-client", "item13_cross_client", ""), ("False agreed", "false_agreed", ""),
+           ("False proposal", "false_proposal", "")]
 
 
 def row_of(x: dict) -> dict:
@@ -457,7 +466,8 @@ def row_of(x: dict) -> dict:
             "lookup_p50_ms": x["live"]["p50_ms"], "lookup_p95_ms": x["live"]["p95_ms"],
             "duplicates": x["after"]["duplicates"], "suggested": x["after"].get("suggested"),
             "duplicates_if_confirmed": x["after"].get("duplicates_if_confirmed"), "wrong_identity": x["after"]["wrong_identity"],
-            "item13_cross_client": x["after"]["item13_cross_client"], "false_agreed": x["after"]["false_agreed"]}
+            "item13_cross_client": x["after"]["item13_cross_client"], "false_agreed": x["after"]["false_agreed"],
+            "false_proposal": x["after"].get("false_proposal")}
 
 
 def fmt(v, unit: str) -> str:
@@ -514,7 +524,7 @@ def newest(name: str) -> dict:
 
 LOWER_IS_BETTER = {"prep_leaks", "live_leaks", "lookup_p50_ms", "lookup_p95_ms", "duplicates", "duplicates_if_confirmed",
                    "wrong_identity",
-                   "item13_cross_client", "false_agreed"}
+                   "item13_cross_client", "false_agreed", "false_proposal"}
 
 
 def compare(a: dict, b: dict) -> str:
@@ -550,7 +560,8 @@ def regen_register(gold_path: Path = GOLD) -> Path:
         m = re.match(r"^(\d{4}-\d\d-\d\d)-(\d\d)(\d\d)-", call)
         day = "{}T{}:{}:00+00:00".format(m.group(1), m.group(2), m.group(3))
         with clock(day):
-            CM.record_notes(str(live), call=call, notes=n.read_text(encoding="utf-8"), aliases=list(gold["aliases"]))
+            CM.record_notes(str(live), call=call, notes=n.read_text(encoding="utf-8"), aliases=list(gold["aliases"]),
+                            people={})
     return reg
 
 

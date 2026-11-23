@@ -81,6 +81,7 @@ Each target call is replayed on a clean copy of the fixture project, with every 
 | Wrong identity | expected items where the register did not do the expected thing (update the existing item, or add one new item) |
 | Item 13 cross-client | events of the call on the other client's items, plus the other client's item 13 in the call's Tracker |
 | False agreed | a "we will try" item that stands in the register as an open commitment |
+| False proposal | a firm expected item that stands in the register as a "we will try" proposal (added in PB-51 fix round 3; 0 on every target, and the fixture has no firm task with a trailing "maybe" yet, so unit tests cover that wording) |
 
 Matching rule: both sides lower case, whitespace collapsed, a phrase matches on word boundaries.
 

@@ -15,7 +15,10 @@ Pacenote. Earlier versions are described in the commit messages and in
   PM can reject a suggestion or undo a link and that pair is never joined again (an undo gives each item back its own
   status, due date and done, and what was done on either while joined stays with it), and the PM's latest edit gives the
   joined item its wording. Names follow the aliases of the voice library the app keeps; people who only share a first
-  name are at most a suggestion. A "we will try" promise is a proposal, not an open commitment. The first write
+  name are at most a suggestion. A "we will try" promise is a proposal, not an open commitment; "maybe" and "if
+  possible" count only when they open the task ("send the deck by Friday, maybe earlier" stays agreed, and so does
+  quoted text such as "fix the 'try to login' banner"), and `python -m livetips_m0.commitments agree <live folder>
+  <id>` makes a proposal open. The first write
   migrates the register by appending events only (in about a second for 1000 items, never closing or reopening a
   task), and `python -m livetips_m0.commitments rollback <live folder>` undoes every migration it holds; an older app
   ignores the new events, and moving a call to another project no longer hides a task joined from another call. On

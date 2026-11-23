@@ -752,7 +752,7 @@ def ensure_migrated(folder, people: Optional[Dict[str, str]] = None) -> None:
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("cmd", choices=["list", "done", "reopen", "drop", "link", "unlink", "suggest", "same", "reject", "split",
-                                    "migrate", "rollback"])
+                                    "agree", "migrate", "rollback"])     # agree: the PM makes a "we will try" open
     ap.add_argument("--to", default="", help="same/reject: the older item")
     ap.add_argument("--page", default="")
     ap.add_argument("folder", type=Path)
