@@ -1222,7 +1222,11 @@ filters on a ranked list:
      Nov 19 is open in a replay as of Nov 17; a Tracker item's name and status come from the `text` and `status` its
      snippet locator keeps on the Tracker revision valid at `as_of` (the active revision without `as_of`, so each
      snapshot renames and closes the item; PB-84 review round 5); an entity with no name claim keeps the name of its earliest evidence at
-     or before `as_of`, and an entity with no row at or before `as_of` is not visible at all;
+     or before `as_of`, and an entity with no row at or before `as_of` is not visible at all; a `d-` or `r-` entity
+     (call notes, `<stem>.notion.json`, `decisions.md`) is visible only through a revision that carries it
+     (`entity_rev`): one valid at `as_of`, the active one without `as_of`, never just any revision of its file, so a
+     decision a later revision adds is not in an earlier replay, and one a later revision removes is visible only in
+     a replay at a time its revision was valid, not as current (PB-84 review round 7);
    - a merge applies only when its register event or `pm_override` has `at <= as_of`;
    - a claim or edge is `superseded` only when the superseding claim (or the PM's `supersedes` edge) is dated at or
      before `as_of`, and `rejected` only when the rejecting override has `at <= as_of`; one exception: a PM rejection
@@ -1413,6 +1417,9 @@ them `pending` (it costs money, so it is never automatic).
   nobody cites, purged sources, then, in the same transaction, every claim and edge left with no evidence row and
   every `segment_cache` row whose `seg_hash` no segment of a remaining revision has, or whose `extractor` is not the
   current one and is older than 30 days; old `run_item` and `state_request` rows (keep 90 days); then `VACUUM`.
+  The vacuum command applies pending state requests first, so a revoke still in the log is purged by this run. The
+  shared-claim purge is not undone if the document is shared again: the other file's copy of that fact comes back
+  only after `rebuild` (deterministic claims) or re-extraction (S3).
 
 ## 14. G0: how the store is measured
 
@@ -1748,7 +1755,8 @@ Acceptance:
 - [ ] No access query reads `client_set` or `entity.client`: a test sets every `client_set` and `entity.client` to
       `''` after ingest and the access results of all access tests above are unchanged.
 - [ ] Time tests on content time: a first index of files with past content times, replayed as of a past call, sees
-      the files valid then; `as_of` before a revision or before a claim returns none of them; a claim whose evidence
+      the files valid then; `as_of` before a revision or before a claim returns none of them, nor a decision or risk
+      that revision adds (not in `entities`, no card); a claim whose evidence
       sits only on a replaced revision is not current; a task closed after `as_of` is open (register and Tracker), a merge after `as_of` is
       not applied, a decision superseded after `as_of` is current, and a PM rejection applies at every `as_of`.
 - [ ] Edge modality (each sub-case fails on the old key `src_id|rel|dst_id`): "Globex blocks Northpoint" quoted as

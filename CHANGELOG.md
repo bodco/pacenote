@@ -18,7 +18,9 @@ Pacenote. Earlier versions are described in the commit messages and in
   task keeps its own name and status for this client, and the other client sees only its own mention. A Tracker item takes the name and status of each new snapshot,
   and a replay date shows the ones it had then. A claim the PM rejected is not shown in an entity's timeline either.
   A fact a revoked document states stays out of the search after the clean-up too, even when another file says the
-  same. No model, network
+  same, and the clean-up first applies any hide or revoke still waiting in the queue. A replay date never shows a
+  decision or risk that a later version of its notes, `decisions.md` or Notion links file added, and a decision
+  removed from its notes is no longer shown as current. No model, network
   or embedding request is added (vectors only from the bundled local server when it runs). LLM extraction, topic
   summaries and the settings row come in the next steps.
 - **Preparation no longer mixes in another client's facts (PB-70).** When one project folder holds several clients,

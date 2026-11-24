@@ -508,7 +508,7 @@ def ingest_file(ctx: Ctx, uri: str, info: dict, text: Optional[str] = None) -> N
         if info["kind"] == "notes":
             notes_items(ctx, sid, rid, uri)
         elif info["kind"] == "link_sidecar":
-            sidecar_items(ctx, sid, uri, text)
+            sidecar_items(ctx, sid, rid, uri, text)
         elif info["kind"] == "project_state" and uri.endswith("decisions.md"):
             decisions_md_items(ctx, sid, rid)
 
@@ -603,7 +603,8 @@ def write_marks(conn, snid: int, pmarks: set, chunk: dict, universe: set) -> Non
 # ---------------------------------------------------------------- deterministic entities
 
 def _entity(ctx: Ctx, eid: str, etype: str, name: str, origin: str, sid: Optional[int], marks: Dict[str, Iterable[str]],
-            status: Optional[str] = None, client: str = "") -> None:
+            status: Optional[str] = None, client: str = "", rid: Optional[int] = None) -> None:
+    """rid: the revision that carries the entity (a decision or risk is visible at as_of only through one, 11.2)."""
     ctx.conn.execute("INSERT INTO entity(id, type, name, client, status, origin, updated_at) VALUES (?,?,?,?,?,?,?)"
                      " ON CONFLICT(id) DO UPDATE SET name=CASE WHEN entity.pm_locked=1 THEN entity.name ELSE excluded.name END,"
                      " status=coalesce(excluded.status, entity.status), updated_at=excluded.updated_at",
@@ -613,6 +614,8 @@ def _entity(ctx: Ctx, eid: str, etype: str, name: str, origin: str, sid: Optiona
                              [(eid, kind, n) for n in names if n])
     if sid:
         ctx.conn.execute("INSERT OR IGNORE INTO entity_source(entity_id, source_id) VALUES (?,?)", (eid, sid))
+    if rid:
+        ctx.conn.execute("INSERT OR IGNORE INTO entity_rev(entity_id, revision_id) VALUES (?,?)", (eid, rid))
 
 
 def _alias(conn, an: str, eid: str, origin: str, status: str = "confirmed") -> None:
@@ -673,12 +676,12 @@ def notes_items(ctx: Ctx, sid: int, rid: int, uri: str) -> None:
     text = "\n".join(r["text"] for r in ctx.store.q("SELECT text FROM snippet WHERE revision_id=? ORDER BY ord", (rid,)))
     for kind, item in section_items(text):
         eid = ID.item_id(kind, stem, item)
-        _entity(ctx, eid, "decision" if kind == "d" else "risk", item, "g1", sid, _call_marks(stem, item))
+        _entity(ctx, eid, "decision" if kind == "d" else "risk", item, "g1", sid, _call_marks(stem, item), rid=rid)
         _alias(ctx.conn, item, eid, "g1")
         _claim(ctx, eid, "decided" if kind == "d" else "risk_level", item, "statement", rid, item)
 
 
-def sidecar_items(ctx: Ctx, sid: int, uri: str, text: str) -> None:
+def sidecar_items(ctx: Ctx, sid: int, rid: int, uri: str, text: str) -> None:
     """<stem>.notion.json: notion:<page id> aliases on the call's d-, r- and task entities (spec section 7.1). A key
     with no matching item creates the d- entity from the key alone, so the alias always has an entity."""
     try:
@@ -691,7 +694,7 @@ def sidecar_items(ctx: Ctx, sid: int, uri: str, text: str) -> None:
             pid = (v or {}).get("id") if isinstance(v, dict) else ""
             eid = ID.item_id(kind[0], stem, key)
             _entity(ctx, eid, "decision" if kind == "decisions" else "risk", key, "g1", sid,
-                    _call_marks(stem, key))
+                    _call_marks(stem, key), rid=rid)
             if pid:
                 _alias(ctx.conn, ID.notion_alias(pid), eid, "notion")
     tasks = d.get("tasks") or {}
@@ -710,7 +713,7 @@ def decisions_md_items(ctx: Ctx, sid: int, rid: int) -> None:
     text = "\n".join(r["text"] for r in ctx.store.q("SELECT text FROM snippet WHERE revision_id=? ORDER BY ord", (rid,)))
     for it in parse_snapshot(text):
         eid = ID.register_decision_id(it["date"], it["title"])
-        _entity(ctx, eid, "decision", it["title"], "g1", sid, {"text": CS._names(it["title"])})
+        _entity(ctx, eid, "decision", it["title"], "g1", sid, {"text": CS._names(it["title"])}, rid=rid)
         _alias(ctx.conn, it["title"], eid, "g1")
         _claim(ctx, eid, "decided", it["title"], "statement", rid, it["title"])
         for r in ctx.store.q("SELECT id FROM entity WHERE type='decision' AND id<>? AND id LIKE 'd-%'", (eid,)):

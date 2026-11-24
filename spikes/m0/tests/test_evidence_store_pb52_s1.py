@@ -958,6 +958,54 @@ def test_time_replay_on_content_time(env):
     assert SE.entity_card(st, "e-golive", as_of="2026-11-17T00:00:00Z") is None            # its only claim then
 
 
+OKTA = "Use Okta for single sign-on"
+CALL10 = "live/2026-11-10-acme-technical-sync/2026-11-10-1400-acme-technical-sync"
+
+
+@pytest.mark.parametrize("where", ["notes", "decisions.md", "sidecar"])
+def test_decision_added_in_a_later_revision_is_not_visible_before_it(env, where):
+    """A decision, from call notes, pacenote/decisions.md or only a sidecar key, that a later revision of its file
+    adds: a replay before that revision neither names it in `entities` nor opens its card (PB-84 review round 7)."""
+    root = env
+    rel = {"notes": CALL10 + ".notes.md", "decisions.md": "pacenote/decisions.md", "sidecar": CALL10 + ".notion.json"}[where]
+    first = {"notes": "# Notes\n\n### Summary\n- Kickoff with Mike.\n", "decisions.md": "# Active decisions\n",
+             "sidecar": json.dumps({"decisions": {}})}[where]
+    later = {"notes": "# Notes\n\n### Decisions\n- {}\n".format(OKTA),
+             "decisions.md": "# Active decisions\n\n- 2026-11-14 | {} | Emily | SSO\n".format(OKTA),
+             "sidecar": json.dumps({"decisions": {OKTA: {"id": NID, "url": ""}}})}[where]
+    put(root, rel, first, mtime=ts("2026-11-10T12:00:00Z"))
+    st = open_store(root=root)
+    run(st, root)
+    put(root, rel, later, mtime=ts("2026-11-15T12:00:00Z"))
+    run(st, root)
+    did = {"notes": ID.item_id("d", CALL10, OKTA), "decisions.md": ID.register_decision_id("2026-11-14", OKTA),
+           "sidecar": ID.item_id("d", CALL10, OKTA)}[where]
+    assert st.one("SELECT 1 FROM entity WHERE id=?", (did,))
+    if where != "sidecar":            # a sidecar-only key has only a notion: alias, no name a search could match
+        assert SE.search(st, OKTA, as_of="2026-11-12T00:00:00Z")["entities"] == []
+        assert [e["id"] for e in SE.search(st, OKTA, as_of="2026-11-17T00:00:00Z")["entities"]] == [did]
+    assert SE.entity_card(st, did, as_of="2026-11-12T00:00:00Z") is None
+    assert SE.entity_state(st, did, "2026-11-12T00:00:00Z") == {}
+    assert SE.entity_card(st, did, as_of="2026-11-17T00:00:00Z")["name"] == OKTA
+    assert SE.entity_card(st, did)["name"] == OKTA
+
+
+def test_decision_removed_in_a_later_revision_is_not_current(env):
+    """A decision line a later notes revision removes: visible in a replay at a time its revision was valid, not as
+    current (no card, not in `entities`)."""
+    root = env
+    rel = CALL10 + ".notes.md"
+    put(root, rel, "# Notes\n\n### Decisions\n- {}\n".format(OKTA), mtime=ts("2026-11-10T12:00:00Z"))
+    st = open_store(root=root)
+    run(st, root)
+    put(root, rel, "# Notes\n\n### Summary\n- Kickoff with Mike.\n", mtime=ts("2026-11-15T12:00:00Z"))
+    run(st, root)
+    did = ID.item_id("d", CALL10, OKTA)
+    assert SE.entity_card(st, did, as_of="2026-11-12T00:00:00Z")["name"] == OKTA
+    assert SE.entity_card(st, did) is None
+    assert SE.search(st, OKTA)["entities"] == []
+
+
 @pytest.mark.parametrize("raw,key", [("1234abcd", "notion:1234abcd"), ("crm:Sow-1", "crm:Sow-1")])
 def test_tracker_task_closed_after_as_of_is_open(env, tmp_path, raw, key):
     """A Tracker item renamed and closed in a later snapshot: now it is done under its new name; a replay before the
@@ -1105,6 +1153,18 @@ def test_purge_after_revoke_and_vacuum(env):
     assert st.one("SELECT count(*) FROM alias WHERE origin='llm'")[0] == 0
     t = texts(SE.search(st, "ibex budget team"))
     assert "90 hours" not in t and "three people" in t
+
+
+def test_vacuum_command_applies_a_queued_revoke_first(env):
+    root = env
+    g = "live/google/google-file-{}.md".format(GID[:16])
+    put(root, g, "# G\n\nThe ibex budget is 90 hours.\n")
+    st = open_store("p-v", root)
+    run(st, root)
+    st.append_request("revoked", {"revoked": [GID]}, "r-v")     # queued while a pass held the lock
+    assert CLI.main(["vacuum", "--project-uid", "p-v", "--root", str(root)]) == 0
+    assert st.one("SELECT state FROM source WHERE uri=?", (g,))[0] == "revoked"
+    assert st.one("SELECT count(*) FROM revision rv JOIN source s ON s.id=rv.source_id WHERE s.uri=?", (g,))[0] == 0
 
 
 def test_vacuum_drops_a_claim_and_edge_the_revoked_file_shares_with_another(env):

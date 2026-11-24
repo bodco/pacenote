@@ -168,7 +168,7 @@ def cmd_card(a) -> dict:
     return {"ok": card is not None, "card": card}
 
 
-DERIVED = ("evidence", "alias_seen", "alias", "claim", "edge", "entity_mark", "entity_source", "entity", "snippet_mark",
+DERIVED = ("evidence", "alias_seen", "alias", "claim", "edge", "entity_mark", "entity_rev", "entity_source", "entity", "snippet_mark",
            "snippet", "revision", "topic_cite", "topic_sentence", "topic_member", "topic", "run_item")
 
 
@@ -232,6 +232,7 @@ def cmd_vacuum(a) -> dict:
     if not pl:
         return {"ok": False, "status": "busy"}
     with S.held(pl):
+        IG.apply_pending(st)            # a revoke still in the request log is purged by this vacuum, not the next
         return {"ok": True, "report": vacuum(st)}
 
 

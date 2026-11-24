@@ -29,6 +29,8 @@ STOP = {"the", "and", "for", "with", "what", "where", "when", "who", "how", "are
         "in", "on", "a", "an", "we", "it", "do", "did", "does", "about", "that", "this", "still"}
 DET_ORIGINS = ("g1", "tracker", "voices", "pm")
 CALL_KINDS = IG.CALL_KINDS
+REV_AT = "rv.valid_from<=:as_of AND (rv.valid_to IS NULL OR rv.valid_to>:as_of)"     # a revision valid at as_of
+G1_ITEM = ("decision", "risk")            # g1 entities carried by a revision (entity_rev), not by the register
 
 
 class Budget(dict):
@@ -182,15 +184,21 @@ def prepare(store: S.Store, scope: Optional[dict], as_of: Optional[str], exclude
               " AND ev.target_id=e.id AND x.cls='denied')"
               " AND NOT EXISTS (SELECT 1 FROM pm_override o WHERE o.target='edge' AND o.field='reject'"
               " AND o.target_key=e.src_id||'|'||e.rel||'|'||e.dst_id||'|'||e.modality)")
+    es_ok = ("EXISTS (SELECT 1 FROM entity_source es JOIN _src x ON x.id=es.source_id WHERE es.entity_id=en.id"
+             " AND x.cls='pass' AND x.tok=1)")
+    # a decision or risk of notes, a sidecar or decisions.md: a passing revision that carries it, valid at as_of
+    # (any revision of its file is not enough: the item may come in a later one, section 11.2)
+    er_ok = ("EXISTS (SELECT 1 FROM entity_rev er JOIN revision rv ON rv.id=er.revision_id JOIN _src x ON x.id=rv.source_id"
+             " WHERE er.entity_id=en.id AND x.cls='pass' AND {})".format(REV_AT if as_of else "rv.superseded_at IS NULL"))
     c.execute("CREATE TEMP TABLE _ent AS SELECT en.id AS id FROM entity en WHERE"
               " EXISTS (SELECT 1 FROM claim cl JOIN _claim x ON x.id=cl.id WHERE cl.subject_id=en.id)"
               " OR EXISTS (SELECT 1 FROM edge e JOIN _edge x ON x.id=e.id WHERE e.src_id=en.id OR e.dst_id=en.id)"
               " OR (en.origin IN ('g1','tracker','pm') AND CASE WHEN en.origin='g1' AND en.type='task'"
               # a register task: one of its ids has a passing event, never the folded entity's side (section 5.3)
-              " THEN en.id IN (SELECT id FROM _rev) OR EXISTS (SELECT 1 FROM alias a JOIN _rev r ON r.norm=a.alias_norm"
-              " WHERE a.entity_id=en.id AND a.origin='g1')"
-              " ELSE (SELECT side FROM _eside WHERE id=en.id)<>'other' END AND EXISTS (SELECT 1 FROM entity_source es"
-              " JOIN _src x ON x.id=es.source_id WHERE es.entity_id=en.id AND x.cls='pass' AND x.tok=1))"
+              " THEN (en.id IN (SELECT id FROM _rev) OR EXISTS (SELECT 1 FROM alias a JOIN _rev r ON r.norm=a.alias_norm"
+              " WHERE a.entity_id=en.id AND a.origin='g1')) AND {es}"
+              " WHEN en.origin='g1' THEN (SELECT side FROM _eside WHERE id=en.id)<>'other' AND {er}"
+              " ELSE (SELECT side FROM _eside WHERE id=en.id)<>'other' AND {es} END)".format(es=es_ok, er=er_ok) +
               " OR (en.origin='voices' AND NOT EXISTS (SELECT 1 FROM entity_source es WHERE es.entity_id=en.id))", params)
     c.execute("CREATE INDEX temp._ent_i ON _ent(id)")
     if c.in_transaction:
@@ -238,6 +246,10 @@ def entity_state(store: S.Store, eid: str, as_of: Optional[str], fold: Optional[
     if not e:
         return {}
     name, status, merged, shown = e["name"], e["status"], e["merged_into"], eid
+    if as_of and e["origin"] == "g1" and e["type"] in G1_ITEM and not store.one(
+            "SELECT 1 FROM entity_rev er JOIN revision rv ON rv.id=er.revision_id WHERE er.entity_id=?1 AND "
+            + REV_AT.replace(":as_of", "?2"), (eid, as_of)):
+        return {}                               # no revision of its file carried it yet at as_of (section 11.2)
     if e["type"] == "task" and e["origin"] == "g1":
         scoped = fold is not None
         it = _task_item(store, eid, fold) if scoped else IG.register_fold_at(store, as_of).get(eid)

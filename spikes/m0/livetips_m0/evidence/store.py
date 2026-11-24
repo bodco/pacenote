@@ -61,6 +61,10 @@ CREATE TABLE IF NOT EXISTS entity_mark (
 CREATE TABLE IF NOT EXISTS entity_source (
   entity_id TEXT NOT NULL REFERENCES entity(id) ON DELETE CASCADE,
   source_id INTEGER NOT NULL REFERENCES source(id) ON DELETE CASCADE, PRIMARY KEY (entity_id, source_id));
+CREATE TABLE IF NOT EXISTS entity_rev (
+  entity_id TEXT NOT NULL REFERENCES entity(id) ON DELETE CASCADE,
+  revision_id INTEGER NOT NULL REFERENCES revision(id) ON DELETE CASCADE, PRIMARY KEY (entity_id, revision_id));
+CREATE INDEX IF NOT EXISTS entity_rev_rev ON entity_rev(revision_id);
 CREATE TABLE IF NOT EXISTS alias (
   alias_norm TEXT NOT NULL, entity_id TEXT NOT NULL REFERENCES entity(id) ON DELETE CASCADE, lang TEXT,
   origin TEXT NOT NULL, status TEXT NOT NULL, client_set TEXT NOT NULL DEFAULT '', vec BLOB,
