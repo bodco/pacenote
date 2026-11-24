@@ -41,10 +41,11 @@ def copy_rules(tmp_path):
 
 def test_gen_skill_section(tmp_path, monkeypatch, capsys):
     rules = copy_rules(tmp_path)
-    for name in ("ROOT", "RULES", "OUT", "OUT_REG", "OUT_AFTER", "OUT_SALES", "OUT_DEC"):
+    for name in ("ROOT", "RULES", "OUT", "OUT_REG", "OUT_AFTER", "OUT_SALES", "OUT_DEC", "OUT_EVI"):
         val = {"ROOT": tmp_path, "RULES": rules, "OUT": rules / "generated" / "skill_triggers.md",
                "OUT_REG": rules / "generated" / "skill_register.md", "OUT_AFTER": rules / "generated" / "skill_after.md",
-               "OUT_SALES": rules / "generated" / "skill_sales.md", "OUT_DEC": rules / "generated" / "skill_decisions.md"}[name]
+               "OUT_SALES": rules / "generated" / "skill_sales.md", "OUT_DEC": rules / "generated" / "skill_decisions.md",
+               "OUT_EVI": rules / "generated" / "skill_evidence.md"}[name]
         monkeypatch.setattr(G, name, val)
     shutil.rmtree(rules / "generated")
     assert G.main(["--check"]) == 1
@@ -53,7 +54,8 @@ def test_gen_skill_section(tmp_path, monkeypatch, capsys):
     skill = tmp_path / "SKILL.md"
     good = ("# Skill\n\n### Triggers\n\nintro\n\n" + G.render(rules) + "\nafter\n\n" + G.REG_HEAD + "\n\n" + G.render_register(rules) +
             "\n" + G.AFTER_HEAD + "\n" + G.render_after(rules) + "\n" + G.SALES_HEAD + "\n" + G.render_sales(rules) +
-            "\n" + G.DEC_HEAD + "\n" + G.render_decisions(rules) + "\n## End\n")
+            "\n" + G.DEC_HEAD + "\n" + G.render_decisions(rules) + "\n" + G.EVI_HEAD + "\n" + G.render_evidence(rules) +
+            "\n## End\n")
     skill.write_text(good)
     assert G.main(["--compare", str(skill)]) == 0
     skill.write_text(good.replace(G.AFTER_HEAD, "### Something else"))
@@ -63,6 +65,9 @@ def test_gen_skill_section(tmp_path, monkeypatch, capsys):
     assert G.main(["--compare", str(skill)]) == 1
     assert "DRIFT: the Triggers table" in capsys.readouterr().err
     (rules / "generated" / "skill_after.md").write_text("old")
+    assert G.main(["--check"]) == 1
+    assert G.main([]) == 0
+    (rules / "generated" / "skill_evidence.md").write_text("old")
     assert G.main(["--check"]) == 1
 
 
