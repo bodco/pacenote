@@ -211,16 +211,55 @@ No content hashing exists in the app today (`file_day` uses the date in the name
 
 Snippet size: the rules of the `FolderIndex` chunker (`lookup.chunks`, paragraphs merged up to 900 characters, the
 last heading kept, paragraphs over 1800 characters split), in a new variant `lookup.chunks_at` owned by S1 that
-differs in two ways:
+differs in these ways:
 
 - it returns the character and line range of every chunk in the normalised text (`lookup.chunks` returns only the
   text, so it cannot give locators);
-- it also cuts at client boundaries: a heading section that names a client (by `client_scope.text_side` against the
-  project's labels, section 5.3) starts a new chunk, and a line that names a client other than the one of the
-  current chunk ends it. So one snippet never holds the lines of two clients unless one line names both.
 - it returns the full heading path of every chunk (all ancestor headings, not only the last one): `filter_text`
   drops every nested subheading under a client heading (`skip_level`), so a snippet under "Globex > Timeline" takes
-  its client label from the ancestor "Globex", and the label at ingest (section 5.3) reads the whole path.
+  its marks from the ancestor "Globex" too (section 5.3);
+- it finds headings exactly as `filter_text` does: `client_scope.HEADING` on every stripped line, not only on the
+  first line of a paragraph (`lookup.chunks` checks `startswith("#")` on a paragraph's first line, so a heading with
+  no blank line above it would not close the chunk there);
+- it never cuts inside a line. The 1800-character split cuts at a line end; one line longer than that stays one
+  snippet (rare; a segment is whole snippets, so such a segment may pass 6000 characters). `lookup.chunks` cuts a
+  long paragraph with no newline at a fixed width, which would put the tail of a Globex line, without the word
+  "Globex", into a snippet of its own: that is a leak, not coverage loss;
+- **the chunk invariant**: every snippet is a run of consecutive non-blank lines with one heading path and one
+  **line mark set** (the folder slugs of `meta.label_universe` that the whole line carries, by
+  `client_scope._names`, section 5.3). A line whose mark set differs from the previous non-blank line's starts a new
+  snippet; the 900 and 1800 size rules only split a run further (at line ends), they
+  never merge two runs. A heading line belongs to its own section (its marks are in the path, its line mark set
+  counts as empty), so headings do not fragment the text under them. Blank lines are not part of the comparison.
+
+Why the invariant gives line-exact parity with `filter_text` for every scope: `filter_text` keeps or drops a
+non-blank line from two inputs only, the names of its ancestor headings and the names of the line itself, and it
+consults only `scope.client` and `scope.others`. Every label `decide()` can return is a folder slug from
+`_client_dirs` (call-name words are only hints that pick among folders), so every name it consults is in the label
+universe. Two lines with the same heading path and the same line mark set therefore get the same keep or drop for
+every scope; a snippet holds only such lines, and the per-snippet rule of section 5.3 step 3 equals the per-line
+rule. The cuts do not depend on `labels(root)` or on any call, so a client that only becomes "other" at query time
+(late client) is already cut out. A cut on `labels(root)` at client changes only fails this: in a
+shared file with L1 (no client), L2 (Globex), L3 (no client), it gave `[L1] [L2 L3]`, and the Acme scope lost L3.
+
+Cost of the invariant: lines that name any folder of the universe (also topic folders such as `design`) become their
+own snippets, so a shared file can have more, smaller snippets. This is a quality cost (less context per snippet),
+never an access one, and it adds no segments (section 8.2). S1 reports the snippet count of `chunks_at` against
+`lookup.chunks` and the share of lines in marked runs on the G0 fixture.
+
+**Universe change splits snippets.** Only an **added** slug (a folder added or renamed) needs work: a removed slug is
+in no scope any more, and a cut that is finer than needed stays exact. The store keeps no full revision text, so
+the local relabel works on `snippet.text` alone, which also covers superseded revisions kept for `as_of` replay: for
+every snippet of every kept revision it computes each line's marks with `client_scope._names` against the new
+universe (not through `snippet_fts`: an added two-word folder `acme-corp` is the bigram `acmecorp`, which the FTS
+tokens `acme` and `corp` never match), and splits a snippet where the invariant now asks for a cut, in one
+transaction per revision: new snippet rows with `ord` renumbered, their `snippet_mark` rows, and every evidence row
+re-anchored by its offset inside the old snippet to the new piece that holds the whole quote. A quote that crosses a
+new cut is dropped, and a claim or edge left with no evidence row has its segment queued for extraction at the next
+pass (under the ceiling, shown in the estimate). Claims, edges and `pm_override` rows keep their natural keys. A new
+piece has `vec` NULL until the next pass embeds it (a text-equal snippet copies its vector at once, section 7.6);
+until then it ranks by FTS only. The relabel makes no model, network or embed request. The segment cache misses
+only where a segment's snippet texts changed (`seg_hash` covers them).
 
 Variant A keeps `lookup.chunks` unchanged. B and C use `chunks_at`; the chunk boundaries therefore differ slightly
 from A, which the G0 report states next to the A versus B numbers (B exists to show the effect of more context, so
@@ -241,9 +280,10 @@ request's scope, with the same rules as `side`, `side_of_name`, `series_side`, `
 
 - **Label universe.** S1 adds `client_scope.label_universe(root)`: the slug of every folder `_client_dirs` could ever
   return, that is every folder within `MAX_DEPTH` outside `SKIP_DIRS` and the skipped prefixes, **without** the hint
-  filter, plus the first word of every call name in `live/` (`CALL_NAME`). Every label `decide()` can return for the
-  same tree is in it, whatever companies the call brings. The set is stored in `meta` (`label_universe`, JSON) at the
-  end of every pass, with the tree's folder list hash.
+  filter. Every label `decide()` can return for the same tree is in it, whatever companies the call brings, because
+  `decide()` only returns folder slugs (`client_scope.py:126-141`); call-name first words are hints that pick among
+  folders and are not needed in it. The set is stored in `meta` (`label_universe`, JSON) at the end of every pass,
+  with the tree's folder list hash. `chunks_at` cuts on it (section 5.2).
 - **Marks.** For each snippet the store writes `snippet_mark` rows (section 6): the universe names (`client_scope._names`
   intersected with the universe) of the source path's folder and file-name words (`kind = path`, the word rule of
   `side`), of each ancestor heading with its level (`kind = heading`), and of each line (`kind = line`, with the line
@@ -263,22 +303,26 @@ request's scope, with the same rules as `side`, `side_of_name`, `series_side`, `
   A deterministic entity's side is `series_side`, then `side_of_name`, then `text_side` on its `entity_mark` rows.
 - **Stale universe.** When `scope.client` or a label of `scope.others` is not in the stored `label_universe` (a
   folder added or renamed after the last pass), marks cannot answer the text rule for that label. Non-live callers
-  (`mode = prep`, `after`, the CLI) first run a local relabel (marks only: no model, network or embed request; S1
-  measures its time) and then search. The live reader (`mode=ro`, section 11.4) cannot write: it
+  (`mode = prep`, `after`, the CLI) first run a local relabel (the snippet split of section 5.2: snippets, marks and
+  evidence offsets for the added slugs; no model, network or embed request; S1 measures its time)
+  and then search. The live reader (`mode=ro`, section 11.4) cannot write: it
   passes only rows whose source path is under the own client's folders and reports `scope_stale`.
   Coverage loss for that call, never a leak.
-- **Labels for chunking only.** `client_scope.labels(root)` still exists, now labelling every client folder it finds,
-  even when there is only one (the "fewer than 2 means no scope" rule stays in `decide()`). It shapes the chunks
-  (`chunks_at` cuts at client boundaries, section 5.2), the segments (one client per segment, section 8.2) and the
-  topic split (section 8.7), and fills the `client_set` cache columns for display. Those are quality choices: a
-  wrong label there costs coverage or a mixed segment, never access, because step 1 never reads `client_set` or
-  `entity.client`. When `labels(root)` changes, the caches are recomputed deterministically (no model call).
+- **Labels for segments, topics and display only.** `client_scope.labels(root)` still exists, now labelling every
+  client folder it finds, even when there is only one (the "fewer than 2 means no scope" rule stays in `decide()`).
+  It no longer shapes the chunks (`chunks_at` cuts on the label universe, section 5.2). It shapes the segments (one
+  client per segment, section 8.2) and the topic split (section 8.7), and fills the `client_set` cache columns for
+  display. Those are quality choices: a wrong label there costs coverage or a mixed segment, never access, because
+  step 1 never reads `client_set` or `entity.client`. When `labels(root)` changes, the caches are recomputed
+  deterministically (no model call).
 
 S1 tests the rule against the query-time functions, not against ingest labels (section 17, S1): for every scope
 `decide()` can return on the G0 fixture **and** on the case above (a client folder backed only by the call's
-company), the snippets that pass cover exactly the lines that `side()` and `filter_text` keep for that scope, and
-nothing under another client's folder passes as a snippet, claim, edge, entity, alias or topic sentence. The negative
-control is named in the test: a filter on `client_set` from ingest labels fails the second case.
+company), the set of non-blank line numbers covered by passing snippets equals the set of non-blank line numbers
+that `side()` and `filter_text` keep for that scope (both run on the revision's normalised text), and nothing under
+another client's folder passes as a snippet, claim, edge, entity, alias or topic sentence. The negative controls
+are named in the test: a filter on `client_set` from ingest labels fails the second case, and chunking on
+`labels(root)` at client changes only fails the line set equality.
 
 ## 6. SQLite schema
 
@@ -598,7 +642,7 @@ Notes on the schema:
   are caches of the current state, used only without `as_of`. Under `as_of` they are derived, never read (section
   11.2 step 2), so they need no history columns and a rebuild gets them right for free.
 - **Client access is decided at query time on evidence.** Every `client_set` column and `entity.client` are caches
-  for chunking, segments, display and the topic split, filled from `labels(root)`; access never reads them. It
+  for segments, display and the topic split, filled from `labels(root)`; access never reads them. It
   decides each evidence snippet's side from the request's scope, `source.uri` and `snippet_mark` (deterministic
   entities: `entity_mark`; llm aliases: `alias_seen`), section 5.3 and section 11.2 step 1, so one
   edge found with the same modality in a shared file and in client A's file is one row that passes for A and is dropped for client B
@@ -757,10 +801,13 @@ as a transcript, across their headings: they have 8 fixed short sections (`calln
 once after the call, so a per-section cut would pay the prefix and catalog 8 times for a cache that never helps.
 The snippets keep their heading path. For every kind, a segment also ends where the snippets' `client_set`
 changes, so each segment carries one client label (the one in its `seg_hash` and in the prompt's source meta).
+A segment does **not** end at the finer snippet cuts of the chunk invariant (section 5.2): neighbouring snippets
+with the same `client_set` (for example a line naming the topic folder `design` between shared lines) stay in one
+segment, so the invariant adds no segments and the cost model of section 9 stands.
 
 **Extraction cache per segment.** A small edit to a large file (Current State, `decisions.md`) must not re-extract
 the whole file. Snippets are stable across an edit in another section (`lookup.chunks` closes a chunk at each
-heading, and `chunks_at` keeps that rule), and segments do not cross headings, so an edit in one section leaves the
+heading, and `chunks_at` keeps that rule with `client_scope.HEADING` on every line), and segments do not cross headings, so an edit in one section leaves the
 segments of every other section byte-equal. Each segment has a content key
 `seg_hash = sha256(client label | heading path | segment snippet texts)`: the context snippet and the extractor are
 not in it (the context can change when the section above is edited, and quotes from it are never accepted). The
@@ -872,7 +919,9 @@ All of this is pure code and runs the same for every route.
   (`CHAIN_DEFAULT`) is not used: extraction falls back only to `local`, never to another cloud route. The job still
   has to exist everywhere jobs are listed, so Settings can show it and the chain code does not reject it: Python
   `routing.JOBS`, Swift `AIChain` (`AIChain.allowed(route, job: "evidence")`, `ComponentCatalog.afterRemovingLocal` in
-  `LiveTipsCore/Components.swift:78`, called from `OptionalComponents.swift:171`) and the
+  `LiveTipsCore/Components.swift:78`, which today takes only `prep`, `tips` and `after`, so an `evidence` parameter
+  is a signature change: its caller `OptionalComponents.swift:171` and the two CoreChecks calls
+  `CoreChecks/main.swift:3861` and `:3864` change with it) and the
   `chain` entry of `rules/ai.yaml`, which states that `evidence` steps only to the model on this Mac (S5 for Swift, S3
   for Python and the rules).
 - Model per route: the cheaper model of each route for extraction (api `haiku-5-5`, openai `gpt-6-luna`, gemini
@@ -961,6 +1010,10 @@ minimum cacheable prompt length per model, and for Haiku models it has been high
 tokens qualify on `haiku-5-5` was **not verified** in this step. The Haiku row therefore uses the no-cache price.
 S3 checks the provider's cached-token count on the first requests of every route and the estimate uses no cache on
 any route where it stays 0.
+The script prices the cached prefix at the cache-read rate only and leaves out the cache write: one write of the
+1,500-token prefix per pass (again after any 5-minute gap), at the `cost.py` 5-minute write rate of 1.25 times
+input, is under one cent per write on every route in the table (largest: Sonnet and gpt-6.1-sol at $2 input, about
+$0.004). Gemini charges no write.
 
 | Route and model | First full index (typical to cap) | One week incremental (typical to cap) |
 |---|---:|---:|
@@ -1314,6 +1367,9 @@ them `pending` (it costs money, so it is never automatic).
 - **Rebuild** = delete derived tables and redo deterministic ingest (free) and extraction (under the ceiling).
   `pm_override` rows are kept and re-applied by their natural keys (section 6), so PM edits survive a rebuild;
   task edits survive because they live in the register.
+- **Client folder added or renamed**: the label universe gains a slug and the relabel splits stored snippets locally
+  (section 5.2, from `snippet.text`, superseded revisions included): evidence is re-anchored by its offset inside the
+  old snippet, nothing is re-extracted unless a quote crosses a new cut. A removed folder needs no change.
 - **Project renamed**: same uid, so the store is kept. But register items and Tracker items carry the `project`
   slug, and G1's `scope_match` and the Tracker scope compare it, so items written before and after a rename would
   not join. The store keeps every slug the project ever had in `meta` (`slug_history`, appended when the app passes a
@@ -1538,8 +1594,8 @@ over about 3 days on the Codex plan.
   file stale is caught by the 6-hour and pid checks.
 - **Scope drift**: the client of a call is known only at query time (`decide()` counts the call's own companies), so
   ingest stores marks over a label universe of every possible client folder and the search decides own / other per
-  evidence row from the request's scope before ranking (section 5.3); ingest labels shape chunks, segments and
-  topics only. A folder added after the last pass is a stale universe: non-live callers relabel first (free), the
+  evidence row from the request's scope before ranking (section 5.3); chunks are cut on that universe so the
+  per-snippet decision is line-exact (section 5.2), and ingest labels shape segments and topics only. A folder added after the last pass is a stale universe: non-live callers relabel first (free), the
   live reader keeps only the own client's folders (coverage loss for that call, never a leak).
 - **Coverage loss across clients (follow-up task under GraphRAG, out of PB-52 scope)**: when client A's file and
   client B's file each state the same fact, LLM entity ids and `nkey` carry no client, so it becomes one claim with
@@ -1569,7 +1625,9 @@ aliases from `<stem>.notion.json` and `decisions.md` lines keyed by date and tit
 events with alias-key resolution), the segmenter of section 8.2 (deterministic, free, next to `chunks_at`, so S2's
 fixture loader can compute `seg_hash`),
 `client_scope.label_universe(root)` with `snippet_mark`, `entity_mark` and `alias_seen` (section 5.3),
-`client_scope.labels(root)` for chunking only, `lookup.chunks_at` (offsets and client boundaries), snippet vectors at ingest through
+`client_scope.labels(root)` for segments, topics and display only, `lookup.chunks_at` (offsets, `client_scope.HEADING`
+on every line, no cut inside a line, the chunk invariant on the label universe) with the snippet split on an added slug
+(section 5.2), snippet vectors at ingest through
 the bundled `embed_server.py` with the copy of a text-equal snippet's vector (sections 5.2 item 3 and 7.6), content
 time with full UTC `valid_from` and `said_at` (section 6), the write path `store.apply_extraction(revision_id,
 items)` that S3 calls after validation (it writes `entity`, `alias`, `claim`, `edge` and `evidence` rows for
@@ -1631,20 +1689,38 @@ Acceptance:
       decision `superseded` with a `supersedes` edge dated by the override's `at`; the decision is current in a
       replay before that date.
 - [ ] Client parity at query time (section 5.3): on the G0 fixture and on the late-client project below, for every
-      scope `decide()` returns (each client as own, with and without the call's companies), the snippets that pass
-      cover exactly the lines that `client_scope.side()` and `filter_text` keep for that scope; the scopes are taken
-      from `decide()` at query time, never from `labels(root)`.
+      scope `decide()` returns (each client as own, with and without the call's companies), the set of non-blank
+      line numbers covered by passing snippets equals the set that `client_scope.side()` and `filter_text` keep for
+      that scope, both on the revision's normalised text; the scopes are taken from `decide()` at query time, never
+      from `labels(root)`.
+- [ ] Chunk invariant (section 5.2; fails on a `chunks_at` that cuts on `labels(root)` at client changes only): a
+      shared file with L1 (no client), L2 (names Globex), L3 (no client) in one paragraph, and the same three lines
+      under a heading with no blank line above it. For the Acme scope (others `["globex"]`) L1 and L3 are returned
+      and L2 is not; for the Globex scope all three are returned. A unit check on `chunks_at` asserts no snippet
+      holds two lines with different line mark sets or two heading paths.
+- [ ] No cut inside a line (a leak control; fails on the fixed-width cut of `lookup.chunks`): a shared file with
+      one 2,000-character line that names Globex only in its first 20 characters. For the Acme scope no character
+      of that line is returned by `search`, as a snippet or as evidence.
+- [ ] Universe change split: after a pass, `docs/initech` and `docs/acme-corp` are added; a shared line naming
+      Initech and one naming "Acme Corp" each sit between two shared lines whose claims have evidence, in the current
+      revision and in a superseded one. `mode="prep"` splits the snippets (no model, network or embed request), the
+      neighbour claims keep their ids and evidence (re-anchored offsets), and each new client's line is denied for a
+      scope with that client in `others` while its neighbours pass, also under an `as_of` that selects the
+      superseded revision (fails on a finder through `snippet_fts`, which misses `acmecorp`).
 - [ ] Late client (fails on a filter on ingest `client_set`, the named negative control): a project with
       `docs/acme` and `docs/globex`, Globex known from `live/2026-11-04-globex-weekly` calls, Acme backed by no call
-      and no sheet, and a shared `pacenote/decisions.md` with one line that names only Globex. Ingest runs first, so
+      and no sheet, and a shared `pacenote/decisions.md` with one line that names only Globex and one that names
+      only Acme, each in a paragraph with shared lines before and after it. Ingest runs first, so
       `labels(root)` at ingest knows only `globex`. Then `search` with the scope of `decide(root, "Kickoff",
       ["Acme"])` (client `acme`, others `["globex"]`) returns nothing from `docs/globex`, nothing from the Globex call,
       not the Globex line of `decisions.md`, and no claim, edge, entity, alias or name known only from them; the
       Acme folder's facts and the shared lines are returned. Second half: after an Acme sheet is recorded (so Acme is
       backed), a Globex call's scope (client `globex`, others `["acme"]`, a label `labels(root)` did not know at
-      ingest) returns the Globex facts and nothing from `docs/acme`.
+      ingest) returns the Globex facts, nothing from `docs/acme` and not the Acme line of `decisions.md`. In both
+      halves every shared line of `decisions.md` is returned (the line set equality of the parity test).
 - [ ] Stale label universe: a client folder created after the last pass (its label not in `meta.label_universe`):
-      `mode="prep"` relabels first (no model, network or embed request) and then applies the full rule; `mode="live"`
+      `mode="prep"` relabels first (the snippet split of section 5.2; no model, network or embed request) and then applies
+      the full rule; `mode="live"`
       returns only rows under the own client's folders and reports `scope_stale`.
 - [ ] No access query reads `client_set` or `entity.client`: a test sets every `client_set` and `entity.client` to
       `''` after ingest and the access results of all access tests above are unchanged.
@@ -1791,7 +1867,8 @@ status `denied` or `not_found`; stored page folders under `SheetCLI.stateDir/web
 state-only pass on hide, unhide and loss of access, at once also during a call, each with a `--request-id` kept
 until `evidence status` lists it applied and re-sent otherwise (section 13.1), the supersede click in
 `CallPage.swift` running `evidence override --key notion:<old> --field supersede --value notion:<new>` after `decision_notion.py --supersede` returns ok (section 7.1), triggers (after notes, folder change debounce, idle hourly, "Index now"), the `evidence` job in Swift
-`AIChain` (`allowed`, Settings list, stepping only to the model on this Mac), the settings row with the all-projects
+`AIChain` (`allowed`, Settings list, stepping only to the model on this Mac; the `evidence` parameter of
+`ComponentCatalog.afterRemovingLocal` with its three call sites, section 8.6), the settings row with the all-projects
 day cap and the first-index confirmation with the texts of section 10 (en and uk i18n), delete per project, status
 line; docs EN and UK (including that G2 searches stored site pages); CHANGELOG.
 
@@ -1936,7 +2013,9 @@ for k, lo, hi, per in (("codex %", 68, 84, 10),):
    не рахуються незалежним підтвердженням.
 6. Пошук: доступ, клієнт (PB-70: при індексації лише позначки назв папок у шляху, заголовках і рядках, а свій чи
    чужий клієнт вирішується під час запиту за scope цього дзвінка, тож клієнт, відомий лише з компанії дзвінка, теж
-   відсікається; мітки індексації ніколи не вирішують доступ) і час (`as_of` за часом змісту з точністю до секунди
+   відсікається; мітки індексації ніколи не вирішують доступ; уривок тримає лише рядки з однаковим набором назв
+   папок і одним шляхом заголовків і ніколи не ріже рядок, тож рішення на уривок точно збігається з `filter_text`
+   по рядках) і час (`as_of` за часом змісту з точністю до секунди
    в UTC: ревізія 2 і далі від mtime, а не від дня чи початку дзвінка, тож пізніша правка не потрапляє в реплей;
    статуси й злиття теж на момент `as_of`) фільтруються в SQL до ранжування, також для сутностей, аліасів і кожного речення підсумку
    теми; виключення на запит і видалений файл лише ігнорують рядки доказів цих файлів (факт, який підтверджує
