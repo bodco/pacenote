@@ -20,7 +20,11 @@ Pacenote. Earlier versions are described in the commit messages and in
   lost-access requests of a project go one at a time so a newer list always lands last, Delete is unavailable while
   that project's pass runs, deleting a project's memory keeps its list of
   documents that lost access, a pass queued before a call waits until the call ends, and a project added since
-  launch gets its memory at its first hide, sheet, folder change or pass instead of at the next launch. With the flag off nothing changes.
+  launch gets its memory at its first hide, sheet, folder change or pass instead of at the next launch. Indexing set
+  to the model on this Mac (also through "same as after the call") stays on it when that model is removed or
+  missing, so project text never moves to a cloud AI (once AI reading lands, that pass stops with "Local model not
+  installed"). With the
+  flag off nothing changes.
 - **Project memory, step 1: a local evidence store behind a flag (GraphRAG G2 S1, PB-84).** Off by default (feature
   `evidence_store`), nothing changes for the PM yet. With the flag on, `python -m livetips_m0.evidence` keeps one
   SQLite file per project in Application Support (never in the project folder): every file, call, note, the

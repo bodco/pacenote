@@ -170,7 +170,9 @@ final class OptionalComponents: ObservableObject {
         var connected = AIRoute.connected(); connected.remove(AIRoute.local)
         let r = ComponentCatalog.afterRemovingLocal(prep: s.config.ai.prep, tips: s.config.ai.tips, after: s.config.ai.after,
                                                     evidence: s.config.ai.evidence, chain: s.config.ai.chain, connected: connected)
-        s.config.ai.prep = r.prep; s.config.ai.tips = r.tips; s.config.ai.after = r.after; s.config.ai.evidence = r.evidence
+        s.config.ai.prep = r.prep; s.config.ai.tips = r.tips; s.config.ai.after = r.after
+        // PB-52 G2 (S5): indexing stays on the model on this Mac (spec 8.6); with the flag off the config keeps its value
+        if EvidenceFlag.on(s.config) { s.config.ai.evidence = r.evidence }
         s.config.ai.chain = r.chain; s.config.ai.localFallback = false
     }
 }

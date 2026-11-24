@@ -3861,6 +3861,7 @@ func componentsD3() {
     let r = ComponentCatalog.afterRemovingLocal(prep: "local", tips: "api", after: "local", evidence: nil, chain: chain, connected: ["codex", "api"])
     expect(r.prep == "codex" && r.after == "codex" && r.tips == "api", "d3: jobs move to the next AI: \(r.prep) \(r.after) \(r.tips)")
     expect(r.chain.first { $0.route == "local" }?.on == false, "d3: the local step is off after removal")
+    expect(r.evidence == "local", "d3: indexing that followed the local after-call AI stays on the model on this Mac (spec 8.6)")
     let none = ComponentCatalog.afterRemovingLocal(prep: "local", tips: "api", after: "code", evidence: nil, chain: chain, connected: [])
     expect(none.prep == "code" && none.after == "code", "d3: nothing connected: the default route")
     // search leads to Components

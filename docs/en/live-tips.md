@@ -1343,7 +1343,9 @@ The skill and the app follow the same rules, in `rules/agenda.yaml`, `rules/comm
   sent to the AI provider chosen for indexing and the estimated cost of the first index (for now: "not available
   yet"; the numbers come once extraction is calibrated). Turning the feature on is the consent: there is no extra
   question before the first index (owner decision 24.11). The row has the off switch, "Use for indexing" (by
-  default the AI of after the call; it falls back only to the model on this Mac, never to another cloud AI), the
+  default the AI of after the call; it falls back only to the model on this Mac, never to another cloud AI; when
+  indexing runs on the model on this Mac and that model is removed or missing, it stays set to it, also when after
+  the call moves to a cloud AI; once AI reading lands, that pass stops with "Local model not installed"), the
   ceilings per pass, per project and day and for all projects a day (in USD, percent of the 5-hour limit or minutes
   on this Mac), topic summaries after each pass or only when asked, "Use AI to read sources", Pause, and per project
   its status, "Index now" and "Delete this project's memory" (both unavailable while its pass runs). A pass runs after a call's notes are written, 10

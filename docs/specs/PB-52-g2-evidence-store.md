@@ -963,7 +963,10 @@ All of this is pure code and runs the same for every route.
   by `cost.ProviderCaps`, or the pass ceiling is reached and the PM turned on local overflow (a setting, off by
   default, section 9.1). If Ollama or the model is not installed, the pass stops with `status = off` and says so;
   it never picks another cloud route
-  the PM did not choose.
+  the PM did not choose. Removing the model on this Mac (`ComponentCatalog.afterRemovingLocal`) or running without
+  it (`AIRoute.effective`, and the saved `AIDefaults.apply` in `AIRoute.autoAssign`) keeps indexing on `local`
+  when it was there, chosen or following a local `after` (`AppConfig.AIRoutes.pinnedEvidence` and
+  `keepingIndexing`, flag on only, PB-88 review round 4); with S3 the pass then stops with `off`.
 
 ### 8.7 Topic summaries and global questions
 

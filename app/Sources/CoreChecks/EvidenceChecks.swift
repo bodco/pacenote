@@ -272,7 +272,26 @@ func evidenceS5PB88() {
     routes.evidence = "local"
     expect(routes.route("evidence") == "local", "S5: a chosen indexing AI wins")
     let moved = ComponentCatalog.afterRemovingLocal(prep: "code", tips: "api", after: "code", evidence: "local", chain: AIChain.defaults(), connected: ["codex", "api"])
-    expect(moved.evidence == nil, "S5: removing the model on this Mac moves indexing back to the after-call AI, not to another cloud AI")
+    expect(moved.evidence == "local", "S5 (spec 8.6): removing the model on this Mac keeps indexing on it, never moves it to a cloud AI: \(String(describing: moved.evidence))")
+    // nil follows the after-call AI: when that was the model on this Mac, indexing is pinned to it before after moves
+    let followed = ComponentCatalog.afterRemovingLocal(prep: "code", tips: "api", after: "local", evidence: nil, chain: AIChain.defaults(), connected: ["codex", "api"])
+    expect(followed.after == "codex" && followed.evidence == "local", "S5 (spec 8.6): indexing that followed a local after-call AI stays local: \(followed.after) \(String(describing: followed.evidence))")
+    let cloud = ComponentCatalog.afterRemovingLocal(prep: "code", tips: "api", after: "local", evidence: "openai", chain: AIChain.defaults(), connected: ["codex", "api"])
+    expect(cloud.evidence == "openai", "S5: an indexing AI the PM chose in the cloud is kept")
+    let same = ComponentCatalog.afterRemovingLocal(prep: "code", tips: "api", after: "code", evidence: nil, chain: AIChain.defaults(), connected: ["codex", "api"])
+    expect(same.evidence == nil, "S5: indexing that follows a cloud after-call AI keeps following it")
+    // the run-time settings (AIRoute.effective) pin it the same way before the after-call AI is replaced
+    var pinned = AppConfig.AIRoutes(); pinned.after = "local"; pinned.evidence = nil
+    expect(AppConfig.AIRoutes.pinnedEvidence(pinned.evidence, after: pinned.after) == "local", "S5 (spec 8.6): run-time pin keeps local indexing local")
+    expect(AppConfig.AIRoutes.pinnedEvidence(nil, after: "code") == nil && AppConfig.AIRoutes.pinnedEvidence("api", after: "local") == "api",
+           "S5: run-time pin changes only indexing that follows a local after-call AI")
+    // the saved follow-what-is-connected rule (AIDefaults.apply at launch or a sign-in change) keeps local indexing local
+    var onLocal = AppConfig.AIRoutes(); onLocal.after = "local"; onLocal.evidence = nil; onLocal.seen = ["codex"]
+    let followed2 = AIDefaults.apply(onLocal, connected: ["codex"]).keepingIndexing(from: onLocal)
+    expect(followed2.after != "local" && followed2.evidence == "local",
+           "S5 (spec 8.6): after moves off a missing local model, indexing stays local: \(followed2.after) \(String(describing: followed2.evidence))")
+    var onCloud = AppConfig.AIRoutes(); onCloud.after = "code"; onCloud.evidence = nil
+    expect(onCloud.keepingIndexing(from: onCloud).evidence == nil, "S5: unchanged after-call AI leaves indexing as it is")
 
     // 6. Cost text: a range typical to cap from S3's calibrated estimate; until then "not available yet"
     typealias T = EvidenceText

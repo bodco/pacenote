@@ -170,6 +170,17 @@ public struct AppConfig: Codable, Equatable {
             after = Self.migratedRoute(after)
         }
         public static func migratedRoute(_ route: String) -> String { route == "agy" ? "gemini" : route }
+        /// PB-52 G2 (S5, spec 8.6): the indexing AI before the after-call AI is changed (the model on this Mac removed or
+        /// missing): indexing that follows a local after-call AI (nil) is pinned to the model on this Mac, so it never
+        /// moves to a cloud AI the PM did not choose for it; any other value is kept.
+        public static func pinnedEvidence(_ evidence: String?, after: String) -> String? {
+            evidence ?? (after == "local" ? "local" : nil)
+        }
+        /// These routes after the after-call AI was changed from `old` (AIDefaults.apply): indexing pinned as above.
+        public func keepingIndexing(from old: AIRoutes) -> AIRoutes {
+            guard old.after != after else { return self }
+            var r = self; r.evidence = Self.pinnedEvidence(old.evidence, after: old.after); return r
+        }
         public func openaiModel(_ job: String) -> String { job == "prep" ? openaiPrep : job == "tips" ? openaiTips : openaiAfter }
         public func geminiModel(_ job: String) -> String { job == "prep" ? geminiPrep : job == "tips" ? geminiTips : geminiAfter }
         public func route(_ job: String) -> String {
