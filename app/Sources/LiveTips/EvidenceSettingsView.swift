@@ -59,22 +59,22 @@ struct ProjectMemorySection: View {
             }
             Button(prefs.wrappedValue.paused ? L("mem.resume") : L("mem.pause")) { prefs.wrappedValue.paused.toggle() }
             ForEach(service.projects(), id: \.slug) { p in projectRow(p) }
-            let orphans = service.orphans()
-            if !orphans.isEmpty {
+            if !service.orphanUIDs.isEmpty {
                 HStack {
-                    Text(L("mem.orphans", ["count": "\(orphans.count)"])).font(PN.Font.caption).foregroundStyle(PN.C.text3)
+                    Text(L("mem.orphans", ["count": "\(service.orphanUIDs.count)"])).font(PN.Font.caption).foregroundStyle(PN.C.text3)
                     Button(L("mem.orphans.delete")) { deletingOrphans = true }
                 }
             }
         } header: { Text(L("mem.title")).settingsAnchor("ai.memory") }
         .onAppear {
             service.ensureUIDs()
+            service.refreshOrphans()
             for p in service.projects() { service.refreshStatus(p) }
         }
         .confirmationDialog(L("mem.delete.confirm", ["project": deleting?.name ?? ""]), isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })) {
             Button(L("mem.delete"), role: .destructive) { if let p = deleting { service.delete(p) }; deleting = nil }
         }
-        .confirmationDialog(L("mem.orphans.confirm", ["count": "\(service.orphans().count)"]), isPresented: $deletingOrphans) {
+        .confirmationDialog(L("mem.orphans.confirm", ["count": "\(service.orphanUIDs.count)"]), isPresented: $deletingOrphans) {
             Button(L("mem.orphans.delete"), role: .destructive) { service.deleteOrphans(); deletingOrphans = false }
         }
     }

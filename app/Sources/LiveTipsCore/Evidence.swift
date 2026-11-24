@@ -83,6 +83,25 @@ public enum CallActive {
         return now.timeIntervalSince(i.startedAt) > staleAfter || !pidAlive(i.pid)
     }
 
+    /// Whether a live process with this pid can be the one that wrote the file: it started before `started_at` (a few
+    /// seconds of slack). A pid reused after a reboot belongs to a process that started later, so the file is stale.
+    /// An unknown start time trusts the pid.
+    public static func writtenBy(_ i: Info, processStart: Date?) -> Bool {
+        guard let s = processStart else { return true }
+        return s <= i.startedAt.addingTimeInterval(5)
+    }
+
+    /// When a process started (sysctl), or nil when it cannot be read.
+    public static func processStart(_ pid: Int32) -> Date? {
+        var info = kinfo_proc()
+        var size = MemoryLayout<kinfo_proc>.stride
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
+        guard sysctl(&mib, 4, &info, &size, nil, 0) == 0, size > 0 else { return nil }
+        let tv = info.kp_proc.p_un.__p_starttime
+        guard tv.tv_sec > 0 else { return nil }
+        return Date(timeIntervalSince1970: Double(tv.tv_sec) + Double(tv.tv_usec) / 1e6)
+    }
+
     /// At launch: the file is removed when stale; a file of a live process (another running copy) stays.
     public static func shouldRemoveAtLaunch(_ d: Data?, now: Date, ownPid: Int32, pidAlive: (Int32) -> Bool) -> Bool {
         guard let d = d else { return false }
@@ -114,8 +133,30 @@ public struct EvidenceRequests: Codable, Equatable {
     /// Drops the requests `evidence status` lists as applied.
     public mutating func applied(_ ids: Set<String>) { pending.removeAll { ids.contains($0.id) } }
 
-    /// The requests to send again: every one not listed as applied (a re-sent applied id is a no-op in the CLI).
-    public func toResend(applied ids: Set<String>) -> [Request] { pending.filter { !ids.contains($0.id) } }
+    /// The requests to send again as they were: overrides not listed as applied (a re-sent applied id is a no-op in
+    /// the CLI). An `exclude` is never replayed as stored: an old list could land after a newer one; `staleExcludes`
+    /// tells the caller to send one fresh request per list with the current lists instead.
+    public func toResend(applied ids: Set<String>) -> [Request] {
+        pending.filter { !ids.contains($0.id) && !Self.isExclude($0) }
+    }
+
+    /// Whether an `exclude` request is still unapplied: the caller drops them all and sends the current lists fresh.
+    public func staleExcludes(applied ids: Set<String>) -> Bool {
+        pending.contains { !ids.contains($0.id) && Self.isExclude($0) }
+    }
+
+    /// Drops every unapplied `exclude` request (replaced by a fresh one with the current lists).
+    public mutating func dropExcludes() { pending.removeAll { Self.isExclude($0) } }
+
+    public static func isExclude(_ r: Request) -> Bool { r.args.count > 2 && r.args[2] == "exclude" }
+
+    /// After the project's memory is deleted: the sent requests go with the store, the revoked list stays (a document
+    /// that lost access must not come back as active in the next index).
+    public func afterDelete() -> EvidenceRequests {
+        var r = EvidenceRequests()
+        r.revoked = revoked
+        return r
+    }
 
     /// The ids `evidence status` reports as applied (`applied_requests`); a `-revoked` suffix the CLI adds to a
     /// combined request counts for its base id too.
@@ -163,6 +204,16 @@ public enum EvidenceCommand {
     /// The state-only pass for a document that lost access (the full current revoked list).
     public static func excludeRevoked(_ t: Target, revoked: [String], requestID: String) -> [String] {
         base("exclude", t) + ["--revoked", json(revoked), "--request-id", requestID]
+    }
+
+    /// One state-only pass with the current lists (nil leaves that list out), sent fresh after a pass or in place of
+    /// stale `exclude` requests. Nil when both are nil.
+    public static func exclude(_ t: Target, hidden: [String]?, revoked: [String]?, requestID: String) -> [String]? {
+        guard hidden != nil || revoked != nil else { return nil }
+        var a = base("exclude", t)
+        if let h = hidden { a += ["--hidden-calls", json(h)] }
+        if let r = revoked { a += ["--revoked", json(r)] }
+        return a + ["--request-id", requestID]
     }
 
     /// The supersede click (spec section 7.1): the override only after `decision_notion.py --supersede` returned ok.
@@ -236,6 +287,14 @@ public enum EvidenceLists {
             }
         }
         return out.sorted()
+    }
+
+    /// After a pass: the lists to send again because they changed while it ran. The pass applies the lists it started
+    /// with at its end, over a hide, unhide or revoke that arrived meanwhile (and counts that request as applied), so
+    /// each list that differs now goes again as a fresh request; nil for a list that did not change.
+    public static func resync(passedHidden: [String], passedRevoked: [String], hidden: [String], revoked: [String])
+        -> (hidden: [String]?, revoked: [String]?) {
+        (Set(passedHidden) == Set(hidden) ? nil : hidden.sorted(), Set(passedRevoked) == Set(revoked) ? nil : revoked.sorted())
     }
 
     /// Stored page folders of this project's sheets outside the project folder (`<sheet state>/web/<site>`).
@@ -333,6 +392,30 @@ public enum EvidenceSchedule {
         case .idleHourly: return idle && onPower && (lastPass.map { now.timeIntervalSince($0) >= hourly } ?? true)
         case .indexNow: return true
         }
+    }
+}
+
+/// The passes waiting to start, one per project, one at a time. A queued pass never starts while a call runs (the
+/// check at request time is not enough: a pass may wait behind another one into a call); it stays queued and starts
+/// when the call ends.
+public struct EvidenceQueue: Equatable {
+    public struct Entry: Equatable {
+        public var uid: String
+        public var trigger: EvidenceSchedule.Trigger
+        public init(uid: String, trigger: EvidenceSchedule.Trigger) { self.uid = uid; self.trigger = trigger }
+    }
+    public private(set) var entries: [Entry] = []
+    public init() {}
+
+    public mutating func add(_ uid: String, _ t: EvidenceSchedule.Trigger, running: Set<String>) {
+        guard !entries.contains(where: { $0.uid == uid }), !running.contains(uid) else { return }
+        entries.append(Entry(uid: uid, trigger: t))
+    }
+
+    /// The next pass to start, or nil (and the queue kept) while one runs or a call is active.
+    public mutating func next(busy: Bool, callActive: Bool) -> Entry? {
+        guard !busy, !callActive, !entries.isEmpty else { return nil }
+        return entries.removeFirst()
     }
 }
 

@@ -90,13 +90,69 @@ func evidenceS5PB88() {
     reqs.add(.init(id: "r-1", args: hide, sentAt: t0)); reqs.add(.init(id: "r-1", args: hide, sentAt: t0)); reqs.add(.init(id: "r-2", args: unhide, sentAt: t0))
     expect(reqs.pending.count == 2, "S5: one request per id")
     let applied = EvidenceRequests.appliedIDs(status: ["applied_requests": ["r-2"]])
-    expect(reqs.toResend(applied: applied).map(\.id) == ["r-1"], "S5: an id not listed as applied after the pass is re-sent")
+    expect(reqs.toResend(applied: applied).isEmpty && reqs.staleExcludes(applied: applied),
+           "S5 (PB-88 r2): an unapplied hide is not replayed as stored; the current list goes fresh instead")
     reqs.applied(applied)
     expect(reqs.pending.map(\.id) == ["r-1"], "S5: applied ids are dropped")
     expect(EvidenceRequests.appliedIDs(status: ["applied_requests": ["r-3-revoked"]]).contains("r-3"), "S5: a combined request counts by its base id")
     if let d = try? JSONEncoder().encode(reqs), let back = try? JSONDecoder().decode(EvidenceRequests.self, from: d) {
         expect(back == reqs, "S5: the tracker survives a restart")
     } else { expect(false, "S5: request tracker round trip") }
+
+    // PB-88 review round 2. A stale "hide A" (unapplied) must never land after the newer, applied "hide A and B":
+    // excludes are dropped and replaced by one fresh request; an unapplied override still replays as it was.
+    var mixed = EvidenceRequests()
+    let ov = EvidenceCommand.supersede(tg, notionResult: ["ok": true], old: "a", new: "b", requestID: "r-ov", at: t0) ?? []
+    mixed.add(.init(id: "r-old", args: EvidenceCommand.excludeHidden(tg, hidden: ["a.md"], requestID: "r-old"), sentAt: t0))
+    mixed.add(.init(id: "r-ov", args: ov, sentAt: t0))
+    let appliedNew: Set<String> = ["r-new"]
+    expect(mixed.toResend(applied: appliedNew).map(\.id) == ["r-ov"], "S5 r2: only the override replays verbatim")
+    expect(mixed.staleExcludes(applied: appliedNew), "S5 r2: an unapplied exclude asks for a fresh one")
+    mixed.dropExcludes()
+    expect(mixed.pending.map(\.id) == ["r-ov"] && !mixed.staleExcludes(applied: []), "S5 r2: the stale exclude is dropped")
+    let fresh = EvidenceCommand.exclude(tg, hidden: ["a.md", "b.md"], revoked: ["doc1"], requestID: "r-f") ?? []
+    expect(fresh[fresh.firstIndex(of: "--hidden-calls")! + 1] == "[\"a.md\",\"b.md\"]" && fresh[fresh.firstIndex(of: "--revoked")! + 1] == "[\"doc1\"]"
+           && fresh.last == "r-f" && EvidenceRequests.isExclude(.init(id: "r-f", args: fresh, sentAt: t0)), "S5 r2: one fresh exclude with both current lists")
+    expect(EvidenceCommand.exclude(tg, hidden: nil, revoked: nil, requestID: "r-x") == nil, "S5 r2: nothing changed, nothing sent")
+    let onlyRev = EvidenceCommand.exclude(tg, hidden: nil, revoked: [], requestID: "r-y") ?? []
+    expect(!onlyRev.contains("--hidden-calls") && onlyRev[onlyRev.firstIndex(of: "--revoked")! + 1] == "[]", "S5 r2: a list left out stays as it is")
+
+    // PB-88 r2: a pass applies the lists it started with at its end, over a hide that came meanwhile; the changed list
+    // goes again after the pass, an unchanged one does not.
+    let rs = EvidenceLists.resync(passedHidden: ["a.md"], passedRevoked: ["doc1"], hidden: ["b.md", "a.md"], revoked: ["doc1"])
+    expect(rs.hidden == ["a.md", "b.md"] && rs.revoked == nil, "S5 r2: a hide during the pass is sent again after it: \(rs)")
+    let rs2 = EvidenceLists.resync(passedHidden: ["a.md"], passedRevoked: [], hidden: [], revoked: ["doc2"])
+    expect(rs2.hidden == [] && rs2.revoked == ["doc2"], "S5 r2: an unhide of the last call and a revoke during the pass go again")
+    let rs3 = EvidenceLists.resync(passedHidden: ["b.md", "a.md"], passedRevoked: ["doc1"], hidden: ["a.md", "b.md"], revoked: ["doc1"])
+    expect(rs3.hidden == nil && rs3.revoked == nil, "S5 r2: nothing changed during the pass, nothing sent")
+
+    // PB-88 r2: deleting a project's memory keeps its revoked list (else the next index reads the document as active)
+    var withRev = EvidenceRequests()
+    withRev.revoked = ["doc1"]
+    withRev.add(.init(id: "r-9", args: ov, sentAt: t0))
+    let afterDel = withRev.afterDelete()
+    expect(afterDel.revoked == ["doc1"] && afterDel.pending.isEmpty, "S5 r2: delete keeps the revoked list, drops the sent requests")
+
+    // PB-88 r2: a queued pass never starts during a call; it stays queued and starts after the call
+    var q = EvidenceQueue()
+    q.add("uid-1", .afterNotes, running: [])
+    q.add("uid-1", .indexNow, running: [])
+    q.add("uid-2", .indexNow, running: ["uid-2"])
+    expect(q.entries.count == 1, "S5 r2: one queued pass per project, none for a project that runs")
+    expect(q.next(busy: false, callActive: true) == nil && q.entries.count == 1, "S5 r2: a call started while the pass waited: it stays queued")
+    expect(q.next(busy: true, callActive: false) == nil && q.entries.count == 1, "S5 r2: one pass at a time")
+    expect(q.next(busy: false, callActive: false)?.uid == "uid-1" && q.entries.isEmpty, "S5 r2: after the call the pass starts")
+
+    // PB-88 r2: a pid reused after a reboot (its process started after the file) does not keep call-active.json
+    expect(CallActive.writtenBy(info, processStart: t0.addingTimeInterval(-120)), "S5 r2: the app that wrote the file started before it")
+    expect(!CallActive.writtenBy(info, processStart: t0.addingTimeInterval(3600)), "S5 r2: a later process with the same pid did not write it")
+    expect(CallActive.writtenBy(info, processStart: nil), "S5 r2: an unknown start time trusts the pid")
+    // the real start time of this process: known, in the past, and a file it writes now counts as its own
+    let ownStart = CallActive.processStart(getpid())
+    expect(ownStart != nil && ownStart! <= Date() && ownStart! > Date().addingTimeInterval(-86400),
+           "S5 r2: the start time of this process reads: \(String(describing: ownStart))")
+    expect(CallActive.writtenBy(CallActive.Info(startedAt: Date(), pid: getpid()), processStart: CallActive.processStart(getpid())),
+           "S5 r2: the running app's own call-active.json is not stale")
 
     // supersede: the override only after Notion returned ok
     expect(EvidenceCommand.supersede(tg, notionResult: ["ok": false, "error": "403"], old: "a", new: "b", requestID: "r-4", at: t0) == nil,

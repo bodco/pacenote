@@ -12,11 +12,13 @@ final class EvidenceService: ObservableObject {
     /// Per project uid: the last `evidence status`, and whether a pass of it runs now.
     @Published private(set) var status: [String: [String: Any]] = [:]
     @Published private(set) var running: Set<String> = []
+    /// Stores of projects no longer in Pacenote, listed when Settings opens and after a delete (not in the view body).
+    @Published private(set) var orphanUIDs: [String] = []
     private var timer: Timer?
     private var lastChange: [String: Date] = [:]
     private var changeWait: Set<String> = []
     private var lastPassAt: [String: Date] = [:]
-    private var queue: [(uid: String, trigger: EvidenceSchedule.Trigger)] = []
+    private var queue = EvidenceQueue()
     private var busy = false
 
     /// The settings in memory (the Settings model keeps config.json and itself in step), so a folder event with the
@@ -31,7 +33,10 @@ final class EvidenceService: ObservableObject {
     func start() {
         Self.cleanCallActive()
         NotificationCenter.default.addObserver(forName: CallEngine.callEnded, object: nil, queue: .main) { _ in
-            MainActor.assumeIsolated { Self.callEnded() }
+            MainActor.assumeIsolated {
+                Self.callEnded()
+                EvidenceService.shared.drain()             // a pass queued during the call starts now (notes may never come)
+            }
         }
         startWorker()
     }
@@ -64,7 +69,7 @@ final class EvidenceService: ObservableObject {
     nonisolated static func cleanCallActive() {
         let path = callActivePath
         let d = FileManager.default.contents(atPath: path)
-        if CallActive.shouldRemoveAtLaunch(d, now: Date(), ownPid: getpid(), pidAlive: { kill($0, 0) == 0 || errno == EPERM }) {
+        if CallActive.shouldRemoveAtLaunch(d, now: Date(), ownPid: getpid(), pidAlive: writer(d.flatMap(CallActive.parse))) {
             try? FileManager.default.removeItem(atPath: path)
         }
     }
@@ -72,7 +77,16 @@ final class EvidenceService: ObservableObject {
     nonisolated static var callActiveNow: Bool {
         let d = FileManager.default.contents(atPath: callActivePath)
         guard let d = d else { return false }
-        return !CallActive.isStale(CallActive.parse(d), now: Date(), pidAlive: { kill($0, 0) == 0 || errno == EPERM })
+        let i = CallActive.parse(d)
+        return !CallActive.isStale(i, now: Date(), pidAlive: writer(i))
+    }
+
+    /// The pid of the file is alive and started before the file was written (a pid reused after a reboot is not).
+    nonisolated static func writer(_ i: CallActive.Info?) -> (Int32) -> Bool {
+        { pid in
+            guard kill(pid, 0) == 0 || errno == EPERM else { return false }
+            return i.map { CallActive.writtenBy($0, processStart: CallActive.processStart(pid)) } ?? true
+        }
     }
 
     // MARK: triggers
@@ -80,14 +94,17 @@ final class EvidenceService: ObservableObject {
     /// After a call's notes are written (or failed to be written): a pass of its project.
     nonisolated static func notesWritten(file: String) {
         Task { @MainActor in
-            guard EvidenceService.shared.on, let p = PyTool.project(of: file).project else { return }
-            EvidenceService.shared.request(p, .afterNotes)
+            let s = EvidenceService.shared
+            guard s.on, let p = PyTool.project(of: file).project.map(s.current) else { return }
+            s.request(p, .afterNotes)
         }
     }
 
     /// The folder watcher saw a change: a pass 10 minutes after the last change.
     func folderChanged(root: String) {
-        guard on, let p = projects().first(where: { ProjectRegistry.norm($0.root) == ProjectRegistry.norm(root) }), let uid = p.evidenceUid else { return }
+        guard on else { return }
+        ensureUIDs()
+        guard let p = projects().first(where: { ProjectRegistry.norm($0.root) == ProjectRegistry.norm(root) }), let uid = p.evidenceUid else { return }
         lastChange[uid] = Date()
         guard !changeWait.contains(uid) else { return }       // one wait per project; it moves with later changes
         changeWait.insert(uid)
@@ -110,6 +127,7 @@ final class EvidenceService: ObservableObject {
 
     private func tick() {
         guard on, Self.idleSeconds() >= 300, Self.onPower() else { return }
+        ensureUIDs()
         for p in projects() { request(p, .idleHourly) }
     }
 
@@ -119,21 +137,21 @@ final class EvidenceService: ObservableObject {
         let last = lastPassAt[uid] ?? (status[uid]?["last_pass"] as? String).flatMap { ISO8601DateFormatter().date(from: $0) }
         guard EvidenceSchedule.shouldRun(t, now: Date(), lastPass: last, lastChange: lastChange[uid], callActive: Self.callActiveNow,
                                          idle: Self.idleSeconds() >= 300, onPower: Self.onPower(), paused: prefs.paused) else { return }
-        if !queue.contains(where: { $0.uid == uid }) && !running.contains(uid) { queue.append((uid, t)) }
+        queue.add(uid, t, running: running)
         drain()
     }
 
-    /// One pass at a time across all projects (the engine also holds a global worker lock).
-    private func drain() {
-        guard !busy, !queue.isEmpty else { return }
-        let next = queue.removeFirst()
+    /// One pass at a time across all projects (the engine also holds a global worker lock). A queued pass waits while
+    /// a call runs and starts when it ends.
+    func drain() {
+        guard on, let next = queue.next(busy: busy, callActive: Self.callActiveNow) else { return }
         guard let p = projects().first(where: { $0.evidenceUid == next.uid }), let t = target(p) else { drain(); return }
         busy = true
         running.insert(next.uid)
         writeTrackerSnapshot(p)
         let c = config
-        let reqs = loadRequests(next.uid)
-        let args = EvidenceCommand.pass(t, hidden: hiddenCalls(p), revoked: reqs.revoked, webDirs: webDirs(p),
+        let passed = (hidden: hiddenCalls(p), revoked: loadRequests(next.uid).revoked)
+        let args = EvidenceCommand.pass(t, hidden: passed.hidden, revoked: passed.revoked, webDirs: webDirs(p),
                                         tracker: TrackerSnapshot.path(statePath: AIRoute.statePath, uid: next.uid))
         var env = AIRoute.env(job: AIChain.evidenceJob, config: c)
         if let d = try? JSONSerialization.data(withJSONObject: (c.evidencePrefs ?? EvidencePrefs()).limits),
@@ -143,7 +161,10 @@ final class EvidenceService: ObservableObject {
             self.running.remove(next.uid)
             self.lastPassAt[next.uid] = Date()          // the hourly idle pass counts from here, whatever the status says
             self.busy = false
-            self.refreshStatus(p) { self.resendPending(p) }
+            // The pass applied the lists it started with over any hide, unhide or revoke that came meanwhile: the lists
+            // that changed go again (spec section 13.1).
+            let now = self.projects().first(where: { $0.evidenceUid == next.uid }) ?? p
+            self.resendPending(now, passed: passed)
             self.drain()
         }
     }
@@ -152,14 +173,16 @@ final class EvidenceService: ObservableObject {
 
     /// A call hidden or shown again on Home: the full hidden list of its project, with a request id.
     func hiddenChanged(file: String) {
-        guard on, let p = PyTool.project(of: file).project, let t = target(p) else { return }
+        guard on, let p = PyTool.project(of: file).project.map(current), let t = target(p) else { return }
         stateRequest(p, EvidenceCommand.excludeHidden(t, hidden: hiddenCalls(p), requestID: UUID().uuidString.lowercased()))
     }
 
     /// A Meeting Sheet reported the access of its sources: a Google or Notion document that turned denied or not found
     /// joins the project's revoked list (and one readable again leaves it).
     func sheetFinished(sheet: String?, root: String) {
-        guard on, let sheet = sheet, let p = projects().first(where: { ProjectRegistry.norm($0.root) == ProjectRegistry.norm(root) }),
+        guard on, let sheet = sheet else { return }
+        ensureUIDs()
+        guard let p = projects().first(where: { ProjectRegistry.norm($0.root) == ProjectRegistry.norm(root) }),
               let uid = p.evidenceUid, let t = target(p) else { return }
         let json = sheet.hasSuffix(".md") ? String(sheet.dropLast(3)) + ".json" : sheet
         guard let d = FileManager.default.contents(atPath: json), let o = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any],
@@ -174,7 +197,7 @@ final class EvidenceService: ObservableObject {
 
     /// The supersede click: the override only after `decision_notion.py --supersede` returned ok (spec section 7.1).
     func superseded(file: String, old: String, new: String, notionResult: [String: Any]) {
-        guard on, let p = PyTool.project(of: file).project, let t = target(p),
+        guard on, let p = PyTool.project(of: file).project.map(current), let t = target(p),
               let args = EvidenceCommand.supersede(t, notionResult: notionResult, old: old, new: new,
                                                    requestID: UUID().uuidString.lowercased(), at: Date()) else { return }
         stateRequest(p, args)
@@ -188,16 +211,30 @@ final class EvidenceService: ObservableObject {
         run(args, env: [:], uid: uid, nice: false) { [weak self] _ in self?.refreshStatus(p) {} }
     }
 
-    /// Requests not listed as applied by `evidence status` are sent again (a re-sent applied id is a no-op).
-    private func resendPending(_ p: Project) {
+    /// Overrides not listed as applied by `evidence status` are sent again (a re-sent applied id is a no-op). An
+    /// unapplied hide, unhide or revoke is not replayed (an old list could land after a newer one): one fresh request
+    /// with the current lists replaces them. After a pass (`passed`), each list that changed while it ran goes again.
+    private func resendPending(_ p: Project, passed: (hidden: [String], revoked: [String])? = nil) {
         guard let uid = p.evidenceUid else { return }
         refreshStatus(p) { [weak self] in
-            guard let self = self else { return }
+            guard let self = self, let t = self.target(p) else { return }
             var reqs = self.loadRequests(uid)
             let applied = EvidenceRequests.appliedIDs(status: self.status[uid] ?? [:])
             reqs.applied(applied)
+            let hidden = self.hiddenCalls(p)
+            var send = (hidden: false, revoked: false)
+            if reqs.staleExcludes(applied: applied) { reqs.dropExcludes(); send = (true, true) }
+            if let passed = passed {
+                let r = EvidenceLists.resync(passedHidden: passed.hidden, passedRevoked: passed.revoked, hidden: hidden, revoked: reqs.revoked)
+                send.hidden = send.hidden || r.hidden != nil
+                send.revoked = send.revoked || r.revoked != nil
+            }
             self.saveRequests(uid, reqs)
             for r in reqs.toResend(applied: applied) { self.run(r.args, env: [:], uid: uid, nice: false) { _ in } }
+            if let args = EvidenceCommand.exclude(t, hidden: send.hidden ? hidden : nil, revoked: send.revoked ? reqs.revoked : nil,
+                                                  requestID: UUID().uuidString.lowercased()) {
+                self.stateRequest(p, args)
+            }
         }
     }
 
@@ -215,8 +252,12 @@ final class EvidenceService: ObservableObject {
     func delete(_ p: Project) {
         guard on, let uid = p.evidenceUid, let t = target(p) else { return }
         run(EvidenceCommand.delete(t), env: [:], uid: uid, nice: false) { [weak self] _ in
-            self?.status[uid] = [:]
-            self?.removeAppFiles(uid)
+            guard let self = self else { return }
+            self.status[uid] = [:]
+            // The sent requests and the Tracker snapshot go with the store; the revoked list stays, so a document that
+            // lost access is not indexed again as active.
+            self.saveRequests(uid, self.loadRequests(uid).afterDelete())
+            try? FileManager.default.removeItem(atPath: TrackerSnapshot.path(statePath: AIRoute.statePath, uid: uid))
         }
     }
 
@@ -227,17 +268,23 @@ final class EvidenceService: ObservableObject {
     }
 
     /// Stores of projects that are no longer in Pacenote (spec section 13.4); deleted only after the PM confirms.
-    func orphans() -> [String] {
+    /// Listed when Settings opens and after a delete, never in the view body.
+    func refreshOrphans() {
+        guard on else { if !orphanUIDs.isEmpty { orphanUIDs = [] }; return }
         let dir = (AppPaths.support.path as NSString).appendingPathComponent("evidence")
         let files = (try? FileManager.default.contentsOfDirectory(atPath: dir)) ?? []
-        return EvidenceUID.orphans(storeFiles: files, registry: ProjectRegistry.load(from: AppPaths.projects))
+        let next = EvidenceUID.orphans(storeFiles: files, registry: SettingsWindow.model.registry)
+        if next != orphanUIDs { orphanUIDs = next }
     }
 
     func deleteOrphans() {
         let c = config
-        for uid in orphans() {
+        for uid in orphanUIDs {
             let t = EvidenceCommand.Target(uid: uid, root: "", slug: "", config: AppPaths.config.path)
-            run(EvidenceCommand.delete(t), env: [:], uid: uid, nice: false, engine: c.engine) { [weak self] _ in self?.removeAppFiles(uid) }
+            run(EvidenceCommand.delete(t), env: [:], uid: uid, nice: false, engine: c.engine) { [weak self] _ in
+                self?.removeAppFiles(uid)
+                self?.refreshOrphans()
+            }
         }
     }
 
@@ -249,9 +296,19 @@ final class EvidenceService: ObservableObject {
     /// Every project gets its uid once the flag is on (projects.json is not touched while it is off). The Settings
     /// model saves its registry when it changes.
     func ensureUIDs() {
+        guard on else { return }
         let m = SettingsWindow.model
         var reg = m.registry
         if EvidenceUID.mint(&reg) { m.registry = reg }
+    }
+
+    /// A project read from projects.json (PyTool) as the registry in memory holds it, with its uid: a project added
+    /// since launch gets one here, so its first hide or supersede is not dropped.
+    func current(_ p: Project) -> Project {
+        ensureUIDs()
+        let r = ProjectRegistry.norm(p.root)
+        return projects().first(where: { !r.isEmpty && ProjectRegistry.norm($0.root) == r })
+            ?? projects().first(where: { !p.slug.isEmpty && $0.slug == p.slug }) ?? p
     }
 
     private func target(_ p: Project) -> EvidenceCommand.Target? {
@@ -336,13 +393,16 @@ final class EvidenceService: ObservableObject {
         p.standardOutput = out
         p.standardError = FileHandle.forAppending(path: (config.effectiveAppRoot(appSupport: AppPaths.support.path) as NSString)
             .appendingPathComponent("logs/evidence.log"))
-        p.terminationHandler = { _ in
+        do { try p.run() } catch { done([:]); return }
+        // The output is read while the process runs, so a long one (a status with many request ids) never fills the
+        // pipe and blocks the process.
+        DispatchQueue.global(qos: .utility).async {
             let data = out.fileHandleForReading.readDataToEndOfFile()
+            p.waitUntilExit()
             let line = String(data: data, encoding: .utf8)?.split(separator: "\n").last.map(String.init) ?? ""
             let o = (try? JSONSerialization.jsonObject(with: Data(line.utf8))) as? [String: Any] ?? [:]
             DispatchQueue.main.async { MainActor.assumeIsolated { done(o) } }
         }
-        do { try p.run() } catch { done([:]) }
     }
 
     nonisolated static func idleSeconds() -> Double {

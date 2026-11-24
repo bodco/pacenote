@@ -1369,7 +1369,13 @@ ids (`--request-id <id>` asks about one).
     and `os.rename`s it over the old one, so a reader without the lock sees the old file or the new one, never a
     truncated one.
   - Retry: the app keeps the ids it sent until `evidence status` lists them as applied, and re-sends any id not
-    listed after the pass ends (or at the next launch); a re-sent id that is already applied is a no-op.
+    listed after the pass ends (or at the next launch); a re-sent id that is already applied is a no-op. Only an
+    override is re-sent as it was; an unapplied `exclude` is dropped and replaced by one fresh request with the
+    current hidden and revoked lists, so an older list never lands after a newer one (PB-88 review round 2).
+  - A pass applies the lists it started with at its end, after it applied the requests that arrived meanwhile, so the
+    app compares the lists it gave the pass with the current ones when the pass ends and sends each changed list
+    again as a fresh request. Until then (the end of the pass's embedding step) a call hidden during the pass reads
+    as active in the store; closing that window in the engine is a follow-up.
 - One pass at a time across all projects (`evidence/worker.lock`), so the global daily cap (section 9.1) is summed
   without a race.
 - Many readers (prep, the live engine, the skill CLI) use WAL snapshots and never block the writer.
@@ -1916,7 +1922,8 @@ project of its linked register item; each item with `project` and, for Notion, `
 header), the lists passed to each pass (hidden calls from `history.json`; Google and Notion documents with
 status `denied` or `not_found`; stored page folders under `SheetCLI.stateDir/web` for this project's sheets), the
 state-only pass on hide, unhide and loss of access, at once also during a call, each with a `--request-id` kept
-until `evidence status` lists it applied and re-sent otherwise (section 13.1), the supersede click in
+until `evidence status` lists it applied and otherwise re-sent (an override as it was, a hide, unhide or revoke as
+one fresh request with the current lists, section 13.1), the supersede click in
 `CallPage.swift` running `evidence override --key notion:<old> --field supersede --value notion:<new>` after `decision_notion.py --supersede` returns ok (section 7.1), triggers (after notes, folder change debounce, idle hourly, "Index now"), the `evidence` job in Swift
 `AIChain` (`allowed`, Settings list, stepping only to the model on this Mac; the `evidence` parameter of
 `ComponentCatalog.afterRemovingLocal` with its three call sites, section 8.6), the settings row with the all-projects
@@ -1931,7 +1938,8 @@ Acceptance:
 - [ ] `call-active.json` exists for the whole call and is removed after it, including after a crash on the next
       launch.
 - [ ] Hiding a call on Home starts the state-only pass at once (also during a call) with a request id, and an id
-      not listed as applied after the pass is re-sent (pure-logic test on the request tracker); a supersede click writes the override only after Notion
+      not listed as applied after the pass is sent again with the current list (pure-logic test on the request
+      tracker; a list that changed during a pass goes again after it); a supersede click writes the override only after Notion
       returned ok (pure-logic test on the command builder); a Google document turning
       `denied` does the same with `--revoked`; the Tracker snapshot file is written only from data the app already
       has (no new request; pure-logic tests on the list builders and the writer).

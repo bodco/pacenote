@@ -15,7 +15,10 @@ Pacenote. Earlier versions are described in the commit messages and in
   on power, or on Index now, and never during a call. Hiding a call, a document that lost access and the supersede
   click reach the memory at once, also during a call. The Tracker snapshot includes the HubSpot tasks already loaded
   (keyed by portal and task, so a task linked to a commitment stays one task), and deleting the memories of projects
-  no longer in Pacenote asks first. With the flag off nothing changes.
+  no longer in Pacenote asks first. A hide, unhide or lost access that happens while a pass runs is not undone by
+  that pass, an older hidden list is never sent after a newer one, deleting a project's memory keeps its list of
+  documents that lost access, a pass queued before a call waits until the call ends, and a project added since
+  launch gets its memory at its first hide, sheet, folder change or pass instead of at the next launch. With the flag off nothing changes.
 - **Project memory, step 1: a local evidence store behind a flag (GraphRAG G2 S1, PB-84).** Off by default (feature
   `evidence_store`), nothing changes for the PM yet. With the flag on, `python -m livetips_m0.evidence` keeps one
   SQLite file per project in Application Support (never in the project folder): every file, call, note, the
