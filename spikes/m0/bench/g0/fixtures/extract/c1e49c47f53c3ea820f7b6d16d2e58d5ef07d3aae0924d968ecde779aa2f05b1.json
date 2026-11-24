@@ -1,0 +1,11 @@
+{
+ "seg_hash": "c1e49c47f53c3ea820f7b6d16d2e58d5ef07d3aae0924d968ecde779aa2f05b1",
+ "extractor": "g2-s3-1:b7b1324472",
+ "route": "authored",
+ "base_line": 3,
+ "answers": [
+  "{\"entities\": [\n{\"ref\": \"n1\", \"known_id\": \"d-81974efd06\", \"type\": \"decision\", \"name\": \"Acme SSO uses SAML, not OIDC.\", \"aliases\": [], \"quote\": \"SSO uses SAML, not OIDC.\", \"lines\": [3, 3]},\n{\"ref\": \"n2\", \"known_id\": \"d-ac07e50800\", \"type\": \"decision\", \"name\": \"The Acme go-live date of December 8 stays.\", \"aliases\": [], \"quote\": \"go-live stays on December 8.\", \"lines\": [4, 4]},\n{\"ref\": \"n3\", \"known_id\": \"e-8cbd02b69e\", \"type\": \"date_event\", \"name\": \"Acme go-live\", \"aliases\": [], \"quote\": \"go-live stays on December 8\", \"lines\": [4, 4]}\n],\n\"claims\": [\n{\"subject\": \"d-81974efd06\", \"predicate\": \"decided\", \"value\": \"Acme SSO uses SAML, not OIDC.\", \"modality\": \"confirmation\", \"said_by\": null, \"due\": null, \"quote\": \"2026-11-12 Acme: SSO uses SAML, not OIDC.\", \"lines\": [3, 3], \"confidence\": 0.9},\n{\"subject\": \"d-ac07e50800\", \"predicate\": \"decided\", \"value\": \"The Acme go-live date of December 8 stays.\", \"modality\": \"confirmation\", \"said_by\": null, \"due\": null, \"quote\": \"2026-11-10 Acme: go-live stays on December 8.\", \"lines\": [4, 4], \"confidence\": 0.9},\n{\"subject\": \"e-8cbd02b69e\", \"predicate\": \"due\", \"value\": \"December 8\", \"modality\": \"confirmation\", \"said_by\": null, \"due\": \"December 8\", \"quote\": \"go-live stays on December 8.\", \"lines\": [4, 4], \"confidence\": 0.85}\n],\n\"relations\": []}\n"
+ ],
+ "in_tokens": 0,
+ "out_tokens": 0
+}

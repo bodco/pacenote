@@ -886,22 +886,32 @@ def own_entities(st, items: List[dict], as_of: Optional[str], fold) -> List[dict
 
 
 def hop_items(st, ents: List[dict], scope, as_of, exclude, k: int, hops: int = 2) -> List[dict]:
-    """C's graph step: the claims of entities one and two edges away from the entities the search matched."""
+    """C's graph step: the edges walked and the claims of entities one and two edges away from the entities the search
+    matched, walked from each matched entity in the search's own order, the best match's neighborhood first (S3a: a
+    set's order changed between runs, the edge's quote is the hop, and weak matches no longer fill the k slots)."""
     seen = {e["id"] for e in ents}
-    frontier, out = list(seen)[:6], []
-    for _ in range(hops):
-        nxt = []
-        for eid in frontier:
-            card = SE.entity_card(st, eid, scope=scope, as_of=as_of, exclude=exclude) or {}
-            for e in card.get("edges") or []:
-                other = e.get("dst") if e.get("src") == eid else e.get("src")
-                if other and other not in seen and e.get("rel") != "same_as":
+    out, took = [], set()
+    for root in [e["id"] for e in ents][:6]:
+        frontier = [root]
+        for _ in range(hops):
+            nxt = []
+            for eid in frontier:
+                card = SE.entity_card(st, eid, scope=scope, as_of=as_of, exclude=exclude) or {}
+                for e in card.get("edges") or []:
+                    other = e.get("dst") if e.get("src") == eid else e.get("src")
+                    if not other or other in seen or e.get("rel") == "same_as":
+                        continue
                     seen.add(other)
                     nxt.append(other)
-        for eid in nxt:
-            card = SE.entity_card(st, eid, scope=scope, as_of=as_of, exclude=exclude) or {}
-            out += [dict(c, hop=True) for c in card.get("claims") or []]
-        frontier = nxt[:6]
+                    if e.get("id") not in took:
+                        took.add(e.get("id"))
+                        out.append(dict(e, hop=True))
+            for eid in nxt:
+                card = SE.entity_card(st, eid, scope=scope, as_of=as_of, exclude=exclude) or {}
+                out += [dict(c, hop=True) for c in card.get("claims") or []]
+            frontier = nxt[:6]
+            if len(out) >= k:
+                return out[:k]
     return out[:k]
 
 
@@ -968,10 +978,12 @@ def quote_valid(ctx: dict, item: dict) -> List[bool]:
         return [snippet_ok(item["id"])]
     out = []
     for q in item.get("quotes") or []:
-        sn = st.one("SELECT sn.id, sn.text FROM snippet sn JOIN revision rv ON rv.id=sn.revision_id JOIN source s"
-                    " ON s.id=rv.source_id WHERE s.uri=? AND sn.locator=?", (q.get("uri"), json.dumps(q.get("locator"),
-                                                                                                       ensure_ascii=False)))
-        out.append(bool(sn) and (q.get("quote") or "") in sn["text"] and snippet_ok(sn["id"]))
+        # S3a: a file's revisions share locators (an edited section keeps its heading), and a quote of an LLM claim
+        # may come from an earlier revision (history, as_of); the quote is valid at the revision it sits on
+        sns = st.q("SELECT sn.id, sn.text FROM snippet sn JOIN revision rv ON rv.id=sn.revision_id JOIN source s"
+                   " ON s.id=rv.source_id WHERE s.uri=? AND sn.locator=? ORDER BY rv.id DESC",
+                   (q.get("uri"), json.dumps(q.get("locator"), ensure_ascii=False)))
+        out.append(any((q.get("quote") or "") in sn["text"] and snippet_ok(sn["id"]) for sn in sns))
     return out
 
 
@@ -1021,14 +1033,39 @@ def judge(v, ctx: dict, gold2: dict, row: dict, res: dict) -> dict:
         order_ok = all(dates) and dates == sorted(dates)
     ok = all(f["found"] for f in facts) and state_ok is not False and order_ok is not False \
         and not any(leaks[k] for k in ("future", "stale", "excluded", "client"))
+    facts_found = [i for i in items if i.get("kind") in ("claim", "edge") and any(
+        has_phrase(item_text(i), f["any"]) for f in row.get("expect") or [])]
+    derived = derived_confirmed(ctx, items) if v.name != "A" else None
     if row["kind"] == "modality":
-        ok = False                     # modality is carried by claims (S3); text alone never answers it
+        # S3a: modality is carried by claims and edges, text alone never answers it. "proposal": a matching fact
+        # says proposal and none counts as confirmed; "not_confirmed": a matching fact and none counts as confirmed
+        # (spec 7.4: modality confirmation with a primary or pm source)
+        confirmed = [i for i in facts_found if i.get("modality") == "confirmation" and (i.get("confirmations") or 0) > 0]
+        want_mod = row.get("modality")
+        ok = ok and bool(facts_found) and not confirmed and (
+            want_mod != "proposal" or any(i.get("modality") == "proposal" for i in facts_found))
     if row.get("history") and v.name != "C":
         ok = False                     # "changed later" lives in the entity timeline only
     return {"id": row["id"], "kind": row["kind"], "needs": row["needs"], "status": "pass" if ok else "fail",
             "expected": row["expected"][v.name], "facts": facts, "leaks": leaks, "state_ok": state_ok,
             "order_ok": order_ok, "quotes_valid": sum(checks), "quotes": len(checks),
-            "top": [i.get("source") or "" for i in items]}
+            "top": [i.get("source") or "" for i in items], "derived_confirmed": derived}
+
+
+def derived_confirmed(ctx: dict, items: List[dict]) -> List[int]:
+    """Spec 7.4, checked against the store and not the item's own count: returned claims and edges shown as confirmed
+    (modality confirmation, confirmations > 0) whose evidence holds no primary or pm source. Must be []."""
+    st, bad = ctx["store"], []
+    for i in items:
+        if i.get("kind") not in ("claim", "edge") or i.get("modality") != "confirmation" or not i.get("confirmations"):
+            continue
+        if i.get("origin") == "pm" or not isinstance(i.get("id"), int):
+            continue                    # a PM supersede or override row is its own primary source
+        if not st.one("SELECT 1 FROM evidence ev JOIN snippet sn ON sn.id=ev.snippet_id JOIN revision rv ON"
+                      " rv.id=sn.revision_id JOIN source s ON s.id=rv.source_id WHERE ev.target=? AND ev.target_id=?"
+                      " AND s.origin IN ('primary', 'pm')", (i["kind"], i["id"])):
+            bad.append(i["id"])
+    return bad
 
 
 # ---------------------------------------------------------------- gold v2: one set, one vector mode
@@ -1127,13 +1164,16 @@ def metrics(rows: List[dict], ctx: dict, set_name: str) -> dict:
     evid = [r for r in ev if r["id"] in EVIDENCE_ROWS]
     shared = [r for r in ev if r["id"] in SHARED_ROWS]
     q_ok, q_all = sum(r.get("quotes_valid", 0) for r in ev), sum(r.get("quotes", 0) for r in ev)
+    store_rows = any(r.get("derived_confirmed") is not None for r in ev)      # B and C (A has no store)
     out = {"rows_evaluated": len(ev), "rows_not_evaluated": len(rows) - len(ev), "rows_passed": rate(ev)["n"],
            "expected_mismatch": [r["id"] for r in ev if r["status"] != r["expected"]],
            "hop_answer_rate": rate(by("hop")), "paraphrase_answer_rate": rate(by("paraphrase", "paraphrase_uk")),
            "paraphrase_uk": rate(by("paraphrase_uk")),
            "timeline_recall": pct(tl_found, tl_total), "timeline_order": all(r["order_ok"] for r in glob_rows) if glob_rows else None,
            "evidence_recall": rate(evid), "quote_validity": pct(q_ok, q_all), "quotes_checked": q_all,
-           "modality_accuracy": None, "derived_confirmed": None,     # claims with modality come with S3
+           # S3a: modality rows passed, and confirmed facts with only derived evidence (None for A: no store)
+           "modality_accuracy": rate(by("modality"))["rate"] if store_rows else None,
+           "derived_confirmed": len({x for r in ev for x in r.get("derived_confirmed") or []}) if store_rows else None,
            "future_leaks": sum(len(r["leaks"]["future"]) for r in ev),
            "stale_returned": sum(len(r["leaks"]["stale"]) for r in ev),
            "excluded_leaks": sum(len(r["leaks"]["excluded"]) for r in ev),
@@ -1203,6 +1243,32 @@ def s2_gate(res: dict) -> Optional[dict]:
     return {"pass": all(x for x in checks.values() if x is not None), "checks": checks}
 
 
+def s3_gate(res: dict, b_res: Optional[dict] = None) -> Optional[dict]:
+    """The S3a G0 gate (spec section 17, S3) for C with a recorded extraction fixture whose gold hash is current (the
+    replay stops on "gold changed" otherwise): on the small set hop answer rate at least 4 of 6 and at least 2 more
+    than B (B's newest saved result), fixture misses 0, modality accuracy 100%; derived counted as confirmed 0 on every
+    evaluated run; the S2 checks still pass (added by the caller). Paraphrase rates are reported, not gated here."""
+    if res["variant"] != "C" or "S3" not in res.get("v2", {}).get("ready", []):
+        return None
+    checks: Dict[str, Optional[bool]] = {}
+    small = res["v2"]["sets"].get("small", {}).get("no_vectors")
+    if small and "skipped" not in small:
+        hop = small["hop_answer_rate"]["n"]
+        checks["small hop_ge_4_of_6"] = hop >= 4 and small["hop_answer_rate"]["of"] >= 6
+        try:
+            b = (b_res or newest("B"))["v2"]["sets"]["small"]["no_vectors"]["hop_answer_rate"]["n"]
+            checks["small hop_ge_B_plus_2"] = hop >= b + 2
+        except (SystemExit, KeyError, TypeError):
+            checks["small hop_ge_B_plus_2"] = None       # no B result saved: not evaluated
+        checks["small fixture_misses_0"] = (small.get("fixture") or {}).get("misses") == 0
+        checks["small modality_accuracy_100"] = small["modality_accuracy"] == 100.0
+    for s, modes in res["v2"]["sets"].items():
+        for m, r in modes.items():
+            if "skipped" not in r:
+                checks["{}/{} derived_confirmed_0".format(s, m)] = r["derived_confirmed"] == 0
+    return checks
+
+
 # ---------------------------------------------------------------- the whole run
 
 @contextlib.contextmanager
@@ -1255,6 +1321,11 @@ def run(variant_name: str = "A", gold_path: Path = GOLD, sets=SETS, gold2_path: 
     out["totals"] = totals(out["targets"], samples)
     if "v2" in out:
         out["v2"]["gate"] = s2_gate(out)
+        s3 = s3_gate(out)
+        if s3 and out["v2"]["gate"]:          # S3a: one gate, the S2 zeros still 0 plus the S3 checks
+            out["v2"]["gate"]["checks"].update(s3)
+            out["v2"]["gate"]["pass"] = all(x for x in out["v2"]["gate"]["checks"].values() if x is not None)
+            out["v2"]["gate"]["s3"] = True
     out["seconds"] = round(time.time() - t_all, 2)
     return out
 
@@ -1333,6 +1404,8 @@ V2_COLUMNS = [("Rows passed", lambda r: "{}/{}".format(r["rows_passed"], r["rows
               ("Hop rate", lambda r: fmt(r["hop_answer_rate"]["rate"], "%")),
               ("Paraphrase rate", lambda r: fmt(r["paraphrase_answer_rate"]["rate"], "%")),
               ("Ukrainian", lambda r: fmt(r["paraphrase_uk"]["rate"], "%")),
+              ("Modality", lambda r: fmt(r.get("modality_accuracy"), "%")),
+              ("Derived as confirmed", lambda r: fmt(r.get("derived_confirmed"), "")),
               ("Timeline recall", lambda r: fmt(r["timeline_recall"], "%")),
               ("Evidence recall", lambda r: fmt(r["evidence_recall"]["rate"], "%")),
               ("Quote validity", lambda r: fmt(r["quote_validity"], "%")),
@@ -1369,7 +1442,7 @@ def table_v2(res: dict) -> str:
         failed = [k for k, x in gate["checks"].items() if x is False]
         skipped = [k.split(" ")[0] for k, x in gate["checks"].items() if x is None]
         note = " ({} not evaluated)".format(", ".join(skipped)) if skipped else ""
-        lines += ["", "S2 gate: {}".format("PASS" + note if gate["pass"] else "FAIL: " + ", ".join(failed))]
+        lines += ["", "{} gate: {}".format("S2+S3" if gate.get("s3") else "S2","PASS" + note if gate["pass"] else "FAIL: " + ", ".join(failed))]
     return "\n".join(lines)
 
 

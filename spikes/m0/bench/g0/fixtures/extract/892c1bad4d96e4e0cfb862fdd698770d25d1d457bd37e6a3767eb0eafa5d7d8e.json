@@ -1,0 +1,11 @@
+{
+ "seg_hash": "892c1bad4d96e4e0cfb862fdd698770d25d1d457bd37e6a3767eb0eafa5d7d8e",
+ "extractor": "g2-s3-1:b7b1324472",
+ "route": "authored",
+ "base_line": 1,
+ "answers": [
+  "{\"entities\": [\n{\"ref\": \"n1\", \"known_id\": \"d-d722a421e2\", \"type\": \"decision\", \"name\": \"The Acme pilot grows from 40 to 60 users: the billing team joins.\", \"aliases\": [], \"quote\": \"The Acme pilot grows from 40 to 60 users: the billing team joins.\", \"lines\": [7, 7]},\n{\"ref\": \"n2\", \"known_id\": \"c-2b2d6ef4aa\", \"type\": \"task\", \"name\": \"send Mike a short risk list every Monday\", \"aliases\": [\"weekly risk list\"], \"quote\": \"send Mike a short risk list every Monday\", \"lines\": [9, 9]},\n{\"ref\": \"n3\", \"type\": \"topic\", \"name\": \"Acme pilot\", \"aliases\": [\"the pilot\", \"pilot\"], \"quote\": \"The pilot grows to 60 users.\", \"lines\": [5, 5]},\n{\"ref\": \"n4\", \"type\": \"person\", \"name\": \"David\", \"aliases\": [], \"quote\": \"**David**\", \"lines\": [9, 9]},\n{\"ref\": \"n5\", \"type\": \"person\", \"name\": \"Mike\", \"aliases\": [], \"quote\": \"Mike\", \"lines\": [9, 9]}\n],\n\"claims\": [\n{\"subject\": \"d-d722a421e2\", \"predicate\": \"decided\", \"value\": \"The Acme pilot grows from 40 to 60 users: the billing team joins.\", \"modality\": \"confirmation\", \"said_by\": null, \"due\": null, \"quote\": \"The Acme pilot grows from 40 to 60 users: the billing team joins.\", \"lines\": [7, 7], \"confidence\": 0.9},\n{\"subject\": \"n3\", \"predicate\": \"value\", \"value\": \"60 users\", \"modality\": \"statement\", \"said_by\": null, \"due\": null, \"quote\": \"The pilot grows to 60 users.\", \"lines\": [5, 5], \"confidence\": 0.9},\n{\"subject\": \"c-2b2d6ef4aa\", \"predicate\": \"owner\", \"value\": \"David\", \"modality\": \"confirmation\", \"said_by\": null, \"due\": null, \"quote\": \"**David**: send Mike a short risk list every Monday\", \"lines\": [9, 9], \"confidence\": 0.85},\n{\"subject\": \"c-2b2d6ef4aa\", \"predicate\": \"due\", \"value\": \"every Monday\", \"modality\": \"statement\", \"said_by\": null, \"due\": \"every Monday\", \"quote\": \"Weekly risk list on Mondays.\", \"lines\": [5, 5], \"confidence\": 0.8}\n],\n\"relations\": []}\n"
+ ],
+ "in_tokens": 0,
+ "out_tokens": 0
+}

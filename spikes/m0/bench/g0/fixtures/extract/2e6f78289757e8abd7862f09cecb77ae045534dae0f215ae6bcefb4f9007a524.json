@@ -1,0 +1,11 @@
+{
+ "seg_hash": "2e6f78289757e8abd7862f09cecb77ae045534dae0f215ae6bcefb4f9007a524",
+ "extractor": "g2-s3-1:b7b1324472",
+ "route": "authored",
+ "base_line": 1,
+ "answers": [
+  "{\"entities\": [\n{\"ref\": \"n1\", \"type\": \"task\", \"name\": \"Globex item 13\", \"aliases\": [\"item 13\", \"invoice export to CSV\", \"Globex invoice export\"], \"quote\": \"Globex item 13 is the invoice export to CSV for the finance team.\", \"lines\": [5, 5]},\n{\"ref\": \"n2\", \"known_id\": \"d-4bbfa3f98d\", \"type\": \"decision\", \"name\": \"Globex item 13: invoice export to CSV for the finance team.\", \"aliases\": [], \"quote\": \"Globex item 13: invoice export to CSV for the finance team.\", \"lines\": [7, 7]},\n{\"ref\": \"n3\", \"known_id\": \"c-dc077a5f21\", \"type\": \"task\", \"name\": \"send a sample invoice file for item 13\", \"aliases\": [], \"quote\": \"send a sample invoice file for item 13\", \"lines\": [9, 9]},\n{\"ref\": \"n4\", \"type\": \"person\", \"name\": \"Sarah\", \"aliases\": [], \"quote\": \"**Sarah**\", \"lines\": [9, 9]},\n{\"ref\": \"n5\", \"type\": \"client\", \"name\": \"Globex finance team\", \"aliases\": [\"finance team\", \"the finance team\"], \"quote\": \"the finance team\", \"lines\": [5, 5]}\n],\n\"claims\": [\n{\"subject\": \"n1\", \"predicate\": \"value\", \"value\": \"invoice export to CSV for the finance team\", \"modality\": \"statement\", \"said_by\": null, \"due\": null, \"quote\": \"Globex item 13 is the invoice export to CSV for the finance team.\", \"lines\": [5, 5], \"confidence\": 0.9},\n{\"subject\": \"d-4bbfa3f98d\", \"predicate\": \"decided\", \"value\": \"Globex item 13: invoice export to CSV for the finance team.\", \"modality\": \"confirmation\", \"said_by\": null, \"due\": null, \"quote\": \"Globex item 13: invoice export to CSV for the finance team.\", \"lines\": [7, 7], \"confidence\": 0.9},\n{\"subject\": \"c-dc077a5f21\", \"predicate\": \"owner\", \"value\": \"Sarah\", \"modality\": \"confirmation\", \"said_by\": null, \"due\": null, \"quote\": \"**Sarah**: send a sample invoice file for item 13\", \"lines\": [9, 9], \"confidence\": 0.85}\n],\n\"relations\": []}\n"
+ ],
+ "in_tokens": 0,
+ "out_tokens": 0
+}

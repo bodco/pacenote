@@ -1,0 +1,11 @@
+{
+ "seg_hash": "0d42233e6ae70bc3941066d5e9a2a672f85f302f75a6817251be9ba33858d1bc",
+ "extractor": "g2-s3-1:b7b1324472",
+ "route": "authored",
+ "base_line": 1,
+ "answers": [
+  "{\"entities\": [\n{\"ref\": \"n1\", \"type\": \"system\", \"name\": \"Globex finance dashboard\", \"aliases\": [\"finance dashboard\", \"the finance dashboard\"], \"quote\": \"The finance dashboard reads from the ledger feed.\", \"lines\": [3, 3]},\n{\"ref\": \"n2\", \"known_id\": \"e-201d593111\", \"type\": \"system\", \"name\": \"Globex ledger feed\", \"aliases\": [\"ledger feed\"], \"quote\": \"the ledger feed\", \"lines\": [3, 3]}\n],\n\"claims\": [\n{\"subject\": \"n1\", \"predicate\": \"value\", \"value\": \"charts: monthly totals and overdue invoices\", \"modality\": \"statement\", \"said_by\": null, \"due\": null, \"quote\": \"Charts: monthly totals and overdue invoices.\", \"lines\": [4, 4], \"confidence\": 0.8}\n],\n\"relations\": [\n{\"from\": \"n1\", \"rel\": \"depends_on\", \"to\": \"n2\", \"modality\": \"statement\", \"quote\": \"The finance dashboard reads from the ledger feed.\", \"lines\": [3, 3], \"confidence\": 0.9}\n]}\n"
+ ],
+ "in_tokens": 0,
+ "out_tokens": 0
+}

@@ -1,0 +1,11 @@
+{
+ "seg_hash": "f766c0f8de1970d0a8700450ede8b89b1c0ca78c6390ada9eec31124f452f579",
+ "extractor": "g2-s3-1:b7b1324472",
+ "route": "authored",
+ "base_line": 1,
+ "answers": [
+  "{\"entities\": [\n{\"ref\": \"n1\", \"known_id\": \"d-a793587a7f\", \"type\": \"decision\", \"name\": \"The dashboard uses the teal palette.\", \"aliases\": [\"teal palette\"], \"quote\": \"The dashboard uses the teal palette.\", \"lines\": [5, 5]},\n{\"ref\": \"n2\", \"type\": \"call\", \"name\": \"Acme design review 2026-11-13\", \"aliases\": [\"Acme design review\"], \"quote\": \"# Acme design review, 2026-11-13\", \"lines\": [1, 1]}\n],\n\"claims\": [\n{\"subject\": \"d-a793587a7f\", \"predicate\": \"decided\", \"value\": \"The dashboard uses the teal palette.\", \"modality\": \"confirmation\", \"said_by\": null, \"due\": null, \"quote\": \"The dashboard uses the teal palette.\", \"lines\": [5, 5], \"confidence\": 0.85}\n],\n\"relations\": []}\n"
+ ],
+ "in_tokens": 0,
+ "out_tokens": 0
+}

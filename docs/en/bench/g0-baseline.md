@@ -182,25 +182,35 @@ What it says:
 Each row states which variant should pass it and why (`expected`, `why`); A, B and C match every expectation on both
 sets.
 
-## G2 S3: LLM extraction, validation, routing, ceiling (2026-11-24)
+## G2 S3a: extraction with a fake provider, the fixture and C's S3 gate (2026-11-24)
 
-PB-86 adds the extraction worker (`evidence pass --route`), the validator, the segment cache, the ceilings and the
-recorder for C's extraction fixture (`run.py --extract <route>`, which writes `fixtures/extract/<seg_hash>.json` with
-the raw model answers and `manifest.json` with the gold v2 sha256 and the calibration). The fixture is **not recorded
-yet**: recording sends the invented fixture text to a real route, which this step did not do. So C still evaluates only
-its S2 rows (`C ready: S2`, 16 rows not evaluated), and the S3 gate (hop rate at least 4 of 6, paraphrase, modality,
-the calibration of output tokens and catalog size) waits for that recording.
+PB-86 adds the extraction rules, the prompt builder, the validator, the segment cache and the extraction pass, and
+C's extraction fixture in `fixtures/extract/` (one `<seg_hash>.json` per segment of the small set, 60 segments, plus
+`manifest.json` with the gold v2 sha256). **The fixture is authored, not recorded on a real AI**: the answers were
+written offline in the agent session, one segment at a time so each prompt's catalog held the entities of the answers
+before it, and stored through `record_extract` with a replay transport. The authoring agent opened only the rendered
+prompts, not the gold, but its instructions were written after the developer had read the gold hop rows and carry
+example wordings and linking verbs from them, so the fixture is not independent of the gold. The manifest says
+`route: authored` and `calibration.measured: false`. The C numbers below therefore measure the store, the validator
+and the search on a favorable extraction, not a real model's extraction quality;
+PB-103 (S3b) re-records the fixture with `run.py --extract <route>` and calibrates output and catalog size.
 
-Results at this commit (`results/A-2026-11-24-s3.json`, `results/C-2026-11-24-s3.json`):
+The harness changes with it: a quote is valid at any revision of its file that holds it at that locator (an edited
+section keeps its locator); the hop step starts from the search's best match in its own order (a set's order changed
+between runs) and returns the edges it walks; modality rows pass on a matching claim with the expected modality and
+none confirmed by a primary source; `modality_accuracy` and `derived_confirmed` (confirmed facts whose evidence is only
+a derived source, checked in the store) are filled for B and C; and C with a fixture gets the S3 checks in its gate.
 
-- **A unchanged** against `A-2026-11-24-s2.json`: every column equal (prep coverage 80.0%, prep and live leaks 0,
-  live answer rate 100.0%, answer text in top 80.0%, duplicates 5, suggested 8, wrong identity 4, item 13 cross-client
-  4; gold v2 10/39 rows on both sets, future leaks 6, stale 1, excluded leaks 13), only lookup time moved (p50 1.62 to
-  1.68 ms, p95 2.59 to 2.71 ms).
-- **C unchanged** against `C-2026-11-24-s2.json`: 23/23 evaluated rows on both sets, every leak 0, quote validity and
-  evidence recall 100%, fixture 0 hits and 64 (small) and 114 (scale) misses as "not recorded"; the S2 gate passes
-  (the runs with vectors not evaluated: no bge-m3 model folder here). Live p95 on the scale set 29.87 ms against the
-  150 ms bar.
+Results at this commit (`results/{A,B,C}-2026-11-24-s3a.json`, against the `-s2` results on main):
+
+- **A unchanged**: every column equal; only lookup time moved (p50 1.62 to 1.59 ms, p95 2.59 to 2.39 ms).
+- **B unchanged**: every column equal; the new columns read modality 0.0% and derived as confirmed 0.
+- **C**: v1 columns equal (prep coverage 80.0%, leaks 0, live answer rate 100.0%). Gold v2 on both sets: rows 23/23
+  to 32/36 (3 not evaluated: S4), hop rate 5 of 6 (B 0), modality 100%, derived as confirmed 0, fixture 64 hits and
+  0 misses on the small set, quote validity and evidence recall 100%, every leak 0, shared facts kept 3 of 3. Not
+  passed: h6 (budget change, steering group) and the paraphrase rows p1 to p3 (0.0%, as B; the runs with vectors are
+  not evaluated here, no bge-m3 model folder). Live p95 4.37 to 8.78 ms (small) and 22.44 to 26.36 ms (scale), against
+  the 150 ms bar. S2+S3 gate: PASS.
 
 ## What is measured
 

@@ -37,9 +37,7 @@ from typing import Callable, Dict, Optional
 from .providers import AnthropicProvider, Completion, Provider, gist_closed, user_text
 
 ROUTES = ("api", "code", "local", "openai", "codex", "gemini")   # 0.8.5: "local" = a model on this Mac (rules/ai.yaml)
-JOBS = ("prep", "tips", "after", "evidence")
-# PB-52 G2 (S3): "evidence" indexes the project for the evidence store (behind the flag evidence_store). It never uses
-# the general chain: it falls back only to the model on this Mac, never to another cloud AI (rules/ai.yaml > chain).
+JOBS = ("prep", "tips", "after")
 # 0.10.0 (AI chain, owner 12.11): an AI out without a known reset time is checked again every 15 minutes
 PROBE_EVERY_S = 900
 # 0.10.0 (AI chain, owner 12.11): one fallback chain for every job (LiveTipsCore/AIChain.swift, rules/ai.yaml > chain):
@@ -105,8 +103,6 @@ def chain_order(job: str, chosen: str, chain, connected, auto: bool = True) -> l
     """The order a job tries its AIs (same as AIChain.order in Swift): the chosen one first, then the connected AIs
     of `chain` (the enabled routes in the PM's order), the model on this Mac last."""
     out = [chosen]
-    if job == "evidence":       # PB-52 S3: the chosen AI, then only the model on this Mac
-        return out + (["local"] if chosen != "local" and "local" in (connected or ()) else [])
     if not auto:
         return out
     local = False

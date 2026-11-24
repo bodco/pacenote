@@ -1,0 +1,11 @@
+{
+ "seg_hash": "8b334c21c95f457c6bc8c3786c46c474a3e9dbfbc10a42b98433c0a0d6cbe2c2",
+ "extractor": "g2-s3-1:b7b1324472",
+ "route": "authored",
+ "base_line": 1,
+ "answers": [
+  "{\"entities\": [\n{\"ref\": \"n1\", \"type\": \"topic\", \"name\": \"Acme team staffing\", \"aliases\": [\"staffing\", \"Acme team\"], \"quote\": \"Staffing: 4 engineers on the Acme team.\", \"lines\": [5, 5]}\n],\n\"claims\": [\n{\"subject\": \"n1\", \"predicate\": \"value\", \"value\": \"4 engineers\", \"modality\": \"statement\", \"said_by\": null, \"due\": null, \"quote\": \"Staffing: 4 engineers on the Acme team.\", \"lines\": [5, 5], \"confidence\": 0.9}\n],\n\"relations\": []}\n"
+ ],
+ "in_tokens": 0,
+ "out_tokens": 0
+}

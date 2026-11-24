@@ -1,0 +1,11 @@
+{
+ "seg_hash": "527f89a8dab98f1a11730aab167a88bace5e0f5b054a795a0000a52b4879720f",
+ "extractor": "g2-s3-1:b7b1324472",
+ "route": "authored",
+ "base_line": 1,
+ "answers": [
+  "{\"entities\": [\n{\"ref\": \"n1\", \"type\": \"person\", \"name\": \"Brian\", \"aliases\": [], \"quote\": \"Brian chairs the steering group for Globex.\", \"lines\": [5, 5]},\n{\"ref\": \"n2\", \"type\": \"topic\", \"name\": \"Globex steering group\", \"aliases\": [\"steering group\", \"the steering group\"], \"quote\": \"the steering group for Globex\", \"lines\": [5, 5]},\n{\"ref\": \"n3\", \"type\": \"task\", \"name\": \"Globex March invoice run\", \"aliases\": [\"March invoice run\", \"the March invoice run\"], \"quote\": \"the March invoice run\", \"lines\": [5, 5]}\n],\n\"claims\": [\n{\"subject\": \"n2\", \"predicate\": \"owner\", \"value\": \"Brian\", \"modality\": \"statement\", \"said_by\": null, \"due\": null, \"quote\": \"Brian chairs the steering group for Globex.\", \"lines\": [5, 5], \"confidence\": 0.9},\n{\"subject\": \"n3\", \"predicate\": \"status\", \"value\": \"confirmed\", \"modality\": \"confirmation\", \"said_by\": null, \"due\": null, \"quote\": \"Globex confirmed the March invoice run.\", \"lines\": [5, 5], \"confidence\": 0.9}\n],\n\"relations\": [\n{\"from\": \"n1\", \"rel\": \"owns\", \"to\": \"n2\", \"modality\": \"statement\", \"quote\": \"Brian chairs the steering group for Globex.\", \"lines\": [5, 5], \"confidence\": 0.9}\n]}\n"
+ ],
+ "in_tokens": 0,
+ "out_tokens": 0
+}

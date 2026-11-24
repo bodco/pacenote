@@ -1,0 +1,11 @@
+{
+ "seg_hash": "790d16d31d1ab0f1db9f5aaa9ece7f2e471388426b203e667812390f628912bf",
+ "extractor": "g2-s3-1:b7b1324472",
+ "route": "authored",
+ "base_line": 1,
+ "answers": [
+  "{\"entities\": [\n{\"ref\": \"n1\", \"type\": \"system\", \"name\": \"Acme reporting module\", \"aliases\": [\"reporting module\", \"the reporting module\"], \"quote\": \"The reporting module needs the warehouse connector.\", \"lines\": [3, 3]},\n{\"ref\": \"n2\", \"known_id\": \"e-aa5fa5582d\", \"type\": \"system\", \"name\": \"Acme warehouse connector\", \"aliases\": [\"warehouse connector\"], \"quote\": \"the warehouse connector\", \"lines\": [3, 3]}\n],\n\"claims\": [\n{\"subject\": \"n1\", \"predicate\": \"value\", \"value\": \"exports are PDF and spreadsheet\", \"modality\": \"statement\", \"said_by\": null, \"due\": null, \"quote\": \"Exports are PDF and spreadsheet.\", \"lines\": [4, 4], \"confidence\": 0.8}\n],\n\"relations\": [\n{\"from\": \"n1\", \"rel\": \"depends_on\", \"to\": \"n2\", \"modality\": \"statement\", \"quote\": \"The reporting module needs the warehouse connector.\", \"lines\": [3, 3], \"confidence\": 0.9}\n]}\n"
+ ],
+ "in_tokens": 0,
+ "out_tokens": 0
+}

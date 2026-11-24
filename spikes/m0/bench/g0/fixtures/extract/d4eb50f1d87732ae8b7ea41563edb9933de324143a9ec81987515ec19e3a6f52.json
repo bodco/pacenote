@@ -1,0 +1,11 @@
+{
+ "seg_hash": "d4eb50f1d87732ae8b7ea41563edb9933de324143a9ec81987515ec19e3a6f52",
+ "extractor": "g2-s3-1:b7b1324472",
+ "route": "authored",
+ "base_line": 1,
+ "answers": [
+  "{\"entities\": [\n{\"ref\": \"n1\", \"type\": \"document\", \"name\": \"Globex statement of work\", \"aliases\": [\"statement of work\", \"SOW\", \"Globex SOW\"], \"quote\": \"# Globex statement of work, summary\", \"lines\": [1, 1]},\n{\"ref\": \"n2\", \"type\": \"topic\", \"name\": \"Globex pilot\", \"aliases\": [\"pilot scope\", \"Globex pilot scope\"], \"quote\": \"Pilot scope: invoice export and the finance dashboard.\", \"lines\": [3, 3]},\n{\"ref\": \"n3\", \"known_id\": \"e-493f73e32c\", \"type\": \"task\", \"name\": \"Globex item 13\", \"aliases\": [\"invoice export\"], \"quote\": \"invoice export\", \"lines\": [3, 3]},\n{\"ref\": \"n4\", \"known_id\": \"e-9eb311a281\", \"type\": \"system\", \"name\": \"Globex finance dashboard\", \"aliases\": [\"finance dashboard\"], \"quote\": \"the finance dashboard\", \"lines\": [3, 3]},\n{\"ref\": \"n5\", \"known_id\": \"e-19c2e1d873\", \"type\": \"topic\", \"name\": \"Globex budget\", \"aliases\": [\"pilot budget\"], \"quote\": \"Pilot budget: 120 hours.\", \"lines\": [4, 4]}\n],\n\"claims\": [\n{\"subject\": \"n2\", \"predicate\": \"value\", \"value\": \"scope: invoice export and the finance dashboard\", \"modality\": \"statement\", \"said_by\": null, \"due\": null, \"quote\": \"Pilot scope: invoice export and the finance dashboard.\", \"lines\": [3, 3], \"confidence\": 0.85},\n{\"subject\": \"e-19c2e1d873\", \"predicate\": \"value\", \"value\": \"120 hours\", \"modality\": \"statement\", \"said_by\": null, \"due\": null, \"quote\": \"Pilot budget: 120 hours.\", \"lines\": [4, 4], \"confidence\": 0.9},\n{\"subject\": \"n1\", \"predicate\": \"value\", \"value\": \"payment terms net 30\", \"modality\": \"statement\", \"said_by\": null, \"due\": null, \"quote\": \"Payment terms: net 30.\", \"lines\": [5, 5], \"confidence\": 0.85}\n],\n\"relations\": []}\n"
+ ],
+ "in_tokens": 0,
+ "out_tokens": 0
+}

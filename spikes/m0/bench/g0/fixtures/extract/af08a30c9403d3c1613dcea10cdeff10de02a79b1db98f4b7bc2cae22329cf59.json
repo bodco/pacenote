@@ -1,0 +1,11 @@
+{
+ "seg_hash": "af08a30c9403d3c1613dcea10cdeff10de02a79b1db98f4b7bc2cae22329cf59",
+ "extractor": "g2-s3-1:b7b1324472",
+ "route": "authored",
+ "base_line": 1,
+ "answers": [
+  "{\"entities\": [\n{\"ref\": \"n1\", \"known_id\": \"e-19c2e1d873\", \"type\": \"topic\", \"name\": \"Globex budget\", \"aliases\": [\"budget\", \"hours\"], \"quote\": \"Globex budget: 81 of 120 hours used, 39 left.\", \"lines\": [5, 5]},\n{\"ref\": \"n2\", \"known_id\": \"d-1dc2b84361\", \"type\": \"decision\", \"name\": \"Globex export is CSV only, no PDF.\", \"aliases\": [], \"quote\": \"Globex export is CSV only, no PDF.\", \"lines\": [7, 7]},\n{\"ref\": \"n3\", \"known_id\": \"c-20eb0d189a\", \"type\": \"task\", \"name\": \"send Sarah the invoice export mockup\", \"aliases\": [\"invoice export mockup\"], \"quote\": \"send Sarah the invoice export mockup\", \"lines\": [9, 9]},\n{\"ref\": \"n4\", \"type\": \"person\", \"name\": \"David\", \"aliases\": [], \"quote\": \"**David**\", \"lines\": [9, 9]},\n{\"ref\": \"n5\", \"type\": \"person\", \"name\": \"Sarah\", \"aliases\": [], \"quote\": \"Sarah\", \"lines\": [9, 9]}\n],\n\"claims\": [\n{\"subject\": \"e-19c2e1d873\", \"predicate\": \"value\", \"value\": \"81 of 120 hours used, 39 left\", \"modality\": \"statement\", \"said_by\": null, \"due\": null, \"quote\": \"Globex budget: 81 of 120 hours used, 39 left.\", \"lines\": [5, 5], \"confidence\": 0.95},\n{\"subject\": \"d-1dc2b84361\", \"predicate\": \"decided\", \"value\": \"Globex export is CSV only, no PDF.\", \"modality\": \"confirmation\", \"said_by\": null, \"due\": null, \"quote\": \"Globex export is CSV only, no PDF.\", \"lines\": [7, 7], \"confidence\": 0.9},\n{\"subject\": \"c-20eb0d189a\", \"predicate\": \"owner\", \"value\": \"David\", \"modality\": \"confirmation\", \"said_by\": null, \"due\": null, \"quote\": \"**David**: send Sarah the invoice export mockup\", \"lines\": [9, 9], \"confidence\": 0.85},\n{\"subject\": \"c-20eb0d189a\", \"predicate\": \"due\", \"value\": \"Friday\", \"modality\": \"confirmation\", \"said_by\": null, \"due\": \"Friday\", \"quote\": \"send Sarah the invoice export mockup (due: Friday)\", \"lines\": [9, 9], \"confidence\": 0.85}\n],\n\"relations\": []}\n"
+ ],
+ "in_tokens": 0,
+ "out_tokens": 0
+}

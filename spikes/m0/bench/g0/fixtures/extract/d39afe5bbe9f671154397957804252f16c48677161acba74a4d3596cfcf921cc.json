@@ -1,0 +1,11 @@
+{
+ "seg_hash": "d39afe5bbe9f671154397957804252f16c48677161acba74a4d3596cfcf921cc",
+ "extractor": "g2-s3-1:b7b1324472",
+ "route": "authored",
+ "base_line": 1,
+ "answers": [
+  "{\"entities\": [\n{\"ref\": \"n1\", \"type\": \"system\", \"name\": \"Acme warehouse connector\", \"aliases\": [\"warehouse connector\", \"the warehouse connector\"], \"quote\": \"The warehouse connector\", \"lines\": [5, 5]}\n],\n\"claims\": [\n{\"subject\": \"n1\", \"predicate\": \"due\", \"value\": \"December 1\", \"modality\": \"statement\", \"said_by\": null, \"due\": \"December 1\", \"quote\": \"The warehouse connector is due on December 1.\", \"lines\": [5, 5], \"confidence\": 0.9}\n],\n\"relations\": []}\n"
+ ],
+ "in_tokens": 0,
+ "out_tokens": 0
+}

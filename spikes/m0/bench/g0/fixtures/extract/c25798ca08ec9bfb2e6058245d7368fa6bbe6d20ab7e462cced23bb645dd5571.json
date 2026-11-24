@@ -1,0 +1,11 @@
+{
+ "seg_hash": "c25798ca08ec9bfb2e6058245d7368fa6bbe6d20ab7e462cced23bb645dd5571",
+ "extractor": "g2-s3-1:b7b1324472",
+ "route": "authored",
+ "base_line": 1,
+ "answers": [
+  "{\"entities\": [{\"ref\": \"n1\", \"known_id\": \"d-a793587a7f\", \"type\": \"decision\", \"name\": \"The dashboard uses the teal palette.\", \"aliases\": [\"teal palette\"], \"quote\": \"the dashboard uses the teal palette\", \"lines\": [6, 6]}, {\"ref\": \"n2\", \"type\": \"person\", \"name\": \"Emily\", \"aliases\": [], \"quote\": \"Emily\", \"lines\": [6, 6]}, {\"ref\": \"n3\", \"type\": \"person\", \"name\": \"David\", \"aliases\": [], \"quote\": \"David\", \"lines\": [7, 7]}], \"claims\": [{\"subject\": \"d-a793587a7f\", \"predicate\": \"decided\", \"value\": \"The dashboard uses the teal palette.\", \"modality\": \"confirmation\", \"said_by\": \"n2\", \"due\": null, \"quote\": \"For the record, the dashboard uses the teal palette.\", \"lines\": [6, 6], \"confidence\": 0.9}], \"relations\": []}\n"
+ ],
+ "in_tokens": 0,
+ "out_tokens": 0
+}

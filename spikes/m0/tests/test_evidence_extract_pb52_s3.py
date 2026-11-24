@@ -577,7 +577,6 @@ def test_unconnected_route_falls_back_to_local_only(env):
     res = run_pass(st, root, FakeTransport(resp), route="openai")
     assert res["status"] == "done" and res["route"] == "local" and res["fallback_from"] == "openai"
     assert set(seen) == {"openai", "local"}
-    assert R.chain_order("evidence", "openai", R.CHAIN_DEFAULT, set(R.ROUTES)) == ["openai", "local"]
 
 
 # ---------------------------------------------------------------- the segment cache (section 8.2)
@@ -681,89 +680,10 @@ def test_route_with_no_cached_tokens_is_estimated_without_cache(env):
     assert p.estimate("hello") < full
 
 
-def test_models_come_from_the_ai_yaml_map(env, tmp_path):
-    assert W.models("api")["extract"] == "claude-haiku-5-5"
-    assert W.models("openai") == {"extract": "gpt-6-luna", "summary": "gpt-6.1-sol"}
-    ai = yaml.safe_load(W.AI_YAML.read_text(encoding="utf-8"))
-    ai["evidence"]["extract"]["openai"] = "gpt-6.1-terra"
-    alt = tmp_path / "ai.yaml"
-    alt.write_text(yaml.safe_dump(ai), encoding="utf-8")
-    root = env
-    many_sections(root, "docs/plan.md", 1)
-    st = open_store(root)
-    ingest(st, root)
-    tr = FakeTransport()
-    run_pass(st, root, tr, route="openai", ai_yaml=str(alt))
-    assert tr.requests and tr.requests[0]["model"] == "gpt-6.1-terra"
-    del ai["evidence"]
-    alt.write_text(yaml.safe_dump(ai), encoding="utf-8")
-    assert W.models("openai", alt) == {"extract": R.PING_MODEL["openai"], "summary": "gpt-6.1-sol"}
-    assert W.models("gemini", alt) == {"extract": R.PING_MODEL["gemini"], "summary": "gemini-3.8-flash"}
-
-
-# ---------------------------------------------------------------- the real OpenAI and Gemini classes, a cut answer
-
-class FakeStream:
-    def __init__(self, lines):
-        self.lines = [x.encode() for x in lines]
-
-    def __iter__(self):
-        return iter(self.lines)
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *a):
-        return False
-
-
-def openai_cut():
-    return ['data: ' + json.dumps({"type": "response.output_text.delta", "delta": '{"entities": [{"ref": "n1"'}),
-            'data: ' + json.dumps({"type": "response.incomplete", "response": {
-                "usage": {"input_tokens": 900, "output_tokens": 2000},
-                "incomplete_details": {"reason": "max_output_tokens"}}})]
-
-
-def gemini_cut():
-    return ['data: ' + json.dumps({"candidates": [{"content": {"parts": [{"text": '{"entities": [{"ref"'}]},
-                                                   "finishReason": "MAX_TOKENS"}],
-                                   "usageMetadata": {"promptTokenCount": 900, "candidatesTokenCount": 2000}})]
-
-
-@pytest.mark.parametrize("kind", ["openai", "gemini"])
-def test_real_provider_class_with_a_cut_answer_sends_one_request(monkeypatch, kind):
-    """The PB-52 review note: the evidence job turns the provider's second request off. Negative control: without
-    single_request the same class sends two requests."""
-    from livetips_m0 import gemini_provider as GP
-    from livetips_m0 import openai_provider as OP
-    from livetips_m0.evidence import request as RQ
-    mod = OP if kind == "openai" else GP
-    bodies = []
-
-    def fake_urlopen(req, timeout=None):
-        bodies.append(json.loads(req.data.decode()))
-        return FakeStream(openai_cut() if kind == "openai" else gemini_cut())
-    monkeypatch.setattr(mod.urllib.request, "urlopen", fake_urlopen)
-    p = OP.OpenAIProvider("k-test") if kind == "openai" else GP.GeminiProvider("k-test")
-    model = "gpt-6-luna" if kind == "openai" else "gemini-3.5-flash-lite"
-    args = dict(model=model, system=[{"text": "sys"}], user="u", max_tokens=2000, cache_ttl=None)
-    c = p.complete(extra=RQ.extra_for(kind, 2000), **args)
-    assert len(bodies) == 1 and c.incomplete == "max_output_tokens"
-    assert X.cut({"text": c.text, "incomplete": c.incomplete, "stop_reason": c.stop_reason})
-    if kind == "openai":
-        assert bodies[0]["max_output_tokens"] == 2000
-    else:
-        assert bodies[0]["generationConfig"]["maxOutputTokens"] == 2000 + GP.THINKING_ROOM["minimal"]
-        assert W.out_cap("gemini", model, 2000) == 2000 + GP.THINKING_ROOM["minimal"]
-    bodies.clear()
-    p.complete(extra=None, **args)
-    assert len(bodies) == 2                                  # the default path is unchanged: a second request
-
-
-def test_request_extras_never_reach_the_api_route():
-    from livetips_m0.evidence import request as RQ
-    assert RQ.extra_for("api", 2000) is None and RQ.extra_for("code", 2000) is None
-    assert RQ.extra_for("local", 2000) == {"num_predict": 2000}
+def test_models_without_the_map_fall_back_to_routing(env):
+    """S3a: rules/ai.yaml has no evidence map yet (PB-103 S3b adds it); the worker uses routing.PING_MODEL."""
+    assert W.models("openai")["extract"] == R.PING_MODEL["openai"]
+    assert W.models("api")["extract"] == R.PING_MODEL["api"]
 
 
 def test_flag_off_cli_refuses_pass(env, monkeypatch):
@@ -812,6 +732,101 @@ def test_fixture_records_the_gold_hash_and_a_changed_gold_fails(tmp_path, monkey
         with pytest.raises(SystemExit, match="gold changed"):
             bench.replay_fixture(ctx, out, True)
         ctx["store"].close()
+
+
+def g0_bench():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("g0_run_s3a", HERE.parent / "bench" / "g0" / "run.py")
+    bench = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(bench)
+    return bench
+
+
+def test_checked_in_fixture_matches_the_current_gold():
+    """S3a: the extraction fixture in bench/g0/fixtures/extract was recorded against today's gold v2 and says honestly
+    that no provider wrote it (authored; PB-103 S3b re-records it on a real route)."""
+    bench = g0_bench()
+    m = json.loads(bench.MANIFEST.read_text(encoding="utf-8"))
+    assert m["gold_sha256"] == __import__("hashlib").sha256(bench.GOLD2.read_bytes()).hexdigest()
+    assert m["route"] == "authored" and m["calibration"]["measured"] is False
+    files = [p for p in bench.EXTRACT.glob("*.json") if p.name != "manifest.json"]
+    assert len(files) == m["calibration"]["segments_recorded"] and "S3" in bench.ready_set()
+
+
+def gate_res(hop=5, misses=0, modality=100.0, derived=0, b_hop=0):
+    run = {"hop_answer_rate": {"n": hop, "of": 6}, "fixture": {"misses": misses}, "modality_accuracy": modality,
+           "derived_confirmed": derived}
+    res = {"variant": "C", "v2": {"ready": ["S2", "S3"], "sets": {"small": {"no_vectors": run,
+                                                                            "vectors": {"skipped": "no model"}}}}}
+    b = {"v2": {"sets": {"small": {"no_vectors": {"hop_answer_rate": {"n": b_hop}}}}}}
+    return res, b
+
+
+def test_s3_gate_checks():
+    bench = g0_bench()
+    res, b = gate_res()
+    assert all(bench.s3_gate(res, b).values())
+    for kw, key in ((dict(hop=3), "small hop_ge_4_of_6"), (dict(b_hop=4), "small hop_ge_B_plus_2"),
+                    (dict(misses=1), "small fixture_misses_0"), (dict(modality=50.0), "small modality_accuracy_100"),
+                    (dict(derived=1), "small/no_vectors derived_confirmed_0")):
+        res, b = gate_res(**kw)
+        assert bench.s3_gate(res, b)[key] is False, kw
+    res, b = gate_res()
+    res["v2"]["ready"] = ["S2"]
+    assert bench.s3_gate(res, b) is None             # no recorded fixture: no S3 gate
+    res["variant"] = "B"
+    assert bench.s3_gate(res, b) is None
+
+
+def test_modality_rows_and_derived_confirmation(env):
+    """A modality row passes only on a matching claim with the expected modality and none confirmed by a primary
+    source; a confirmation whose evidence is only a derived source (notes) is counted by derived_confirmed."""
+    bench = g0_bench()
+    root = env
+    put(root, "live/2026-11-04-1000-globex-weekly.notes.md", "## Summary\nNorthpoint proposed 39 extra hours.\n")
+    st = open_store(root)
+    ingest(st, root)
+    rev = st.one("SELECT rv.id FROM revision rv JOIN source s ON s.id=rv.source_id WHERE s.uri LIKE '%notes.md'")[0]
+    S.apply_extraction(st, rev, {"entities": [{"ref": "n1", "type": "topic", "name": "Globex extra hours",
+                                               "quote": "proposed 39 extra hours", "lines": [2, 2]}],
+                                 "claims": [{"subject": "n1", "predicate": "value", "value": "39", "modality": "confirmation",
+                                             "quote": "Northpoint proposed 39 extra hours.", "lines": [2, 2]}]})
+    cid = st.one("SELECT id FROM claim")[0]
+    ctx = {"store": st, "pm_excluded": []}
+
+    class V:
+        name = "C"
+    row = {"id": "m", "kind": "modality", "needs": "S3", "client": "globex", "expect": [{"any": ["proposed 39 extra hours"]}],
+           "modality": "proposal", "expected": {"C": "pass"}}
+    gold2 = {"excluded_facts": [], "forbidden": {"globex": []}}
+    item = {"kind": "claim", "id": cid, "modality": "proposal", "confirmations": 0, "origin": "llm",
+            "text": "Northpoint proposed 39 extra hours.", "quotes": []}
+    ok = bench.judge(V, ctx, gold2, row, {"items": [item], "entities": []})
+    assert ok["status"] == "pass" and ok["derived_confirmed"] == []
+    wrong = dict(item, modality="statement")
+    assert bench.judge(V, ctx, gold2, row, {"items": [wrong], "entities": []})["status"] == "fail"
+    shown = dict(item, modality="confirmation", confirmations=1)      # counted as confirmed: only notes hold it
+    r = bench.judge(V, ctx, gold2, dict(row, modality="not_confirmed"), {"items": [shown], "entities": []})
+    assert r["status"] == "fail" and r["derived_confirmed"] == [cid]
+
+
+def test_hop_walk_follows_the_search_order(env, monkeypatch):
+    """The hop step starts from the best match (not a set's order) and returns the edge it walked."""
+    bench = g0_bench()
+    cards = {"a": {"edges": [{"kind": "edge", "id": 1, "src": "a", "rel": "depends_on", "dst": "b", "text": "a needs b"}]},
+             "b": {"edges": [{"kind": "edge", "id": 1, "src": "a", "rel": "depends_on", "dst": "b", "text": "a needs b"},
+                             {"kind": "edge", "id": 2, "src": "c", "rel": "blocks", "dst": "b", "text": "c blocks b"}],
+                   "claims": [{"kind": "claim", "id": 9, "text": "b is late"}]},
+             "c": {"claims": [{"kind": "claim", "id": 10, "text": "c waits for the client"}]}}
+    for i in range(20):
+        cards["w{}".format(i)] = {"edges": [{"kind": "edge", "id": 100 + i, "src": "w{}".format(i), "rel": "owns",
+                                             "dst": "x{}".format(i), "text": "weak"}]}
+    monkeypatch.setattr(bench.SE, "entity_card", lambda st, eid, **kw: cards.get(eid))
+    ents = [{"id": "a"}] + [{"id": "w{}".format(i)} for i in range(20)]
+    out = bench.hop_items(None, ents, None, None, (), 6)
+    texts = [o["text"] for o in out]
+    assert texts[:4] == ["a needs b", "b is late", "c blocks b", "c waits for the client"]
+    assert all(o["hop"] for o in out)
 
 
 def test_line_range_over_two_snippets_is_kept(env):

@@ -1,0 +1,11 @@
+{
+ "seg_hash": "d84dc0b14c01eb0f35e78c2b05984dc4083e9f5fbf6ce8d279a663332f1ca677",
+ "extractor": "g2-s3-1:b7b1324472",
+ "route": "authored",
+ "base_line": 5,
+ "answers": [
+  "{\"entities\": [\n{\"ref\": \"n1\", \"known_id\": \"e-9fc59eddc9\", \"type\": \"topic\", \"name\": \"Acme pilot\", \"aliases\": [], \"quote\": \"Pilot with 60 users\", \"lines\": [6, 6]},\n{\"ref\": \"n2\", \"type\": \"date_event\", \"name\": \"Acme go-live\", \"aliases\": [\"go-live\", \"go-live December 8\"], \"quote\": \"go-live December 8\", \"lines\": [6, 6]},\n{\"ref\": \"n3\", \"known_id\": \"e-caa1cfd0c1\", \"type\": \"task\", \"name\": \"Acme item 13\", \"aliases\": [\"SSO user mapping\"], \"quote\": \"SSO user mapping\", \"lines\": [7, 7]}\n],\n\"claims\": [\n{\"subject\": \"e-9fc59eddc9\", \"predicate\": \"value\", \"value\": \"60 users\", \"modality\": \"statement\", \"said_by\": null, \"due\": null, \"quote\": \"Pilot with 60 users\", \"lines\": [6, 6], \"confidence\": 0.9},\n{\"subject\": \"n2\", \"predicate\": \"due\", \"value\": \"December 8\", \"modality\": \"statement\", \"said_by\": null, \"due\": \"December 8\", \"quote\": \"go-live December 8\", \"lines\": [6, 6], \"confidence\": 0.9},\n{\"subject\": \"e-caa1cfd0c1\", \"predicate\": \"status\", \"value\": \"open\", \"modality\": \"statement\", \"said_by\": null, \"due\": null, \"quote\": \"Open: SSO user mapping.\", \"lines\": [7, 7], \"confidence\": 0.85}\n],\n\"relations\": []}\n"
+ ],
+ "in_tokens": 0,
+ "out_tokens": 0
+}

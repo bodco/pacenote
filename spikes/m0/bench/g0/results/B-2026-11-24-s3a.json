@@ -1,8 +1,8 @@
 {
  "schema": "pacenote.bench.g0/2",
- "variant": "C",
+ "variant": "B",
  "date": "2026-11-24",
- "commit": "e72240e",
+ "commit": "feecded",
  "fixture_sha": "26d3ec6b228f19a9",
  "gold_sha": "180234bba3fef52c",
  "route": "codex",
@@ -69,8 +69,8 @@
     "error": null
    },
    "live": {
-    "answer_rate": 100.0,
-    "answered": 4,
+    "answer_rate": 75.0,
+    "answered": 3,
     "total": 4,
     "questions": [
      {
@@ -80,7 +80,7 @@
       "top": [
        "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.notes.md",
        "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.notes.md",
-       "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.notes.md"
+       "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.md"
       ],
       "leaks": []
      },
@@ -90,8 +90,8 @@
       "answer_in_top": false,
       "top": [
        "docs/acme/item-13-sso-user-mapping.md",
-       "live/2026-11-12-acme-technical-sync/2026-11-12-1400-acme-technical-sync.notes.md",
-       "docs/acme/item-13-sso-user-mapping.md"
+       "docs/acme/item-13-sso-user-mapping.md",
+       "live/commitments.jsonl"
       ],
       "leaks": []
      },
@@ -100,19 +100,19 @@
       "ok": true,
       "answer_in_top": true,
       "top": [
-       "live/2026-10-27-acme-weekly-status/2026-10-27-1000-acme-weekly-status.notes.md",
        "_notion/Northpoint Current State.md",
+       "live/2026-10-27-acme-weekly-status/2026-10-27-1000-acme-weekly-status.notes.md",
        "live/2026-10-27-acme-weekly-status/2026-10-27-1000-acme-weekly-status.notes.md"
       ],
       "leaks": []
      },
      {
       "q": "Чого ми чекаємо від служби безпеки Acme?",
-      "ok": true,
+      "ok": false,
       "answer_in_top": false,
       "top": [
-       "live/2026-11-12-acme-technical-sync/2026-11-12-1400-acme-technical-sync.notes.md",
-       "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.notes.md",
+       "docs/acme/item-13-sso-user-mapping.md",
+       "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.notes.md",
        "live/2026-10-27-acme-weekly-status/2026-10-27-1000-acme-weekly-status.notes.md"
       ],
       "leaks": []
@@ -121,10 +121,10 @@
     "answer_text_rate": 50.0,
     "answer_text": 2,
     "leaks": 0,
-    "p50_ms": 4.5,
-    "p95_ms": 5.9,
-    "index_build_ms": 72.8,
-    "cold_ms": 9.0
+    "p50_ms": 2.67,
+    "p95_ms": 2.82,
+    "index_build_ms": 50.3,
+    "cold_ms": 7.3
    },
    "after": {
     "duplicates": 3,
@@ -232,8 +232,8 @@
       "answer_in_top": true,
       "top": [
        "docs/globex/item-13-invoice-export-2026-11-13.md",
-       "live/2026-11-04-globex-weekly/2026-11-04-1100-globex-weekly.notes.md",
-       "docs/globex/item-13-invoice-export-2026-11-13.md"
+       "docs/globex/item-13-invoice-export-2026-11-13.md",
+       "live/commitments.jsonl"
       ],
       "leaks": []
      },
@@ -261,10 +261,10 @@
     "answer_text_rate": 100.0,
     "answer_text": 3,
     "leaks": 0,
-    "p50_ms": 2.46,
-    "p95_ms": 3.22,
-    "index_build_ms": 52.8,
-    "cold_ms": 6.8
+    "p50_ms": 2.03,
+    "p95_ms": 2.32,
+    "index_build_ms": 35.8,
+    "cold_ms": 5.9
    },
    "after": {
     "duplicates": 2,
@@ -364,7 +364,7 @@
       "answer_in_top": true,
       "top": [
        "live/2026-11-12-acme-technical-sync/2026-11-12-1400-acme-technical-sync.md",
-       "live/2026-11-12-acme-technical-sync/2026-11-12-1400-acme-technical-sync.notes.md",
+       "docs/acme/item-13-sso-user-mapping.md",
        "docs/acme/item-13-sso-user-mapping.md"
       ],
       "leaks": []
@@ -384,8 +384,8 @@
       "answer_in_top": true,
       "top": [
        "live/2026-11-12-acme-technical-sync/2026-11-12-1400-acme-technical-sync.notes.md",
-       "live/2026-11-12-acme-technical-sync/2026-11-12-1400-acme-technical-sync.notes.md",
-       "pacenote/decisions.md"
+       "pacenote/decisions.md",
+       "live/2026-11-12-acme-technical-sync/2026-11-12-1400-acme-technical-sync.notes.md"
       ],
       "leaks": []
      }
@@ -393,10 +393,10 @@
     "answer_text_rate": 100.0,
     "answer_text": 3,
     "leaks": 0,
-    "p50_ms": 2.77,
-    "p95_ms": 3.43,
-    "index_build_ms": 46.9,
-    "cold_ms": 7.5
+    "p50_ms": 2.16,
+    "p95_ms": 2.34,
+    "index_build_ms": 36.5,
+    "cold_ms": 6.4
    },
    "after": {
     "duplicates": 0,
@@ -437,49 +437,50 @@
   "gold_sha256": "7167c20c603811f61ffe47d8fa400d0cdeea2c4f9ac8a519b5533c113b265792",
   "fixture_v2_sha": "03f1b14dbea88b77",
   "ready": [
-   "S2"
+   "S2",
+   "S3"
   ],
   "sets": {
    "small": {
     "no_vectors": {
-     "rows_evaluated": 23,
-     "rows_not_evaluated": 16,
-     "rows_passed": 23,
+     "rows_evaluated": 39,
+     "rows_not_evaluated": 0,
+     "rows_passed": 22,
      "expected_mismatch": [],
      "hop_answer_rate": {
-      "rate": null,
+      "rate": 0.0,
       "n": 0,
-      "of": 0
+      "of": 6
      },
      "paraphrase_answer_rate": {
-      "rate": null,
+      "rate": 0.0,
       "n": 0,
-      "of": 0
+      "of": 3
      },
      "paraphrase_uk": {
-      "rate": null,
+      "rate": 0.0,
       "n": 0,
-      "of": 0
+      "of": 1
      },
-     "timeline_recall": null,
-     "timeline_order": null,
+     "timeline_recall": 25.0,
+     "timeline_order": false,
      "evidence_recall": {
       "rate": 100.0,
       "n": 4,
       "of": 4
      },
      "quote_validity": 100.0,
-     "quotes_checked": 103,
-     "modality_accuracy": null,
-     "derived_confirmed": null,
+     "quotes_checked": 177,
+     "modality_accuracy": 0.0,
+     "derived_confirmed": 0,
      "future_leaks": 0,
      "stale_returned": 0,
      "excluded_leaks": 0,
      "client_leaks": 0,
      "shared_facts_kept": {
       "rate": 100.0,
-      "n": 2,
-      "of": 2
+      "n": 3,
+      "of": 3
      },
      "live_client_leaks": 0,
      "live_excluded_leaks": 0,
@@ -488,81 +489,447 @@
        "id": "h1-pilot-blocker",
        "kind": "hop",
        "needs": "S3",
-       "status": "not_evaluated",
-       "missing": "S3 (LLM extraction)",
-       "expected": "pass"
+       "status": "fail",
+       "expected": "fail",
+       "facts": [
+        {
+         "any": [
+          "depends on single sign-on"
+         ],
+         "found": true,
+         "said_at": "2026-11-06T10:00:00Z"
+        },
+        {
+         "any": [
+          "item 13 blocks the sso integration"
+         ],
+         "found": false,
+         "said_at": null
+        },
+        {
+         "any": [
+          "waiting for client confirmation"
+         ],
+         "found": false,
+         "said_at": null
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "docs/acme/pilot-launch-plan.md",
+        "docs/acme/onboarding-pilot.md",
+        "live/commitments.jsonl",
+        "live/commitments.jsonl",
+        "_notion/Northpoint Current State.md",
+        "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.notes.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
       },
       {
        "id": "h2-archive-purge",
        "kind": "hop",
        "needs": "S3",
-       "status": "not_evaluated",
-       "missing": "S3 (LLM extraction)",
-       "expected": "pass"
+       "status": "fail",
+       "expected": "fail",
+       "facts": [
+        {
+         "any": [
+          "waits for the retention policy"
+         ],
+         "found": true,
+         "said_at": "2026-11-06T10:00:00Z"
+        },
+        {
+         "any": [
+          "rachel signs the retention policy"
+         ],
+         "found": false,
+         "said_at": null
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "docs/acme/data-retention.md",
+        "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.md",
+        "live/2026-11-03-acme-weekly-status/2026-11-03-1000-acme-weekly-status.notes.md",
+        "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.notes.md",
+        "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.md",
+        "live/2026-11-12-acme-technical-sync/2026-11-12-1400-acme-technical-sync.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
       },
       {
        "id": "h3-reporting-module",
        "kind": "hop",
        "needs": "S3",
-       "status": "not_evaluated",
-       "missing": "S3 (LLM extraction)",
-       "expected": "pass"
+       "status": "fail",
+       "expected": "fail",
+       "facts": [
+        {
+         "any": [
+          "needs the warehouse connector"
+         ],
+         "found": true,
+         "said_at": "2026-11-06T10:00:00Z"
+        },
+        {
+         "any": [
+          "due on december 1"
+         ],
+         "found": false,
+         "said_at": null
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "docs/acme/reporting-module.md",
+        "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.notes.md",
+        "docs/acme/acme-release-plan-2026-11-14.md",
+        "docs/acme/phase-two-plan.md",
+        "live/2026-10-27-acme-weekly-status/2026-10-27-1000-acme-weekly-status.md",
+        "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
       },
       {
        "id": "h4-mobile-rollout",
        "kind": "hop",
        "needs": "S3",
-       "status": "not_evaluated",
-       "missing": "S3 (LLM extraction)",
-       "expected": "pass"
+       "status": "fail",
+       "expected": "fail",
+       "facts": [
+        {
+         "any": [
+          "belongs to the field team track"
+         ],
+         "found": true,
+         "said_at": "2026-11-06T10:00:00Z"
+        },
+        {
+         "any": [
+          "brandon leads the field team track"
+         ],
+         "found": false,
+         "said_at": null
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "docs/acme/mobile-rollout.md",
+        "live/commitments.jsonl",
+        "live/commitments.jsonl",
+        "live/2026-11-03-acme-weekly-status/2026-11-03-1000-acme-weekly-status.notes.md",
+        "live/2026-11-03-acme-weekly-status/2026-11-03-1000-acme-weekly-status.notes.md",
+        "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.notes.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
       },
       {
        "id": "h5-finance-dashboard",
        "kind": "hop",
        "needs": "S3",
-       "status": "not_evaluated",
-       "missing": "S3 (LLM extraction)",
-       "expected": "pass"
+       "status": "fail",
+       "expected": "fail",
+       "facts": [
+        {
+         "any": [
+          "reads from the ledger feed"
+         ],
+         "found": true,
+         "said_at": "2026-11-05T10:00:00Z"
+        },
+        {
+         "any": [
+          "paused until the data agreement is signed"
+         ],
+         "found": false,
+         "said_at": null
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "docs/globex/dashboard-plan.md",
+        "docs/globex/globex-sow-summary.md",
+        "_notion/Northpoint Current State.md",
+        "live/2026-11-06-globex-finance-review/2026-11-06-1500-globex-finance-review.notes.md",
+        "live/2026-11-06-globex-finance-review/2026-11-06-1500-globex-finance-review.notes.md",
+        "docs/globex/item-13-invoice-export-2026-11-13.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
       },
       {
        "id": "h6-budget-change",
        "kind": "hop",
        "needs": "S3",
-       "status": "not_evaluated",
-       "missing": "S3 (LLM extraction)",
-       "expected": "pass"
+       "status": "fail",
+       "expected": "fail",
+       "facts": [
+        {
+         "any": [
+          "goes to the steering group"
+         ],
+         "found": true,
+         "said_at": "2026-11-05T10:00:00Z"
+        },
+        {
+         "any": [
+          "brian chairs the steering group"
+         ],
+         "found": false,
+         "said_at": null
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "docs/globex/change-control.md",
+        "docs/globex/change-request-draft.md",
+        "_notion/Northpoint Current State.md",
+        "docs/globex/change-request-draft.md",
+        "live/2026-11-11-globex-weekly/2026-11-11-1100-globex-weekly.notes.md",
+        "docs/globex/globex-sow-summary.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
       },
       {
        "id": "p1-login-problem",
        "kind": "paraphrase",
        "needs": "S3",
-       "status": "not_evaluated",
-       "missing": "S3 (LLM extraction)",
-       "expected": "pass"
+       "status": "fail",
+       "expected": "fail",
+       "facts": [
+        {
+         "any": [
+          "blocks the sso integration",
+          "waiting for client confirmation",
+          "sso user mapping"
+         ],
+         "found": false,
+         "said_at": null
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 0,
+       "quotes": 0,
+       "top": [],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
       },
       {
        "id": "p2-field-team-uk",
        "kind": "paraphrase_uk",
        "needs": "S3",
-       "status": "not_evaluated",
-       "missing": "S3 (LLM extraction)",
-       "expected": "pass"
+       "status": "fail",
+       "expected": "fail",
+       "facts": [
+        {
+         "any": [
+          "brandon leads the field team track"
+         ],
+         "found": false,
+         "said_at": null
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 0,
+       "quotes": 0,
+       "top": [],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
       },
       {
        "id": "p3-hours-burned",
        "kind": "paraphrase",
        "needs": "S3",
-       "status": "not_evaluated",
-       "missing": "S3 (LLM extraction)",
-       "expected": "pass"
+       "status": "fail",
+       "expected": "fail",
+       "facts": [
+        {
+         "any": [
+          "81 of 120 hours used"
+         ],
+         "found": false,
+         "said_at": null
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 3,
+       "quotes": 3,
+       "top": [
+        "live/2026-11-11-globex-weekly/2026-11-11-1100-globex-weekly.md",
+        "docs/globex/change-request-draft.md",
+        "docs/globex/item-13-invoice-export-2026-11-13.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
       },
       {
        "id": "g1-sso-timeline",
        "kind": "global",
        "needs": "S4",
-       "status": "not_evaluated",
-       "missing": "S4 (topic summaries)",
-       "expected": "pass"
+       "status": "fail",
+       "expected": "fail",
+       "facts": [
+        {
+         "any": [
+          "maps the acme directory groups"
+         ],
+         "found": false,
+         "said_at": null
+        },
+        {
+         "any": [
+          "okta"
+         ],
+         "found": false,
+         "said_at": null
+        },
+        {
+         "any": [
+          "waiting for client confirmation"
+         ],
+         "found": false,
+         "said_at": null
+        },
+        {
+         "any": [
+          "saml, not oidc",
+          "saml not oidc"
+         ],
+         "found": true,
+         "said_at": "2026-11-12T10:00:00Z"
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": false,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "docs/acme/item-13-sso-user-mapping.md",
+        "live/commitments.jsonl",
+        "docs/acme/item-13-sso-user-mapping.md",
+        "_notion/Northpoint Current State.md",
+        "live/2026-11-12-acme-technical-sync/2026-11-12-1400-acme-technical-sync.notes.md",
+        "pacenote/decisions.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
       },
       {
        "id": "t1-golive-nov17",
@@ -594,9 +961,10 @@
         "docs/acme/phase-two-budget.md",
         "docs/acme/phase-two-plan.md",
         "docs/acme/acme-release-plan-2026-11-14.md",
-        "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.notes.md",
-        "_notion/Northpoint Current State.md"
+        "_notion/Northpoint Current State.md",
+        "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.notes.md"
        ],
+       "derived_confirmed": [],
        "live_leaks": {
         "client": [],
         "excluded": []
@@ -632,9 +1000,10 @@
         "docs/acme/phase-two-budget.md",
         "docs/acme/phase-two-plan.md",
         "docs/acme/acme-release-plan-2026-11-14.md",
-        "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.notes.md",
-        "_notion/Northpoint Current State.md"
+        "_notion/Northpoint Current State.md",
+        "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.notes.md"
        ],
+       "derived_confirmed": [],
        "live_leaks": {
         "client": [],
         "excluded": []
@@ -644,16 +1013,47 @@
        "id": "t1-golive-history",
        "kind": "replay",
        "needs": "S3",
-       "status": "not_evaluated",
-       "missing": "S3 (LLM extraction)",
-       "expected": "pass"
+       "status": "fail",
+       "expected": "fail",
+       "facts": [
+        {
+         "any": [
+          "february 2"
+         ],
+         "found": true,
+         "said_at": "2026-11-19T12:00:00Z"
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "docs/acme/phase-two-plan.md",
+        "docs/acme/phase-two-budget.md",
+        "docs/acme/phase-two-plan.md",
+        "docs/acme/acme-release-plan-2026-11-14.md",
+        "_notion/Northpoint Current State.md",
+        "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.notes.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
       },
       {
        "id": "t2-task-open-nov17",
        "kind": "state",
        "needs": "S2",
-       "status": "pass",
-       "expected": "pass",
+       "status": "fail",
+       "expected": "fail",
        "facts": [
         {
          "any": [
@@ -669,7 +1069,7 @@
         "excluded": [],
         "client": []
        },
-       "state_ok": true,
+       "state_ok": false,
        "order_ok": null,
        "quotes_valid": 6,
        "quotes": 6,
@@ -681,6 +1081,7 @@
         "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.notes.md",
         "live/2026-11-03-acme-weekly-status/2026-11-03-1000-acme-weekly-status.notes.md"
        ],
+       "derived_confirmed": [],
        "live_leaks": {
         "client": [],
         "excluded": []
@@ -690,8 +1091,8 @@
        "id": "t2-task-done-now",
        "kind": "state",
        "needs": "S2",
-       "status": "pass",
-       "expected": "pass",
+       "status": "fail",
+       "expected": "fail",
        "facts": [
         {
          "any": [
@@ -707,7 +1108,7 @@
         "excluded": [],
         "client": []
        },
-       "state_ok": true,
+       "state_ok": false,
        "order_ok": null,
        "quotes_valid": 6,
        "quotes": 6,
@@ -719,6 +1120,7 @@
         "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.notes.md",
         "live/2026-11-03-acme-weekly-status/2026-11-03-1000-acme-weekly-status.notes.md"
        ],
+       "derived_confirmed": [],
        "live_leaks": {
         "client": [],
         "excluded": []
@@ -728,8 +1130,8 @@
        "id": "t3-decision-nov17",
        "kind": "state",
        "needs": "S2",
-       "status": "pass",
-       "expected": "pass",
+       "status": "fail",
+       "expected": "fail",
        "facts": [
         {
          "any": [
@@ -745,14 +1147,14 @@
         "excluded": [],
         "client": []
        },
-       "state_ok": true,
+       "state_ok": false,
        "order_ok": null,
-       "quotes_valid": 2,
-       "quotes": 2,
+       "quotes_valid": 1,
+       "quotes": 1,
        "top": [
-        "live/2026-11-14-acme-architecture-review/2026-11-14-1000-acme-architecture-review.notes.md",
         "live/2026-11-14-acme-architecture-review/2026-11-14-1000-acme-architecture-review.notes.md"
        ],
+       "derived_confirmed": [],
        "live_leaks": {
         "client": [],
         "excluded": []
@@ -762,8 +1164,8 @@
        "id": "t3-decision-now",
        "kind": "state",
        "needs": "S2",
-       "status": "pass",
-       "expected": "pass",
+       "status": "fail",
+       "expected": "fail",
        "facts": [
         {
          "any": [
@@ -779,15 +1181,15 @@
         "excluded": [],
         "client": []
        },
-       "state_ok": true,
+       "state_ok": false,
        "order_ok": null,
-       "quotes_valid": 3,
-       "quotes": 3,
+       "quotes_valid": 2,
+       "quotes": 2,
        "top": [
-        "live/2026-11-19-acme-architecture-review/2026-11-19-1000-acme-architecture-review.notes.md",
         "live/2026-11-14-acme-architecture-review/2026-11-14-1000-acme-architecture-review.notes.md",
         "live/2026-11-19-acme-architecture-review/2026-11-19-1000-acme-architecture-review.notes.md"
        ],
+       "derived_confirmed": [],
        "live_leaks": {
         "client": [],
         "excluded": []
@@ -823,6 +1225,7 @@
         "docs/acme/phase-two-plan.md",
         "docs/acme/phase-two-plan.md"
        ],
+       "derived_confirmed": [],
        "live_leaks": {
         "client": [],
         "excluded": []
@@ -858,6 +1261,7 @@
         "docs/acme/phase-two-plan.md",
         "docs/acme/phase-two-plan.md"
        ],
+       "derived_confirmed": [],
        "live_leaks": {
         "client": [],
         "excluded": []
@@ -893,6 +1297,7 @@
         "docs/acme/phase-two-plan.md",
         "docs/acme/phase-two-plan.md"
        ],
+       "derived_confirmed": [],
        "live_leaks": {
         "client": [],
         "excluded": []
@@ -925,12 +1330,13 @@
        "quotes": 6,
        "top": [
         "live/2026-11-12-acme-staffing-review/2026-11-12-1500-acme-staffing-review.notes.md",
-        "live/2026-10-27-acme-weekly-status/2026-10-27-1000-acme-weekly-status.notes.md",
-        "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.notes.md",
-        "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.notes.md",
         "live/commitments.jsonl",
-        "docs/acme/item-13-sso-user-mapping.md"
+        "docs/acme/item-13-sso-user-mapping.md",
+        "docs/acme/mobile-rollout.md",
+        "live/2026-11-07-acme-weekly-status/2026-11-07-1000-acme-weekly-status.notes.md",
+        "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.notes.md"
        ],
+       "derived_confirmed": [],
        "live_leaks": {
         "client": [],
         "excluded": []
@@ -954,13 +1360,14 @@
        "quotes_valid": 6,
        "quotes": 6,
        "top": [
-        "live/2026-10-27-acme-weekly-status/2026-10-27-1000-acme-weekly-status.notes.md",
-        "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.notes.md",
-        "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.notes.md",
         "live/commitments.jsonl",
         "docs/acme/item-13-sso-user-mapping.md",
-        "docs/acme/mobile-rollout.md"
+        "docs/acme/mobile-rollout.md",
+        "live/2026-11-07-acme-weekly-status/2026-11-07-1000-acme-weekly-status.notes.md",
+        "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.notes.md",
+        "live/2026-10-27-acme-weekly-status/2026-10-27-1000-acme-weekly-status.notes.md"
        ],
+       "derived_confirmed": [],
        "live_leaks": {
         "client": [],
         "excluded": []
@@ -993,12 +1400,13 @@
        "quotes": 6,
        "top": [
         "live/2026-11-12-acme-staffing-review/2026-11-12-1500-acme-staffing-review.notes.md",
-        "live/2026-10-27-acme-weekly-status/2026-10-27-1000-acme-weekly-status.notes.md",
-        "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.notes.md",
-        "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.notes.md",
         "live/commitments.jsonl",
-        "docs/acme/item-13-sso-user-mapping.md"
+        "docs/acme/item-13-sso-user-mapping.md",
+        "docs/acme/mobile-rollout.md",
+        "live/2026-11-07-acme-weekly-status/2026-11-07-1000-acme-weekly-status.notes.md",
+        "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.notes.md"
        ],
+       "derived_confirmed": [],
        "live_leaks": {
         "client": [],
         "excluded": []
@@ -1032,11 +1440,12 @@
        "top": [
         "docs/acme/onboarding-pilot.md",
         "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.notes.md",
-        "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.notes.md",
-        "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.notes.md",
         "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.md",
-        "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.md"
+        "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.md",
+        "docs/acme/pilot-launch-plan.md",
+        "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.notes.md"
        ],
+       "derived_confirmed": [],
        "live_leaks": {
         "client": [],
         "excluded": []
@@ -1070,11 +1479,12 @@
        "top": [
         "docs/acme/onboarding-pilot.md",
         "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.notes.md",
-        "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.notes.md",
-        "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.notes.md",
         "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.md",
-        "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.md"
+        "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.md",
+        "docs/acme/pilot-launch-plan.md",
+        "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.notes.md"
        ],
+       "derived_confirmed": [],
        "live_leaks": {
         "client": [],
         "excluded": []
@@ -1084,25 +1494,110 @@
        "id": "t7-summary-before",
        "kind": "replay",
        "needs": "S4",
-       "status": "not_evaluated",
-       "missing": "S4 (topic summaries)",
-       "expected": "pass"
+       "status": "pass",
+       "expected": "pass",
+       "facts": [],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "docs/acme/item-13-sso-user-mapping.md",
+        "live/commitments.jsonl",
+        "docs/acme/item-13-sso-user-mapping.md",
+        "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.notes.md",
+        "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.notes.md",
+        "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
       },
       {
        "id": "m1-proposed-hours",
        "kind": "modality",
        "needs": "S3",
-       "status": "not_evaluated",
-       "missing": "S3 (LLM extraction)",
-       "expected": "pass"
+       "status": "fail",
+       "expected": "fail",
+       "facts": [
+        {
+         "any": [
+          "proposed 39 extra hours"
+         ],
+         "found": true,
+         "said_at": "2026-11-12T10:00:00Z"
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "docs/globex/change-request-draft.md",
+        "live/2026-11-11-globex-weekly/2026-11-11-1100-globex-weekly.md",
+        "live/2026-11-11-globex-weekly/2026-11-11-1100-globex-weekly.notes.md",
+        "_notion/Northpoint Current State.md",
+        "live/2026-11-09-globex-data-review/2026-11-09-1100-globex-data-review.notes.md",
+        "docs/globex/globex-sow-summary.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
       },
       {
        "id": "m2-derived-only",
        "kind": "modality",
        "needs": "S3",
-       "status": "not_evaluated",
-       "missing": "S3 (LLM extraction)",
-       "expected": "pass"
+       "status": "fail",
+       "expected": "fail",
+       "facts": [
+        {
+         "any": [
+          "march invoice run"
+         ],
+         "found": true,
+         "said_at": "2026-11-06T10:00:00Z"
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "live/2026-11-06-globex-finance-review/2026-11-06-1500-globex-finance-review.notes.md",
+        "docs/globex/item-13-invoice-export-2026-11-13.md",
+        "docs/globex/item-13-invoice-export-2026-11-13.md",
+        "_notion/Northpoint Current State.md",
+        "pacenote/decisions.md",
+        "docs/globex/dashboard-plan.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
       },
       {
        "id": "x1-pm-excluded",
@@ -1122,6 +1617,7 @@
        "quotes_valid": 0,
        "quotes": 0,
        "top": [],
+       "derived_confirmed": [],
        "live_leaks": {
         "client": [],
         "excluded": []
@@ -1145,6 +1641,7 @@
        "quotes_valid": 0,
        "quotes": 0,
        "top": [],
+       "derived_confirmed": [],
        "live_leaks": {
         "client": [],
         "excluded": []
@@ -1175,6 +1672,7 @@
         "live/2026-10-27-acme-weekly-status/2026-10-27-1000-acme-weekly-status.notes.md",
         "live/2026-11-06-acme-technical-sync/2026-11-06-1400-acme-technical-sync.notes.md"
        ],
+       "derived_confirmed": [],
        "live_leaks": {
         "client": [],
         "excluded": []
@@ -1198,13 +1696,14 @@
        "quotes_valid": 6,
        "quotes": 6,
        "top": [
-        "live/2026-11-12-acme-technical-sync/2026-11-12-1400-acme-technical-sync.notes.md",
         "docs/acme/item-13-sso-user-mapping.md",
-        "live/2026-10-27-acme-weekly-status/2026-10-27-1000-acme-weekly-status.notes.md",
         "_notion/Northpoint Current State.md",
-        "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.notes.md",
-        "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.notes.md"
+        "live/commitments.jsonl",
+        "live/commitments.jsonl",
+        "docs/acme/item-13-sso-user-mapping.md",
+        "live/2026-11-12-acme-technical-sync/2026-11-12-1400-acme-technical-sync.notes.md"
        ],
+       "derived_confirmed": [],
        "live_leaks": {
         "client": [],
         "excluded": []
@@ -1214,9 +1713,32 @@
        "id": "x5-hidden-topic",
        "kind": "exclusion",
        "needs": "S4",
-       "status": "not_evaluated",
-       "missing": "S4 (topic summaries)",
-       "expected": "pass"
+       "status": "pass",
+       "expected": "pass",
+       "facts": [],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "live/2026-11-14-acme-architecture-review/2026-11-14-1000-acme-architecture-review.notes.md",
+        "live/2026-11-19-acme-architecture-review/2026-11-19-1000-acme-architecture-review.notes.md",
+        "live/2026-11-12-acme-staffing-review/2026-11-12-1500-acme-staffing-review.notes.md",
+        "live/2026-11-14-acme-architecture-review/2026-11-14-1000-acme-architecture-review.notes.md",
+        "live/2026-11-19-acme-architecture-review/2026-11-19-1000-acme-architecture-review.notes.md",
+        "live/2026-11-12-acme-staffing-review/2026-11-12-1500-acme-staffing-review.notes.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
       },
       {
        "id": "x6-deleted-shared-register",
@@ -1249,8 +1771,9 @@
         "live/commitments.jsonl",
         "live/2026-10-27-acme-weekly-status/2026-10-27-1000-acme-weekly-status.notes.md",
         "live/2026-11-12-acme-technical-sync/2026-11-12-1400-acme-technical-sync.notes.md",
-        "live/2026-11-12-acme-technical-sync/2026-11-12-1400-acme-technical-sync.notes.md"
+        "live/2026-11-03-acme-weekly-status/2026-11-03-1000-acme-weekly-status.notes.md"
        ],
+       "derived_confirmed": [],
        "live_leaks": {
         "client": [],
         "excluded": []
@@ -1260,9 +1783,35 @@
        "id": "x7-deleted-shared-file",
        "kind": "shared",
        "needs": "S3",
-       "status": "not_evaluated",
-       "missing": "S3 (LLM extraction)",
-       "expected": "pass"
+       "status": "pass",
+       "expected": "pass",
+       "facts": [
+        {
+         "any": [
+          "rachel moore"
+         ],
+         "found": true,
+         "said_at": "2026-11-02T10:00:00Z"
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 1,
+       "quotes": 1,
+       "top": [
+        "docs/acme/escalation-contacts.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
       },
       {
        "id": "x8-moved-call",
@@ -1295,6 +1844,7 @@
         "live/2026-11-07-acme-ops-sync/2026-11-07-1100-acme-ops-sync.md",
         "notion:33333333333333333333333333333333"
        ],
+       "derived_confirmed": [],
        "live_leaks": {
         "client": [],
         "excluded": []
@@ -1328,6 +1878,7 @@
        "top": [
         "docs/initech/initech-kickoff.md"
        ],
+       "derived_confirmed": [],
        "live_leaks": {
         "client": [],
         "excluded": []
@@ -1364,8 +1915,9 @@
         "live/2026-11-04-globex-weekly/2026-11-04-1100-globex-weekly.md",
         "live/2026-11-04-globex-weekly/2026-11-04-1100-globex-weekly.notes.md",
         "docs/globex/item-13-invoice-export-2026-11-13.md",
-        "live/2026-11-04-globex-weekly/2026-11-04-1100-globex-weekly.notes.md"
+        "live/commitments.jsonl"
        ],
+       "derived_confirmed": [],
        "live_leaks": {
         "client": [],
         "excluded": []
@@ -1404,6 +1956,7 @@
         "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.notes.md",
         "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.md"
        ],
+       "derived_confirmed": [],
        "live_leaks": {
         "client": [],
         "excluded": []
@@ -1412,20 +1965,12 @@
      ],
      "latency": {
       "engine": "evidence store",
-      "live_p50_ms": 2.89,
-      "live_p95_ms": 4.81,
-      "prep_p50_ms": 2.92,
-      "prep_p95_ms": 4.58
+      "live_p50_ms": 2.38,
+      "live_p95_ms": 3.36,
+      "prep_p50_ms": 2.33,
+      "prep_p95_ms": 3.13
      },
-     "fixture": {
-      "recorded": false,
-      "hits": 0,
-      "misses": 64,
-      "tokens": 0,
-      "extractors": [],
-      "state": "not_recorded",
-      "generated_docs": 0
-     },
+     "fixture": null,
      "index_cost": {
       "segments": 56,
       "documents": 49,
@@ -1446,44 +1991,44 @@
    },
    "scale": {
     "no_vectors": {
-     "rows_evaluated": 23,
-     "rows_not_evaluated": 16,
-     "rows_passed": 23,
+     "rows_evaluated": 39,
+     "rows_not_evaluated": 0,
+     "rows_passed": 22,
      "expected_mismatch": [],
      "hop_answer_rate": {
-      "rate": null,
+      "rate": 0.0,
       "n": 0,
-      "of": 0
+      "of": 6
      },
      "paraphrase_answer_rate": {
-      "rate": null,
+      "rate": 0.0,
       "n": 0,
-      "of": 0
+      "of": 3
      },
      "paraphrase_uk": {
-      "rate": null,
+      "rate": 0.0,
       "n": 0,
-      "of": 0
+      "of": 1
      },
-     "timeline_recall": null,
-     "timeline_order": null,
+     "timeline_recall": 25.0,
+     "timeline_order": false,
      "evidence_recall": {
       "rate": 100.0,
       "n": 4,
       "of": 4
      },
      "quote_validity": 100.0,
-     "quotes_checked": 141,
-     "modality_accuracy": null,
-     "derived_confirmed": null,
+     "quotes_checked": 191,
+     "modality_accuracy": 0.0,
+     "derived_confirmed": 0,
      "future_leaks": 0,
      "stale_returned": 0,
      "excluded_leaks": 0,
      "client_leaks": 0,
      "shared_facts_kept": {
       "rate": 100.0,
-      "n": 2,
-      "of": 2
+      "n": 3,
+      "of": 3
      },
      "live_client_leaks": 0,
      "live_excluded_leaks": 0,
@@ -1496,81 +2041,447 @@
        "id": "h1-pilot-blocker",
        "kind": "hop",
        "needs": "S3",
-       "status": "not_evaluated",
-       "missing": "S3 (LLM extraction)",
-       "expected": "pass"
+       "status": "fail",
+       "expected": "fail",
+       "facts": [
+        {
+         "any": [
+          "depends on single sign-on"
+         ],
+         "found": true,
+         "said_at": "2026-11-06T10:00:00Z"
+        },
+        {
+         "any": [
+          "item 13 blocks the sso integration"
+         ],
+         "found": false,
+         "said_at": null
+        },
+        {
+         "any": [
+          "waiting for client confirmation"
+         ],
+         "found": false,
+         "said_at": null
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "docs/acme/pilot-launch-plan.md",
+        "docs/acme/onboarding-pilot.md",
+        "docs/acme/scale/acme-scale-01.md",
+        "docs/acme/scale/acme-scale-14.md",
+        "docs/scale/shared-scale-02.md",
+        "docs/scale/shared-scale-03.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
       },
       {
        "id": "h2-archive-purge",
        "kind": "hop",
        "needs": "S3",
-       "status": "not_evaluated",
-       "missing": "S3 (LLM extraction)",
-       "expected": "pass"
+       "status": "fail",
+       "expected": "fail",
+       "facts": [
+        {
+         "any": [
+          "waits for the retention policy"
+         ],
+         "found": true,
+         "said_at": "2026-11-06T10:00:00Z"
+        },
+        {
+         "any": [
+          "rachel signs the retention policy"
+         ],
+         "found": false,
+         "said_at": null
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "docs/acme/data-retention.md",
+        "live/2026-11-03-acme-weekly-status/2026-11-03-1000-acme-weekly-status.notes.md",
+        "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.md",
+        "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.md",
+        "live/2026-11-12-acme-technical-sync/2026-11-12-1400-acme-technical-sync.md",
+        "live/2026-11-05-acme-technical-sync/2026-11-05-1400-acme-technical-sync.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
       },
       {
        "id": "h3-reporting-module",
        "kind": "hop",
        "needs": "S3",
-       "status": "not_evaluated",
-       "missing": "S3 (LLM extraction)",
-       "expected": "pass"
+       "status": "fail",
+       "expected": "fail",
+       "facts": [
+        {
+         "any": [
+          "needs the warehouse connector"
+         ],
+         "found": true,
+         "said_at": "2026-11-06T10:00:00Z"
+        },
+        {
+         "any": [
+          "due on december 1"
+         ],
+         "found": false,
+         "said_at": null
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "docs/acme/reporting-module.md",
+        "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.md",
+        "live/2026-10-27-acme-weekly-status/2026-10-27-1000-acme-weekly-status.md",
+        "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.notes.md",
+        "docs/acme/acme-release-plan-2026-11-14.md",
+        "docs/acme/phase-two-plan.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
       },
       {
        "id": "h4-mobile-rollout",
        "kind": "hop",
        "needs": "S3",
-       "status": "not_evaluated",
-       "missing": "S3 (LLM extraction)",
-       "expected": "pass"
+       "status": "fail",
+       "expected": "fail",
+       "facts": [
+        {
+         "any": [
+          "belongs to the field team track"
+         ],
+         "found": true,
+         "said_at": "2026-11-06T10:00:00Z"
+        },
+        {
+         "any": [
+          "brandon leads the field team track"
+         ],
+         "found": false,
+         "said_at": null
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "docs/acme/mobile-rollout.md",
+        "live/commitments.jsonl",
+        "live/commitments.jsonl",
+        "live/2026-11-03-acme-weekly-status/2026-11-03-1000-acme-weekly-status.notes.md",
+        "live/2026-11-03-acme-weekly-status/2026-11-03-1000-acme-weekly-status.notes.md",
+        "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.notes.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
       },
       {
        "id": "h5-finance-dashboard",
        "kind": "hop",
        "needs": "S3",
-       "status": "not_evaluated",
-       "missing": "S3 (LLM extraction)",
-       "expected": "pass"
+       "status": "fail",
+       "expected": "fail",
+       "facts": [
+        {
+         "any": [
+          "reads from the ledger feed"
+         ],
+         "found": true,
+         "said_at": "2026-11-05T10:00:00Z"
+        },
+        {
+         "any": [
+          "paused until the data agreement is signed"
+         ],
+         "found": false,
+         "said_at": null
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "docs/globex/dashboard-plan.md",
+        "docs/globex/globex-sow-summary.md",
+        "live/2026-11-06-globex-finance-review/2026-11-06-1500-globex-finance-review.notes.md",
+        "live/2026-11-06-globex-finance-review/2026-11-06-1500-globex-finance-review.notes.md",
+        "docs/globex/item-13-invoice-export-2026-11-13.md",
+        "live/2026-11-04-globex-weekly/2026-11-04-1100-globex-weekly.notes.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
       },
       {
        "id": "h6-budget-change",
        "kind": "hop",
        "needs": "S3",
-       "status": "not_evaluated",
-       "missing": "S3 (LLM extraction)",
-       "expected": "pass"
+       "status": "fail",
+       "expected": "fail",
+       "facts": [
+        {
+         "any": [
+          "goes to the steering group"
+         ],
+         "found": true,
+         "said_at": "2026-11-05T10:00:00Z"
+        },
+        {
+         "any": [
+          "brian chairs the steering group"
+         ],
+         "found": false,
+         "said_at": null
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "docs/globex/change-control.md",
+        "docs/globex/change-request-draft.md",
+        "docs/globex/change-request-draft.md",
+        "docs/globex/scale/globex-scale-12.md",
+        "docs/globex/scale/globex-scale-01.md",
+        "docs/globex/scale/globex-scale-09.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
       },
       {
        "id": "p1-login-problem",
        "kind": "paraphrase",
        "needs": "S3",
-       "status": "not_evaluated",
-       "missing": "S3 (LLM extraction)",
-       "expected": "pass"
+       "status": "fail",
+       "expected": "fail",
+       "facts": [
+        {
+         "any": [
+          "blocks the sso integration",
+          "waiting for client confirmation",
+          "sso user mapping"
+         ],
+         "found": false,
+         "said_at": null
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 0,
+       "quotes": 0,
+       "top": [],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
       },
       {
        "id": "p2-field-team-uk",
        "kind": "paraphrase_uk",
        "needs": "S3",
-       "status": "not_evaluated",
-       "missing": "S3 (LLM extraction)",
-       "expected": "pass"
+       "status": "fail",
+       "expected": "fail",
+       "facts": [
+        {
+         "any": [
+          "brandon leads the field team track"
+         ],
+         "found": false,
+         "said_at": null
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 0,
+       "quotes": 0,
+       "top": [],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
       },
       {
        "id": "p3-hours-burned",
        "kind": "paraphrase",
        "needs": "S3",
-       "status": "not_evaluated",
-       "missing": "S3 (LLM extraction)",
-       "expected": "pass"
+       "status": "fail",
+       "expected": "fail",
+       "facts": [
+        {
+         "any": [
+          "81 of 120 hours used"
+         ],
+         "found": false,
+         "said_at": null
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 3,
+       "quotes": 3,
+       "top": [
+        "live/2026-11-11-globex-weekly/2026-11-11-1100-globex-weekly.md",
+        "docs/globex/change-request-draft.md",
+        "docs/globex/scale/globex-scale-01.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
       },
       {
        "id": "g1-sso-timeline",
        "kind": "global",
        "needs": "S4",
-       "status": "not_evaluated",
-       "missing": "S4 (topic summaries)",
-       "expected": "pass"
+       "status": "fail",
+       "expected": "fail",
+       "facts": [
+        {
+         "any": [
+          "maps the acme directory groups"
+         ],
+         "found": false,
+         "said_at": null
+        },
+        {
+         "any": [
+          "okta"
+         ],
+         "found": false,
+         "said_at": null
+        },
+        {
+         "any": [
+          "waiting for client confirmation"
+         ],
+         "found": false,
+         "said_at": null
+        },
+        {
+         "any": [
+          "saml, not oidc",
+          "saml not oidc"
+         ],
+         "found": true,
+         "said_at": "2026-11-12T10:00:00Z"
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": false,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "docs/acme/item-13-sso-user-mapping.md",
+        "live/2026-11-12-acme-technical-sync/2026-11-12-1400-acme-technical-sync.md",
+        "live/commitments.jsonl",
+        "docs/acme/item-13-sso-user-mapping.md",
+        "_notion/Northpoint Current State.md",
+        "live/2026-11-12-acme-technical-sync/2026-11-12-1400-acme-technical-sync.notes.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
       },
       {
        "id": "t1-golive-nov17",
@@ -1602,9 +2513,10 @@
         "docs/acme/phase-two-budget.md",
         "docs/acme/phase-two-plan.md",
         "docs/acme/acme-release-plan-2026-11-14.md",
-        "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.notes.md",
-        "_notion/Northpoint Current State.md"
+        "_notion/Northpoint Current State.md",
+        "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.notes.md"
        ],
+       "derived_confirmed": [],
        "live_leaks": {
         "client": [],
         "excluded": []
@@ -1640,9 +2552,10 @@
         "docs/acme/phase-two-budget.md",
         "docs/acme/phase-two-plan.md",
         "docs/acme/acme-release-plan-2026-11-14.md",
-        "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.notes.md",
-        "_notion/Northpoint Current State.md"
+        "_notion/Northpoint Current State.md",
+        "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.notes.md"
        ],
+       "derived_confirmed": [],
        "live_leaks": {
         "client": [],
         "excluded": []
@@ -1652,16 +2565,47 @@
        "id": "t1-golive-history",
        "kind": "replay",
        "needs": "S3",
-       "status": "not_evaluated",
-       "missing": "S3 (LLM extraction)",
-       "expected": "pass"
+       "status": "fail",
+       "expected": "fail",
+       "facts": [
+        {
+         "any": [
+          "february 2"
+         ],
+         "found": true,
+         "said_at": "2026-11-19T12:00:00Z"
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "docs/acme/phase-two-plan.md",
+        "docs/acme/phase-two-budget.md",
+        "docs/acme/phase-two-plan.md",
+        "docs/acme/acme-release-plan-2026-11-14.md",
+        "_notion/Northpoint Current State.md",
+        "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.notes.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
       },
       {
        "id": "t2-task-open-nov17",
        "kind": "state",
        "needs": "S2",
-       "status": "pass",
-       "expected": "pass",
+       "status": "fail",
+       "expected": "fail",
        "facts": [
         {
          "any": [
@@ -1677,7 +2621,7 @@
         "excluded": [],
         "client": []
        },
-       "state_ok": true,
+       "state_ok": false,
        "order_ok": null,
        "quotes_valid": 6,
        "quotes": 6,
@@ -1689,6 +2633,7 @@
         "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.notes.md",
         "live/2026-11-03-acme-weekly-status/2026-11-03-1000-acme-weekly-status.notes.md"
        ],
+       "derived_confirmed": [],
        "live_leaks": {
         "client": [],
         "excluded": []
@@ -1698,8 +2643,8 @@
        "id": "t2-task-done-now",
        "kind": "state",
        "needs": "S2",
-       "status": "pass",
-       "expected": "pass",
+       "status": "fail",
+       "expected": "fail",
        "facts": [
         {
          "any": [
@@ -1715,7 +2660,7 @@
         "excluded": [],
         "client": []
        },
-       "state_ok": true,
+       "state_ok": false,
        "order_ok": null,
        "quotes_valid": 6,
        "quotes": 6,
@@ -1727,6 +2672,7 @@
         "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.notes.md",
         "live/2026-11-03-acme-weekly-status/2026-11-03-1000-acme-weekly-status.notes.md"
        ],
+       "derived_confirmed": [],
        "live_leaks": {
         "client": [],
         "excluded": []
@@ -1736,8 +2682,8 @@
        "id": "t3-decision-nov17",
        "kind": "state",
        "needs": "S2",
-       "status": "pass",
-       "expected": "pass",
+       "status": "fail",
+       "expected": "fail",
        "facts": [
         {
          "any": [
@@ -1753,14 +2699,14 @@
         "excluded": [],
         "client": []
        },
-       "state_ok": true,
+       "state_ok": false,
        "order_ok": null,
-       "quotes_valid": 2,
-       "quotes": 2,
+       "quotes_valid": 1,
+       "quotes": 1,
        "top": [
-        "live/2026-11-14-acme-architecture-review/2026-11-14-1000-acme-architecture-review.notes.md",
         "live/2026-11-14-acme-architecture-review/2026-11-14-1000-acme-architecture-review.notes.md"
        ],
+       "derived_confirmed": [],
        "live_leaks": {
         "client": [],
         "excluded": []
@@ -1770,8 +2716,8 @@
        "id": "t3-decision-now",
        "kind": "state",
        "needs": "S2",
-       "status": "pass",
-       "expected": "pass",
+       "status": "fail",
+       "expected": "fail",
        "facts": [
         {
          "any": [
@@ -1787,15 +2733,15 @@
         "excluded": [],
         "client": []
        },
-       "state_ok": true,
+       "state_ok": false,
        "order_ok": null,
-       "quotes_valid": 3,
-       "quotes": 3,
+       "quotes_valid": 2,
+       "quotes": 2,
        "top": [
-        "live/2026-11-19-acme-architecture-review/2026-11-19-1000-acme-architecture-review.notes.md",
         "live/2026-11-14-acme-architecture-review/2026-11-14-1000-acme-architecture-review.notes.md",
         "live/2026-11-19-acme-architecture-review/2026-11-19-1000-acme-architecture-review.notes.md"
        ],
+       "derived_confirmed": [],
        "live_leaks": {
         "client": [],
         "excluded": []
@@ -1824,16 +2770,17 @@
        },
        "state_ok": null,
        "order_ok": null,
-       "quotes_valid": 14,
-       "quotes": 14,
+       "quotes_valid": 6,
+       "quotes": 6,
        "top": [
         "docs/acme/phase-two-budget.md",
         "docs/acme/phase-two-plan.md",
         "docs/acme/phase-two-plan.md",
-        "docs/acme/scale/acme-scale-01.md",
-        "docs/acme/scale/acme-scale-06.md",
-        "docs/acme/scale/acme-scale-10.md"
+        "docs/acme/scale/acme-scale-10.md",
+        "docs/acme/scale/acme-scale-02.md",
+        "docs/acme/scale/acme-scale-02.md"
        ],
+       "derived_confirmed": [],
        "live_leaks": {
         "client": [],
         "excluded": []
@@ -1862,16 +2809,17 @@
        },
        "state_ok": null,
        "order_ok": null,
-       "quotes_valid": 14,
-       "quotes": 14,
+       "quotes_valid": 6,
+       "quotes": 6,
        "top": [
         "docs/acme/phase-two-budget.md",
         "docs/acme/phase-two-plan.md",
         "docs/acme/phase-two-plan.md",
-        "docs/acme/scale/acme-scale-01.md",
-        "docs/acme/scale/acme-scale-06.md",
-        "docs/acme/scale/acme-scale-10.md"
+        "docs/acme/scale/acme-scale-10.md",
+        "docs/acme/scale/acme-scale-02.md",
+        "docs/acme/scale/acme-scale-02.md"
        ],
+       "derived_confirmed": [],
        "live_leaks": {
         "client": [],
         "excluded": []
@@ -1900,16 +2848,17 @@
        },
        "state_ok": null,
        "order_ok": null,
-       "quotes_valid": 14,
-       "quotes": 14,
+       "quotes_valid": 6,
+       "quotes": 6,
        "top": [
         "docs/acme/phase-two-budget.md",
         "docs/acme/phase-two-plan.md",
         "docs/acme/phase-two-plan.md",
-        "docs/acme/scale/acme-scale-01.md",
-        "docs/acme/scale/acme-scale-06.md",
-        "docs/acme/scale/acme-scale-10.md"
+        "docs/acme/scale/acme-scale-10.md",
+        "docs/acme/scale/acme-scale-02.md",
+        "docs/acme/scale/acme-scale-02.md"
        ],
+       "derived_confirmed": [],
        "live_leaks": {
         "client": [],
         "excluded": []
@@ -1942,12 +2891,13 @@
        "quotes": 6,
        "top": [
         "live/2026-11-12-acme-staffing-review/2026-11-12-1500-acme-staffing-review.notes.md",
-        "live/2026-10-27-acme-weekly-status/2026-10-27-1000-acme-weekly-status.notes.md",
         "docs/acme/item-13-sso-user-mapping.md",
         "live/commitments.jsonl",
         "docs/acme/mobile-rollout.md",
-        "live/2026-11-07-acme-weekly-status/2026-11-07-1000-acme-weekly-status.notes.md"
+        "live/2026-11-07-acme-weekly-status/2026-11-07-1000-acme-weekly-status.notes.md",
+        "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.notes.md"
        ],
+       "derived_confirmed": [],
        "live_leaks": {
         "client": [],
         "excluded": []
@@ -1971,13 +2921,14 @@
        "quotes_valid": 6,
        "quotes": 6,
        "top": [
-        "live/2026-10-27-acme-weekly-status/2026-10-27-1000-acme-weekly-status.notes.md",
         "docs/acme/item-13-sso-user-mapping.md",
         "live/commitments.jsonl",
         "docs/acme/mobile-rollout.md",
         "live/2026-11-07-acme-weekly-status/2026-11-07-1000-acme-weekly-status.notes.md",
-        "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.notes.md"
+        "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.notes.md",
+        "live/2026-10-27-acme-weekly-status/2026-10-27-1000-acme-weekly-status.notes.md"
        ],
+       "derived_confirmed": [],
        "live_leaks": {
         "client": [],
         "excluded": []
@@ -2010,12 +2961,13 @@
        "quotes": 6,
        "top": [
         "live/2026-11-12-acme-staffing-review/2026-11-12-1500-acme-staffing-review.notes.md",
-        "live/2026-10-27-acme-weekly-status/2026-10-27-1000-acme-weekly-status.notes.md",
         "docs/acme/item-13-sso-user-mapping.md",
         "live/commitments.jsonl",
         "docs/acme/mobile-rollout.md",
-        "live/2026-11-07-acme-weekly-status/2026-11-07-1000-acme-weekly-status.notes.md"
+        "live/2026-11-07-acme-weekly-status/2026-11-07-1000-acme-weekly-status.notes.md",
+        "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.notes.md"
        ],
+       "derived_confirmed": [],
        "live_leaks": {
         "client": [],
         "excluded": []
@@ -2049,11 +3001,12 @@
        "top": [
         "docs/acme/onboarding-pilot.md",
         "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.notes.md",
-        "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.notes.md",
-        "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.notes.md",
         "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.md",
-        "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.notes.md"
+        "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.notes.md",
+        "live/2026-09-04-acme-weekly-status/2026-09-04-1000-acme-weekly-status.md",
+        "live/2026-09-08-acme-weekly-status/2026-09-08-1000-acme-weekly-status.md"
        ],
+       "derived_confirmed": [],
        "live_leaks": {
         "client": [],
         "excluded": []
@@ -2087,11 +3040,12 @@
        "top": [
         "docs/acme/onboarding-pilot.md",
         "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.notes.md",
-        "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.notes.md",
-        "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.notes.md",
         "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.md",
-        "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.notes.md"
+        "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.notes.md",
+        "live/2026-09-04-acme-weekly-status/2026-09-04-1000-acme-weekly-status.md",
+        "live/2026-09-08-acme-weekly-status/2026-09-08-1000-acme-weekly-status.md"
        ],
+       "derived_confirmed": [],
        "live_leaks": {
         "client": [],
         "excluded": []
@@ -2101,25 +3055,110 @@
        "id": "t7-summary-before",
        "kind": "replay",
        "needs": "S4",
-       "status": "not_evaluated",
-       "missing": "S4 (topic summaries)",
-       "expected": "pass"
+       "status": "pass",
+       "expected": "pass",
+       "facts": [],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "docs/acme/item-13-sso-user-mapping.md",
+        "live/commitments.jsonl",
+        "docs/acme/item-13-sso-user-mapping.md",
+        "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.notes.md",
+        "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.notes.md",
+        "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
       },
       {
        "id": "m1-proposed-hours",
        "kind": "modality",
        "needs": "S3",
-       "status": "not_evaluated",
-       "missing": "S3 (LLM extraction)",
-       "expected": "pass"
+       "status": "fail",
+       "expected": "fail",
+       "facts": [
+        {
+         "any": [
+          "proposed 39 extra hours"
+         ],
+         "found": true,
+         "said_at": "2026-11-12T10:00:00Z"
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "docs/globex/change-request-draft.md",
+        "live/2026-11-11-globex-weekly/2026-11-11-1100-globex-weekly.md",
+        "live/2026-11-11-globex-weekly/2026-11-11-1100-globex-weekly.notes.md",
+        "live/2026-11-09-globex-data-review/2026-11-09-1100-globex-data-review.notes.md",
+        "_notion/Northpoint Current State.md",
+        "docs/globex/globex-sow-summary.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
       },
       {
        "id": "m2-derived-only",
        "kind": "modality",
        "needs": "S3",
-       "status": "not_evaluated",
-       "missing": "S3 (LLM extraction)",
-       "expected": "pass"
+       "status": "fail",
+       "expected": "fail",
+       "facts": [
+        {
+         "any": [
+          "march invoice run"
+         ],
+         "found": true,
+         "said_at": "2026-11-06T10:00:00Z"
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "live/2026-11-06-globex-finance-review/2026-11-06-1500-globex-finance-review.notes.md",
+        "docs/globex/item-13-invoice-export-2026-11-13.md",
+        "docs/globex/item-13-invoice-export-2026-11-13.md",
+        "live/2026-11-04-globex-weekly/2026-11-04-1100-globex-weekly.md",
+        "_notion/Northpoint Current State.md",
+        "live/commitments.jsonl"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
       },
       {
        "id": "x1-pm-excluded",
@@ -2139,6 +3178,7 @@
        "quotes_valid": 0,
        "quotes": 0,
        "top": [],
+       "derived_confirmed": [],
        "live_leaks": {
         "client": [],
         "excluded": []
@@ -2162,6 +3202,7 @@
        "quotes_valid": 0,
        "quotes": 0,
        "top": [],
+       "derived_confirmed": [],
        "live_leaks": {
         "client": [],
         "excluded": []
@@ -2192,6 +3233,7 @@
         "live/2026-11-06-acme-technical-sync/2026-11-06-1400-acme-technical-sync.notes.md",
         "live/2026-11-07-acme-ops-sync/2026-11-07-1100-acme-ops-sync.notes.md"
        ],
+       "derived_confirmed": [],
        "live_leaks": {
         "client": [],
         "excluded": []
@@ -2217,11 +3259,12 @@
        "top": [
         "docs/acme/item-13-sso-user-mapping.md",
         "_notion/Northpoint Current State.md",
-        "live/2026-11-12-acme-technical-sync/2026-11-12-1400-acme-technical-sync.notes.md",
-        "live/2026-10-27-acme-weekly-status/2026-10-27-1000-acme-weekly-status.notes.md",
         "live/commitments.jsonl",
-        "live/commitments.jsonl"
+        "live/commitments.jsonl",
+        "docs/acme/item-13-sso-user-mapping.md",
+        "live/2026-11-12-acme-technical-sync/2026-11-12-1400-acme-technical-sync.notes.md"
        ],
+       "derived_confirmed": [],
        "live_leaks": {
         "client": [],
         "excluded": []
@@ -2231,9 +3274,32 @@
        "id": "x5-hidden-topic",
        "kind": "exclusion",
        "needs": "S4",
-       "status": "not_evaluated",
-       "missing": "S4 (topic summaries)",
-       "expected": "pass"
+       "status": "pass",
+       "expected": "pass",
+       "facts": [],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "docs/acme/scale/acme-scale-02.md",
+        "docs/acme/scale/acme-scale-07.md",
+        "docs/acme/scale/acme-scale-07.md",
+        "docs/acme/scale/acme-scale-01.md",
+        "docs/acme/scale/acme-scale-01.md",
+        "docs/acme/scale/acme-scale-02.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
       },
       {
        "id": "x6-deleted-shared-register",
@@ -2268,6 +3334,7 @@
         "live/2026-10-27-acme-weekly-status/2026-10-27-1000-acme-weekly-status.notes.md",
         "live/2026-11-03-acme-weekly-status/2026-11-03-1000-acme-weekly-status.notes.md"
        ],
+       "derived_confirmed": [],
        "live_leaks": {
         "client": [],
         "excluded": []
@@ -2277,9 +3344,35 @@
        "id": "x7-deleted-shared-file",
        "kind": "shared",
        "needs": "S3",
-       "status": "not_evaluated",
-       "missing": "S3 (LLM extraction)",
-       "expected": "pass"
+       "status": "pass",
+       "expected": "pass",
+       "facts": [
+        {
+         "any": [
+          "rachel moore"
+         ],
+         "found": true,
+         "said_at": "2026-11-02T10:00:00Z"
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 1,
+       "quotes": 1,
+       "top": [
+        "docs/acme/escalation-contacts.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
       },
       {
        "id": "x8-moved-call",
@@ -2312,6 +3405,7 @@
         "live/2026-11-07-acme-ops-sync/2026-11-07-1100-acme-ops-sync.md",
         "notion:33333333333333333333333333333333"
        ],
+       "derived_confirmed": [],
        "live_leaks": {
         "client": [],
         "excluded": []
@@ -2350,6 +3444,7 @@
         "docs/scale/shared-scale-04.md",
         "docs/scale/shared-scale-02.md"
        ],
+       "derived_confirmed": [],
        "live_leaks": {
         "client": [],
         "excluded": []
@@ -2386,8 +3481,9 @@
         "live/2026-11-04-globex-weekly/2026-11-04-1100-globex-weekly.md",
         "live/2026-11-04-globex-weekly/2026-11-04-1100-globex-weekly.notes.md",
         "docs/globex/item-13-invoice-export-2026-11-13.md",
-        "live/2026-11-04-globex-weekly/2026-11-04-1100-globex-weekly.notes.md"
+        "live/commitments.jsonl"
        ],
+       "derived_confirmed": [],
        "live_leaks": {
         "client": [],
         "excluded": []
@@ -2426,6 +3522,7 @@
         "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.notes.md",
         "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.md"
        ],
+       "derived_confirmed": [],
        "live_leaks": {
         "client": [],
         "excluded": []
@@ -2434,20 +3531,12 @@
      ],
      "latency": {
       "engine": "evidence store",
-      "live_p50_ms": 17.33,
-      "live_p95_ms": 29.87,
-      "prep_p50_ms": 17.91,
-      "prep_p95_ms": 29.67
+      "live_p50_ms": 14.55,
+      "live_p95_ms": 20.67,
+      "prep_p50_ms": 15.0,
+      "prep_p95_ms": 20.68
      },
-     "fixture": {
-      "recorded": false,
-      "hits": 0,
-      "misses": 114,
-      "tokens": 0,
-      "extractors": [],
-      "state": "not_recorded",
-      "generated_docs": 40
-     },
+     "fixture": null,
      "index_cost": {
       "segments": 626,
       "documents": 99,
@@ -2496,13 +3585,13 @@
   "prep_found": 16,
   "prep_total": 20,
   "prep_leaks": 0,
-  "live_answer_rate": 100.0,
-  "live_answered": 10,
+  "live_answer_rate": 90.0,
+  "live_answered": 9,
   "live_total": 10,
   "live_answer_text_rate": 80.0,
   "live_leaks": 0,
-  "lookup_p50_ms": 2.93,
-  "lookup_p95_ms": 5.07,
+  "lookup_p50_ms": 2.27,
+  "lookup_p95_ms": 2.82,
   "duplicates": 5,
   "wrong_identity": 4,
   "suggested": 8,
@@ -2511,6 +3600,6 @@
   "false_agreed": 0,
   "false_proposal": 0
  },
- "seconds": 11.64,
- "label": "s3"
+ "seconds": 11.42,
+ "label": "s3a"
 }

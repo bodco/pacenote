@@ -1,0 +1,11 @@
+{
+ "seg_hash": "9fcbc37fbbf9f6a510d09d91dac0d60c81ee9883262d5c5a79e665ec9e743c07",
+ "extractor": "g2-s3-1:b7b1324472",
+ "route": "authored",
+ "base_line": 1,
+ "answers": [
+  "{\"entities\": [\n{\"ref\": \"n1\", \"known_id\": \"e-4eeecf214c\", \"type\": \"topic\", \"name\": \"Globex steering group\", \"aliases\": [\"steering group\"], \"quote\": \"the steering group\", \"lines\": [3, 3]},\n{\"ref\": \"n2\", \"known_id\": \"e-19c2e1d873\", \"type\": \"topic\", \"name\": \"Globex budget\", \"aliases\": [\"budget\"], \"quote\": \"Every budget change\", \"lines\": [3, 3]}\n],\n\"claims\": [\n{\"subject\": \"e-19c2e1d873\", \"predicate\": \"value\", \"value\": \"every budget change goes to the steering group\", \"modality\": \"statement\", \"said_by\": null, \"due\": null, \"quote\": \"Every budget change goes to the steering group.\", \"lines\": [3, 3], \"confidence\": 0.85}\n],\n\"relations\": []}\n"
+ ],
+ "in_tokens": 0,
+ "out_tokens": 0
+}

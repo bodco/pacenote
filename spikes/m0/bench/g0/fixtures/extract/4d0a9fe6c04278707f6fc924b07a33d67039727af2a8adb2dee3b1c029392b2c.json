@@ -1,0 +1,11 @@
+{
+ "seg_hash": "4d0a9fe6c04278707f6fc924b07a33d67039727af2a8adb2dee3b1c029392b2c",
+ "extractor": "g2-s3-1:b7b1324472",
+ "route": "authored",
+ "base_line": 5,
+ "answers": [
+  "{\"entities\": [\n{\"ref\": \"n1\", \"known_id\": \"d-1dc2b84361\", \"type\": \"decision\", \"name\": \"Globex export is CSV only, no PDF.\", \"aliases\": [], \"quote\": \"the invoice export is CSV only, no PDF.\", \"lines\": [5, 5]},\n{\"ref\": \"n2\", \"known_id\": \"e-493f73e32c\", \"type\": \"task\", \"name\": \"Globex item 13\", \"aliases\": [\"invoice export\"], \"quote\": \"the invoice export\", \"lines\": [5, 5]}\n],\n\"claims\": [\n{\"subject\": \"d-1dc2b84361\", \"predicate\": \"decided\", \"value\": \"Globex export is CSV only, no PDF.\", \"modality\": \"confirmation\", \"said_by\": null, \"due\": null, \"quote\": \"2026-11-11 Globex: the invoice export is CSV only, no PDF.\", \"lines\": [5, 5], \"confidence\": 0.9}\n],\n\"relations\": []}\n"
+ ],
+ "in_tokens": 0,
+ "out_tokens": 0
+}

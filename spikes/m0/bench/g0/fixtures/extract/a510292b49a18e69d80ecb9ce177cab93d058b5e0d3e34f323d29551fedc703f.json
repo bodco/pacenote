@@ -1,0 +1,11 @@
+{
+ "seg_hash": "a510292b49a18e69d80ecb9ce177cab93d058b5e0d3e34f323d29551fedc703f",
+ "extractor": "g2-s3-1:b7b1324472",
+ "route": "authored",
+ "base_line": 1,
+ "answers": [
+  "{\"entities\": [\n{\"ref\": \"n1\", \"type\": \"task\", \"name\": \"Acme archive purge\", \"aliases\": [\"archive purge\", \"the archive purge\"], \"quote\": \"The archive purge waits for the retention policy.\", \"lines\": [3, 3]},\n{\"ref\": \"n2\", \"known_id\": \"e-f9501b0bc9\", \"type\": \"document\", \"name\": \"Acme retention policy\", \"aliases\": [\"retention policy\"], \"quote\": \"the retention policy\", \"lines\": [3, 3]}\n],\n\"claims\": [\n{\"subject\": \"n1\", \"predicate\": \"waiting_for\", \"value\": \"the retention policy\", \"modality\": \"expectation\", \"said_by\": null, \"due\": null, \"quote\": \"The archive purge waits for the retention policy.\", \"lines\": [3, 3], \"confidence\": 0.9},\n{\"subject\": \"n1\", \"predicate\": \"value\", \"value\": \"records older than seven years are in scope\", \"modality\": \"statement\", \"said_by\": null, \"due\": null, \"quote\": \"Records older than seven years are in scope.\", \"lines\": [4, 4], \"confidence\": 0.75}\n],\n\"relations\": [\n{\"from\": \"n1\", \"rel\": \"waiting_on\", \"to\": \"n2\", \"modality\": \"statement\", \"quote\": \"The archive purge waits for the retention policy.\", \"lines\": [3, 3], \"confidence\": 0.9}\n]}\n"
+ ],
+ "in_tokens": 0,
+ "out_tokens": 0
+}

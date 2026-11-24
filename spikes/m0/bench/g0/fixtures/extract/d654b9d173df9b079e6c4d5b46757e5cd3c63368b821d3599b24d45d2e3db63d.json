@@ -1,0 +1,11 @@
+{
+ "seg_hash": "d654b9d173df9b079e6c4d5b46757e5cd3c63368b821d3599b24d45d2e3db63d",
+ "extractor": "g2-s3-1:b7b1324472",
+ "route": "authored",
+ "base_line": 1,
+ "answers": [
+  "{\"entities\": [\n{\"ref\": \"n1\", \"type\": \"topic\", \"name\": \"Acme onboarding pilot\", \"aliases\": [\"onboarding pilot\", \"the onboarding pilot\"], \"quote\": \"The onboarding pilot starts in March.\", \"lines\": [3, 3]}\n],\n\"claims\": [\n{\"subject\": \"n1\", \"predicate\": \"due\", \"value\": \"starts in March\", \"modality\": \"statement\", \"said_by\": null, \"due\": \"March\", \"quote\": \"The onboarding pilot starts in March.\", \"lines\": [3, 3], \"confidence\": 0.85}\n],\n\"relations\": []}\n"
+ ],
+ "in_tokens": 0,
+ "out_tokens": 0
+}

@@ -1612,7 +1612,7 @@ duplicates, wrong identity, item 13 cross-client, false agreed, false proposal.
 
 1. **Option (a).** The cheapest model of the PM's route reads sources for extraction (Haiku, GPT-6 Luna, Gemini 3.5
    Flash-Lite, the Codex default, Claude Code's smallest model, the local model); the route's after-call model writes
-   topic summaries. Recorded as the `evidence` map in `rules/ai.yaml` (S3).
+   topic summaries. Recorded as the `evidence` map in `rules/ai.yaml` in S3b (PB-103).
 2. **Option (b).** No consent prompt before the first cloud index: turning the flag `evidence_store` on is the
    consent. The per-pass and per-day ceilings, the cost shown before and after each pass and the off switch stay.
    Where the flag is turned on, one plain line says that project text will be sent to the chosen AI provider for
@@ -1954,10 +1954,27 @@ Implementation notes (S3, PB-86):
 - The extraction fixture format is raw model output per `seg_hash` (`answers`, `base_line`) plus
   `fixtures/extract/manifest.json` (gold v2 `sha256`, route, model, extractor, calibration); replay runs the same
   validator as the worker and fails as "gold changed" on a different gold hash. C evaluates the `needs: S3` rows only
-  when the manifest exists (`run.py` `ready_set`). **The fixture is not recorded in PB-86**: recording sends the
-  invented fixture text to a real route (`run.py --extract <route>`) and needs the owner's key or plan, so the C hop,
-  paraphrase and modality gate and the calibration of output tokens and catalog size wait for that run; until then C
-  stays on its S2 rows and the estimates keep the 500-token and 2,000-token assumptions.
+  when the manifest exists (`run.py` `ready_set`).
+- **S3 is split (24.11).** S3a (PB-86): rules, prompt and catalog, validator, segment cache, the pass on a fake
+  provider, the fixture and C's S3 gate. S3b (PB-103): the six real routes and the `evidence` map in `rules/ai.yaml`,
+  the `evidence` job in `routing`, the real OpenAI and Gemini classes with one request per cut answer and Ollama's cap,
+  call-active pause and abort, the USD, percent and minutes ceilings and the ledger, and `--extract` calibration. The
+  worker code for those already exists in PB-86 (driven by the fake transport in its tests) but is accepted in S3b;
+  PB-86 leaves `rules/ai.yaml`, `routing.py` and the provider classes as on main, so without the map the worker uses
+  `routing.PING_MODEL`.
+- **The S3a fixture is authored, not recorded on a real AI** (nothing leaves the Mac in PB-86): the 60 answers were
+  written offline in the agent session, one segment at a time so each catalog held the entities of the answers before
+  it, and stored through `record_extract` with a replay transport; the authoring agent opened only the prompts, but
+  its instructions were written after the developer had read the gold hop rows and carry example wordings from them,
+  so the fixture is not independent of the gold; the manifest says `route: authored`, `calibration.measured: false`. C's S3 numbers measure the store, validator
+  and search on that extraction, not a real model's quality; S3b re-records with `run.py --extract <route>`, and until
+  then the estimates keep the 500-token and 2,000-token assumptions.
+- S3a gate as implemented (`run.py` `s3_gate`, added to the S2 gate for C with a fixture): small set hop at least 4
+  of 6 and at least B + 2 (B's newest saved result), fixture misses 0, modality accuracy 100%, derived counted as
+  confirmed 0 on every evaluated run, every S2 check. The paraphrase lines of the gate above are outside the S3a task
+  list and not met: without vectors C answers 0 of 3 like B (the line asks for above B); with vectors not evaluated
+  here. The harness's hop step walks from the search's best match in its own
+  order and returns the edges it walks; a quote is valid at any revision of its file holding it at that locator.
 
 ### S4. Topic summaries and global questions (core)
 
@@ -2169,6 +2186,8 @@ for k, lo, hi, per in (("codex %", 68, 84, 10),):
     рішення Bohdan 24.11: джерела читає найдешевша модель маршруту, підсумки тем пише модель after (варіант a);
     окремої згоди перед першим хмарним індексом немає, згода це увімкнений прапорець, а поруч із ним один рядок
     каже, що текст проєкту піде обраному провайдеру, і яка оцінка вартості першого індексу (варіант b).
-11. S3 (PB-86): екстракція, валідатор, каталог за клієнтом, кеш сегментів, стелі, переривання запиту під час
-    дзвінка, `--extract` для запису фікстури; саму фікстуру ще не записано (потрібен справжній маршрут), тож гейт
-    C для рядків S3 чекає на цей запис.
+11. S3 розділено. S3a (PB-86): правила, промпт і каталог за клієнтом, валідатор, кеш сегментів, прохід на фейковому
+    провайдері, фікстура і гейт S3 для C. Фікстуру написано офлайн (не справжнім AI, `route: authored`), тож числа C
+    вимірюють сховище і пошук, а не якість моделі: кілька переходів 5 з 6 (B 0), модальність 100%, похідне як
+    підтверджене 0, гейт PASS. S3b (PB-103): шість справжніх маршрутів, мапа `evidence` у `rules/ai.yaml`, стелі й
+    журнал витрат, пауза і переривання під час дзвінка, перезапис фікстури через `--extract` і калібрування.
