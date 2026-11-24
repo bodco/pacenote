@@ -136,6 +136,9 @@ public struct AppConfig: Codable, Equatable {
         /// nil until the first look, so an update never takes over a choice.
         public var seen: [String]? = nil
         public var geminiAccountNoticePending = false
+        /// PB-52 G2 (S5): the AI that indexes project memory (job `evidence`, only with the flag `evidence_store` on).
+        /// nil = the same as after the call; written only once the PM picks one. It steps only to the model on this Mac.
+        public var evidence: String? = nil
         public func order(_ job: String, connected: Set<String>) -> [String] {
             AIChain.order(job: job, chosen: route(job), chain: chain, connected: connected, auto: autoSwitch)
         }
@@ -161,6 +164,7 @@ public struct AppConfig: Codable, Equatable {
             let usesGeminiAccount = [prep, tips, after].contains("agy")
             geminiAccountNoticePending = usesGeminiAccount ||
                 ((try? c.decodeIfPresent(Bool.self, forKey: .geminiAccountNoticePending)) ?? false)
+            evidence = (try? c.decodeIfPresent(String.self, forKey: .evidence)).map(Self.migratedRoute)
             prep = Self.migratedRoute(prep)
             tips = Self.migratedRoute(tips)
             after = Self.migratedRoute(after)
@@ -168,7 +172,9 @@ public struct AppConfig: Codable, Equatable {
         public static func migratedRoute(_ route: String) -> String { route == "agy" ? "gemini" : route }
         public func openaiModel(_ job: String) -> String { job == "prep" ? openaiPrep : job == "tips" ? openaiTips : openaiAfter }
         public func geminiModel(_ job: String) -> String { job == "prep" ? geminiPrep : job == "tips" ? geminiTips : geminiAfter }
-        public func route(_ job: String) -> String { job == "prep" ? prep : job == "tips" ? tips : after }
+        public func route(_ job: String) -> String {
+            job == "prep" ? prep : job == "tips" ? tips : job == "evidence" ? (evidence ?? after) : after
+        }
     }
     /// Engine processes (M1-M2: Python core). Not shown in the UI; set by the installer.
     public struct Engine: Codable, Equatable {
@@ -323,6 +329,12 @@ public struct AppConfig: Codable, Equatable {
     public var appRoot = ""
     /// Model ids the API returned on the last successful key test (for the model pickers).
     public var knownModels: [String] = []
+    /// PB-52 G2: feature flags, {"evidence_store": true}. nil = none set (and not written, so config.json does not change
+    /// while every flag is off). The engine reads the same key from this file (`--config`, livetips_m0.evidence.enabled).
+    public var features: [String: Bool]? = nil
+    /// PB-52 G2 (S5): the settings of project memory (ceilings, topic summaries, AI reading, pause); nil until the PM
+    /// changes one, so config.json does not change while the flag is off.
+    public var evidencePrefs: EvidencePrefs? = nil
     public init() {}
 
     public init(from decoder: Decoder) throws {
@@ -398,6 +410,8 @@ public struct AppConfig: Codable, Equatable {
         workRoot = (try? c.decode(String.self, forKey: .workRoot)) ?? d.workRoot
         appRoot = (try? c.decode(String.self, forKey: .appRoot)) ?? d.appRoot
         knownModels = (try? c.decode([String].self, forKey: .knownModels)) ?? d.knownModels
+        features = try? c.decodeIfPresent([String: Bool].self, forKey: .features)
+        evidencePrefs = try? c.decodeIfPresent(EvidencePrefs.self, forKey: .evidencePrefs)
     }
 
     /// 0.8.7 (F3): per-project meeting databases become one. The most used database wins (the old default counts

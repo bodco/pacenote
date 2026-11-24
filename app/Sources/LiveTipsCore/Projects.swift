@@ -56,6 +56,10 @@ public struct Project: Codable, Equatable {
     public var links: [String] = []
     /// 0.17.0 (5.1): the sample project made at the first start. While it is untouched it never syncs to the server.
     public var sample = false
+    /// PB-52 G2 (S5): the project's evidence store key, a random UUID minted once while the flag `evidence_store` is on
+    /// (EvidenceUID.mint). A rename or a folder change in the app keeps it. nil until minted, and then not written at all,
+    /// so projects.json does not change while the flag is off. Stored as `evidence_uid`.
+    public var evidenceUid: String? = nil
     public var linkedToOrgProject: Bool { !orgProjectID.isEmpty && !orgProjectOrg.isEmpty }
     /// Where the project's new calls go: its organization project's organization, else the one it was moved to, else
     /// "" (where new calls go, Settings > Account).
@@ -67,6 +71,7 @@ public struct Project: Codable, Equatable {
         case name, slug, root, config, status, workspace, defaultLanguage, clientLanguage, audienceDefault, people, aliases,
              apiAllowed, serverSync, index, notionValue, salesEnabled, salesMethod, crmCompanyId, crmCompanyName,
              orgProjectID, orgProjectOrg, orgProjectName, privateByDefault, orgID, about, client, goal, glossary, links, sample
+        case evidenceUid = "evidence_uid"
     }
 
     /// 0.8.7: every field but the name is optional in the file, so new fields never drop a saved project.
@@ -102,6 +107,7 @@ public struct Project: Codable, Equatable {
         glossary = (try? c.decode([String].self, forKey: .glossary)) ?? []
         links = (try? c.decode([String].self, forKey: .links)) ?? []
         sample = (try? c.decode(Bool.self, forKey: .sample)) ?? false
+        evidenceUid = (try? c.decode(String.self, forKey: .evidenceUid)).flatMap { $0.isEmpty ? nil : $0 }
     }
 }
 
@@ -155,6 +161,7 @@ public struct ProjectRegistry: Codable, Equatable {
             let key = Self.norm(p.root)
             if !key.isEmpty, let i = out.firstIndex(where: { Self.norm($0.root) == key }) {
                 var keep = out[i].config.isEmpty && !p.config.isEmpty ? p : out[i]
+                if keep.evidenceUid == nil { keep.evidenceUid = out[i].evidenceUid ?? p.evidenceUid }   // PB-52 S5: one folder, one store
                 if out[i].status != "archived" || p.status != "archived" { keep.status = "active" }
                 keep.root = key
                 out[i] = keep
@@ -221,6 +228,7 @@ public struct ProjectRegistry: Codable, Equatable {
                 p.audienceDefault = old.audienceDefault
                 p.notionValue = old.notionValue; p.salesEnabled = old.salesEnabled; p.salesMethod = old.salesMethod
                 p.crmCompanyId = old.crmCompanyId; p.crmCompanyName = old.crmCompanyName
+                if p.evidenceUid == nil { p.evidenceUid = old.evidenceUid }      // PB-52 S5: matched by slug, same store
                 if !old.workspace.isEmpty { p.workspace = old.workspace }
                 if p.root.isEmpty { p.root = old.root }
                 projects[i] = p

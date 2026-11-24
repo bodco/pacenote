@@ -3858,10 +3858,10 @@ func componentsD3() {
     expect(s.count == 2 && s.bytes == 310_000_000, "d3: summary counts optional parts only, measured first: \(s)")
     // the model goes: jobs on it move to the next connected AI allowed for the job, local switched off
     let chain = AIChain.defaults()
-    let r = ComponentCatalog.afterRemovingLocal(prep: "local", tips: "api", after: "local", chain: chain, connected: ["codex", "api"])
+    let r = ComponentCatalog.afterRemovingLocal(prep: "local", tips: "api", after: "local", evidence: nil, chain: chain, connected: ["codex", "api"])
     expect(r.prep == "codex" && r.after == "codex" && r.tips == "api", "d3: jobs move to the next AI: \(r.prep) \(r.after) \(r.tips)")
     expect(r.chain.first { $0.route == "local" }?.on == false, "d3: the local step is off after removal")
-    let none = ComponentCatalog.afterRemovingLocal(prep: "local", tips: "api", after: "code", chain: chain, connected: [])
+    let none = ComponentCatalog.afterRemovingLocal(prep: "local", tips: "api", after: "code", evidence: nil, chain: chain, connected: [])
     expect(none.prep == "code" && none.after == "code", "d3: nothing connected: the default route")
     // search leads to Components
     let base = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
@@ -6430,5 +6430,6 @@ func tailReaderPB30() {
     expect(r.newLines() == ["[10:31:12] Me (en): Bye"] && !r.replaced, "PB-30: an append after the replacement is read as new")
 }
 tailReaderPB30()
+evidenceS5PB88()
 print("core checks: \(passed) passed, \(failures) failed")
 exit(failures == 0 ? 0 : 1)

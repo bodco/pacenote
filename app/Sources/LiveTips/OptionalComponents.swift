@@ -169,8 +169,8 @@ final class OptionalComponents: ObservableObject {
         let s = SettingsWindow.model
         var connected = AIRoute.connected(); connected.remove(AIRoute.local)
         let r = ComponentCatalog.afterRemovingLocal(prep: s.config.ai.prep, tips: s.config.ai.tips, after: s.config.ai.after,
-                                                    chain: s.config.ai.chain, connected: connected)
-        s.config.ai.prep = r.prep; s.config.ai.tips = r.tips; s.config.ai.after = r.after
+                                                    evidence: s.config.ai.evidence, chain: s.config.ai.chain, connected: connected)
+        s.config.ai.prep = r.prep; s.config.ai.tips = r.tips; s.config.ai.after = r.after; s.config.ai.evidence = r.evidence
         s.config.ai.chain = r.chain; s.config.ai.localFallback = false
     }
 }

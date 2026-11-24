@@ -75,14 +75,16 @@ public enum ComponentCatalog {
     /// The AI settings after the model on this Mac is removed: every job set to it moves to the next AI in the
     /// chain (on, connected, not the model, allowed for the job), else to the default route; the chain's local
     /// step is switched off. `connected` is AIRoute.connected() without the model.
-    public static func afterRemovingLocal(prep: String, tips: String, after: String, chain: [AIChain.Entry],
-                                          connected: Set<String>) -> (prep: String, tips: String, after: String, chain: [AIChain.Entry]) {
+    /// PB-52 G2 (S5): `evidence` (the indexing AI, nil = same as after the call) set to the model on this Mac goes back
+    /// to nil (the after-call AI), never to another cloud AI the PM did not choose for indexing.
+    public static func afterRemovingLocal(prep: String, tips: String, after: String, evidence: String?, chain: [AIChain.Entry],
+                                          connected: Set<String>) -> (prep: String, tips: String, after: String, evidence: String?, chain: [AIChain.Entry]) {
         let c = AIChain.normalized(chain)
         func next(_ job: String, _ route: String, _ fallback: String) -> String {
             guard route == "local" else { return route }
             return c.first { $0.on && $0.route != "local" && connected.contains($0.route) && AIChain.allowed($0.route, job: job) }?.route ?? fallback
         }
         return (next("prep", prep, "code"), next("tips", tips, "api"), next("after", after, "code"),
-                AIChain.setOn(c, route: "local", on: false))
+                evidence == "local" ? nil : evidence, AIChain.setOn(c, route: "local", on: false))
     }
 }

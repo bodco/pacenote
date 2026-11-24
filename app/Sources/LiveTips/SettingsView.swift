@@ -1000,6 +1000,7 @@ struct SettingsView: View {
             AIProviderCard(provider: "claude", model: model)
             AIProviderCard(provider: "chatgpt", model: model)
             AIProviderCard(provider: "gemini", model: model)
+            if ProjectMemorySection.visible(model.config) { ProjectMemorySection(model: model) }   // PB-52 G2 (S5): flag evidence_store only
             SettingsAdvancedHeader("ai", summary: L("adv.sum.ai"))
             if aiAdv == "1" {
             Group {

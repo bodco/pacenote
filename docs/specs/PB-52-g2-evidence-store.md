@@ -1120,7 +1120,17 @@ Settings > AI, a new row under the routes (only when the flag is on):
   360 minutes", and for all projects together "Never more than $3.00 / 30% / 360 minutes a day for all projects"),
   "Topic summaries: after each pass / only when asked", the switch "Use AI to read
   sources" (off = deterministic links only, no model requests), and "Delete this project's memory".
-- Before the first full index of a project, a confirmation: "First index of Northpoint: 192 sources, about 3.9M
+- **Owner decision 24.11 (section 15, question 2, option b): no confirmation before the first index.** Turning the
+  flag on is the consent. Where it is turned on, the row's first line says in plain words that project text will be
+  sent to the provider chosen for indexing and what the first index is estimated to cost: "Project text will be sent
+  to Anthropic for indexing. Estimated first index: about $1.34 to $1.85." Until S3's calibration is on main the
+  second sentence is "The estimated cost of the first index is not available yet." On the model on this Mac it says
+  "Indexing runs on the model on this Mac. Project text does not leave the Mac." When the indexing provider is not
+  the one used for preparation, the line below it stays: "Your project files have so far gone only to <prep
+  provider>; indexing sends them to <index provider>." The per-pass, per-day and all-projects ceilings, the cost
+  before and after a pass and the off switch stay as above. The dialog below is kept only as the record of what was
+  proposed; S5 does not build it.
+- (Superseded by the owner decision above.) Before the first full index of a project, a confirmation: "First index of Northpoint: 192 sources, about 3.9M
   characters. On Claude key (Haiku reads, Sonnet writes topic summaries): about $1.34 to $1.85, in 2 passes. On your
   ChatGPT plan: about 68% to 84% of a 5-hour limit, in 7 to 9 passes over about 3 days. On this Mac: 5 to 29 hours,
   free. Your files are sent only to the AI you chose
@@ -1303,11 +1313,12 @@ ids (`--request-id <id>` asks about one).
 - Model requests go only to the route the PM chose for the `evidence` job (or local). The `evidence` route defaults to
   the `after` route (section 8.6), which receives transcripts and notes today; folder files, project state and site
   pages go today only to the `prep` route. When the `evidence` route's provider differs from `prep`'s, indexing sends
-  those files to a provider that has not seen them before, so the first-index confirmation (section 10) names that
-  provider in that case. G2 adds no destination the PM did not choose for some job. The worker itself makes no
+  those files to a provider that has not seen them before, so the line where the flag is turned on (section 10) names
+  that provider in that case. G2 adds no destination the PM did not choose for some job. The worker itself makes no
   Notion, HubSpot or web request: the Tracker comes from the snapshot file the app writes (section 5.2, item 5), site pages from
   what G6 already stored. The first full index asks before it starts (section 10) because it sends more text than
-  one preparation does.
+  one preparation does. (Owner decision 24.11, section 15: no question; the line where the flag is turned on names the
+  provider and the estimated cost instead.)
 - The files of a hidden call (section 5.1) are never sent to any model and never searched; its register events
   stay searchable as register items, as the app's Tracker shows them today (section 5.1). Hiding a call later starts the
   immediate state-only pass, which moves its sources to `excluded`, and from then on their claims, edges and the
@@ -1586,10 +1597,17 @@ duplicates, wrong identity, item 13 cross-client, false agreed, false proposal.
    are a **lower bound**: they assume one segment per 6,000 characters of a document, and a folder document with
    many short sections has one segment per section (section 8.2); the real count is shown before the first index.
    **Recommendation: (a)**; G0 `--extract` compares quality and we switch if the cheap model misses too much.
+   **Owner decision 24.11: (a).** The cheapest model of the PM's route reads sources for extraction; the route's
+   after-call model writes topic summaries.
 2. **Consent before spending on a cloud route.** Options: (a) ask once per project before the first full index,
    showing the volume, provider and cost range (section 10), then run increments in the background without asking,
    under the per-pass and daily caps; (b) no prompt at all, the flag is consent enough; (c) local only for the first
    index, cloud for increments; (d) ask before every pass. **Recommendation: (a)**.
+   **Owner decision 24.11: (b).** No consent prompt before the first cloud index: turning the flag `evidence_store`
+   on is the consent. The per-pass, per-day and all-projects ceilings, the cost shown before and after a pass and the
+   off switch stay. Where the flag is turned on, one plain line says that project text will be sent to the chosen AI
+   provider for indexing and what the estimated first-index cost is (section 10). Section 12's "the first full index
+   asks before it starts" is replaced by this line.
 
 Team defaults, each a setting in section 10, not owner questions: $1.00 per pass and $3.00 per day on paid keys,
 10% per pass and 30% per day of the 5-hour window on plans, 120 and 360 minutes on local, and the same day caps for
@@ -1922,6 +1940,16 @@ Acceptance:
 
 G0 gate: no change to any G0 column (the app wiring is not on the bench); `CoreChecks` and `swift build` green.
 
+S5 as built (PB-88): the flag is `features.evidence_store` in the app's `config.json`, the file the CLI reads through
+`--config` (the app never sets `LT_EVIDENCE`); the store is passed `LT_SUPPORT_DIR` = Application Support so it is
+never under the work folder the app root may sit in; `evidence_uid`, `features`, the `evidence` route and the
+ceilings are written to `projects.json` and `config.json` only once the flag is on or the PM changes them. The
+ceilings reach the worker as `LT_EVIDENCE_LIMITS` (JSON: `pass`, `day`, `all_day` with `usd`, `pct`, `min`, plus
+`topics`, `extract`, `local_overflow`) for S3 to read. The cost text shows numbers only from an `estimate` object in
+`evidence status` with `calibrated: true` (`typical`, `cap`, `unit`, `parts`) and the `run` row under `last_run`;
+S3 adds both. With neither, every estimate line says it is not available yet. The first-index dialog is not built
+(owner decision 24.11, section 15).
+
 Order: S1 -> S2 -> S3 -> S4; S5 can start after S1 (it needs only the CLI and the flag), shows cost numbers only after
 S3's calibration, and must land before the flag is offered to the owner. S1 and S2 go first because they make every
 later gate measurable; S1 is split from S2 so the store merges without waiting for the new gold.
@@ -2067,3 +2095,8 @@ for k, lo, hi, per in (("codex %", 68, 84, 10),):
     питання, S5 інтеграція в застосунок; кожен рядок еталону позначає, з якого S його оцінюють, і кожен S
     перевіряється лише своїм кодом;
     2 питання до Bohdan: яка модель читає джерела, згода перед першим хмарним індексом.
+11. Рішення власника 24.11 (розділ 15): (1) варіант (a), найдешевша модель маршруту PM читає джерела, модель після
+    дзвінка пише підсумки тем; (2) варіант (b), окремої згоди перед першим хмарним індексом немає, увімкнення
+    прапорця `evidence_store` і є згодою. Стелі на прохід і на день, вартість до і після та вимикач лишаються; там, де
+    прапорець вмикають, один рядок каже, що текст проєкту піде до обраного провайдера ШІ для індексації, і яка
+    орієнтовна вартість першого індексу (до калібрування S3: "поки недоступна").

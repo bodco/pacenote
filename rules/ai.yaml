@@ -165,6 +165,9 @@ chain: |
   step for the preparation (Meeting Sheet build), after-call jobs and typed questions, never for live tips (19-59 s);
   Tips use only cloud AIs; when all are out the instant cards and facts keep
   working. "Switch to the next AI automatically" off: the chosen AI only, as before.
+  PB-52 G2 (flag evidence_store only): the job `evidence` (project memory indexing) runs on any AI, by default the AI
+  of after the call, and steps only to the model on this Mac (when it is on in the chain and installed), never to
+  another cloud AI the PM did not choose for it (AIChain.order in the app, PB-88; livetips_m0.routing with S3).
   What switches: a runtime outage, not only a static check: Codex "usage limit reached", a plan limit, out of credits,
   a 429 with a quota or limit code (insufficient_quota, quota_exceeded), a bad key (401/403), signed out, not installed.
   A plain short rate limit (429 rate_limit_exceeded) or a timeout never switches. The out AI is marked in

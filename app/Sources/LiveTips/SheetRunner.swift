@@ -546,6 +546,7 @@ final class SheetRunner: ObservableObject {
         if ok {
             AIRoute.markUp(j.route)
             sheetPath = o["sheet"] as? String
+            EvidenceService.shared.sheetFinished(sheet: sheetPath, root: j.prep.root)   // PB-52 S5: lost access -> --revoked
             for (k, v) in sources where v.status == "reading" || v.status == "ok" { sources[k]?.status = "read" }
             var extra: [String: Any] = ["route": routeName, "model": o["model"] ?? "", "sheet": sheetPath ?? ""]
             if let u = usd { extra["cost_usd"] = (u * 10000).rounded() / 10000 }

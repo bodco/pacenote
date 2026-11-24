@@ -34,6 +34,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         MainActor.assumeIsolated { AnalyticsTracker.shared.start() }  // 0.19.0 (S4, D43): product analytics v2, hourly
         MainActor.assumeIsolated { AIStatusModel.shared.start() }    // 0.10.0 (status fix): limits known from launch
         MainActor.assumeIsolated { AIUsageProbe.shared.start() }     // 0.10.0 (owner 12.11): account usage numbers, 60 s after launch
+        MainActor.assumeIsolated { EvidenceService.shared.start() }  // PB-52 G2 (S5): project memory, only with the flag evidence_store
         // 0.9.5: recordings that were on their way to Google Drive when the app quit go on (after the accounts load)
         DispatchQueue.main.asyncAfter(deadline: .now() + 20) { MainActor.assumeIsolated { DriveRecordings.shared.resumeQueue(); CallSyncService.shared.start(); CRMCallLogger.start() } }
         // 0.26.2 (call folders, B6): flat calls move into their call folders, a few seconds after launch (move only)
@@ -480,6 +481,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         CallRecorder.shared.stopAndWait()              // 0.9.5: a recording is saved before the app quits
+        EvidenceService.callEnded()                    // PB-52 S5: no call-active.json outlives the app
         MainActor.assumeIsolated { AnalyticsTracker.shared.quit() }   // 0.19.0: app_quit, the queue sealed for next launch
         MainActor.assumeIsolated { LocalAIService.shared.stop() }
         tips?.setSplit(false, animate: false)          // keep the saved tips window at its normal width

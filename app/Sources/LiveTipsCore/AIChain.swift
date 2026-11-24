@@ -28,7 +28,10 @@ public enum AIChain {
         return out
     }
 
-    /// Live tips never run on the model on this Mac: too slow for a call.
+    /// Live tips never run on the model on this Mac: too slow for a call. PB-52 G2 (S5): project memory indexing
+    /// (job `evidence`, flag `evidence_store`) runs on any AI, including the model on this Mac.
+    public static let evidenceJob = "evidence"
+
     public static func allowed(_ route: String, job: String) -> Bool {
         defaultOrder.contains(route) && (job != "tips" || route != "local")
     }
@@ -36,9 +39,15 @@ public enum AIChain {
     /// The order a job tries its AIs: the chosen one first (even when it is not connected: the caller says why it
     /// cannot run), then the connected AIs that are on, in the PM's order; the model on this Mac always last.
     /// `auto` off (Settings > AI > switch automatically): the chosen AI only.
+    /// PB-52 G2 (S5, spec 8.6): indexing never steps to another cloud AI the PM did not choose for it, only to the
+    /// model on this Mac (when it is on in the chain and connected).
     public static func order(job: String, chosen: String, chain: [Entry], connected: Set<String>, auto: Bool = true) -> [String] {
         var out = [chosen]
         guard auto else { return out }
+        if job == evidenceJob {
+            let localOn = normalized(chain).contains { $0.route == "local" && $0.on }
+            return chosen != "local" && localOn && connected.contains("local") ? out + ["local"] : out
+        }
         var local = false
         for e in normalized(chain) where e.on && e.route != chosen && connected.contains(e.route) && allowed(e.route, job: job) {
             if e.route == "local" { local = true } else { out.append(e.route) }

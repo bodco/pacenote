@@ -5,6 +5,15 @@ Pacenote. Earlier versions are described in the commit messages and in
 
 ## Unreleased
 
+- **Project memory in the app, behind the same flag (GraphRAG G2 S5, PB-88).** Still off by default; with
+  `"features": {"evidence_store": true}` in `config.json`, Settings > AI gets a Project memory row: one line saying
+  that project text goes to the AI provider chosen for indexing and what the first index is estimated to cost (not
+  available yet until AI reading is calibrated), the off switch, the AI used for indexing (it never falls back to
+  another cloud AI, only to the model on this Mac), ceilings per pass, per day and for all projects a day, topic
+  summaries, Pause, and per project its status, Index now and Delete. Each project keeps one memory through a rename
+  or a folder change. A pass runs after a call's notes, 10 minutes after folder changes, hourly while the Mac is idle
+  on power, or on Index now, and never during a call. Hiding a call, a document that lost access and the supersede
+  click reach the memory at once, also during a call. With the flag off nothing changes.
 - **Project memory, step 1: a local evidence store behind a flag (GraphRAG G2 S1, PB-84).** Off by default (feature
   `evidence_store`), nothing changes for the PM yet. With the flag on, `python -m livetips_m0.evidence` keeps one
   SQLite file per project in Application Support (never in the project folder): every file, call, note, the
