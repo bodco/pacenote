@@ -20,6 +20,7 @@ import time
 from typing import Dict, Iterable, List, Optional
 
 from .. import client_scope as CS
+from .. import identity as ID
 from . import ingest as IG
 from . import store as S
 
@@ -59,7 +60,7 @@ def prepare(store: S.Store, scope: Optional[dict], as_of: Optional[str], exclude
     """TEMP tables of this request: _snip(sid, src, cls, tok) with cls in denied/ignored/pass and tok = valid at as_of,
     _src(id, cls) for sources, _ent(id) for visible entities."""
     c = store.conn
-    for t in ("_others", "_ownf", "_othf", "_deny", "_excl", "_eside", "_snip", "_src", "_ent", "_claim", "_edge"):
+    for t in ("_others", "_ownf", "_othf", "_deny", "_excl", "_eside", "_snip", "_src", "_rev", "_ent", "_claim", "_edge"):
         c.execute("DROP TABLE IF EXISTS temp.{}".format(t))
     c.execute("CREATE TEMP TABLE _others(name TEXT PRIMARY KEY)")
     c.execute("CREATE TEMP TABLE _ownf(rel TEXT)")
@@ -161,6 +162,12 @@ def prepare(store: S.Store, scope: Optional[dict], as_of: Optional[str], exclude
               " FROM source s".format(
                   "(s.kind='register' AND rv.superseded_at IS NULL) OR (rv.valid_from<=:as_of AND (rv.valid_to IS NULL"
                   " OR rv.valid_to>:as_of))" if as_of else "rv.superseded_at IS NULL"), params)
+    # the register task ids the request may see: ids of passing register events up to as_of (filter_register)
+    c.execute("CREATE TEMP TABLE _rev(id TEXT PRIMARY KEY, norm TEXT)")
+    c.executemany("INSERT OR IGNORE INTO _rev VALUES (?,?)", [(str(e["id"]), S.norm_alias(str(e["id"])))
+                                                              for e in IG.register_events_at(store, as_of, passing=True)
+                                                              if e.get("id")])
+    c.execute("CREATE INDEX temp._rev_n ON _rev(norm)")
     # claims and edges: a passing row exists and no denied row does (strict denial); rejected by the PM: never
     c.execute("CREATE TEMP TABLE _claim AS SELECT cl.id AS id FROM claim cl WHERE"
               " EXISTS (SELECT 1 FROM evidence ev JOIN _snip x ON x.sid=ev.snippet_id WHERE ev.target='claim'"
@@ -178,10 +185,16 @@ def prepare(store: S.Store, scope: Optional[dict], as_of: Optional[str], exclude
     c.execute("CREATE TEMP TABLE _ent AS SELECT en.id AS id FROM entity en WHERE"
               " EXISTS (SELECT 1 FROM claim cl JOIN _claim x ON x.id=cl.id WHERE cl.subject_id=en.id)"
               " OR EXISTS (SELECT 1 FROM edge e JOIN _edge x ON x.id=e.id WHERE e.src_id=en.id OR e.dst_id=en.id)"
-              " OR (en.origin IN ('g1','tracker','pm') AND (SELECT side FROM _eside WHERE id=en.id)<>'other' AND EXISTS (SELECT 1 FROM entity_source es"
+              " OR (en.origin IN ('g1','tracker','pm') AND CASE WHEN en.origin='g1' AND en.type='task'"
+              # a register task: one of its ids has a passing event, never the folded entity's side (section 5.3)
+              " THEN en.id IN (SELECT id FROM _rev) OR EXISTS (SELECT 1 FROM alias a JOIN _rev r ON r.norm=a.alias_norm"
+              " WHERE a.entity_id=en.id AND a.origin='g1')"
+              " ELSE (SELECT side FROM _eside WHERE id=en.id)<>'other' END AND EXISTS (SELECT 1 FROM entity_source es"
               " JOIN _src x ON x.id=es.source_id WHERE es.entity_id=en.id AND x.cls='pass' AND x.tok=1))"
               " OR (en.origin='voices' AND NOT EXISTS (SELECT 1 FROM entity_source es WHERE es.entity_id=en.id))", params)
     c.execute("CREATE INDEX temp._ent_i ON _ent(id)")
+    if c.in_transaction:
+        c.commit()          # only TEMP tables were written: end the implicit transaction so no read lock stays held
 
 
 # ---------------------------------------------------------------- overrides and state under as_of
@@ -207,23 +220,38 @@ def supersedes(store: S.Store, as_of: Optional[str]) -> List[dict]:
     return out
 
 
+def _task_item(store: S.Store, eid: str, fold: Dict[str, dict]) -> Optional[dict]:
+    """The item of a register task in a request's fold: by its id, else by one of its g1 ids (a mention joined to
+    the task, seen on its own when the request may see only that mention's events)."""
+    it = fold.get(eid)
+    if it is None:
+        ids = {r[0] for r in store.q("SELECT alias_norm FROM alias WHERE entity_id=? AND origin='g1'", (eid,))}
+        it = next((v for k, v in fold.items() if S.norm_alias(k) in ids), None)
+    return it
+
+
 def entity_state(store: S.Store, eid: str, as_of: Optional[str], fold: Optional[Dict[str, dict]] = None) -> dict:
-    """Name and status of an entity at `as_of`, derived from dated rows (never the "now" caches under as_of)."""
+    """Name and status of an entity at `as_of`, derived from dated rows (never the "now" caches under as_of). fold:
+    the request's fold of the register events it may see (search and entity_card pass it); None folds every event
+    (no request scope). A register task is named only from that fold, never from the stored name of the full fold."""
     e = store.one("SELECT * FROM entity WHERE id=?", (eid,))
     if not e:
         return {}
-    name, status, merged = e["name"], e["status"], e["merged_into"]
+    name, status, merged, shown = e["name"], e["status"], e["merged_into"], eid
     if e["type"] == "task" and e["origin"] == "g1":
-        it = (fold if fold is not None else IG.register_fold_at(store, as_of)).get(eid)
-        if it is None and as_of:
+        scoped = fold is not None
+        it = _task_item(store, eid, fold) if scoped else IG.register_fold_at(store, as_of).get(eid)
+        if it is None and (as_of or scoped):
             return {}
         if it:
-            name, status = it.get("text") or name, it.get("status") or status
+            name, status = it.get("text") or it["id"], it.get("status") or status
+            if eid not in (it.get("ids") or [it["id"]]):
+                shown = it["id"]                # only the joined mention is visible: it is named by its own id
     if as_of and merged and (e["merged_at"] or "") > as_of:
         merged = None
     if any(s["old"] == eid for s in supersedes(store, as_of)):
         status = "superseded"
-    return {"id": eid, "type": e["type"], "name": name, "status": status, "merged_into": merged, "origin": e["origin"]}
+    return {"id": shown, "type": e["type"], "name": name, "status": status, "merged_into": merged, "origin": e["origin"]}
 
 
 # ---------------------------------------------------------------- rows from passing evidence only
@@ -290,7 +318,7 @@ def search(store: S.Store, query: str, *, scope: Optional[dict] = None, as_of=No
     stale, relabel_rep = _relabel_if_stale(store, scope, mode)
     prepare(store, scope, as_of, exclude, stale=stale, window=window)
     kinds = set(kinds or ("snippet", "claim", "edge"))
-    fold = IG.register_fold_at(store, as_of)
+    fold = IG.register_fold_at(store, as_of, passing=True)
     sup = {s["old"] for s in supersedes(store, as_of)}
     q = fts_query(query)
     items: List[dict] = []
@@ -315,7 +343,7 @@ def search(store: S.Store, query: str, *, scope: Optional[dict] = None, as_of=No
         an = " " + " ".join(WORD.findall(r["alias_norm"])) + " "
         if len(an.strip()) < 3 or an not in qn:
             continue
-        if r["origin"] == "llm" and not _alias_passes(store, r["alias_norm"], r["entity_id"]):
+        if not _alias_ok(store, r["alias_norm"], r["origin"], r["entity_id"], fold):
             continue
         st = entity_state(store, r["entity_id"], as_of, fold)
         if st:
@@ -397,12 +425,23 @@ def _alias_passes(store: S.Store, alias_norm: str, eid: str) -> bool:
     return bool(r[0])
 
 
-def visible_aliases(store: S.Store, eid: str) -> List[str]:
-    out = []
-    for r in store.q("SELECT alias_norm, origin FROM alias WHERE entity_id=? AND status<>'rejected'", (eid,)):
-        if r["origin"] != "llm" or _alias_passes(store, r["alias_norm"], eid):
-            out.append(r["alias_norm"])
-    return out
+def _alias_ok(store: S.Store, alias_norm: str, origin: str, eid: str, fold: Optional[Dict[str, dict]]) -> bool:
+    """An alias the request may see: an LLM alias by its alias_seen rows; for a register task, a g1 id only when its
+    own events pass (_rev) and a Tracker id only when the item of the visible events carries it."""
+    if origin == "llm":
+        return _alias_passes(store, alias_norm, eid)
+    if fold is None or origin not in ("g1", "tracker") or not store.one(
+            "SELECT 1 FROM entity WHERE id=? AND type='task' AND origin='g1'", (eid,)):
+        return True
+    if origin == "g1":
+        return bool(store.one("SELECT 1 FROM _rev WHERE norm=?", (alias_norm,)))
+    it = _task_item(store, eid, fold)
+    return bool(it) and S.norm_alias(ID.tracker_id(it)) == alias_norm
+
+
+def visible_aliases(store: S.Store, eid: str, fold: Optional[Dict[str, dict]] = None) -> List[str]:
+    return [r["alias_norm"] for r in store.q("SELECT alias_norm, origin FROM alias WHERE entity_id=? AND status<>'rejected'",
+                                             (eid,)) if _alias_ok(store, r["alias_norm"], r["origin"], eid, fold)]
 
 
 # ---------------------------------------------------------------- entity card
@@ -414,9 +453,18 @@ def entity_card(store: S.Store, entity_id: str, *, scope: Optional[dict] = None,
     as_of = S.utc(as_of) if as_of else None
     stale, _rep = _relabel_if_stale(store, scope, "prep")
     prepare(store, scope, as_of, exclude, stale=stale, window=window)
+    fold = IG.register_fold_at(store, as_of, passing=True)
     if not store.one("SELECT 1 FROM _ent WHERE id=?", (entity_id,)):
-        return None
-    fold = IG.register_fold_at(store, as_of)
+        # a register task asked for by a joined mention's id: the request sees the mention when its events pass
+        hit = next((r["entity_id"] for r in store.q("SELECT a.entity_id FROM alias a JOIN _ent v ON v.id=a.entity_id"
+                                                    " WHERE a.alias_norm=? AND a.origin='g1'", (S.norm_alias(entity_id),))
+                    if _alias_ok(store, S.norm_alias(entity_id), "g1", r["entity_id"], fold)), None)
+        if not hit:
+            return None
+        entity_id = hit
+    elif store.one("SELECT 1 FROM entity WHERE id=? AND type='task' AND origin='g1'", (entity_id,)) and not store.one(
+            "SELECT 1 FROM _rev WHERE id=?", (entity_id,)):
+        return None         # a task id known only from events the request may not see: visible only by its mention
     st = entity_state(store, entity_id, as_of, fold)
     if not st:
         return None
@@ -447,4 +495,4 @@ def entity_card(store: S.Store, entity_id: str, *, scope: Optional[dict] = None,
                 edges.append({"kind": "edge", "src": s["new"], "rel": "supersedes", "dst": s["old"], "origin": "pm",
                               "modality": "confirmation", "status": "accepted", "said_at": s["at"],
                               "first_said_at": s["at"], "last_said_at": s["at"]})
-    return dict(st, aliases=visible_aliases(store, entity_id), claims=claims, history=history, edges=edges)
+    return dict(st, aliases=visible_aliases(store, entity_id, fold), claims=claims, history=history, edges=edges)

@@ -755,6 +755,48 @@ def test_register_parity_with_filter_register(env):
         parity(st, sc)
 
 
+def test_task_name_and_status_come_from_the_visible_register_events(env):
+    """A Globex mention joined to an Acme task and then edited and ticked: under the Acme scope the task keeps its own
+    name and stays open, with no Globex text or id; under the Globex scope only the Globex mention is seen, by its own
+    id. Both on entity_card and search (PB-84 review round 4)."""
+    root = env
+    two_clients(root)
+    reg = [{"v": 1, "op": "add", "id": "c-aaaaaaaaaa", "text": "book the heron demo", "owner": "me",
+            "series": "|acmeweeklystatus", "created": "2026-11-03T10:00:00+00:00"},
+           {"v": 1, "op": "add", "id": "c-hhhhhhhhhh", "text": "Globex heron demo slides", "owner": "me",
+            "series": "|globexweekly", "created": "2026-11-04T11:05:00+00:00"},
+           {"v": 1, "op": "same", "id": "c-hhhhhhhhhh", "to": "c-aaaaaaaaaa", "at": "2026-11-05T11:00:00+00:00"},
+           {"v": 1, "op": "edit", "id": "c-hhhhhhhhhh", "text": "pelican secret price 9000", "at": "2026-11-06T10:00:00+00:00"},
+           {"v": 1, "op": "done", "id": "c-hhhhhhhhhh", "at": "2026-11-07T10:00:00+00:00"}]
+    put(root, IG.REGISTER, "\n".join(json.dumps(e) for e in reg) + "\n")
+    st = open_store(root=root)
+    run(st, root)
+    sc_a = acme(root)
+    sc_g = CS.decide(str(root), "Globex weekly", ["Globex"])
+    assert sc_g and sc_g["client"] == "globex"
+    assert _kept_events(sc_a) == {1} and _kept_events(sc_g) == {2, 3, 4, 5}
+    a_card = SE.entity_card(st, "c-aaaaaaaaaa", scope=sc_a)
+    assert a_card["name"] == "book the heron demo" and a_card["status"] == "open" and a_card["id"] == "c-aaaaaaaaaa"
+    assert SE.entity_card(st, "c-hhhhhhhhhh", scope=sc_a) is None      # the mention's id is Globex's
+    a_hits = [SE.search(st, q, scope=sc_a) for q in ("c-aaaaaaaaaa", "c-hhhhhhhhhh", "heron demo", "pelican price")]
+    assert not a_hits[1]["entities"]
+    for blob in [a_card] + a_hits:
+        text = json.dumps(blob).lower()
+        assert "hhhhhhhhhh" not in text and "pelican" not in text and "globex" not in text, text
+    g_card = SE.entity_card(st, "c-hhhhhhhhhh", scope=sc_g)
+    assert g_card["id"] == "c-hhhhhhhhhh" and g_card["name"] == "pelican secret price 9000" and g_card["status"] == "done"
+    assert SE.entity_card(st, "c-aaaaaaaaaa", scope=sc_g) is None      # the task's own id is Acme's
+    g_hits = [SE.search(st, q, scope=sc_g) for q in ("c-hhhhhhhhhh", "c-aaaaaaaaaa", "heron demo", "pelican price")]
+    assert [(e["id"], e["name"], e["status"]) for e in g_hits[0]["entities"]] == [
+        ("c-hhhhhhhhhh", "pelican secret price 9000", "done")]
+    assert "pelican" in texts(g_hits[3])
+    for blob in [g_card] + [h["entities"] for h in g_hits]:     # the kept op same line itself names its target
+        text = json.dumps(blob).lower()
+        assert "aaaaaaaaaa" not in text and "book the heron" not in text, text
+    unscoped = SE.entity_card(st, "c-aaaaaaaaaa")                     # no scope: the whole register, as before
+    assert unscoped["name"] == "pelican secret price 9000" and unscoped["status"] == "done"
+
+
 def late_client(root):
     put(root, "docs/acme/notes.md", "# Acme\n\nThe Acme pilot has 60 users.\n")
     put(root, "docs/globex/notes.md", "# Globex\n\nThe Globex budget is 120 hours.\n")

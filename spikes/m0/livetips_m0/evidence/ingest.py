@@ -862,11 +862,12 @@ def ingest_register(ctx: Ctx) -> None:
         ctx.report["new_revisions"] += 1
 
 
-def register_fold_at(store: S.Store, as_of: Optional[str]) -> Dict[str, dict]:
-    """{task id: item} from the active register revision's events folded up to `as_of` (spec section 11.2 step 2):
-    a task closed after `as_of` is open in that replay."""
+def register_events_at(store: S.Store, as_of: Optional[str], passing: bool = False) -> List[dict]:
+    """The active register revision's events up to `as_of`. passing: only the events whose snippet the request may
+    see (`_snip` cls pass of search.prepare), the events filter_register keeps for the scope (section 5.3)."""
     rows = store.q("SELECT sn.locator, sn.said_at FROM snippet sn JOIN revision rv ON rv.id=sn.revision_id JOIN source s"
-                   " ON s.id=rv.source_id WHERE s.kind='register' AND rv.superseded_at IS NULL ORDER BY sn.ord")
+                   " ON s.id=rv.source_id{} WHERE s.kind='register' AND rv.superseded_at IS NULL ORDER BY sn.ord".format(
+                       " JOIN _snip x ON x.sid=sn.id AND x.cls='pass'" if passing else ""))
     events = []
     for r in rows:
         if as_of and (r["said_at"] or "") > as_of:
@@ -874,8 +875,15 @@ def register_fold_at(store: S.Store, as_of: Optional[str]) -> Dict[str, dict]:
         e = json.loads(r["locator"]).get("event")
         if isinstance(e, dict):
             events.append(e)
+    return events
+
+
+def register_fold_at(store: S.Store, as_of: Optional[str], passing: bool = False) -> Dict[str, dict]:
+    """{task id: item} from the active register revision's events folded up to `as_of` (spec section 11.2 step 2):
+    a task closed after `as_of` is open in that replay. passing: fold only the events the request may see, so a name,
+    status or join that comes from another client's events never reaches the request (PB-84 review round 4)."""
     out = {}
-    for it in CM.fold(events):
+    for it in CM.fold(register_events_at(store, as_of, passing)):
         for x in it.get("ids") or [it["id"]]:
             out[x] = it
     return out

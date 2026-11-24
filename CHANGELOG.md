@@ -14,7 +14,8 @@ Pacenote. Earlier versions are described in the commit messages and in
   revoked document is never searchable or embedded, even while a pass or a rebuild runs, and a renamed or moved file
   takes the client of its new path. A client folder created later also covers the calls and Tracker items that
   already named that client. A commitment of another client stays out of the search even after it moved to another
-  project or was joined to a task of this client, the same rule the folder search already applies. No model, network
+  project or was joined to a task of this client, the same rule the folder search already applies; such a joined
+  task keeps its own name and status for this client, and the other client sees only its own mention. No model, network
   or embedding request is added (vectors only from the bundled local server when it runs). LLM extraction, topic
   summaries and the settings row come in the next steps.
 - **Preparation no longer mixes in another client's facts (PB-70).** When one project folder holds several clients,

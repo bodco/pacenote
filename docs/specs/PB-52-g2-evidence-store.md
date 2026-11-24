@@ -311,7 +311,13 @@ request's scope, with the same rules as `side`, `side_of_name`, `series_side`, `
   4. a register event: other when, for any `pos`, its `rseries`, then `rcall`, then `rtext` marks give **other** (the
      `item_side` order), as `filter_register` drops every event of an id with an `add` on another client's side; a
      Tracker snippet: other when its item's entity is other.
-  A deterministic entity's side is `series_side`, then `side_of_name`, then `text_side` on its `entity_mark` rows.
+  A deterministic entity's side is `series_side`, then `side_of_name`, then `text_side` on its `entity_mark` rows,
+  except a register task: it is visible when an event with one of its ids (its own or a g1 alias) passes, and its
+  name, status and ids come only from `fold()` over the register events the request may see, never from the stored
+  entity (folded from every event). A mention of another client joined by `op same` is seen by that client under its
+  own id with its own text and status; the task's own id, the mention's id and the mention's later edit or `done`
+  never reach the other side. A g1 alias shows only when its id's events pass, a Tracker alias only when the visible
+  item carries it (PB-84 review round 4).
 - **Stale universe.** When `scope.client` or a label of `scope.others` is not in the stored `label_universe` (a
   folder added or renamed after the last pass), marks cannot answer the text rule for that label. Non-live callers
   (`mode = prep`, `after`, the CLI) first run a local relabel (the snippet split of section 5.2: snippets, marks and
@@ -1211,7 +1217,8 @@ filters on a ranked list:
    `claim.status`, `edge.status`, section 6) are not read in a replay; they are derived from rows dated at or before
    `as_of`:
    - an entity's status and name come from its `status` and name claims with `said_at <= as_of` (for tasks these are
-     the register events folded up to `as_of`, the same `commitments.fold()` cut at that time), so a task closed on
+     the register events that pass step 1 folded up to `as_of`, the same `commitments.fold()` cut at that time, section
+     5.3), so a task closed on
      Nov 19 is open in a replay as of Nov 17; an entity with no name claim keeps the name of its earliest evidence at
      or before `as_of`, and an entity with no row at or before `as_of` is not visible at all;
    - a merge applies only when its register event or `pm_override` has `at <= as_of`;
