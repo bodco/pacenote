@@ -1,0 +1,2 @@
+{"v": 1, "op": "add", "id": "c-40ad1729b3", "text": "rotate the API signing key", "owner": "Kevin", "project": "", "series": "|acmeopssync", "call": "2026-11-07-1100-acme-ops-sync.md", "t": "11:00:20", "created": "2026-11-07T11:00:00+00:00", "due": "", "by": "app", "source": "notes"}
+{"v": 1, "op": "done", "id": "c-cd6930cc17", "at": "2026-11-19T09:00:00+00:00", "by": "pm"}

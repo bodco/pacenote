@@ -629,7 +629,8 @@ def model_dir() -> Optional[Path]:
 @contextlib.contextmanager
 def embed_server(mdir: Optional[Path]):
     """The bundled embed_server.py on an ephemeral loopback port (11435 may be the app's), started for the run with
-    vectors and stopped at the end; None without the model folder."""
+    vectors and stopped at the end; None without the model folder or when the server never came up (the run with
+    vectors is then recorded as skipped, never run without vectors under the "vectors" label)."""
     if not mdir:
         yield None
         return
@@ -640,14 +641,15 @@ def embed_server(mdir: Optional[Path]):
     proc = subprocess.Popen([sys.executable, "-m", "livetips_m0.embed_server", "--model-dir", str(mdir), "--port", str(port)],
                             cwd=str(M0), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
-        deadline = time.time() + 180
-        while time.time() < deadline:
+        deadline, up = time.time() + 180, False
+        while time.time() < deadline and proc.poll() is None:
             try:
                 with urllib.request.urlopen("http://127.0.0.1:{}/api/tags".format(port), timeout=2):
+                    up = True
                     break
             except OSError:
                 time.sleep(0.5)
-        yield IG.LoopbackEmbedder(port=port, timeout=300.0)
+        yield IG.LoopbackEmbedder(port=port, timeout=300.0) if up else None
     finally:
         proc.terminate()
         try:
@@ -694,13 +696,17 @@ def new_segments(ctx: dict) -> int:
 
 
 def build_v2(base: Path, gold: dict, gold2: dict, scale: bool, embedder=None) -> dict:
-    """The gold v2 project and its store, pass by pass (gold_v2.yaml header): the base pass, the revision states in
+    """The gold v2 project and its store, pass by pass (gold_v2.yaml header): the base pass, the decision sidecars
+    (*.notion.json) in a pass of their own on notes already ingested (spec 14.2 item 4), the revision states in
     time order, the move, the deletions, the supersede override and the state-only pass through the CLI."""
     base.mkdir(parents=True, exist_ok=True)
     root = base / gold2["project"]
     shutil.copytree(PROJECT, root)
+    sidecars = []                     # decision sidecars land in a later pass, on notes already ingested (14.2 item 4)
     for p in sorted((OVERLAY / "files").rglob("*")):
-        if p.is_file():
+        if p.is_file() and p.name.endswith(".notion.json"):
+            sidecars.append(p)
+        elif p.is_file():
             dst = root / p.relative_to(OVERLAY / "files")
             dst.parent.mkdir(parents=True, exist_ok=True)
             dst.write_bytes(p.read_bytes())
@@ -732,7 +738,17 @@ def build_v2(base: Path, gold: dict, gold2: dict, scale: bool, embedder=None) ->
 
     one_pass()
     ctx["cost"]["base"] = new_segments(ctx)
-    revs = yaml.safe_load((REVISIONS / "revisions.yaml").read_text(encoding="utf-8"))
+    for p in sidecars:
+        rel_path = str(p.relative_to(OVERLAY / "files"))
+        dst = root / rel_path
+        dst.write_bytes(p.read_bytes())
+        m = DATE_RX.search(rel_path)
+        ts = dt.datetime.fromisoformat((m.group(0) if m else "2026-11-01") + "T12:00:00").timestamp()
+        os.utime(dst, (ts, ts))
+    if sidecars:
+        one_pass()
+        ctx["cost"]["sidecars"] = new_segments(ctx)
+    revs =yaml.safe_load((REVISIONS / "revisions.yaml").read_text(encoding="utf-8"))
     states = sorted(((ES.utc(s["at"]), rel_path, i, s) for rel_path, ss in revs["files"].items() for i, s in enumerate(ss)),
                     key=lambda x: (x[0], x[1]))
     for at, rel_path, i, s in states:
@@ -990,6 +1006,9 @@ def judge(v, ctx: dict, gold2: dict, row: dict, res: dict) -> dict:
 
 def evaluate_v2(v, ctx: dict, gold2: dict, set_name: str, embedder=None) -> dict:
     fixture = replay_fixture(ctx, EXTRACT, set_name == "small") if v.name == "C" else None
+    if embedder is not None and not ctx["store"].one("SELECT 1 FROM snippet WHERE vec IS NOT NULL"):
+        raise SystemExit("G0 {}: the run with vectors stored no snippet vector (the embed server answered nothing)"
+                         .format(v.name))
     rows = []
     top = int(gold2.get("top", 6))
     for row in gold2["rows"]:
@@ -1002,10 +1021,26 @@ def evaluate_v2(v, ctx: dict, gold2: dict, set_name: str, embedder=None) -> dict
         if embedder is not None:
             vecs = embedder([row["q"]])
             qvec = vecs[0] if vecs else None
-        rows.append(judge(v, ctx, gold2, row, ask(v, ctx, row, int(row.get("top") or top), qvec)))
+            if qvec is None:
+                raise SystemExit("G0 {}: the run with vectors got no query vector for {}".format(v.name, row["id"]))
+        k = int(row.get("top") or top)
+        got = judge(v, ctx, gold2, row, ask(v, ctx, row, k, qvec))
+        if v.name != "A":
+            got["live_leaks"] = live_leaks(v, ctx, gold2, row, k)
+        rows.append(got)
     lat = latency(v, ctx, gold2, rows)
     return dict(metrics(rows, ctx, set_name), rows=rows, latency=lat, fixture=fixture,
                 index_cost=index_cost(ctx, fixture), passes=len(ctx["passes"]))
+
+
+def live_leaks(v, ctx: dict, gold2: dict, row: dict, k: int) -> dict:
+    """The row's question through search(mode="live") as the app asks it during a call (now, no as_of, the PM's
+    exclusions passed): the client and excluded leaks of what it returns. Future and stale do not apply to "now"."""
+    res = SE.search(ctx["store"], row["q"], scope=scope_of(ctx, row), exclude=ctx["pm_excluded"], kinds=v.kinds,
+                    mode="live", budget=SE.Budget(k=k, ms=150))
+    now = {key: val for key, val in row.items() if key not in ("as_of", "state", "order", "history", "dated")}
+    got = judge(v, ctx, gold2, now, {"items": list(res["items"]), "entities": list(res.get("entities") or [])})
+    return {"client": got["leaks"]["client"], "excluded": got["leaks"]["excluded"]}
 
 
 def latency(v, ctx: dict, gold2: dict, rows: List[dict]) -> dict:
@@ -1022,7 +1057,7 @@ def latency(v, ctx: dict, gold2: dict, rows: List[dict]) -> dict:
                 ask(v, ctx, row, 6)
                 live.append((time.perf_counter() - t) * 1000)
                 continue
-            SE.search(ctx["store"], row["q"], scope=scope, kinds=v.kinds, mode="live")
+            SE.search(ctx["store"], row["q"], scope=scope, exclude=ctx["pm_excluded"], kinds=v.kinds, mode="live")
             live.append((time.perf_counter() - t) * 1000)
             t = time.perf_counter()
             SE.search(ctx["store"], row["q"], scope=scope, as_of=row.get("as_of"), exclude=ctx["pm_excluded"],
@@ -1075,6 +1110,9 @@ def metrics(rows: List[dict], ctx: dict, set_name: str) -> dict:
            "excluded_leaks": sum(len(r["leaks"]["excluded"]) for r in ev),
            "client_leaks": sum(len(r["leaks"]["client"]) for r in ev),
            "shared_facts_kept": rate(shared)}
+    if any("live_leaks" in r for r in ev):     # B and C: the same rows through mode="live" (now, PM exclusions)
+        out["live_client_leaks"] = sum(len(r["live_leaks"]["client"]) for r in ev)
+        out["live_excluded_leaks"] = sum(len(r["live_leaks"]["excluded"]) for r in ev)
     if ctx["scale"]:            # the scale set's extraction is generated: no hop or paraphrase gate reads it
         out["generated_extraction"] = {"docs": len(ctx["generated"]), "gated": False}
     return out
@@ -1097,8 +1135,10 @@ def run_v2(v, gold: dict, gold2: dict, gold2_path: Path, tmp: Path, sets, mdir: 
             out["sets"][s] = {}
             for m in modes:
                 if m == "vectors" and emb is None:
-                    out["sets"][s][m] = {"skipped": "no bge-m3 model folder (models/bge-m3-int8 or G0_BGE_M3_DIR): the "
-                                                    "run with vectors is evaluated on a machine with the model"}
+                    why = ("no bge-m3 model folder (models/bge-m3-int8 or G0_BGE_M3_DIR): the run with vectors is "
+                           "evaluated on a machine with the model") if not mdir else \
+                        "the embed server did not come up on loopback within 180 s"
+                    out["sets"][s][m] = {"skipped": why}
                     continue
                 ctx = build_v2(tmp / "v2-{}-{}".format(s, m), gold, gold2, s == "scale", emb if m == "vectors" else None)
                 try:
@@ -1110,8 +1150,9 @@ def run_v2(v, gold: dict, gold2: dict, gold2_path: Path, tmp: Path, sets, mdir: 
 
 def s2_gate(res: dict) -> Optional[dict]:
     """The S2 G0 gate (spec section 17, S2) for B and C: prep and live leaks 0 on the v1 targets; on every evaluated
-    run of gold v2 client, future and excluded leaks 0, quote validity 100%, evidence recall of register and Tracker
-    facts 100%; mode live p95 on the scale set at most 150 ms."""
+    run of gold v2 client, future and excluded leaks 0 in prep, client and excluded leaks 0 in mode live (the same
+    rows, now), quote validity 100%, evidence recall of register and Tracker facts 100%; mode live p95 on the scale
+    set at most 150 ms."""
     if res["variant"] == "A" or "v2" not in res:
         return None
     checks = {"prep_leaks_0": res["totals"]["prep_leaks"] == 0, "live_leaks_0": res["totals"]["live_leaks"] == 0}
@@ -1126,6 +1167,7 @@ def s2_gate(res: dict) -> Optional[dict]:
             checks[k + "excluded_leaks_0"] = r["excluded_leaks"] == 0
             checks[k + "quote_validity_100"] = r["quote_validity"] in (100.0, None)
             checks[k + "evidence_recall_100"] = r["evidence_recall"]["rate"] == 100.0
+            checks[k + "live_leaks_0"] = r.get("live_client_leaks") == 0 and r.get("live_excluded_leaks") == 0
             if s == "scale":
                 checks[k + "live_p95_le_150ms"] = r["latency"]["live_p95_ms"] <= 150
     return {"pass": all(x for x in checks.values() if x is not None), "checks": checks}
@@ -1267,6 +1309,8 @@ V2_COLUMNS = [("Rows passed", lambda r: "{}/{}".format(r["rows_passed"], r["rows
               ("Future leaks", lambda r: r["future_leaks"]), ("Stale", lambda r: r["stale_returned"]),
               ("Excluded leaks", lambda r: r["excluded_leaks"]), ("Client leaks", lambda r: r["client_leaks"]),
               ("Shared kept", lambda r: fmt(r["shared_facts_kept"]["rate"], "%")),
+              ("Live client/excluded leaks", lambda r: "{}/{}".format(r["live_client_leaks"], r["live_excluded_leaks"])
+               if "live_client_leaks" in r else "n/a"),
               ("Fixture hits/misses", lambda r: "{}/{}".format(r["fixture"]["hits"], r["fixture"]["misses"]) if r.get("fixture") else "n/a"),
               ("Live p50/p95 ms", lambda r: "{}/{}".format(r["latency"]["live_p50_ms"], r["latency"]["live_p95_ms"])),
               ("Prep p50/p95 ms", lambda r: "{}/{}".format(r["latency"]["prep_p50_ms"], r["latency"]["prep_p95_ms"])
@@ -1293,7 +1337,9 @@ def table_v2(res: dict) -> str:
     gate = v2.get("gate")
     if gate:
         failed = [k for k, x in gate["checks"].items() if x is False]
-        lines += ["", "S2 gate: {}".format("PASS" if gate["pass"] else "FAIL: " + ", ".join(failed))]
+        skipped = [k.split(" ")[0] for k, x in gate["checks"].items() if x is None]
+        note = " ({} not evaluated)".format(", ".join(skipped)) if skipped else ""
+        lines += ["", "S2 gate: {}".format("PASS" + note if gate["pass"] else "FAIL: " + ", ".join(failed))]
     return "\n".join(lines)
 
 
@@ -1427,7 +1473,8 @@ def main(argv=None) -> int:
             print("\n" + m)
     if not a.no_save:
         print("\nwrote", save(res, a.tag).relative_to(HERE))
-    return 0
+    gate = (res.get("v2") or {}).get("gate")
+    return 1 if gate and not gate["pass"] else 0      # a failing S2 gate fails the run (the result is still saved)
 
 
 if __name__ == "__main__":

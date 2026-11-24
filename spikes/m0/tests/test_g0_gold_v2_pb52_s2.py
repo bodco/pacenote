@@ -7,6 +7,8 @@ import hashlib
 import importlib.util
 import json
 import socket
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -69,6 +71,41 @@ def test_every_variant_runs_offline_on_both_sets_with_the_new_columns(results):
                 assert "skipped" in modes["vectors"] or "future_leaks" in modes["vectors"]
 
 
+def test_no_fixture_file_is_gitignored():
+    """A clean checkout has every file the bench reads (review PB-85 r0: fixtures/v2/files/live/ and
+    register-extra.jsonl were hidden by the live/ and *.jsonl rules)."""
+    repo = G0.parents[3]
+    files = [str(p.relative_to(repo)) for p in sorted((G0 / "fixtures").rglob("*")) if p.is_file()]
+    files += ["spikes/m0/bench/g0/gold.yaml", "spikes/m0/bench/g0/gold_v2.yaml"]
+    probe = "spikes/m0/bench/g0/fixtures/v9/files/live/x.md"        # the rule that hid v2: must still be ignored
+    try:
+        got = subprocess.run(["git", "-C", str(repo), "check-ignore", "--no-index", "--stdin"],
+                             input="\n".join(files + [probe]), capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        pytest.skip("git is not available")
+    if got.returncode not in (0, 1):
+        pytest.skip("not a git checkout: " + got.stderr.strip())
+    assert got.stdout.split() == [probe], got.stdout
+    assert any("/v2/files/live/" in f for f in files) and any(f.endswith("v2/register-extra.jsonl") for f in files)
+
+
+def test_main_exits_1_when_the_s2_gate_fails(bench, monkeypatch):
+    res = {"variant": "B", "v2": {"gate": {"pass": False, "checks": {"small/no_vectors live_leaks_0": False}}}}
+    monkeypatch.setattr(bench, "run", lambda *a, **kw: res)
+    for name in ("table", "misses", "table_v2", "misses_v2"):
+        monkeypatch.setattr(bench, name, lambda r: "")
+    assert bench.main(["--variant", "B", "--no-save"]) == 1
+    res["v2"]["gate"]["pass"] = True
+    assert bench.main(["--variant", "B", "--no-save"]) == 0
+
+
+def test_an_embed_server_that_never_comes_up_is_a_skip_not_a_run_without_vectors(bench, monkeypatch, tmp_path):
+    real = subprocess.Popen
+    monkeypatch.setattr(bench.subprocess, "Popen", lambda *a, **kw: real([sys.executable, "-c", "pass"]))
+    with bench.embed_server(tmp_path) as emb:
+        assert emb is None
+
+
 def test_offline_blocks_every_host_but_loopback(bench):
     with bench.offline() as blocked:
         with pytest.raises(OSError):
@@ -90,6 +127,31 @@ def test_b_and_c_meet_the_s2_gate(results):
         assert gate["pass"], (v, [k for k, x in gate["checks"].items() if x is False])
         scale = results[v]["v2"]["sets"]["scale"]["no_vectors"]
         assert scale["latency"]["live_p95_ms"] <= 150
+        for s in ("small", "scale"):            # mode live is checked on gold v2 too, not only on the v1 targets
+            assert gate["checks"]["{}/no_vectors live_leaks_0".format(s)] is True, v
+            run = results[v]["v2"]["sets"][s]["no_vectors"]
+            assert run["live_client_leaks"] == 0 and run["live_excluded_leaks"] == 0
+            assert all("live_leaks" in r for r in run["rows"] if r["status"] != "not_evaluated")
+
+
+def test_a_live_leak_on_gold_v2_fails_the_gate(bench, small, monkeypatch):
+    gold2 = bench.load_gold(bench.GOLD2)
+    row = next(r for r in gold2["rows"] if r["client"] == "acme")
+    real = bench.SE.search
+    leak = {"kind": "snippet", "id": 0, "text": "The invoice export moves to Friday.", "source": "docs/acme/vendor-shortlist.md"}
+
+    def fake(st, q, **kw):
+        assert kw["mode"] == "live" and "as_of" not in kw and kw["exclude"] == small["pm_excluded"]
+        return dict(real(st, q, **kw), items=[leak])
+    monkeypatch.setattr(bench.SE, "search", fake)
+    got = bench.live_leaks(bench.variant("B"), small, gold2, row, 6)
+    assert got["client"] == ["invoice export"] and "item:docs/acme/vendor-shortlist.md" in got["excluded"]
+    res = {"variant": "B", "totals": {"prep_leaks": 0, "live_leaks": 0},
+           "v2": {"sets": {"small": {"no_vectors": {"client_leaks": 0, "future_leaks": 0, "excluded_leaks": 0,
+                                                    "quote_validity": 100.0, "evidence_recall": {"rate": 100.0},
+                                                    "live_client_leaks": 1, "live_excluded_leaks": 0}}}}}
+    gate = bench.s2_gate(res)
+    assert gate["pass"] is False and gate["checks"]["small/no_vectors live_leaks_0"] is False
 
 
 # ---------------------------------------------------------------- acceptance 2: every row says who should pass it and why
@@ -229,13 +291,14 @@ def test_needs_on_every_row_a_b_everywhere_c_only_where_its_code_is(bench, resul
 # ---------------------------------------------------------------- acceptance 7: the mtime cases, the gold hash
 
 def test_mtime_cases_run_through_utime_and_a_normal_pass(bench, tmp_path, monkeypatch):
-    seen = []
+    seen, sidecars = [], []
     real = IG.ingest
 
     def spy(store, root, **kw):
         changed = sorted(p for p in ("live/2026-11-12-acme-staffing-review/2026-11-12-1500-acme-staffing-review.notes.md",
                                      "docs/acme/onboarding-pilot.md") if (Path(root) / p).exists())
         seen.append((kw.get("valid_from"), changed))
+        sidecars.append(len(list(Path(root).rglob("*.notion.json"))))
         return real(store, root, **kw)
     monkeypatch.setattr(IG, "ingest", spy)
     with bench.store_env(tmp_path):
@@ -247,6 +310,8 @@ def test_mtime_cases_run_through_utime_and_a_normal_pass(bench, tmp_path, monkey
             rows[uri] = [r["valid_from"] for r in st.q("SELECT rv.valid_from FROM revision rv JOIN source s ON"
                                                        " s.id=rv.source_id WHERE s.uri=? ORDER BY rv.id", (uri,))]
         st.close()
+    # the decision sidecars land in the second pass, on notes the first pass already ingested (spec 14.2 item 4)
+    assert sidecars[0] == 0 and sidecars[1] == 2
     # the passes that brought the mtime-case states had no valid_from (passes with it exist for the other files)
     assert any(vf for vf, _c in seen)
     assert rows["live/2026-11-12-acme-staffing-review/2026-11-12-1500-acme-staffing-review.notes.md"] == [

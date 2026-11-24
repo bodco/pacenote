@@ -123,13 +123,11 @@ preparation and after-call columns equal A's.
 
 | Variant | Live answer rate | Answer text in top | Live leaks | Lookup p50/p95 ms |
 |---|---:|---:|---:|---:|
-| A (folder index) | 100.0% | 80.0% | 0 | 1.88 / 6.01 |
-| B (store, snippets) | 90.0% | 80.0% | 0 | 3.38 / 19.23 |
-| C (store, snippets, claims, edges) | 100.0% | 80.0% | 0 | 3.38 / 19.15 |
+| A (folder index) | 100.0% | 80.0% | 0 | 1.62 / 2.59 |
+| B (store, snippets) | 90.0% | 80.0% | 0 | 2.26 / 2.83 |
+| C (store, snippets, claims, edges) | 100.0% | 80.0% | 0 | 2.56 / 3.47 |
 
-Latency note: the three result files were saved with the three runs in parallel, so their latencies are high. Run one
-after another on the same Mac (not saved): v1 lookup p50/p95 A 1.70/2.82, B 2.91/3.98, C 2.94/4.44 ms; gold v2 live
-p95 on the scale set A 41.38, B 25.17, C 26.28 ms. Every other number is the same in both runs.
+The three result files were saved one after another on the same Mac (fix round 1 re-run).
 
 B misses the Ukrainian question of the weekly call ("Чого ми чекаємо від служби безпеки Acme?"): it does not rank the
 expected notes in its top 3, while A does (A also reads the call's Meeting Sheet, which B leaves out as the call's own
@@ -140,14 +138,18 @@ change; B versus C isolates the entities.
 
 **Gold v2, without vectors** (the run with vectors is `skipped` here: the bge-m3 model folder is not on this Mac):
 
-| Variant, set | Rows passed | Not evaluated | Future leaks | Stale | Excluded leaks | Client leaks | Evidence recall | Quote validity | Shared kept | Live p50/p95 ms |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| A small | 10/39 | 0 | 6 | 1 | 13 | 0 | 75.0% | n/a | 100.0% | 1.88 / 12.33 |
-| A scale | 10/39 | 0 | 6 | 1 | 13 | 0 | 75.0% | n/a | 100.0% | 6.07 / 80.64 |
-| B small | 22/39 | 0 | 0 | 0 | 0 | 0 | 100.0% | 100.0% | 100.0% | 3.28 / 6.46 |
-| B scale | 22/39 | 0 | 0 | 0 | 0 | 0 | 100.0% | 100.0% | 100.0% | 21.32 / 66.29 |
-| C small | 23/23 | 16 | 0 | 0 | 0 | 0 | 100.0% | 100.0% | 100.0% | 3.28 / 5.88 |
-| C scale | 23/23 | 16 | 0 | 0 | 0 | 0 | 100.0% | 100.0% | 100.0% | 21.48 / 64.00 |
+| Variant, set | Rows passed | Not evaluated | Future leaks | Stale | Excluded leaks | Client leaks | Evidence recall | Quote validity | Shared kept | Live client/excluded leaks | Live p50/p95 ms |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| A small | 10/39 | 0 | 6 | 1 | 13 | 0 | 75.0% | n/a | 100.0% | n/a | 1.62 / 4.57 |
+| A scale | 10/39 | 0 | 6 | 1 | 13 | 0 | 75.0% | n/a | 100.0% | n/a | 2.58 / 35.80 |
+| B small | 22/39 | 0 | 0 | 0 | 0 | 0 | 100.0% | 100.0% | 100.0% | 0 / 0 | 2.55 / 3.73 |
+| B scale | 22/39 | 0 | 0 | 0 | 0 | 0 | 100.0% | 100.0% | 100.0% | 0 / 0 | 15.14 / 21.44 |
+| C small | 23/23 | 16 | 0 | 0 | 0 | 0 | 100.0% | 100.0% | 100.0% | 0 / 0 | 2.50 / 4.37 |
+| C scale | 23/23 | 16 | 0 | 0 | 0 | 0 | 100.0% | 100.0% | 100.0% | 0 / 0 | 15.15 / 22.44 |
+
+The leak columns before "Live" are the preparation search (`mode="prep"`, with `as_of`). "Live client/excluded leaks"
+asks every evaluated row again through `search(mode="live")` as a call does: now, no `as_of`, the PM's exclusions
+passed (A has no live mode of its own, so n/a).
 
 Hop, paraphrase and Ukrainian answer rates: 0% for A and B (6, 3 and 1 rows), not evaluated for C until S3. Timeline
 recall: 75% for A, 25% for B (one question, four dated facts), not evaluated for C until S4. Index cost (all
@@ -161,9 +163,16 @@ What it says:
 - **A cannot replay time or honour exclusions.** It reads the folder as it is now: 6 future leaks (the go-live date,
   the hourly decision, the edited notes and the same-day edit, each as of a past call), 1 stale value (the budget on
   Nov 20) and 13 excluded leaks (the PM-excluded file, the revoked page and the hidden call, by text and by source).
-- **B and C hold every S2 zero** on both sets: client, future and excluded leaks 0, quote validity 100%, register and
-  Tracker facts 100%, the deleted and moved facts kept. This is the S2 gate (spec section 17), and it passes for both;
-  live p95 on the scale set is 25 to 27 ms run alone (64 to 66 ms in the parallel saved run) against the 150 ms bar.
+- **B and C hold every S2 zero** on both sets: client, future and excluded leaks 0 in preparation, client and
+  excluded leaks 0 in mode live, quote validity 100%, register and Tracker facts 100%, the deleted and moved facts
+  kept. This is the S2 gate (spec section 17), and it passes for both; live p95 on the scale set is 21 to 22 ms against
+  the 150 ms bar. The run with vectors is not evaluated here, and the gate line says so ("PASS (small/vectors,
+  scale/vectors not evaluated)").
+- **The vector path's cost, synthetic only.** With a random 1024-dimension vector on each of the scale set's 7332
+  snippets (not bge-m3), preparation search took about 364 ms per question with `query_vec` and about 22 ms without,
+  inside the 1000 ms preparation budget. This times the scan only: random vectors rarely clear the 0.35 cosine floor, so
+  almost no candidate is added. The cosine is pure Python over every passing snippet; the real model's run is still to
+  be measured on a Mac with the model.
 - **C adds the state columns.** The task closed on Nov 19 is open as of Nov 17 and done now; the decision superseded
   on Nov 19 is current as of Nov 17 and superseded now. B returns the same text with no status, so it fails those 4
   rows by design.
@@ -217,9 +226,10 @@ python3 bench/g0/run.py --compare A C        # the newest result of each variant
 python3 -m pytest -q tests/test_g0_bench.py  # runs the harness, checks the fixture (not the scores)
 ```
 
-A run takes 10 to 25 seconds (the v1 targets in about 2, then gold v2 on both sets; `--set small`, `--set scale` or
+A run takes about 7 to 12 seconds (the v1 targets in about 2, then gold v2 on both sets; `--set small`, `--set scale` or
 `--set none` picks the sets), makes no model call and opens no connection but the local site and, for the run with
 vectors, the bundled embed server on a free loopback port (any other host is blocked and counted). The stores of a run
-live in its temp folder, never in Application Support. `python3 -m pytest -q tests/test_g0_gold_v2_pb52_s2.py` checks
-gold v2, the scale set and the S2 gate. After editing the fixture notes, rebuild the register with
-`python3 bench/g0/run.py --regen-register`.
+live in its temp folder, never in Application Support. A failing S2 gate makes the run exit with code 1 (the result is
+still saved). When the embed server does not come up, the run with vectors is recorded as `skipped`, never run without
+vectors under that name. `python3 -m pytest -q tests/test_g0_gold_v2_pb52_s2.py` checks gold v2, the scale set and the
+S2 gate. After editing the fixture notes, rebuild the register with `python3 bench/g0/run.py --regen-register`.

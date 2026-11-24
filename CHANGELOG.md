@@ -12,7 +12,9 @@ Pacenote. Earlier versions are described in the commit messages and in
   client folder with no call yet), a seeded 2 MB set of distracting project text, and two new variants over the store:
   B (text search over every call and file) and C (B plus the store's entities). With the flag on, the store's search
   also ranks by meaning when the caller passes a query vector from the bundled local embedding server (preparation
-  only, never during a call).
+  only, never during a call). Its gate also asks every question the way a call does (now, with the PM's exclusions)
+  and checks that nothing from another client or an excluded source comes back; a failing gate makes the benchmark run
+  exit with an error.
 - **Project memory, step 1: a local evidence store behind a flag (GraphRAG G2 S1, PB-84).** Off by default (feature
   `evidence_store`), nothing changes for the PM yet. With the flag on, `python -m livetips_m0.evidence` keeps one
   SQLite file per project in Application Support (never in the project folder): every file, call, note, the

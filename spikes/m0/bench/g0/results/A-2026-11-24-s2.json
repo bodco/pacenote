@@ -2,7 +2,7 @@
  "schema": "pacenote.bench.g0/2",
  "variant": "A",
  "date": "2026-11-24",
- "commit": "9d8dae8",
+ "commit": "add12ba",
  "fixture_sha": "26d3ec6b228f19a9",
  "gold_sha": "180234bba3fef52c",
  "route": "codex",
@@ -121,10 +121,10 @@
     "answer_text_rate": 50.0,
     "answer_text": 2,
     "leaks": 0,
-    "p50_ms": 2.89,
-    "p95_ms": 12.26,
-    "index_build_ms": 15.3,
-    "cold_ms": 12.7
+    "p50_ms": 2.11,
+    "p95_ms": 2.64,
+    "index_build_ms": 4.6,
+    "cold_ms": 6.8
    },
    "after": {
     "duplicates": 3,
@@ -261,10 +261,10 @@
     "answer_text_rate": 100.0,
     "answer_text": 3,
     "leaks": 0,
-    "p50_ms": 1.72,
-    "p95_ms": 1.91,
-    "index_build_ms": 6.3,
-    "cold_ms": 24.5
+    "p50_ms": 1.38,
+    "p95_ms": 1.48,
+    "index_build_ms": 4.3,
+    "cold_ms": 5.5
    },
    "after": {
     "duplicates": 2,
@@ -393,10 +393,10 @@
     "answer_text_rate": 100.0,
     "answer_text": 3,
     "leaks": 0,
-    "p50_ms": 1.72,
-    "p95_ms": 2.68,
-    "index_build_ms": 6.4,
-    "cold_ms": 7.7
+    "p50_ms": 1.51,
+    "p95_ms": 1.83,
+    "index_build_ms": 5.0,
+    "cold_ms": 7.1
    },
    "after": {
     "duplicates": 0,
@@ -1800,8 +1800,8 @@
      ],
      "latency": {
       "engine": "folder index (A)",
-      "live_p50_ms": 1.88,
-      "live_p95_ms": 12.33,
+      "live_p50_ms": 1.62,
+      "live_p95_ms": 4.57,
       "prep_p50_ms": null,
       "prep_p95_ms": null
      },
@@ -1818,7 +1818,7 @@
       "move_resegments": 0,
       "moved_files": 2
      },
-     "passes": 12
+     "passes": 13
     }
    },
    "scale": {
@@ -3194,8 +3194,8 @@
      ],
      "latency": {
       "engine": "folder index (A)",
-      "live_p50_ms": 6.07,
-      "live_p95_ms": 80.64,
+      "live_p50_ms": 2.58,
+      "live_p95_ms": 35.8,
       "prep_p50_ms": null,
       "prep_p95_ms": null
      },
@@ -3212,7 +3212,7 @@
       "move_resegments": 0,
       "moved_files": 2
      },
-     "passes": 12
+     "passes": 13
     }
    }
   },
@@ -3229,8 +3229,8 @@
   "live_total": 10,
   "live_answer_text_rate": 80.0,
   "live_leaks": 0,
-  "lookup_p50_ms": 1.88,
-  "lookup_p95_ms": 6.01,
+  "lookup_p50_ms": 1.62,
+  "lookup_p95_ms": 2.59,
   "duplicates": 5,
   "wrong_identity": 4,
   "suggested": 8,
@@ -3239,6 +3239,6 @@
   "false_agreed": 0,
   "false_proposal": 0
  },
- "seconds": 12.54,
+ "seconds": 7.37,
  "label": "s2"
 }

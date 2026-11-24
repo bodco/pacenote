@@ -12,6 +12,9 @@ models/
 # PB-50: the G0 benchmark fixture is a project folder in the app's own layout (live/, commitments.jsonl)
 !spikes/m0/bench/g0/fixtures/*/live/
 !spikes/m0/bench/g0/fixtures/*/live/commitments.jsonl
+# PB-85: gold v2's overlay (fixtures/v2/files/live/ and the register additions)
+!spikes/m0/bench/g0/fixtures/v2/files/live/
+!spikes/m0/bench/g0/fixtures/v2/*.jsonl
 # quality gates (ub-mode: crapper, dryer, mutator)
 .metrics/
 target/
