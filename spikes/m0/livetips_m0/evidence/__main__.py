@@ -6,7 +6,8 @@
     ingest    deterministic pass (also `pass`; LLM extraction comes with S3): --hidden-calls, --revoked, --web-dirs,
               --tracker, --valid-from (tests and the bench only), --quiet-seconds, --no-embed
     exclude   the state-only pass: --hidden-calls and/or --revoked (full current lists), --request-id
-    override  one pm_override row: --target --key --field --value --at --via, --request-id
+    override  one pm_override row: --target --key --field --value --at --via, --request-id (any field is stored;
+              in S1 search applies only reject and supersede)
     search    --query, --as-of, --exclude, --mode, --k, scope from --scope-json or --title/--companies (decide)
     card      --entity
     rebuild   derived tables again from the files; pm_override rows and source states are kept
@@ -262,7 +263,7 @@ def parser() -> argparse.ArgumentParser:
     ap.add_argument("--request-id", default="")
     ap.add_argument("--target", default="entity")
     ap.add_argument("--key", default="")
-    ap.add_argument("--field", default="")
+    ap.add_argument("--field", default="", help="stored as given; in S1 search applies only reject and supersede")
     ap.add_argument("--value", default=None)
     ap.add_argument("--at", default="")
     ap.add_argument("--via", default="app")

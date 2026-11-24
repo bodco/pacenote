@@ -765,6 +765,55 @@ def test_universe_change_splits_snippets_and_stale_live(env):
     assert "Initech" not in old and "Acme Corp" not in old and "Shared beta" in old and "delta" not in old
 
 
+def _initech_scope(root, client="acme"):
+    others = sorted({"acme", "globex", "initech"} - {client})
+    return {"client": client, "others": others, "root": str(root),
+            "folders": {n: ["docs/" + n] for n in ("acme", "globex", "initech")}}
+
+
+def test_client_folder_added_after_a_call_folder_names_it(env):
+    """The call folder names Initech before docs/initech exists; the transcript text never does. Once the folder is
+    created the path alone makes the call another client's (path marks are stored unfiltered, spec section 5.3)."""
+    root = env
+    two_clients(root)
+    uri = "live/2026-11-06-initech-sync/2026-11-06-1000-initech-sync.md"
+    put(root, uri, "# Live transcript\n\n- Start: 2026-11-06 10:00:00\n\n[10:00:10] Dana (en): The budget is 90 hours.\n")
+    st = open_store(root=root)
+    run(st, root)
+    (root / "docs" / "initech").mkdir()
+    put(root, "docs/initech/plan.md", "# Initech plan\n\nInitech wants a pilot.\n")
+    sc = _initech_scope(root)
+    assert CS.side(sc, os.path.join(str(root), uri)) == "other"
+    t = texts(SE.search(st, "budget hours", scope=sc, budget=SE.Budget(k=50)))
+    assert "90 hours" not in t and "90 hours" not in passing(st, sc)
+    parity(st, sc)
+    run(st, root)
+    assert "90 hours" not in passing(st, sc)
+    parity(st, sc)
+    assert "90 hours" in passing(st, _initech_scope(root, "initech"))
+
+
+def test_client_folder_added_after_a_tracker_item_names_it(env, tmp_path):
+    """A Tracker item names Initech before docs/initech exists: its entity text marks are stored unfiltered, so the
+    item is another client's once the folder is created (the snippet follows the item's side)."""
+    root = env
+    two_clients(root)
+    snap = tmp_path / "tracker.json"
+    snap.write_text(json.dumps({"items": [{"id": "1234abcd", "text": "Send Initech the revised SOW", "status": "open",
+                                           "last_edited": "2026-11-06T10:00:00Z"}]}), encoding="utf-8")
+    st = open_store(root=root)
+    run(st, root, tracker_path=str(snap))
+    (root / "docs" / "initech").mkdir()
+    put(root, "docs/initech/plan.md", "# Initech plan\n\nInitech wants a pilot.\n")
+    sc = _initech_scope(root)
+    assert "revised SOW" not in texts(SE.search(st, "revised SOW", scope=sc, budget=SE.Budget(k=50)))
+    assert "revised SOW" not in passing(st, sc)
+    run(st, root, tracker_path=str(snap))
+    assert "revised SOW" not in passing(st, sc)
+    assert "revised SOW" not in texts(SE.search(st, "revised SOW", scope=sc, budget=SE.Budget(k=50)))
+    assert "revised SOW" in passing(st, _initech_scope(root, "initech"))
+
+
 # ---------------------------------------------------------------- time, modality, edges
 
 def test_time_replay_on_content_time(env):

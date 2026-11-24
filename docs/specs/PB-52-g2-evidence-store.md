@@ -284,13 +284,16 @@ request's scope, with the same rules as `side`, `side_of_name`, `series_side`, `
   `decide()` only returns folder slugs (`client_scope.py:126-141`); call-name first words are hints that pick among
   folders and are not needed in it. The set is stored in `meta` (`label_universe`, JSON) at the end of every pass,
   with the tree's folder list hash. `chunks_at` cuts on it (section 5.2).
-- **Marks.** For each snippet the store writes `snippet_mark` rows (section 6): the universe names (`client_scope._names`
-  intersected with the universe) of the source path's folder and file-name words (`kind = path`, the word rule of
-  `side`), of each ancestor heading with its level (`kind = heading`), and of each line (`kind = line`, with the line
-  number). For a deterministic entity (register and Tracker items) the store writes `entity_mark` rows: the series
-  slug (`kind = series`), the first word of its call's file name (`kind = call`) and the universe names of its text
-  (`kind = text`), the inputs of `item_side`. Extra marks are harmless: only names in the request's `scope.client` and
-  `scope.others` are ever consulted.
+- **Marks.** For each snippet the store writes `snippet_mark` rows (section 6): every name (`client_scope._names`, not
+  cut to the universe) of the source path's folder and file-name words (`kind = path`, the word rule of `side`), the
+  universe names of each ancestor heading with its level (`kind = heading`), and of each line (`kind = line`, with the
+  line number). For a deterministic entity (register and Tracker items) the store writes `entity_mark` rows: the
+  series slug (`kind = series`), the first word of its call's file name (`kind = call`) and every name of its text
+  (`kind = text`, not cut to the universe), the inputs of `item_side`. Extra marks are harmless: only names in the
+  request's `scope.client` and `scope.others` are ever consulted. Path and entity text marks stay uncut because the
+  relabel of an added slug (section 5.2) finds work only through snippet text: a call folder or a Tracker item that
+  names a client before its folder exists must carry that name already (PB-84 review round 2). Heading titles are
+  snippet text, so heading and line marks are redone by the relabel.
 - **Query-time side of a snippet** (section 11.2 step 1), evaluated in SQL with the scope bound as parameters, in the
   order of `side()` then `filter_text`:
   1. the source path under a folder of `scope.folders[scope.client]`: own; under a folder of `scope.folders[o]` for an
@@ -424,7 +427,7 @@ CREATE TABLE snippet_mark (             -- the label-universe names a snippet ca
   snippet_id  INTEGER NOT NULL REFERENCES snippet(id) ON DELETE CASCADE,  -- query time (section 5.3)
   kind        TEXT NOT NULL,            -- path (folder and file-name words), heading (ancestor), line
   pos         INTEGER NOT NULL,         -- 0 for path, heading level, or line number inside the snippet
-  name        TEXT NOT NULL,            -- a slug from meta.label_universe
+  name        TEXT NOT NULL,            -- heading, line: a slug from meta.label_universe; path: any path name
   PRIMARY KEY (snippet_id, kind, pos, name)
 );
 CREATE INDEX snippet_mark_name ON snippet_mark(name, snippet_id);

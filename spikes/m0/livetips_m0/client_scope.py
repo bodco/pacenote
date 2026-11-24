@@ -84,7 +84,8 @@ def _client_dirs(root: str, hints: set) -> Dict[str, Dict[str, str]]:
 def label_universe(root: str) -> List[str]:
     """PB-52 G2 (S1): the slug of every folder _client_dirs could ever return (within MAX_DEPTH, outside SKIP_DIRS and
     the skipped prefixes), without the hint filter. Every label decide() can return for this tree is in it, whatever
-    companies a call brings. The evidence store cuts snippets and stores marks on it (spec section 5.3)."""
+    companies a call brings. The evidence store cuts snippets and stores heading and line marks on it
+    (spec section 5.3)."""
     root = os.path.realpath(os.path.expanduser(root or ""))
     if not root or not os.path.isdir(root):
         return []

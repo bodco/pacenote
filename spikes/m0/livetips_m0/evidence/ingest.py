@@ -261,11 +261,12 @@ def walk(root: str, web_dirs: Iterable[str] = ()) -> Dict[str, dict]:
 
 # ---------------------------------------------------------------- marks
 
-def path_marks(rel: str, universe: set) -> set:
-    """The word rule of client_scope.side on a path: every folder and file-name word (and two-word name)."""
+def path_marks(rel: str) -> set:
+    """The word rule of client_scope.side on a path: every folder and file-name word (and two-word name). Not cut to
+    the label universe: a folder created later must find the mark without a relabel (spec section 5.3)."""
     parts = rel.split("/")
     parts[-1] = os.path.splitext(parts[-1])[0]
-    return set().union(*(CS._names(p) for p in parts)) & universe
+    return set().union(*(CS._names(p) for p in parts))
 
 
 def _client_set(names: Iterable[str], labels: set) -> str:
@@ -452,7 +453,7 @@ def _source(ctx: Ctx, uri: str, info: dict, title: str = "") -> int:
 def remark_path(ctx: Ctx, sid: int, uri: str) -> None:
     """A moved source: the path marks of every snippet of every revision from the new path, and client_set again
     from the path, heading and line marks, as write_snippets would write them (spec sections 5.2 item 6 and 5.3)."""
-    pmarks = path_marks(uri, ctx.universe) if not uri.startswith("/") else set()
+    pmarks = path_marks(uri) if not uri.startswith("/") else set()
     for (snid,) in ctx.store.q("SELECT sn.id FROM snippet sn JOIN revision rv ON rv.id=sn.revision_id WHERE rv.source_id=?",
                                (sid,)):
         ctx.conn.execute("DELETE FROM snippet_mark WHERE snippet_id=? AND kind='path'", (snid,))
@@ -521,7 +522,7 @@ def write_snippets(ctx: Ctx, sid: int, rid: int, uri: str, kind: str, text: str,
                          " WHERE rv.source_id=? AND rv.id<>? ORDER BY rv.id", (sid, rid)):
         earlier.setdefault(r["text"], (r["said_at"], r["vec"]))
     times = line_times(text, call_start(text, uri) or vf) if kind == "transcript" else {}
-    pmarks = path_marks(uri, ctx.universe) if not uri.startswith("/") else set()
+    pmarks = path_marks(uri) if not uri.startswith("/") else set()
     ids, need = [], []
     for n, c in enumerate(chunks):
         loc = {"lines": c["lines"], "chars": c["chars"]}
@@ -658,12 +659,12 @@ def section_items(text: str) -> List[tuple]:
     return out
 
 
-def _call_marks(stem: str, text: str, universe: set) -> Dict[str, set]:
+def _call_marks(stem: str, text: str) -> Dict[str, set]:
     p = CL.parse(stem + ".md")
     series = CS.slug(p["slug"]) if p else ""
     m = CS.CALL_NAME.match(stem.lower())
     return {"series": {series} if series else set(), "call": {m.group(1)} if m else set(),
-            "text": CS._names(text) & universe}
+            "text": CS._names(text)}
 
 
 def notes_items(ctx: Ctx, sid: int, rid: int, uri: str) -> None:
@@ -672,7 +673,7 @@ def notes_items(ctx: Ctx, sid: int, rid: int, uri: str) -> None:
     text = "\n".join(r["text"] for r in ctx.store.q("SELECT text FROM snippet WHERE revision_id=? ORDER BY ord", (rid,)))
     for kind, item in section_items(text):
         eid = ID.item_id(kind, stem, item)
-        _entity(ctx, eid, "decision" if kind == "d" else "risk", item, "g1", sid, _call_marks(stem, item, ctx.universe))
+        _entity(ctx, eid, "decision" if kind == "d" else "risk", item, "g1", sid, _call_marks(stem, item))
         _alias(ctx.conn, item, eid, "g1")
         _claim(ctx, eid, "decided" if kind == "d" else "risk_level", item, "statement", rid, item)
 
@@ -690,7 +691,7 @@ def sidecar_items(ctx: Ctx, sid: int, uri: str, text: str) -> None:
             pid = (v or {}).get("id") if isinstance(v, dict) else ""
             eid = ID.item_id(kind[0], stem, key)
             _entity(ctx, eid, "decision" if kind == "decisions" else "risk", key, "g1", sid,
-                    _call_marks(stem, key, ctx.universe))
+                    _call_marks(stem, key))
             if pid:
                 _alias(ctx.conn, ID.notion_alias(pid), eid, "notion")
     tasks = d.get("tasks") or {}
@@ -709,7 +710,7 @@ def decisions_md_items(ctx: Ctx, sid: int, rid: int) -> None:
     text = "\n".join(r["text"] for r in ctx.store.q("SELECT text FROM snippet WHERE revision_id=? ORDER BY ord", (rid,)))
     for it in parse_snapshot(text):
         eid = ID.register_decision_id(it["date"], it["title"])
-        _entity(ctx, eid, "decision", it["title"], "g1", sid, {"text": CS._names(it["title"]) & ctx.universe})
+        _entity(ctx, eid, "decision", it["title"], "g1", sid, {"text": CS._names(it["title"])})
         _alias(ctx.conn, it["title"], eid, "g1")
         _claim(ctx, eid, "decided", it["title"], "statement", rid, it["title"])
         for r in ctx.store.q("SELECT id FROM entity WHERE type='decision' AND id<>? AND id LIKE 'd-%'", (eid,)):
@@ -825,7 +826,7 @@ def ingest_register(ctx: Ctx) -> None:
             series = CS.slug(str(it.get("series") or "").split("|")[-1])
             m = CS.CALL_NAME.match(os.path.basename(str(it.get("call") or "")).lower())
             marks = {"series": {series} if series else set(), "call": {m.group(1)} if m else set(),
-                     "text": CS._names(it.get("text") or "") & ctx.universe,
+                     "text": CS._names(it.get("text") or ""),
                      "callstem": {ID.call_stem(str(h.get("call") or "")) for h in CM.history_of(it) if h.get("call")}}
             _entity(ctx, it["id"], "task", it.get("text") or it["id"], "g1", sid, marks, status=it.get("status"))
             for x in it.get("ids") or []:
@@ -924,7 +925,7 @@ def ingest_tracker(ctx: Ctx, path: Optional[str]) -> None:
                              (snid, eid))
             if not linked:
                 _entity(ctx, eid, "task", str(it.get("text") or uri), "tracker", sid,
-                        {"text": CS._names(str(it.get("text") or "")) & ctx.universe}, status=it.get("status"))
+                        {"text": CS._names(str(it.get("text") or ""))}, status=it.get("status"))
                 _alias(ctx.conn, uri, eid, "tracker")
             else:
                 ctx.conn.execute("INSERT OR IGNORE INTO entity_source(entity_id, source_id) VALUES (?,?)", (eid, sid))
@@ -1057,7 +1058,7 @@ def relabel(store: S.Store, universe: set, added: List[str]) -> dict:
         if not any(add & CS._names(r["text"]) for r in rows):
             continue
         src = store.one("SELECT s.uri FROM source s JOIN revision rv ON rv.source_id=s.id WHERE rv.id=?", (rid,))[0]
-        pmarks = path_marks(src, universe) if not src.startswith("/") else set()
+        pmarks = path_marks(src) if not src.startswith("/") else set()
         with store.conn:
             plan = []
             for r in rows:
