@@ -234,7 +234,17 @@ Results at this commit (`results/{A,B,C}-2026-11-24-s3b.json`, against the `-s3a
 - **C unchanged**: every existing column equal (rows 32/36, hop 5 of 6, modality 100%, derived as confirmed 0, fixture
   64 hits and 0 misses on the small set, every leak 0); new: the replay keeps 320 of 352 authored items (32 dropped by
   the validator, precision 90.9% on the authored fixture, not a model). Live p95 8.78 to 8.19 ms (small), 26.36 to
-  27.62 ms (scale). S2+S3 gate: PASS.
+  27.62 ms (scale). S2+S3 gate: PASS on its gated checks. **One section 17 S3 line is not met and not gated:** the
+  paraphrase answer rate of C above B without vectors (C 0 of 3, B 0 of 3). The run now prints it under the gate
+  ("Not gated, open: paraphrase above B not met") and it is a GraphRAG follow-up task, not covered by the PASS.
+
+Review round 1 fixes (2026-11-25): `--extract <route>` is all or nothing. It records into a new folder next to the
+fixture and replaces the fixture only when every pass ended `done` on the route asked for (never the model on this
+Mac, no local overflow, no failed segment) and the new folder replays the small set with no miss; otherwise the
+checked-in fixture and its manifest stay as they were and the run exits with an error. A pass stopped at a ceiling
+therefore never mixes real and authored answers under `measured: true`: a run stopped at a ceiling or by an error
+records nothing (tested with a stub, no real route). Only answers the worker keeps are recorded, not a cut answer
+before its split or an unparsable one before its repair.
 
 ## What is measured
 

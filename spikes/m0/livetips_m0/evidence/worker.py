@@ -83,6 +83,47 @@ def ceiling_kind(route: str) -> str:
     return "usd" if route in USD_ROUTES else "pct" if route in PCT_ROUTES else "minutes"
 
 
+# the app's limits (EvidencePrefs.limits, PB-88) in the worker's ceiling names
+_LIMIT_UNITS = {"usd": "usd", "pct": "pct", "min": "minutes"}
+_LIMIT_SCOPES = {"pass": "pass", "day": "day", "all_day": "all_projects_day"}
+
+
+def app_settings(env: Optional[dict] = None) -> dict:
+    """The PM's settings as the app passes them to `evidence pass` (PB-88, spec section 17 S5): `LT_EVIDENCE_LIMITS`
+    = {"pass"|"day"|"all_day": {"usd", "pct", "min"}, "extract", "local_overflow", "topics"} and `LT_LOCAL_FALLBACK`
+    ("0" = the model on this Mac is off in the chain). Unset: {} (the rules' defaults). Unreadable: AI reading off,
+    so a setting the worker cannot read never sends project text (PB-103 review r1)."""
+    env = os.environ if env is None else env
+    out: dict = {}
+    if env.get("LT_LOCAL_FALLBACK") == "0":
+        out["no_local"] = True
+    raw = env.get("LT_EVIDENCE_LIMITS")
+    if not raw:
+        return out
+    try:
+        lim = json.loads(raw)
+        if not isinstance(lim, dict):
+            raise ValueError("not an object")
+    except ValueError as e:
+        out.update(extract=False, limits_error="LT_EVIDENCE_LIMITS unreadable: {}".format(e))
+        return out
+    ceilings: Dict[str, dict] = {}
+    for scope, name in _LIMIT_SCOPES.items():
+        for unit, kind in _LIMIT_UNITS.items():
+            v = (lim.get(scope) or {}).get(unit) if isinstance(lim.get(scope), dict) else None
+            if isinstance(v, (int, float)) and not isinstance(v, bool) and v >= 0:
+                ceilings.setdefault(kind, {})[name] = float(v)
+    if ceilings:
+        out["ceilings"] = ceilings
+    if "extract" in lim:
+        out["extract"] = lim["extract"] is not False      # only an explicit false turns AI reading off
+    if "local_overflow" in lim:
+        out["local_overflow"] = lim["local_overflow"] is True
+    if lim.get("topics") in ("eager", "lazy"):
+        out["topics"] = lim["topics"]
+    return out
+
+
 def state_path() -> Path:
     return Path(R.default_state_path())
 
@@ -319,7 +360,8 @@ class Pass:
     def __init__(self, store: S.Store, root: str, settings: Optional[dict] = None, transport=None,
                  rules: Optional[dict] = None, sleep: Callable[[float], None] = time.sleep):
         self.st, self.root = store, root
-        self.set = dict(settings or {})
+        self.set = dict(app_settings())             # the app's settings (env), then the caller's own win
+        self.set.update(settings or {})
         self.rules = rules or X.load_rules()
         self.ex = X.extractor_id(self.rules)
         self.prefix = X.prefix(self.rules)
@@ -414,14 +456,17 @@ class Pass:
             used = five_hour_pct(self.route)
             if used is not None and used >= float(c.get("stop_above", 80)):
                 raise Stop("ceiling", "plan window above {}%".format(c.get("stop_above", 80)))
-        for name, spent in (("pass", this), ("day", day), ("all_projects_day", glob)):
+        # the day caps first: at a day cap the pass ends even when the pass ceiling is crossed too and overflow is on
+        for name, spent in (("day", day), ("all_projects_day", glob), ("pass", this)):
             limit = c.get(name)
             if limit is None:
                 continue
             if spent + next_cost > float(limit) + 1e-12 or (next_cost == 0 and spent >= float(limit)):
-                if self.route != "local" and self.set.get("local_overflow") and not self.set.get("no_local"):
-                    # the PM's opt-in (off by default, spec sections 8.6 and 9.1): go on with the model on this Mac,
-                    # under its own minutes ceilings; never another cloud route
+                if name == "pass" and self.route != "local" and self.set.get("local_overflow") \
+                        and not self.set.get("no_local"):
+                    # the PM's opt-in (off by default, spec sections 8.6 and 9.1): at the pass ceiling go on with the
+                    # model on this Mac, under its own minutes ceilings; never another cloud route. A day cap ends
+                    # the pass (9.1 "daily").
                     self.switch_local()
                     return self.check_ceiling(0.0)
                 raise Stop("ceiling", name)
@@ -588,9 +633,15 @@ class Pass:
     def run(self) -> dict:
         self._run_start()
         try:
-            if self.route in USD_ROUTES and not self.set.get("no_local"):
+            if self.set.get("limits_error"):         # the app's settings could not be read: no request at all
+                raise Stop("failed", self.set["limits_error"])
+            if self.set.get("extract") is False:     # "Use AI to read sources" off (the CLI skips the pass before)
+                raise Stop("off", "AI reading of sources is off in Settings")
+            if self.route in USD_ROUTES:
                 caps = COST.ProviderCaps.from_cfg(self.set.get("cfg") or {}, str(state_path()))
                 if caps is not None and caps.capped_route(self.route):
+                    if self.set.get("no_local"):     # the monthly limit is reached and local is off in the chain
+                        raise Stop("ceiling", "monthly limit of the provider")
                     self.switch_local()              # the monthly limit of this provider is reached
             if self.route not in R.ROUTES:
                 raise Stop("off", "no route chosen for the evidence job")

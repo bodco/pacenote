@@ -122,7 +122,11 @@ def cmd_ingest(a) -> dict:
             ext = None
             if a.cmd == "pass" and not a.no_extract:
                 from . import worker as W
-                ext = W.extract_pass(st, a.root, _settings(a))
+                s = dict(W.app_settings(), **_settings(a))
+                # "Use AI to read sources" off in the app (LT_EVIDENCE_LIMITS extract: false): like --no-extract, no
+                # run row and no request; an unreadable setting still runs the worker, which ends the pass failed
+                if s.get("extract") is not False or s.get("limits_error"):
+                    ext = W.extract_pass(st, a.root, _settings(a))
             st.compact_log()                    # under both locks (section 13.1)
     out = {"ok": True, "status": "done", "report": rep}
     if ext is not None:

@@ -44,6 +44,8 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setenv("LT_AI_STATE", str(state))
     monkeypatch.delenv("LT_AI_ROUTE", raising=False)
     monkeypatch.delenv("LT_PROVIDER_CAPS", raising=False)
+    monkeypatch.delenv("LT_EVIDENCE_LIMITS", raising=False)     # the app's settings (PB-88), read by the worker
+    monkeypatch.delenv("LT_LOCAL_FALLBACK", raising=False)
     root = tmp_path / "proj"
     root.mkdir()
     return root

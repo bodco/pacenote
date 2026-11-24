@@ -16,12 +16,17 @@ Pacenote. Earlier versions are described in the commit messages and in
   split into smaller parts instead; the model on this Mac gets exactly the 2,000-token limit and says when it cut an
   answer. Every pass stops before the request that could cross the per-pass, per-project-day or all-projects-day
   ceiling (dollars, percent of a plan's 5-hour limit, or minutes on this Mac), pauses when a call starts and stops a
-  request in flight within 2 seconds. An opt-in setting goes on with the model on this Mac at a ceiling (off by
-  default); a missing local model stops the pass with "off". A pass on a paid API never runs on a model whose price
+  request in flight within 2 seconds. An opt-in setting goes on with the model on this Mac at the per-pass ceiling
+  (off by default); a daily ceiling always ends the pass; a missing local model stops the pass with "off". The
+  settings the PM picks in the app are honored: "Use AI to read sources" off sends no project text to any AI, the
+  PM's own ceilings and local overflow apply, and with the model on this Mac off in the chain indexing never moves to
+  it (an AI that is out or at its monthly limit then sends nothing). A pass on a paid API never runs on a model whose price
   Pacenote does not know: it stops with "off" before the first request, and the cost estimate marks it unpriced with
   no amount instead of $0. Spending is counted on the model that actually answered. `run.py --extract <route>` now also records precision,
   recall and the multi-step and paraphrase answer rates of a real AI's extraction next to its size and cost; it has
   not been run on a real AI yet, so the estimates still use the assumed 500 output tokens and 2,000-token catalog.
+  It replaces the recorded answers only when the whole run finished on the chosen AI, so a run stopped at a ceiling
+  or by an error leaves the fixture as it was.
 - **Project memory, step 3a: how an AI will read the project's sources, tested offline (GraphRAG G2 S3a, PB-86).**
   Nothing changes for the PM: the evidence store stays behind the flag `evidence_store` (off by default), no setting
   is shown and no AI is asked yet. This step adds the extraction rules (`rules/evidence.yaml`, the output schema and

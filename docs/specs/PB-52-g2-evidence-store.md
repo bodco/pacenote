@@ -1997,8 +1997,10 @@ Implementation notes (S3b, PB-103):
   reports `done_reason` (`length` = cut). Without these options every class behaves as before (negative controls in
   the tests). Tested on the real classes and the request child's code against a stubbed connection and a fake Ollama
   on loopback; no request left the Mac.
-- Worker: local overflow (`settings.local_overflow`, off by default) switches to the model on this Mac at any of the
-  three caps instead of stopping, with its own minutes counted from the switch; a run that started on a USD route
+- Worker: local overflow (`settings.local_overflow`, off by default) switches to the model on this Mac at the pass
+  ceiling only (section 8.6), with its own minutes counted from the switch. The project-day and all-projects-day caps
+  are checked first and end the pass `ceiling` with that cap's name (9.1 "daily"), also when the pass ceiling is
+  crossed at the same request; the plan window's `stop_above` ends the pass too (review round 1). A run that started on a USD route
   keeps its `usd` and `est_usd` after a switch, and the project-day sum counts it under the route it started on. A
   missing local model (Ollama 404, "not found") ends the pass `off`.
 - Plan routes: the percent of a pass is summed per request. A request whose answer carries the account's usage moves
@@ -2013,6 +2015,20 @@ Implementation notes (S3b, PB-103):
   through the worker (hop 5 of 6 as before). **Not run on a real route in PB-103** (nothing new leaves the Mac): the
   checked-in fixture stays authored, and the estimates keep the 500-token output and 2,000-token catalog until the
   owner approves a real `--extract` run.
+- Review round 1 (2026-11-25): the worker reads the PM's settings as the app passes them since PB-88:
+  `LT_EVIDENCE_LIMITS` (`pass`, `day`, `all_day` x `usd`, `pct`, `min` map onto the `usd`, `pct` and `minutes`
+  ceilings; `stop_above` stays from `rules/evidence.yaml`), `extract: false` ("Use AI to read sources" off) skips
+  extraction in `evidence pass` like `--no-extract` (no run row, no request on any route), `local_overflow` turns
+  overflow on, and `LT_LOCAL_FALLBACK=0` (the model on this Mac off in the chain) means no step to local: a route
+  that is out or over its monthly provider cap then sends nothing. An unreadable `LT_EVIDENCE_LIMITS` sends nothing
+  and ends the pass `failed`. Explicit `--settings-json` keys win over the environment.
+- `--extract <route>` is all or nothing: answers go to a new folder next to the fixture, which replaces it only when
+  every pass ended `done` on the route asked for (no local, no overflow, no failed segment) and the folder replays the
+  small set with no miss and no unparsable answer; otherwise the fixture and manifest are untouched and the run exits
+  non-zero. `measured: true` is written only on that path. The recorder keeps only answers the worker keeps (a cut
+  answer before its split and an unparsable one before its repair are paid and counted, not replayed).
+- Open, not gated: the S3 line "paraphrase answer rate above B without vectors" is not met (C 0 of 3, B 0 of 3). G0
+  prints it under the gate ("Not gated, open") and it is a GraphRAG follow-up task.
 
 ### S4. Topic summaries and global questions (core)
 

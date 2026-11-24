@@ -563,3 +563,188 @@ def test_an_answer_from_an_unpriced_model_is_charged_its_estimate(env):
     res2 = run_pass(st, root, tr2, model="claude-haiku-5-5")
     assert tr2.requests and res2["status"] == "done"
     assert res2["usd"] > 0 and res2["usd"] == pytest.approx(res2["est_usd"])   # never priced at 0
+
+
+# ---------------------------------------------------------------- the app's settings (PB-103 review round 1, PB-88)
+
+# the exact shape of EvidencePrefs.limits (app/Sources/LiveTipsCore/Evidence.swift on main), as JSON
+def app_limits(extract=True, local_overflow=False, usd=(1.0, 3.0, 3.0), pct=(10.0, 30.0, 30.0), mins=(120.0, 360.0, 360.0)):
+    return json.dumps({"pass": {"usd": usd[0], "pct": pct[0], "min": mins[0]},
+                       "day": {"usd": usd[1], "pct": pct[1], "min": mins[1]},
+                       "all_day": {"usd": usd[2], "pct": pct[2], "min": mins[2]},
+                       "topics": "lazy", "extract": extract, "local_overflow": local_overflow})
+
+
+def cli_pass(monkeypatch, root, tr, route="api"):
+    """`evidence pass` as the app starts it (no --settings-json, no --no-extract), the request child replaced by tr."""
+    import io
+    from livetips_m0.evidence import __main__ as CLI
+    monkeypatch.setattr(W, "ChildTransport", lambda: tr)
+    out = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", out)
+    rc = CLI.main(["pass", "--project-uid", "p-app", "--root", str(root), "--route", route, "--no-embed"])
+    return rc, json.loads(out.getvalue().strip().splitlines()[-1])
+
+
+def test_ai_reading_off_in_the_app_sends_nothing(env, monkeypatch):
+    many_sections(env, "docs/plan.md", 3)
+    monkeypatch.setenv("LT_EVIDENCE_LIMITS", app_limits(extract=False))
+    tr = FakeTransport()
+    rc, out = cli_pass(monkeypatch, env, tr)
+    assert rc == 0 and out["status"] == "done" and "extract" not in out
+    assert tr.requests == []                         # no project text left for any AI
+    monkeypatch.setenv("LT_EVIDENCE_LIMITS", app_limits(extract=True))
+    rc, out = cli_pass(monkeypatch, env, tr)         # control: the same pass with AI reading on sends
+    assert rc == 0 and out["extract"]["status"] == "done" and tr.requests
+
+
+def test_the_apps_ceilings_reach_the_worker(env, monkeypatch):
+    many_sections(env, "docs/plan.md", 8)
+    st = open_store(env)
+    one = W.Pass(st, str(env), {"route": "api"}, FakeTransport()).estimate("x")
+    monkeypatch.setenv("LT_EVIDENCE_LIMITS", app_limits(usd=(one * 2.5, 7.0, 9.0), pct=(4.0, 20.0, 25.0)))
+    c = W.Pass(st, str(env), {"route": "codex"}, FakeTransport()).ceilings()
+    assert c == {"pass": 4.0, "day": 20.0, "all_projects_day": 25.0, "stop_above": 80}   # stop_above from the rules
+    assert W.Pass(st, str(env), {"route": "local"}, FakeTransport()).ceilings()["day"] == 360.0
+    st.close()
+    tr = FakeTransport(out_tokens=2000)
+    rc, out = cli_pass(monkeypatch, env, tr)
+    ex = out["extract"]
+    assert ex["status"] == "ceiling" and ex["ceiling_value"] == pytest.approx(one * 2.5)
+    assert 1 <= len(tr.requests) <= 3                # the default $1 pass ceiling lets all 8 parts through
+
+
+def test_unreadable_app_settings_send_nothing(env, monkeypatch):
+    many_sections(env, "docs/plan.md", 2)
+    monkeypatch.setenv("LT_EVIDENCE_LIMITS", "{not json")
+    tr = FakeTransport()
+    rc, out = cli_pass(monkeypatch, env, tr)
+    assert out["extract"]["status"] == "failed" and "LT_EVIDENCE_LIMITS" in out["extract"]["error"]
+    assert tr.requests == []
+
+
+def test_local_off_in_the_chain_never_falls_back_to_local(env, monkeypatch):
+    root = env
+    many_sections(root, "docs/plan.md", 2)
+    st = open_store(root)
+    ingest(st, root)
+    monkeypatch.setenv("LT_LOCAL_FALLBACK", "0")
+    tr = FakeTransport(lambda req: {"error": "NoRoute: no API key", "text": ""})
+    res = run_pass(st, root, tr, route="openai")
+    assert res["route"] == "openai" and not res["fallback_from"]
+    assert {r["route"] for r in tr.requests} == {"openai"}
+
+
+def test_a_capped_provider_with_local_off_sends_nothing(env, monkeypatch):
+    root = env
+    many_sections(root, "docs/plan.md", 2)
+    st = open_store(root)
+    ingest(st, root)
+
+    class Capped:
+        def capped_route(self, route):
+            return True
+    monkeypatch.setattr(COST.ProviderCaps, "from_cfg", classmethod(lambda cls, cfg, sp=None: Capped()))
+    monkeypatch.setenv("LT_LOCAL_FALLBACK", "0")
+    tr = FakeTransport()
+    res = run_pass(st, root, tr, route="api")
+    assert res["status"] == "ceiling" and tr.requests == []
+    monkeypatch.delenv("LT_LOCAL_FALLBACK")          # control: with local allowed the pass goes on there
+    tr = FakeTransport()
+    res = run_pass(st, root, tr, route="api")
+    assert res["route"] == "local" and tr.requests and {r["route"] for r in tr.requests} == {"local"}
+
+
+@pytest.mark.parametrize("cap", ["day", "all_projects_day", "pass_and_day"])
+def test_local_overflow_only_at_the_pass_ceiling(env, cap):
+    """Spec 8.6 and 9.1: overflow goes on with local at the pass ceiling; at a day cap the pass ends there, also
+    when the pass ceiling is crossed at the same request."""
+    root = env
+    many_sections(root, "docs/plan.md", 6)
+    st = open_store(root)
+    ingest(st, root)
+    one = W.Pass(st, str(root), {"route": "api"}, FakeTransport()).estimate("x")
+    lim = {"pass": 100.0, "day": 100.0, "all_projects_day": 100.0}
+    name = "day" if cap == "pass_and_day" else cap
+    lim[name] = one * 2.5
+    if cap == "pass_and_day":
+        lim["pass"] = one * 2.5
+    tr = FakeTransport(out_tokens=2000)
+    res = run_pass(st, root, tr, ceilings={"usd": lim}, local_overflow=True)
+    assert res["status"] == "ceiling" and res["error"] == name and res["route"] == "api"
+    assert tr.requests and {r["route"] for r in tr.requests} == {"api"}
+
+
+# ---------------------------------------------------------------- --extract all or nothing (PB-103 review round 1)
+
+def snapshot(d: Path) -> dict:
+    return {p.name: p.read_bytes() for p in sorted(d.iterdir())}
+
+
+@pytest.mark.parametrize("how", ["ceiling", "error", "not_connected"])
+def test_a_partial_extract_run_leaves_the_fixture_as_it_was(tmp_path, monkeypatch, how):
+    import shutil
+    import run as G0
+    monkeypatch.setenv("LT_AI_STATE", str(tmp_path / "state" / "ai-routes.json"))
+    monkeypatch.delenv("LT_EVIDENCE_LIMITS", raising=False)
+    monkeypatch.delenv("LT_LOCAL_FALLBACK", raising=False)
+    (tmp_path / "state").mkdir()
+    out = tmp_path / "extract"
+    shutil.copytree(G0.EXTRACT, out)
+    before = snapshot(out)
+    authored = G0.EXTRACT
+    n = {"sent": 0}
+
+    class Partial(FakeTransport):
+        def answer(self, req):
+            n["sent"] += 1
+            if req["route"] == "local":
+                return {"text": "{}", "model": req["model"]}       # must never be recorded under the route
+            if how == "not_connected":
+                return {"error": "NoRoute: no API key", "text": ""}
+            if how == "error" and n["sent"] == 7:
+                return {"error": "HTTPError: HTTP Error 500: server error", "text": ""}
+            data = json.loads((authored / (req["seg_hash"] + ".json")).read_text(encoding="utf-8"))
+            return {"text": data["answers"][0], "in_tokens": 1500, "cached": 0, "model": req["model"],
+                    "out_tokens": 2000 if how == "ceiling" else 400}
+    if how == "ceiling":                             # a pass ceiling of about 2 answers at the cap ends passes early
+        rules = X.load_rules()
+        rules["ceilings"] = dict(rules["ceilings"], usd={"pass": 0.03, "day": 3.0, "all_projects_day": 3.0})
+        monkeypatch.setattr(X, "load_rules", lambda *a, **k: rules)
+    with pytest.raises(SystemExit) as e:
+        G0.record_extract("api", out_dir=out, transport=Partial(), settings={"backoff0_s": 0})
+    assert "nothing recorded" in str(e.value)
+    assert {"ceiling": "ended ceiling", "error": "failed", "not_connected": "failed"}[how] in str(e.value)
+    assert n["sent"] > 0
+    assert snapshot(out) == before                   # byte for byte, manifest included
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["extract", "state"]   # no temporary folder left
+
+
+def test_a_complete_extract_run_with_a_repair_and_a_cut_answer_replaces_the_fixture(tmp_path, monkeypatch):
+    """The answers the worker did not keep (an unparsable first answer, a cut one) are not recorded, so a complete run
+    is swapped in: old files gone, the new manifest measured."""
+    import shutil
+    import run as G0
+    monkeypatch.setenv("LT_AI_STATE", str(tmp_path / "state" / "ai-routes.json"))
+    monkeypatch.delenv("LT_EVIDENCE_LIMITS", raising=False)
+    (tmp_path / "state").mkdir()
+    out = tmp_path / "extract"
+    shutil.copytree(G0.EXTRACT, out)
+    (out / "stale-authored.json").write_text("{}")   # a file no new run writes: must be gone after the swap
+    authored = G0.EXTRACT
+    n = {"sent": 0}
+
+    class Replay(FakeTransport):
+        def answer(self, req):
+            n["sent"] += 1
+            data = json.loads((authored / (req["seg_hash"] + ".json")).read_text(encoding="utf-8"))
+            if n["sent"] == 1:
+                return {"text": "not json at all", "in_tokens": 1500, "out_tokens": 5, "model": req["model"]}
+            if n["sent"] == 3:
+                return {"text": data["answers"][0][:40], "stop_reason": "max_tokens", "in_tokens": 1500,
+                        "out_tokens": 2000, "model": req["model"]}
+            return {"text": data["answers"][0], "in_tokens": 1500, "out_tokens": 400, "model": req["model"]}
+    m = G0.record_extract("api", out_dir=out, transport=Replay(), settings={"backoff0_s": 0})
+    assert m["calibration"]["measured"] is True and m["calibration"]["fixture_misses"] == 0
+    assert not (out / "stale-authored.json").exists() and json.loads((out / "manifest.json").read_text())["route"] == "api"
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["extract", "state"]

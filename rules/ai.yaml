@@ -167,8 +167,9 @@ chain: |
   working. "Switch to the next AI automatically" off: the chosen AI only, as before.
   PB-103 (GraphRAG G2 S3b, behind the flag evidence_store, off by default): the project memory's extraction job
   `evidence` (livetips_m0.routing JOBS, chain_allowed) never steps to another cloud AI: the AI chosen for it first, then
-  only the model on this Mac (when the chosen AI is not connected, out, or at its monthly limit). The Swift side
-  (AIChain, ComponentCatalog.afterRemovingLocal) follows in S5.
+  only the model on this Mac (when the chosen AI is not connected, out, or at its monthly limit, and only when the
+  model on this Mac is on in the chain: LT_LOCAL_FALLBACK=0 means no step, then nothing is sent). The worker reads the
+  PM's ceilings, AI reading on or off and local overflow from LT_EVIDENCE_LIMITS (PB-88).
   What switches: a runtime outage, not only a static check: Codex "usage limit reached", a plan limit, out of credits,
   a 429 with a quota or limit code (insufficient_quota, quota_exceeded), a bad key (401/403), signed out, not installed.
   A plain short rate limit (429 rate_limit_exceeded) or a timeout never switches. The out AI is marked in
