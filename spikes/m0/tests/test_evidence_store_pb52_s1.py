@@ -674,6 +674,29 @@ def parity(st, scope):
         whole = "\n".join(full.get(i, "") for i in range(1, n + 1))
         want = _kept_lines(scope, src["uri"], whole)
         assert got == want, (scope["client"], src["uri"], sorted(got ^ want))
+    reg = st.one("SELECT id FROM source WHERE kind='register'")
+    if reg:
+        rv = st.one("SELECT id FROM revision WHERE source_id=? AND superseded_at IS NULL", (reg["id"],))
+        got = {json.loads(r["locator"])["lines"][0] for r in st.q(
+            "SELECT sn.locator FROM snippet sn JOIN _snip x ON x.sid=sn.id WHERE sn.revision_id=? AND x.cls='pass'",
+            (rv["id"],))}
+        assert got == _kept_events(scope), (scope["client"], "register", sorted(got ^ _kept_events(scope)))
+
+
+def _kept_events(scope):
+    """The line numbers of the register events filter_register keeps for a scope (events with an op and an id)."""
+    raw = Path(scope["root"], IG.REGISTER).read_text(encoding="utf-8")
+    kept, j, out = CS.filter_register(scope, raw).split("\n"), 0, set()
+    for n, ln in enumerate(raw.split("\n"), 1):
+        if j < len(kept) and kept[j] == ln:
+            j += 1
+            try:
+                e = json.loads(ln)
+            except ValueError:
+                continue
+            if isinstance(e, dict) and e.get("op") and e.get("id"):
+                out.add(n)
+    return out
 
 
 def test_client_parity_on_the_g0_fixture(tmp_path, monkeypatch):
@@ -690,6 +713,45 @@ def test_client_parity_on_the_g0_fixture(tmp_path, monkeypatch):
             scopes.append(sc)
     assert {s["client"] for s in scopes} == {"acme", "globex"}
     for sc in scopes:
+        parity(st, sc)
+
+
+def test_register_parity_with_filter_register(env):
+    """A register event's side is its own add's item_side, as filter_register decides it: a moved Globex task (fold
+    drops it), a Globex add joined to an Acme task and a plain task edited to name Globex all keep the reference
+    lines for both clients, not the folded entity's side."""
+    root = env
+    two_clients(root)
+    reg = [{"v": 1, "op": "add", "id": "c-gggggggggg", "text": "send the pelican pricing sheet", "owner": "me",
+            "series": "|globexweekly", "created": "2026-11-04T11:00:00+00:00"},
+           {"v": 1, "op": "move", "id": "c-gggggggggg", "at": "2026-11-05T10:00:00+00:00"},
+           {"v": 1, "op": "edit", "id": "c-gggggggggg", "text": "send the pelican pricing sheet v2", "at": "2026-11-06T10:00:00+00:00"},
+           {"v": 1, "op": "add", "id": "c-aaaaaaaaaa", "text": "book the heron demo", "owner": "me",
+            "series": "|acmeweeklystatus", "created": "2026-11-03T10:00:00+00:00"},
+           {"v": 1, "op": "add", "id": "c-hhhhhhhhhh", "text": "Globex heron demo slides", "owner": "me",
+            "created": "2026-11-04T11:05:00+00:00"},
+           {"v": 1, "op": "same", "id": "c-hhhhhhhhhh", "to": "c-aaaaaaaaaa", "at": "2026-11-05T11:00:00+00:00"},
+           {"v": 1, "op": "add", "id": "c-pppppppppp", "text": "order the plover badges", "owner": "me",
+            "created": "2026-11-04T12:00:00+00:00"},
+           {"v": 1, "op": "edit", "id": "c-pppppppppp", "text": "order the plover badges for Globex", "at": "2026-11-06T12:00:00+00:00"},
+           {"v": 1, "op": "done", "id": "c-hhhhhhhhhh", "at": "2026-11-07T10:00:00+00:00"},
+           {"v": 1, "op": "add", "id": "c-dddddddddd", "text": "print the osprey labels", "owner": "me",
+            "series": "|acmeweeklystatus", "created": "2026-11-03T10:30:00+00:00"},
+           {"v": 1, "op": "add", "id": "c-dddddddddd", "text": "print the osprey labels", "owner": "me",
+            "call": "2026-11-04-1100-globex-weekly.md", "created": "2026-11-04T11:30:00+00:00"}]
+    put(root, IG.REGISTER, "\n".join(json.dumps(e) for e in reg) + "\n")
+    st = open_store(root=root)
+    run(st, root)
+    sc_a = acme(root)
+    sc_g = CS.decide(str(root), "Globex weekly", ["Globex"])
+    assert sc_g and sc_g["client"] == "globex"
+    assert _kept_events(sc_a) == {4, 7, 8} and _kept_events(sc_g) == {1, 2, 3, 5, 6, 7, 8, 9}   # both sides covered
+    for sc in (sc_a, sc_g):
+        parity(st, sc)
+    assert "pelican" not in texts(SE.search(st, "pelican pricing sheet", scope=sc_a))
+    assert "heron demo slides" not in texts(SE.search(st, "heron demo slides", scope=sc_a))
+    CLI.rebuild(st, str(root), quiet_s=0, voices={})
+    for sc in (sc_a, sc_g):
         parity(st, sc)
 
 

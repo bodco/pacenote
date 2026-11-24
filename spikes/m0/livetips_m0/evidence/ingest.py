@@ -809,16 +809,26 @@ def ingest_register(ctx: Ctx) -> None:
                                " extract_state) VALUES (?,?,?,?,?,?,?, 'not_needed')",
                                (sid, h, st.st_mtime, st.st_size, len(raw), vf, ctx.observed)).lastrowid
         items = CM.fold([{k: v for k, v in e.items() if k != "_line"} for e in events])
-        owner_of = {x: it["id"] for it in items for x in (it.get("ids") or [it["id"]])}
+        # the side of an event is the item_side of the add events with its own id, as filter_register decides it:
+        # pos k = the k-th such add (an id with any add on another client's side is other), names stored uncut
+        adds: Dict[str, List[list]] = {}
+        for e in events:
+            if e.get("op") == "add":
+                series = CS.slug(str(e.get("series") or "").split("|")[-1])
+                m = CS.CALL_NAME.match(os.path.basename(str(e.get("call") or "")).lower())
+                marks = [("rtext", x) for x in CS._names(str(e.get("text") or ""))]
+                marks += [("rseries", series)] if series else []
+                marks += [("rcall", m.group(1))] if m else []
+                adds.setdefault(str(e["id"]), []).append(marks)
         for n, e in enumerate(events):
             txt = _event_text(e)
             raw_e = {k: v for k, v in e.items() if k != "_line"}
             loc = {"lines": [e["_line"], e["_line"]], "event_id": e.get("id"), "op": e.get("op"), "event": raw_e}
             snid = ctx.conn.execute("INSERT INTO snippet(revision_id, ord, text, locator, said_at) VALUES (?,?,?,?,?)",
                                     (rid, n, txt, json.dumps(loc, ensure_ascii=False), event_time(e) or vf)).lastrowid
-            # the event's item: access follows the item's side (item_side, as filter_register does)
-            ctx.conn.execute("INSERT OR IGNORE INTO snippet_mark(snippet_id, kind, pos, name) VALUES (?, 'item', 0, ?)",
-                             (snid, owner_of.get(e.get("id"), str(e.get("id")))))
+            ctx.conn.executemany("INSERT OR IGNORE INTO snippet_mark(snippet_id, kind, pos, name) VALUES (?,?,?,?)",
+                                 [(snid, kind, k, name) for k, marks in enumerate(adds.get(str(e["id"]), []))
+                                  for kind, name in marks])
             if ctx.store.fts:
                 ctx.conn.execute("INSERT INTO snippet_fts(rowid, text, heading) VALUES (?,?,?)", (snid, txt, ""))
         by_tracker: Dict[str, dict] = {}

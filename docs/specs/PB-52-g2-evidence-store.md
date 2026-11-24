@@ -293,7 +293,12 @@ request's scope, with the same rules as `side`, `side_of_name`, `series_side`, `
   request's `scope.client` and `scope.others` are ever consulted. Path and entity text marks stay uncut because the
   relabel of an added slug (section 5.2) finds work only through snippet text: a call folder or a Tracker item that
   names a client before its folder exists must carry that name already (PB-84 review round 2). Heading titles are
-  snippet text, so heading and line marks are redone by the relabel.
+  snippet text, so heading and line marks are redone by the relabel. A register event's snippet carries the
+  `item_side` inputs of every `add` event with **its own id** (`kind = rseries`, `rcall`, `rtext`, uncut, `pos` = the
+  index of that `add`), never the folded item's: `filter_register` decides by the event's own id and the `add` fields
+  only, so a moved item (dropped by `fold()`), an `add` joined by `op same` to another client's item and an item edited
+  later to name a client all keep the reference side (PB-84 review round 3). Tracker snippets keep their `item` mark
+  to the item's entity.
 - **Query-time side of a snippet** (section 11.2 step 1), evaluated in SQL with the scope bound as parameters, in the
   order of `side()` then `filter_text`:
   1. the source path under a folder of `scope.folders[scope.client]`: own; under a folder of `scope.folders[o]` for an
@@ -303,6 +308,9 @@ request's scope, with the same rules as `side`, `side_of_name`, `series_side`, `
   3. else (a shared file) the text rule of `filter_text`: the snippet is other when any ancestor heading's marks hold
      an `o` and not `scope.client`, or any line's marks hold an `o` and not `scope.client` (a line that names the own
      client passes even if it names another).
+  4. a register event: other when, for any `pos`, its `rseries`, then `rcall`, then `rtext` marks give **other** (the
+     `item_side` order), as `filter_register` drops every event of an id with an `add` on another client's side; a
+     Tracker snippet: other when its item's entity is other.
   A deterministic entity's side is `series_side`, then `side_of_name`, then `text_side` on its `entity_mark` rows.
 - **Stale universe.** When `scope.client` or a label of `scope.others` is not in the stored `label_universe` (a
   folder added or renamed after the last pass), marks cannot answer the text rule for that label. Non-live callers
