@@ -60,7 +60,9 @@ from livetips_m0 import call_layout as CL  # noqa: E402
 from livetips_m0 import client_scope as CS  # noqa: E402
 from livetips_m0 import commitments as CM  # noqa: E402
 from livetips_m0.evidence import __main__ as ECLI  # noqa: E402
+from livetips_m0.evidence import extract as EX  # noqa: E402
 from livetips_m0.evidence import ingest as IG  # noqa: E402
+from livetips_m0.evidence import worker as W  # noqa: E402
 from livetips_m0.evidence import search as SE  # noqa: E402
 from livetips_m0.evidence import segments as SG  # noqa: E402
 from livetips_m0.evidence import store as ES  # noqa: E402
@@ -78,6 +80,12 @@ REVISIONS = FIX / "revisions"           # the revision states of section 14.1 an
 EXTRACT = FIX / "extract"               # C's extraction fixture, <seg_hash>.json (recorded in S3)
 V2_DIRS = ("v2", "revisions", "extract")    # outside fixture_sha, so the v1 columns keep their hash
 READY = {"S2"}          # the sub-tasks whose code C has: S3 adds "S3" with the extraction, S4 adds "S4" with topics
+MANIFEST = EXTRACT / "manifest.json"    # the recorded extraction fixture: gold sha256, route, model, calibration
+
+
+def ready_set() -> set:
+    """S3 counts as ready for C only with a recorded extraction fixture (raw model output, recorded by --extract)."""
+    return READY | ({"S3"} if MANIFEST.is_file() else set())
 SETS = ("small", "scale")
 SEED = 52               # the scale set's noise generator
 VARIANTS = ("A", "B", "C")
@@ -695,7 +703,7 @@ def new_segments(ctx: dict) -> int:
     return n
 
 
-def build_v2(base: Path, gold: dict, gold2: dict, scale: bool, embedder=None) -> dict:
+def build_v2(base: Path, gold: dict, gold2: dict, scale: bool, embedder=None, after_pass=None) -> dict:
     """The gold v2 project and its store, pass by pass (gold_v2.yaml header): the base pass, the decision sidecars
     (*.notion.json) in a pass of their own on notes already ingested (spec 14.2 item 4), the revision states in
     time order, the move, the deletions, the supersede override and the state-only pass through the CLI."""
@@ -734,6 +742,8 @@ def build_v2(base: Path, gold: dict, gold2: dict, scale: bool, embedder=None) ->
         rep = IG.ingest(st, str(root), valid_from=valid_from, embedder=embedder, tracker_path=str(tracker), voices={},
                         quiet_s=0)
         ctx["passes"].append(rep)
+        if after_pass is not None:
+            after_pass(ctx)                 # --extract: the recorder extracts each revision state as it is built
         return rep
 
     one_pass()
@@ -781,7 +791,16 @@ def replay_fixture(ctx: dict, fixture_dir: Path, small: bool) -> dict:
     a recorded fixture with a miss on the small set fails the run as "fixture stale" (a chunker, segmenter or client
     label change moved seg_hash). No file at all = not recorded yet (S3 records it): C runs on its deterministic part."""
     st = ctx["store"]
-    recorded = fixture_dir.is_dir() and any(fixture_dir.glob("*.json"))
+    recorded = fixture_dir.is_dir() and any(p.name != "manifest.json" for p in fixture_dir.glob("*.json"))
+    manifest = fixture_dir / "manifest.json"
+    if recorded and manifest.is_file() and ctx.get("gold_sha256"):
+        rec_gold = json.loads(manifest.read_text(encoding="utf-8")).get("gold_sha256")
+        if rec_gold != ctx["gold_sha256"]:
+            raise SystemExit("G0 C: gold changed: the extraction fixture was recorded against gold v2 {}..., the current "
+                             "gold is {}...; re-record it (run.py --extract <route>)".format(str(rec_gold)[:12],
+                                                                                            ctx["gold_sha256"][:12]))
+    rules = EX.load_rules()
+    labels = EX.project_labels(str(ctx["root"]))
     hits = misses = tokens = 0
     extractors = set()
     for r in st.q("SELECT rv.id FROM revision rv JOIN source s ON s.id=rv.source_id WHERE rv.extract_state='pending'"
@@ -798,7 +817,17 @@ def replay_fixture(ctx: dict, fixture_dir: Path, small: bool) -> dict:
             data = json.loads(p.read_text(encoding="utf-8"))
             extractors.add(str(data.get("extractor") or ""))
             tokens += int(data.get("out_tokens") or 0)
-            ES.apply_extraction(st, r["id"], data.get("items") or {})
+            if "answers" in data:
+                # S3: raw model output (reviewed by deletion only) through the same validator as the worker
+                view = EX.segment_view(st, r["id"], seg)
+                shift = view["snippets"][0]["lines"][0] - int(data.get("base_line") or 0)
+                parts = [EX.parse(t, rules["schema"])[0] or {} for t in data["answers"]]
+                obj = W.rebase(EX.merge(parts) if len(parts) > 1 else parts[0], {"snippets": [{"lines": (shift, 0)}]}, +1)
+                cat = EX.catalog(st, view, str(ctx["root"]), labels, int(rules.get("catalog_max", 60)))
+                items, _c = EX.validate(st, view, obj, rules, cat, str(ctx["root"]), labels)
+                ES.apply_extraction(st, r["id"], items, mark_done=False)
+            else:
+                ES.apply_extraction(st, r["id"], data.get("items") or {})
     out = {"recorded": recorded, "hits": hits, "misses": misses, "tokens": tokens, "extractors": sorted(extractors)}
     out["state"] = "not_recorded" if not recorded else ("stale" if misses else "ok")
     if recorded and misses and small:
@@ -1012,7 +1041,7 @@ def evaluate_v2(v, ctx: dict, gold2: dict, set_name: str, embedder=None) -> dict
     rows = []
     top = int(gold2.get("top", 6))
     for row in gold2["rows"]:
-        if v.name == "C" and row["needs"] not in READY:
+        if v.name == "C" and row["needs"] not in ready_set():
             rows.append({"id": row["id"], "kind": row["kind"], "needs": row["needs"], "status": "not_evaluated",
                          "missing": "{} ({})".format(row["needs"], {"S3": "LLM extraction", "S4": "topic summaries"}[row["needs"]]),
                          "expected": row["expected"]["C"]})
@@ -1128,7 +1157,7 @@ def run_v2(v, gold: dict, gold2: dict, gold2_path: Path, tmp: Path, sets, mdir: 
     SHARED_ROWS.clear()
     SHARED_ROWS.update(r["id"] for r in gold2["rows"] if r.get("shared"))
     out = {"gold_version": 2, "gold_sha256": hashlib.sha256(gold2_path.read_bytes()).hexdigest(),
-           "fixture_v2_sha": tree_sha(OVERLAY, REVISIONS), "ready": sorted(READY), "sets": {}}
+           "fixture_v2_sha": tree_sha(OVERLAY, REVISIONS), "ready": sorted(ready_set()), "sets": {}}
     modes = ("no_vectors",) if v.name == "A" else ("no_vectors", "vectors")
     with embed_server(mdir if v.name != "A" else None) as emb:
         for s in sets:
@@ -1141,6 +1170,7 @@ def run_v2(v, gold: dict, gold2: dict, gold2_path: Path, tmp: Path, sets, mdir: 
                     out["sets"][s][m] = {"skipped": why}
                     continue
                 ctx = build_v2(tmp / "v2-{}-{}".format(s, m), gold, gold2, s == "scale", emb if m == "vectors" else None)
+                ctx["gold_sha256"] = out["gold_sha256"]
                 try:
                     out["sets"][s][m] = evaluate_v2(v, ctx, gold2, s, emb if m == "vectors" else None)
                 finally:
@@ -1442,6 +1472,74 @@ def regen_register(gold_path: Path = GOLD) -> Path:
     return reg
 
 
+class Recorder:
+    """Wraps the worker's transport and keeps every raw answer by the seg_hash of the segment it was asked for."""
+
+    def __init__(self, inner):
+        self.inner = inner
+        self.answers: Dict[str, List[str]] = {}
+        self.base: Dict[str, int] = {}
+        self.tokens: Dict[str, List[int]] = {}
+
+    def start(self, req: dict):
+        h = self.inner.start(req)
+        rec = self
+
+        class H:
+            def done(self):
+                return h.done()
+
+            def cancel(self):
+                h.cancel()
+
+            def result(self):
+                a = h.result()
+                if not a.get("error") and req.get("seg_hash"):
+                    rec.answers.setdefault(req["seg_hash"], []).append(a.get("text") or "")
+                    rec.base.setdefault(req["seg_hash"], int(req.get("base_line") or 0))
+                    t = rec.tokens.setdefault(req["seg_hash"], [0, 0])
+                    t[0] += int(a.get("in_tokens") or 0)
+                    t[1] += int(a.get("out_tokens") or 0)
+                return a
+        return H()
+
+
+def record_extract(route: str, gold_path: Path = GOLD, gold2_path: Path = GOLD2, out_dir: Path = EXTRACT,
+                   transport=None) -> dict:
+    """--extract <route>: extract the gold v2 small set on a real route through the worker (this sends the invented
+    fixture text to that route's provider; never run by the gate), write fixtures/extract/<seg_hash>.json (raw model
+    output, review by deletion only) and manifest.json (gold sha256, route, model, extractor, calibration)."""
+    gold, gold2 = load_gold(gold_path), load_gold(gold2_path)
+    rec = Recorder(transport or W.ChildTransport())
+    runs: List[dict] = []
+    with tempfile.TemporaryDirectory(prefix="g0-extract-") as tmp, store_env(Path(tmp)):
+        def extract(ctx):
+            runs.append(W.extract_pass(ctx["store"], str(ctx["root"]), {"route": route, "record": True}, rec))
+        ctx = build_v2(Path(tmp) / "rec", gold, gold2, False, None, after_pass=extract)
+        cost = index_cost(ctx, None)
+        ctx["store"].close()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    ex = runs[0]["extractor"] if runs else ""
+    for h, answers in rec.answers.items():
+        (out_dir / (h + ".json")).write_text(json.dumps(
+            {"seg_hash": h, "extractor": ex, "route": route, "base_line": rec.base.get(h, 0), "answers": answers,
+             "in_tokens": rec.tokens[h][0], "out_tokens": rec.tokens[h][1]}, ensure_ascii=False, indent=1) + "\n",
+            encoding="utf-8")
+    sent = sum(int(r.get("requests") or 0) for r in runs)
+    outs = sum(int(r.get("out_tokens") or 0) for r in runs)
+    cal = {"segments_recorded": len(rec.answers), "requests": sent,
+           "out_tokens_per_segment": round(outs / len(rec.answers), 1) if rec.answers else None,
+           "catalog_tokens_per_request": round(sum(float(r.get("catalog_tokens") or 0) for r in runs) / sent, 1) if sent else None,
+           "segments_per_document": cost["segments_per_document"],
+           "usd": round(sum(float(r.get("usd") or 0) for r in runs), 4),
+           "statuses": sorted({r["status"] for r in runs})}
+    manifest = {"gold_sha256": hashlib.sha256(Path(gold2_path).read_bytes()).hexdigest(), "route": route,
+                "model": runs[0]["model"] if runs else "", "extractor": ex, "recorded_at": dt.datetime.now().isoformat(
+                    timespec="seconds"), "calibration": cal}
+    (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=1) + "\n", encoding="utf-8")
+    return manifest
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--variant", choices=VARIANTS, default="A")
@@ -1452,7 +1550,13 @@ def main(argv=None) -> int:
     ap.add_argument("--set", choices=("small", "scale", "both", "none"), default="both",
                     help="gold v2 sets to run (none: the v1 targets only)")
     ap.add_argument("--regen-register", action="store_true")
+    ap.add_argument("--extract", metavar="ROUTE", choices=("api", "code", "local", "openai", "codex", "gemini"),
+                    help="record C's extraction fixture on a real route (sends the invented fixture text to it)")
     a = ap.parse_args(argv)
+    if a.extract:
+        m = record_extract(a.extract)
+        print(json.dumps(m, indent=1))
+        return 0
     if a.regen_register:
         print("wrote", regen_register().relative_to(HERE))
         return 0

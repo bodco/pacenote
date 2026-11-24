@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Evidence extraction output (PB-52 G2 S3, rules/evidence.yaml)",
+  "type": "object",
+  "required": ["entities", "claims", "relations"],
+  "properties": {
+    "entities": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["ref", "type", "name", "quote", "lines"],
+        "properties": {
+          "ref": {"type": "string"},
+          "known_id": {"type": ["string", "null"]},
+          "type": {"type": "string"},
+          "name": {"type": "string"},
+          "aliases": {"type": "array", "items": {"type": "string"}},
+          "quote": {"type": "string"},
+          "lines": {"type": "array", "items": {"type": "integer"}, "minItems": 2, "maxItems": 2}
+        }
+      }
+    },
+    "claims": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["subject", "predicate", "modality", "quote", "lines"],
+        "properties": {
+          "subject": {"type": "string"},
+          "predicate": {"type": "string"},
+          "value": {"type": ["string", "number", "null"]},
+          "modality": {"type": "string"},
+          "said_by": {"type": ["string", "null"]},
+          "due": {"type": ["string", "null"]},
+          "quote": {"type": "string"},
+          "lines": {"type": "array", "items": {"type": "integer"}, "minItems": 2, "maxItems": 2},
+          "confidence": {"type": ["number", "null"]}
+        }
+      }
+    },
+    "relations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["from", "rel", "to", "modality", "quote", "lines"],
+        "properties": {
+          "from": {"type": "string"},
+          "rel": {"type": "string"},
+          "to": {"type": "string"},
+          "modality": {"type": "string"},
+          "quote": {"type": "string"},
+          "lines": {"type": "array", "items": {"type": "integer"}, "minItems": 2, "maxItems": 2},
+          "confidence": {"type": ["number", "null"]}
+        }
+      }
+    }
+  }
+}

@@ -187,6 +187,18 @@ chain: |
   turn.failed at a reached limit); the session logs have them in token_count events. The APIs: "$X left of your $Y
   monthly limit" from Settings > AI > Spending limits and spend-ledger.jsonl (a provider does not give the balance
   through a key); the model on this Mac "no limit". Never a key or a token in these files.
+  PB-52 G2 (behind the flag evidence_store): the evidence job (indexing a project for the evidence store) does not use
+  this chain. It runs on the AI chosen for it (default: the after-call AI) and steps only to the model on this Mac,
+  never to another cloud AI (livetips_m0.routing.chain_order, AIChain in Swift with S5).
+evidence:
+  # PB-52 G2 S3 (owner decision 24.11, option a): per route, the model that reads sources (extract) and the model that
+  # writes topic summaries (summary, the route's after-call model). The worker reads this map; without it the extract
+  # model is routing.PING_MODEL and the summary model the "after" entry of JOB_DEFAULTS. local null = LT_LOCAL_MODEL,
+  # else gemma4:26b.
+  extract: {api: claude-haiku-5-5, openai: gpt-6-luna, gemini: gemini-3.5-flash-lite, codex: codex/default, code: haiku,
+            local: null}
+  summary: {api: claude-sonnet-5-5, openai: gpt-6.1-sol, gemini: gemini-3.8-flash, codex: codex/default, code: sonnet,
+            local: null}
 prep_runs:
   rule: |
     0.8.5 (owner: compare preparations by time, price and quality): a full preparation (not a refresh) moves the

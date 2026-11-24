@@ -200,7 +200,9 @@ class OpenAIProvider(Provider):
             except Exception as err:  # noqa: BLE001  return a completion on transport/callback failure
                 c.error = "OpenAI: " + type(err).__name__
                 break
-            if settle(c) and c.retried is None:
+            # PB-52 S3: the evidence job asks for one request only (extra single_request): a cut answer is split by
+            # its worker instead of being paid twice; a whole JSON object at the start is still kept (settle)
+            if settle(c) and c.retried is None and not (extra or {}).get("single_request"):
                 c.retried = "longer"
                 body["max_output_tokens"] = min(LONGER_MAX, body["max_output_tokens"] * LONGER)
                 c.text, c.error, c.stop_reason, c.incomplete = "", None, None, None

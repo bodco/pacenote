@@ -182,6 +182,26 @@ What it says:
 Each row states which variant should pass it and why (`expected`, `why`); A, B and C match every expectation on both
 sets.
 
+## G2 S3: LLM extraction, validation, routing, ceiling (2026-11-24)
+
+PB-86 adds the extraction worker (`evidence pass --route`), the validator, the segment cache, the ceilings and the
+recorder for C's extraction fixture (`run.py --extract <route>`, which writes `fixtures/extract/<seg_hash>.json` with
+the raw model answers and `manifest.json` with the gold v2 sha256 and the calibration). The fixture is **not recorded
+yet**: recording sends the invented fixture text to a real route, which this step did not do. So C still evaluates only
+its S2 rows (`C ready: S2`, 16 rows not evaluated), and the S3 gate (hop rate at least 4 of 6, paraphrase, modality,
+the calibration of output tokens and catalog size) waits for that recording.
+
+Results at this commit (`results/A-2026-11-24-s3.json`, `results/C-2026-11-24-s3.json`):
+
+- **A unchanged** against `A-2026-11-24-s2.json`: every column equal (prep coverage 80.0%, prep and live leaks 0,
+  live answer rate 100.0%, answer text in top 80.0%, duplicates 5, suggested 8, wrong identity 4, item 13 cross-client
+  4; gold v2 10/39 rows on both sets, future leaks 6, stale 1, excluded leaks 13), only lookup time moved (p50 1.62 to
+  1.68 ms, p95 2.59 to 2.71 ms).
+- **C unchanged** against `C-2026-11-24-s2.json`: 23/23 evaluated rows on both sets, every leak 0, quote validity and
+  evidence recall 100%, fixture 0 hits and 64 (small) and 114 (scale) misses as "not recorded"; the S2 gate passes
+  (the runs with vectors not evaluated: no bge-m3 model folder here). Live p95 on the scale set 29.87 ms against the
+  150 ms bar.
+
 ## What is measured
 
 Each target call is replayed on a clean copy of the fixture project, with every file dated by the date in its name

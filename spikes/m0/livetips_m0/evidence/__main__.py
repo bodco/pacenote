@@ -3,8 +3,11 @@
     python -m livetips_m0.evidence <command> --project-uid <uid> [--store <file>] --root <project folder> ...
 
     status    the store's counts, the applied request ids (--request-id asks about one)
-    ingest    deterministic pass (also `pass`; LLM extraction comes with S3): --hidden-calls, --revoked, --web-dirs,
-              --tracker, --valid-from (tests and the bench only), --quiet-seconds, --no-embed
+    ingest    deterministic pass: --hidden-calls, --revoked, --web-dirs, --tracker, --valid-from (tests and the bench
+              only), --quiet-seconds, --no-embed
+    pass      ingest, then LLM extraction of the pending revisions on the evidence route (S3): --route, --model,
+              --settings-json (ceilings, poll_s), --no-extract (the switch "Use AI to read sources" off)
+    estimate  the pending segments and the cost of extracting them on --route, typical to cap
     exclude   the state-only pass: --hidden-calls and/or --revoked (full current lists), --request-id
     override  one pm_override row: --target --key --field --value --at --via, --request-id (any field is stored;
               in S1 search applies only reject and supersede)
@@ -80,6 +83,11 @@ def cmd_status(a) -> dict:
            "edges": c("SELECT count(*) FROM edge"), "pending_extraction": c("SELECT count(*) FROM revision WHERE"
                                                                              " extract_state='pending'"),
            "label_universe": st.meta_json("label_universe", []), "last_pass": st.meta("last_pass"),
+           # S3: segments a model answer could not fill (invalid twice, or one snippet still cut at the output cap)
+           "segments_invalid": c("SELECT count(DISTINCT seg_hash) FROM run_item WHERE status='invalid'"),
+           "segments_truncated": c("SELECT count(DISTINCT seg_hash) FROM run_item WHERE error LIKE 'truncated%'"),
+           "last_extract": dict(st.one("SELECT id, status, route, model, usd, pct_before, pct_after, seconds, error FROM run"
+                                       " WHERE kind='extract' ORDER BY id DESC LIMIT 1") or {}),
            "applied_requests": sorted(st.applied_ids()), "pending_requests": [r["request_id"] for r in st.pending_requests()]}
     if a.request_id:
         out["request"] = {"id": a.request_id, "applied": a.request_id in st.applied_ids()}
@@ -110,9 +118,34 @@ def cmd_ingest(a) -> dict:
                             quiet_s=float(a.quiet_seconds), slug=a.slug or "")
             with st.conn:
                 st.conn.execute("UPDATE run SET status='done', ended_at=? WHERE id=?", (S.now_utc(), run))
+            ext = None
+            if a.cmd == "pass" and not a.no_extract:
+                from . import worker as W
+                ext = W.extract_pass(st, a.root, _settings(a))
             st.compact_log()                    # under both locks (section 13.1)
-    return {"ok": True, "status": "done", "report": rep,
-            "note": "deterministic ingest only; LLM extraction comes with S3" if a.cmd == "pass" else ""}
+    out = {"ok": True, "status": "done", "report": rep}
+    if ext is not None:
+        out.update(extract=ext, status=ext["status"])
+    return out
+
+
+def _settings(a) -> dict:
+    s = {}
+    if a.settings_json:
+        raw = Path(a.settings_json[1:]).read_text(encoding="utf-8") if a.settings_json.startswith("@") else a.settings_json
+        s = json.loads(raw)
+    if a.route:
+        s["route"] = a.route
+    if a.model:
+        s["model"] = a.model
+    return s
+
+
+def cmd_estimate(a) -> dict:
+    from . import worker as W
+    st = _store(a, create=False, readonly=True)
+    s = _settings(a)
+    return dict(W.estimate(st, a.root or st.meta("root_hint"), s.get("route") or "api", settings=s), ok=True)
 
 
 def _state_request(a, kind: str, payload: dict) -> dict:
@@ -255,7 +288,7 @@ def cmd_delete(a) -> dict:
 
 COMMANDS = {"status": cmd_status, "ingest": cmd_ingest, "pass": cmd_ingest, "exclude": cmd_exclude,
             "override": cmd_override, "search": cmd_search, "card": cmd_card, "rebuild": cmd_rebuild,
-            "vacuum": cmd_vacuum, "delete": cmd_delete}
+            "vacuum": cmd_vacuum, "delete": cmd_delete, "estimate": cmd_estimate}
 
 
 def parser() -> argparse.ArgumentParser:
@@ -273,6 +306,10 @@ def parser() -> argparse.ArgumentParser:
     ap.add_argument("--valid-from", default="")
     ap.add_argument("--quiet-seconds", default="600")
     ap.add_argument("--no-embed", action="store_true")
+    ap.add_argument("--no-extract", action="store_true")
+    ap.add_argument("--route", default="", choices=("", "api", "code", "local", "openai", "codex", "gemini"))
+    ap.add_argument("--model", default="")
+    ap.add_argument("--settings-json", default="")
     ap.add_argument("--request-id", default="")
     ap.add_argument("--target", default="entity")
     ap.add_argument("--key", default="")

@@ -142,7 +142,7 @@ class GeminiProvider(Provider):
             except Exception as err:  # noqa: BLE001  return a completion on transport/callback failure
                 c.error = "Gemini: " + type(err).__name__
                 break
-            if settle(c) and c.retried is None:
+            if settle(c) and c.retried is None and not (extra or {}).get("single_request"):   # PB-52 S3, as OpenAI
                 c.retried = "longer"
                 cfg = body["generationConfig"]
                 cfg["maxOutputTokens"] = min(LONGER_MAX, cfg["maxOutputTokens"] * LONGER)

@@ -115,8 +115,8 @@ a key. G2 adds one:
 
 **The `_notion/` mirror.** The `file` rules skip `_notion/` only so it is not read twice: the whole mirror is ingested
 once, through the `notion` copies row (and the Current State page through `project_state`), as today's live lookup
-includes `_notion/`. It is extracted and sent to the `evidence` route like any file, so the first-index confirmation
-(section 10) counts its sources and characters.
+includes `_notion/`. It is extracted and sent to the `evidence` route like any file, so the first-index estimate
+shown where the flag is turned on (section 10) counts its sources and characters.
 
 The column "origin" is what the confirmation rule (section 7.4) counts on. Git commits and the 14-day digest stay
 prep-only sources and are not ingested. `sheet/tracker.py` `collect()` is not a source of its own: it folds the same
@@ -947,18 +947,35 @@ All of this is pure code and runs the same for every route.
   prose; the model choices live in Python (`openai_provider.py:11` and `gemini_provider.py:17` `JOB_DEFAULTS`,
   `routing.PING_MODEL`, which already holds the cheap model of each route). S3 adds a real model map for the
   `evidence` job (extract and summary model per route) to `rules/ai.yaml` and the worker reads it from there, with
-  `PING_MODEL` and the `after` entries of `JOB_DEFAULTS` as the fallback. Section 15, question 1 asks the owner
-  about this default.
-- **Output cap**: every extraction request sets a per-request output limit of 2,000 tokens (`max_tokens` on api
-  and code, the equivalent field on openai, gemini and codex, `num_predict` on local), from `rules/evidence.yaml`
-  (`max_output_tokens`). A reply cut at the cap (the provider's stop reason says so, or the JSON ends early) is
+  `PING_MODEL` and the `after` entries of `JOB_DEFAULTS` as the fallback. The owner chose this default on 24.11
+  (section 15, decision 1).
+- **Output cap**: every extraction request asks for a per-request output limit of 2,000 tokens from
+  `rules/evidence.yaml` (`max_output_tokens`). How hard that limit is depends on the route (PB-52 review note, checked
+  in the provider code in S3; `rules/evidence.yaml` `output_cap` keeps the same table):
+  - **api (Claude key)**: `max_tokens` on the Messages API. A hard cap.
+  - **openai**: `max_output_tokens` is a hard cap per request, but the provider by default sends a cut answer once
+    more with a larger limit (`LONGER`, up to 2,400 tokens, `openai_provider.py`), so one worker request could be two
+    billed requests. **Decision (S3): the `evidence` job turns that second request off** (`single_request`, passed
+    by the request child only for this job; every other job keeps it). A whole JSON object at the start of a cut
+    answer is still kept for free (`settle`); anything else cut is split by the worker as below.
+  - **gemini**: `maxOutputTokens` is the cap plus the thinking room of the level (128 on Flash-Lite's `minimal`, 512
+    on `low`), billed as output. The second request is turned off for the `evidence` job as on openai. The estimate
+    before a request counts the thinking room (`worker.out_cap`).
+  - **codex (ChatGPT plan)**: only a sentence in the prompt ("keep within about 2,000 output tokens"); the CLI has
+    no output limit. Not a hard cap: the percent read back after every request bounds the pass, at most one
+    request over.
+  - **code (Claude Code)**: `claude -p` takes no output limit at all; bounded the same way as codex.
+  - **local (Ollama)**: `num_predict` exactly the cap for the `evidence` job (other jobs keep twice the cap); Ollama's
+    `done_reason = length` marks a cut answer.
+
+  A reply cut at the cap (the provider's stop reason says so, or the JSON ends early) is
   not repaired by asking for fewer items, which would silently drop facts: the segment is split in two at a snippet
   boundary and each half is sent under the same cap, down to one snippet. Once every part validates, their merged
   output is stored in `segment_cache` under the **parent** `seg_hash` (with the summed tokens), so the next pass,
   whose segmenter yields the unsplit segment again, hits the cache instead of re-sending and re-splitting it. A single snippet still cut at the cap gets the one repair retry (section 8.4) asking for the items that
   fit; it is marked `truncated` in `run_item.error` and counted in `evidence status`, so the loss is visible. Each split request goes through the
-  ceiling check like any other. Topic summaries use a cap of 800 tokens. These caps make the ceiling a hard bound (section
-  9.1).
+  ceiling check like any other. Topic summaries use a cap of 800 tokens. On api, openai, gemini and local these caps
+  make the per-request estimate an upper bound; on codex and code they do not (section 9.1).
 - Fallback to local (Ollama, `num_ctx` 65536, `127.0.0.1:11434`): when the chosen route is not connected, is capped
   by `cost.ProviderCaps`, or the pass ceiling is reached and the PM turned on local overflow (a setting, off by
   default, section 9.1). If Ollama or the model is not installed, the pass stops with `status = off` and says so;
@@ -1099,9 +1116,18 @@ What the numbers say:
   global cap. The monthly `cost.ProviderCaps` and `BudgetGuard` stay in force on top and bound the month.
 - The estimate before each request uses `size.estimate` on the segment plus the prefix plus the full output cap
   (2,000 tokens for extraction, 800 for a summary), never the typical output, so the pass stops before the request
-  that would cross the ceiling (`status = ceiling`) even if that request returns the longest allowed answer. With the
-  output cap set on every request (section 8.6), the ceiling is a hard bound on USD routes; on plan routes the
-  percent is read back from the account after every request and can overshoot by at most one request.
+  that would cross the ceiling (`status = ceiling`) even if that request returns the longest allowed answer. Per
+  route (section 8.6):
+  - **api**: the estimate is an upper bound for the request (hard `max_tokens`), so the USD ceiling holds exactly.
+  - **openai**: the same, because the `evidence` job turns the provider's second request off; with it on, one cut
+    segment would cost two full requests before the split and the estimate would be one request too low.
+  - **gemini**: the same, with the thinking room (128 or 512 tokens) added to the estimate's output.
+  - **codex** and **code**: no hard output limit, so the estimate is 0 and the percent is read back from the account
+    after every request; a pass can go over its percent ceiling by at most one request.
+  - **local**: wall-clock minutes, checked before every request; at most one request over.
+
+  In short: "hard bound" holds on api, openai and gemini; on the plan routes and local the ceiling is bounded by the
+  check after every request, over by at most one request.
 - Plan routes also stop when the 5-hour window is above 80% used (the same `near_share` idea as prep), so indexing
   never eats the limit the PM needs for the next preparation.
 - Spend is written to the existing `spend-ledger.jsonl` with job `evidence`.
@@ -1120,13 +1146,16 @@ Settings > AI, a new row under the routes (only when the flag is on):
   360 minutes", and for all projects together "Never more than $3.00 / 30% / 360 minutes a day for all projects"),
   "Topic summaries: after each pass / only when asked", the switch "Use AI to read
   sources" (off = deterministic links only, no model requests), and "Delete this project's memory".
-- Before the first full index of a project, a confirmation: "First index of Northpoint: 192 sources, about 3.9M
-  characters. On Claude key (Haiku reads, Sonnet writes topic summaries): about $1.34 to $1.85, in 2 passes. On your
-  ChatGPT plan: about 68% to 84% of a 5-hour limit, in 7 to 9 passes over about 3 days. On this Mac: 5 to 29 hours,
-  free. Your files are sent only to the AI you chose
-  for this job." When the indexing provider is not the one used for preparation, one more line: "Your project files
-  have so far gone only to <prep provider>; indexing sends them to <index provider>." Buttons: "Start", "Use this Mac only", "Not now". The range comes from the estimate with typical
-  output and with the output cap; after S3 calibration the typical end uses the measured output per segment.
+- **No confirmation before the first index** (owner decision 24.11, section 15 decision 2): turning the flag on is
+  the consent. Where the flag is turned on, one plain line under the switch says what will be sent and what the
+  first index is estimated to cost, for example: "Project text will be sent to Claude key (Haiku) for indexing. First
+  index of Northpoint: about $1.34 to $1.85." On a plan route: "... to your ChatGPT plan for indexing. First index:
+  about 68% to 84% of a 5-hour limit, over about 3 days." On this Mac: "Project text stays on this Mac. First index:
+  about 5 to 29 hours." When the indexing provider is not the one used for preparation, the same line adds: "Your
+  project files have so far gone only to <prep provider>." The range comes from `evidence estimate` (typical output
+  to the output cap, the real segment count of the pending revisions); after the S3 calibration (G0 `--extract`)
+  the typical end uses the measured output per segment. The per-pass and per-day ceilings, the cost shown before
+  and after each pass and the off switch ("Use AI to read sources") stay.
 - After a pass, in the same row: "Done: 230 parts, 0.9M tokens, $0.29 (estimate was $0.31)". A stopped pass says
   why: "Stopped at your $1.00 ceiling", "Paused: a call started", "Local model not installed".
 
@@ -1303,11 +1332,12 @@ ids (`--request-id <id>` asks about one).
 - Model requests go only to the route the PM chose for the `evidence` job (or local). The `evidence` route defaults to
   the `after` route (section 8.6), which receives transcripts and notes today; folder files, project state and site
   pages go today only to the `prep` route. When the `evidence` route's provider differs from `prep`'s, indexing sends
-  those files to a provider that has not seen them before, so the first-index confirmation (section 10) names that
-  provider in that case. G2 adds no destination the PM did not choose for some job. The worker itself makes no
+  those files to a provider that has not seen them before, so the line shown where the flag is turned on (section 10)
+  names that provider in that case. G2 adds no destination the PM did not choose for some job. The worker itself makes no
   Notion, HubSpot or web request: the Tracker comes from the snapshot file the app writes (section 5.2, item 5), site pages from
-  what G6 already stored. The first full index asks before it starts (section 10) because it sends more text than
-  one preparation does.
+  what G6 already stored. The first full index sends more text than one preparation does; it does not ask before it
+  starts (owner decision 24.11, section 15): turning the flag on is the consent, and the line where it is turned on
+  says that project text goes to the chosen provider and what the first index is estimated to cost (section 10).
 - The files of a hidden call (section 5.1) are never sent to any model and never searched; its register events
   stay searchable as register items, as the app's Tracker shows them today (section 5.1). Hiding a call later starts the
   immediate state-only pass, which moves its sources to `excluded`, and from then on their claims, edges and the
@@ -1577,6 +1607,18 @@ Existing columns stay: prep coverage, prep leaks, live answer rate, answer text,
 duplicates, wrong identity, item 13 cross-client, false agreed, false proposal.
 
 ## 15. Questions for the owner (product choices only)
+
+**Owner decisions, 24.11 (final):**
+
+1. **Option (a).** The cheapest model of the PM's route reads sources for extraction (Haiku, GPT-6 Luna, Gemini 3.5
+   Flash-Lite, the Codex default, Claude Code's smallest model, the local model); the route's after-call model writes
+   topic summaries. Recorded as the `evidence` map in `rules/ai.yaml` (S3).
+2. **Option (b).** No consent prompt before the first cloud index: turning the flag `evidence_store` on is the
+   consent. The per-pass and per-day ceilings, the cost shown before and after each pass and the off switch stay.
+   Where the flag is turned on, one plain line says that project text will be sent to the chosen AI provider for
+   indexing and what the estimated first-index cost is (section 10).
+
+The questions as they were asked:
 
 1. **Which model reads sources.** Options: (a) the cheapest model of the chosen route (Haiku, GPT-6 Luna, Gemini
    3.5 Flash-Lite) for extraction and the after-call model for topic summaries: $1.16 to $4.45 for a first index,
@@ -1870,6 +1912,10 @@ Acceptance:
 - [ ] The extract and summary model per route come from the new `evidence` map in `rules/ai.yaml` (section 8.6); a
       test changes the map and the next request uses the new name; without the map the worker falls back to
       `routing.PING_MODEL` and the `after` entry of `JOB_DEFAULTS`.
+- [ ] The real `OpenAIProvider` and `GeminiProvider` classes against a stubbed connection returning a cut answer
+      (PB-52 review note): with the `evidence` job's options one request is sent and the answer is reported cut
+      (the worker splits it); without them the same class sends two requests (the negative control); the Gemini
+      request carries the cap plus the thinking room and the worker's estimate counts it.
 
 G0 gate: C with the extraction fixture, over the rows marked `needs: S2` or `S3` and with the fixture's gold hash
 equal to the current one: hop answer rate at least 4 of 6 multi-hop questions and at least 2 more than
@@ -1881,6 +1927,37 @@ recall, its own hop and paraphrase rates, output tokens per segment, catalog tok
 (recorded, not gated; the measured values replace the 500-token typical output and the 2,000-token catalog
 assumptions in the estimates
 before S5 shows any number).
+
+Implementation notes (S3, PB-86):
+- Code: `evidence/extract.py` (prompt prefix and `extractor` id, segment view with file line numbers, the catalog,
+  the validator of section 8.4, cut detection, the merge of split halves with renamed refs), `evidence/worker.py`
+  (the pass, ceilings, run and `run_item` rows, the ledger, `estimate`), `evidence/request.py` (one request per
+  child process). The CLI `pass` runs ingest and then extraction on `--route` (no route: no request, `status = off`);
+  `--no-extract` is the switch "Use AI to read sources" off; `evidence estimate --route` gives the first-index range
+  of section 10; `evidence status` counts `segments_invalid` and `segments_truncated` and shows the last pass.
+- Abort: every request runs in its own child process (a new session); when `call-active.json` appears the worker
+  kills the process group, which closes the HTTP connection (api, openai, gemini, Ollama) or ends the `codex` or
+  `claude` CLI with it. Tested with a fake Ollama on loopback (it sees the disconnect) and a fake `codex` script
+  (its process is gone).
+- A revision is marked `done` only when every segment of it settled (done, cached or invalid), so a pass stopped
+  by a ceiling or a call resumes; `store.apply_extraction(..., mark_done=False)`. Cached output keeps its line numbers
+  relative to the segment's first line, so a section moved down by an edit above it is still a cache hit.
+- A new `extractor` re-reads every current revision done by another extractor (not only pending ones). A plan route
+  whose account reports no usage (Codex in `--ephemeral` mode) counts `pct_per_request_assumed` (0.5%) per request,
+  so the 10% pass ceiling is at most 20 requests. The model's line range only has to cover the quote (it may span
+  snippets). The USD estimate prices the prefix at the cache-write rate until a cached read is seen. The context
+  snippet is sent only when it has the segment's client label.
+- Catalog of a shared segment: a scope whose client no folder has and whose others are every label, so every
+  client-labelled entity and alias is left out; a one-client project has nothing to keep apart. Client check of
+  item 6: a quote naming a client is kept only when it names the file's own client (its client folder, else the
+  segment's label).
+- The extraction fixture format is raw model output per `seg_hash` (`answers`, `base_line`) plus
+  `fixtures/extract/manifest.json` (gold v2 `sha256`, route, model, extractor, calibration); replay runs the same
+  validator as the worker and fails as "gold changed" on a different gold hash. C evaluates the `needs: S3` rows only
+  when the manifest exists (`run.py` `ready_set`). **The fixture is not recorded in PB-86**: recording sends the
+  invented fixture text to a real route (`run.py --extract <route>`) and needs the owner's key or plan, so the C hop,
+  paraphrase and modality gate and the calibration of output tokens and catalog size wait for that run; until then C
+  stays on its S2 rows and the estimates keep the 500-token and 2,000-token assumptions.
 
 ### S4. Topic summaries and global questions (core)
 
@@ -1917,7 +1994,8 @@ until `evidence status` lists it applied and re-sent otherwise (section 13.1), t
 `CallPage.swift` running `evidence override --key notion:<old> --field supersede --value notion:<new>` after `decision_notion.py --supersede` returns ok (section 7.1), triggers (after notes, folder change debounce, idle hourly, "Index now"), the `evidence` job in Swift
 `AIChain` (`allowed`, Settings list, stepping only to the model on this Mac; the `evidence` parameter of
 `ComponentCatalog.afterRemovingLocal` with its three call sites, section 8.6), the settings row with the all-projects
-day cap and the first-index confirmation with the texts of section 10 (en and uk i18n), delete per project, status
+day cap and the line where the flag is turned on (provider and first-index estimate, section 10; no confirmation
+dialog, owner decision 24.11) with the texts of section 10 (en and uk i18n), delete per project, status
 line; docs EN and UK (including that G2 searches stored site pages); CHANGELOG.
 
 Acceptance:
@@ -2076,7 +2154,10 @@ for k, lo, hi, per in (("codex %", 68, 84, 10),):
    за денної стелі), 68-84% 5-годинного вікна Codex (7-9 проходів, близько 3 днів), 5-29 годин локально; усе з
    каталогом сутностей 2000 токенів.
 8. Стеля на прохід, на день для проєкту і на день для всіх проєктів разом у долари, відсотки ліміту або хвилини,
-   показ вартості до і після, вимикач і видалення.
+   показ вартості до і після, вимикач і видалення. Жорстка межа виходу на запит є лише на Claude key, OpenAI і
+   Gemini (для задачі `evidence` повторний запит провайдера вимкнено, до оцінки Gemini додано запас на thinking);
+   на Codex і Claude Code межа лише в промпті або її немає, тож стеля тримається перевіркою після кожного запиту,
+   з перевищенням не більше ніж на один запит; локально `num_predict` точно дорівнює ліміту.
 9. G0: варіанти B і C з однаковими кандидатами, фікстура екстракції як сирий вихід моделі, складніший еталон (6+
    питань на кілька кроків, перефразування, глобальні, реплей у часі з двома випадками за mtime, модальність,
    виключення, масштаб); еталон заморожується з хешем до запису фікстури. S2 (PB-85): еталон v2 окремим файлом
@@ -2085,4 +2166,9 @@ for k, lo, hi, per in (("codex %", 68, 84, 10),):
 10. Розбиття: S1 сховище і пошук, S2 еталон G0 v2 і варіанти B/C, S3 екстракція і стеля, S4 теми і глобальні
     питання, S5 інтеграція в застосунок; кожен рядок еталону позначає, з якого S його оцінюють, і кожен S
     перевіряється лише своїм кодом;
-    2 питання до Bohdan: яка модель читає джерела, згода перед першим хмарним індексом.
+    рішення Bohdan 24.11: джерела читає найдешевша модель маршруту, підсумки тем пише модель after (варіант a);
+    окремої згоди перед першим хмарним індексом немає, згода це увімкнений прапорець, а поруч із ним один рядок
+    каже, що текст проєкту піде обраному провайдеру, і яка оцінка вартості першого індексу (варіант b).
+11. S3 (PB-86): екстракція, валідатор, каталог за клієнтом, кеш сегментів, стелі, переривання запиту під час
+    дзвінка, `--extract` для запису фікстури; саму фікстуру ще не записано (потрібен справжній маршрут), тож гейт
+    C для рядків S3 чекає на цей запис.

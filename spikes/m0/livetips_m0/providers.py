@@ -341,7 +341,8 @@ class OllamaProvider(Provider):
         c = Completion(model=model, t_start=time.monotonic())
         ensure_ollama(self.base_url)       # 0.8.6: starts Ollama when it is not running
         body = {"model": model, "stream": True, "keep_alive": "5m", "think": False,   # Gemma 4 thinks by default
-                "options": {"num_ctx": self.num_ctx, "num_predict": max(256, int(max_tokens) * 2), "temperature": 0.2},
+                "options": {"num_ctx": self.num_ctx, "num_predict": int((extra or {}).get("num_predict") or max(256, int(max_tokens) * 2)),
+                            "temperature": 0.2},     # PB-52 S3: the evidence job sets its cap exactly
                 "messages": [{"role": "system", "content": "\n\n".join(b["text"] for b in system)},
                              {"role": "user", "content": user_text(user)}]}
         req = urllib.request.Request(self.base_url + "/api/chat", data=json.dumps(body).encode(),
@@ -358,6 +359,7 @@ class OllamaProvider(Provider):
                     if piece:
                         take_piece(c, piece, on_text)
                     if ev.get("done"):
+                        c.stop_reason = ev.get("done_reason") or c.stop_reason    # "length" at num_predict (PB-52 S3)
                         c.input_tokens = int(ev.get("prompt_eval_count") or 0)
                         c.output_tokens = int(ev.get("eval_count") or 0)
             c.t_done = time.monotonic()

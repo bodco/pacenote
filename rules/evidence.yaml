@@ -1,0 +1,74 @@
+# The evidence store's extraction contract (PB-52 GraphRAG G2, S3; docs/specs/PB-52-g2-evidence-store.md sections
+# 7.2, 8.3, 8.4, 8.6 and 9.1). Shared by the app's evidence worker (livetips_m0/evidence/extract.py) and the live-tips
+# skill (rules/generated/skill_evidence.md). Behind the flag evidence_store (off by default).
+schema_version: 1
+# Bumped when the prompt, the enums or a validation rule change. The extractor of a request is
+# "<rules_version>:<sha256 of the prompt prefix>:10", so a change sends every segment again (spec section 8.2).
+rules_version: g2-s3-1
+types: [person, client, task, decision, risk, topic, document, system, call, date_event]
+relations: [blocks, depends_on, owns, about, part_of, mentions, decided_in, risk_for, waiting_on, attended, same_as]
+# supersedes is written by the PM only (spec section 7.1); a model answer naming it is dropped like any unknown relation
+predicates: [status, due, owner, decided, risk_level, waiting_for, value, said]
+modality:
+  proposal: '"we will try", "maybe", an offer not accepted (register: modality tentative, status proposal)'
+  expectation: 'someone waits for or expects something, a due date asked for, not agreed by the owner of the work'
+  confirmation: 'agreed, decided, done, confirmed by the person who owns it (register: modality agreed; status done)'
+  statement: 'a plain fact: a number, a date, a description (register: no modality)'
+# The hedge words of identity.TENTATIVE_RX and HEDGE_RX, kept twice (spec section 7.2): anchored at the start of an
+# item's text (parity with identity.py) and unanchored with word boundaries for a quote (validator item 9).
+hedge_start:
+  - '^\W*(?:(?:(?:we|i)\s+(?:will|shall)\s+|(?:we|i)[''’]ll\s+|will\s+)(?:try|attempt)(?:\s+to)?|(?:(?:we|i)\s+)?(?:try|attempt)\s+to|(?:(?:ми|я)\s+)?(?:спробу(?:ю|єш|є|ємо|єте|ють|вати|ймо)|постара(?:юсь|юся|ємось|ємося|ється|ються|тися|тись)))(?!\w)'
+  - '^\W*(?:maybe|if possible|можливо|мабуть|якщо вийде|по можливості)(?![\w-])'
+hedge_anywhere:
+  - '(?<!\w)(?:(?:(?:we|i)\s+(?:will|shall)\s+|(?:we|i)[''’]ll\s+|will\s+)(?:try|attempt)(?:\s+to)?|(?:try|attempt)\s+to|спробу(?:ю|єш|є|ємо|єте|ють|вати|ймо)|постара(?:юсь|юся|ємось|ємося|ється|ються|тися|тись))(?!\w)'
+  - '(?<!\w)(?:maybe|if possible|можливо|мабуть|якщо вийде|по можливості)(?![\w-])'
+thresholds:
+  confidence: 0.7          # under it a claim or edge is a suggestion (spec section 7.5)
+  quote_chars: 300
+caps:                       # per segment; extras are dropped (validator item 7)
+  entities: 40
+  claims: 60
+  relations: 60
+segment_chars: 6000
+catalog_max: 60             # known entities sent with one segment, only those visible to its client label
+max_output_tokens: 2000     # every extraction request (spec section 8.6); the ceiling estimate uses it in full
+summary_output_tokens: 800  # topic summaries (S4)
+# Team defaults, each a setting (spec sections 9.1 and 10): per pass, per project and day, all projects together per
+# day. usd on api, openai and gemini; pct of the 5-hour window on codex and code (stop_above: the window's used share
+# at which plan routes stop, so indexing never eats the limit the next preparation needs); minutes on local.
+ceilings:
+  usd: {pass: 1.00, day: 3.00, all_projects_day: 3.00}
+  pct: {pass: 10, day: 30, all_projects_day: 30, stop_above: 80}
+  minutes: {pass: 120, day: 360, all_projects_day: 360}
+backoff_s: [60, 3600]       # a route error: wait 1 minute, doubling, at most 1 hour (spec section 13.2)
+# Codex in --ephemeral mode reports no usage: a pass on a plan route whose percent stays unknown counts this much of
+# the 5-hour window per request (an assumption, so the 10% pass ceiling is at most 20 requests)
+pct_per_request_assumed: 0.5
+errors_to_fail: 3           # consecutive route errors before a pass ends failed (spec section 13.2)
+prompt: |
+  You read one part of a project document and return what it says as JSON. Rules:
+  1. Extract only what the text says. Never add what you know from elsewhere.
+  2. Every entity, claim and relation quotes the text verbatim (at most 300 characters) and gives its line range [first, last] from the line numbers shown. Quote only from the numbered lines; the context before them is for reading only.
+  3. Use a known id from the catalog when the text clearly means that entity; otherwise give a new ref (n1, n2, ...).
+  4. Never infer a relation from two separate sentences without a word that links them.
+  5. Mark modality by the table. Say confidence from 0 to 1.
+  6. Types, relations and predicates only from the lists. Return JSON only, no prose and no code fence.
+examples:
+  - text: "12 Item 13 is blocking the SSO integration, Emily said."
+    output: '{"entities": [{"ref": "n1", "type": "task", "name": "Item 13", "aliases": [], "quote": "Item 13 is blocking the SSO integration", "lines": [12, 12]}, {"ref": "n2", "type": "system", "name": "SSO integration", "aliases": ["SSO"], "quote": "the SSO integration", "lines": [12, 12]}], "claims": [{"subject": "n1", "predicate": "status", "value": "blocked", "modality": "statement", "said_by": null, "due": null, "quote": "Item 13 is blocking the SSO integration", "lines": [12, 12], "confidence": 0.9}], "relations": [{"from": "n1", "rel": "blocks", "to": "n2", "modality": "statement", "quote": "Item 13 is blocking the SSO integration", "lines": [12, 12], "confidence": 0.9}]}'
+  - text: "4 We will try to send the budget by Friday."
+    output: '{"entities": [{"ref": "n1", "type": "task", "name": "Send the budget", "aliases": [], "quote": "send the budget by Friday", "lines": [4, 4]}], "claims": [{"subject": "n1", "predicate": "due", "value": "Friday", "modality": "proposal", "said_by": null, "due": "Friday", "quote": "We will try to send the budget by Friday", "lines": [4, 4], "confidence": 0.8}], "relations": []}'
+# Per-route output limits as the providers enforce them (spec sections 8.6 and 9.1, the PB-52 review note).
+output_cap:
+  api: hard cap (max_tokens on the Messages API)
+  openai: >-
+    max_output_tokens is a hard cap; the provider's own second request with a larger limit (LONGER) is turned off for
+    the evidence job (single_request), so a cut answer is split by the worker, never paid twice
+  gemini: >-
+    maxOutputTokens plus the thinking room of the level (128 minimal, 512 low), billed as output; the second request is
+    turned off for the evidence job; the estimate adds the thinking room
+  codex: >-
+    prompt-only ("keep within about N output tokens"): no hard cap; bounded by the percent read back after every
+    request, at most one request over
+  code: no output limit (claude -p); bounded by the percent read back after every request, at most one request over
+  local: num_predict set to exactly the cap for the evidence job (other jobs keep twice the cap)

@@ -5,6 +5,22 @@ Pacenote. Earlier versions are described in the commit messages and in
 
 ## Unreleased
 
+- **Project memory, step 3: an AI reads the project's sources, under a spending ceiling (GraphRAG G2 S3, PB-86).**
+  Still behind the flag `evidence_store` (off by default); nothing changes for the PM with the flag off and no
+  setting is shown yet. With the flag on, `python -m livetips_m0.evidence pass --route <AI>` reads each new or changed
+  part of the project's calls, notes and files with the cheapest model of that AI (Haiku, GPT-6 Luna, Gemini 3.5
+  Flash-Lite, the Codex default, Claude Code's smallest model or the model on this Mac) and keeps the people, tasks,
+  decisions and links it states, each with a verbatim quote. Every quote is checked against the text, each part
+  holds one client's lines and is sent only with the names that client may see (a client with no call or sheet yet
+  counts as shared until the next pass), a hedge word keeps a promise a proposal, and notes
+  never count as a confirmation. A part already read is never paid for again (after an edit elsewhere in the file, a
+  revert or a move). Each pass stops before it would cross its ceiling ($1.00 a pass and $3.00 a day per project and
+  for all projects together on a key, 10% and 30% of the 5-hour limit on a plan, 120 and 360 minutes on this Mac);
+  spend goes to the usual spending ledger. It never runs during a call: a call that starts stops the request in
+  flight at once. If the chosen AI is not connected it moves only to the model on this Mac, never to another cloud
+  AI. For indexing, OpenAI and Gemini no longer send a cut answer a second time (the part is split instead), so the
+  cost estimate is a real upper bound there. `evidence estimate --route <AI>` gives the first-index range shown where
+  the flag is turned on; per the owner's decision there is no extra confirmation before the first index.
 - **Project memory, step 2: a harder benchmark for it (GraphRAG G2 S2, PB-85).** Nothing changes for the PM; the
   evidence store stays behind the flag `evidence_store`. The G0 benchmark gets a second gold set of 39 questions
   (questions that need two or three linked facts, other wording and another language, replays as of a past date, a
