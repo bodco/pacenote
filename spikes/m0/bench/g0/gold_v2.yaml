@@ -1,0 +1,596 @@
+# PB-52 G2 (S2): G0 gold version 2 (spec section 14.2), invented data only, the same two clients plus a late third.
+#
+# A separate file next to gold.yaml (version 1): the existing columns keep their gold and fixture hashes, so an A run
+# stays comparable 1:1 with every earlier A result, and this file's full sha256 is the frozen gold hash every results
+# JSON carries (section 14.2 "Gold freeze": frozen when S2 merges; a later change is a new version).
+#
+# The project of these rows is fixtures/northpoint plus fixtures/v2/files, built at run time in passes (run.py v2
+# timeline): the base pass, the revision states of fixtures/revisions/revisions.yaml in time order, the move of the
+# flat ops sync call (call_layout.migrate), the deletions, the supersede override through the CLI, then the state-only
+# pass with the hidden call and the revoked page. The PM-excluded file is passed in every request's `exclude`, the way
+# the app passes the PM's excluded files with a request.
+#
+# Matching (run.py > has_phrase): lower case, whitespace collapsed, on word boundaries; a fact is any of its phrases.
+# Every row:
+#   needs     the first sub-task whose code lets C answer it (S2, S3 or S4); A and B are evaluated on every row
+#   expected  pass or fail per variant, with `why`, so a later gain is attributable
+#   expect    facts that must all be in the top `top` results ([] = the row passes when nothing leaks)
+#   leak      phrases that must not appear: future (said after as_of), stale (a replaced value returned as current),
+#             excluded (excluded, deleted-only, revoked or hidden-call facts); every row also checks the other clients'
+#             facts of `forbidden` and the facts of `excluded_facts`
+#   state     C only: the status of the entity named by `name` at as_of (register task, superseded decision)
+#   evidence  register or tracker: the fact is a register or Tracker fact (evidence recall, section 14.3)
+#   shared    the fact is also stated by a deleted or moved source (shared facts kept, section 14.3)
+#   dated     the matching item's said_at starts with this day (the content time rule)
+
+version: 2
+project: northpoint
+top: 6
+
+file_dates:                 # overlay files without a date in their path (noon local, as gold.yaml file_dates)
+  docs/acme/pilot-launch-plan.md: 2026-11-06
+  docs/acme/data-retention.md: 2026-11-06
+  docs/acme/reporting-module.md: 2026-11-06
+  docs/acme/mobile-rollout.md: 2026-11-06
+  docs/acme/vendor-shortlist.md: 2026-11-05
+  docs/acme/old-network-notes.md: 2026-10-01
+  docs/acme/weekly-routine-old.md: 2026-10-01
+  docs/acme/escalation-old.md: 2026-10-01
+  docs/acme/escalation-contacts.md: 2026-11-02
+  "_notion/Acme Security Review 55555555555555555555555555555555.md": 2026-11-09
+  docs/globex/dashboard-plan.md: 2026-11-05
+  docs/globex/change-control.md: 2026-11-05
+  docs/globex/change-request-draft.md: 2026-11-12
+  docs/initech/initech-kickoff.md: 2026-11-16
+
+state:                      # what the bench does to the sources, and how the app would
+  pm_excluded: [docs/acme/vendor-shortlist.md]                       # request exclude
+  deleted: [docs/acme/old-network-notes.md, docs/acme/weekly-routine-old.md, docs/acme/escalation-old.md]
+  revoked: ["55555555555555555555555555555555"]                       # --revoked (Notion page id; fake ids are one digit)
+  hidden_calls: [2026-11-13-1000-acme-design-review.md]             # --hidden-calls
+  moved: [live/2026-11-07-1100-acme-ops-sync.md]                     # call_layout.migrate between two passes
+  supersede: {key: "notion:77777777777777777777777777777777", value: "notion:99999999999999999999999999999999",
+              at: "2026-11-19T15:00:00Z"}
+  tracker: v2/tracker.json
+
+forbidden:                  # the other clients' unique facts: a client leak in any row of another client's scope
+  acme: [["invoice export"], ["sample invoice file"], ["120 hours", "39 hours", "39 extra hours"], ["csv only"],
+         ["steering group"], ["data migration"]]
+  globex: [["sso"], ["rollout checklist"], ["december 8"], ["change freeze"], ["phase two"], ["field team track"],
+           ["data migration"]]
+  initech: [["invoice export"], ["sample invoice file"], ["steering group"], ["sso"], ["rollout checklist"],
+            ["phase two"], ["field team track"], ["retention policy"]]
+
+excluded_facts:             # one unique fact per denied or deleted-only source: never returned in any row
+  - {id: pm-excluded, any: ["bluebird analytics"], how: excluded, in: docs/acme/vendor-shortlist.md}
+  - {id: deleted, any: ["gateway-seven"], how: deleted, in: docs/acme/old-network-notes.md}
+  - {id: revoked, any: ["penetration test window"], how: revoked, in: "_notion/Acme Security Review"}
+  - {id: hidden-call, any: ["teal palette"], how: hidden, in: 2026-11-13-1000-acme-design-review}
+
+rows:
+  # ------------------------------------------------------------ 1 cross-series and multi-hop (top 6)
+  - id: h1-pilot-blocker
+    item: 1
+    kind: hop
+    needs: S3
+    client: acme
+    title: Acme weekly status
+    companies: [Acme]
+    q: "What is blocking the pilot launch?"
+    start: pilot launch
+    hops: 2
+    expect:
+      - {any: ["depends on single sign-on"], from: docs/acme/pilot-launch-plan.md}
+      - {any: ["item 13 blocks the sso integration"], from: technical sync 2026-11-12 notes}
+      - {any: ["waiting for client confirmation"], from: weekly status 2026-11-10 notes}
+    expected: {A: fail, B: fail, C: pass}
+    why: "Only 'pilot launch' is shared with the plan; the SSO and item 13 quotes share no word with the question, so word search finds one of three. C walks depends-on and blocks edges (S3 extraction)."
+  - id: h2-archive-purge
+    item: 1
+    kind: hop
+    needs: S3
+    client: acme
+    title: Acme weekly status
+    companies: [Acme]
+    q: "Who has to approve before the archive purge can run?"
+    start: archive purge
+    hops: 2
+    expect:
+      - {any: ["waits for the retention policy"], from: docs/acme/data-retention.md}
+      - {any: ["rachel signs the retention policy"], from: weekly status 2026-11-07 notes}
+    expected: {A: fail, B: fail, C: pass}
+    why: "The signer is two steps away (purge, policy, Rachel); the notes line shares no word with the question."
+  - id: h3-reporting-module
+    item: 1
+    kind: hop
+    needs: S3
+    client: acme
+    title: Acme technical sync
+    companies: [Acme]
+    q: "When can the reporting module go out?"
+    start: reporting module
+    hops: 1
+    expect:
+      - {any: ["needs the warehouse connector"], from: docs/acme/reporting-module.md}
+      - {any: ["due on december 1"], from: technical sync 2026-11-06 notes}
+    expected: {A: fail, B: fail, C: pass}
+    why: "The date sits on the connector, one edge from the module; the notes line shares no word with the question."
+  - id: h4-mobile-rollout
+    item: 1
+    kind: hop
+    needs: S3
+    client: acme
+    title: Acme weekly status
+    companies: [Acme]
+    q: "Who owns the mobile rollout?"
+    start: mobile rollout
+    hops: 1
+    expect:
+      - {any: ["belongs to the field team track"], from: docs/acme/mobile-rollout.md}
+      - {any: ["brandon leads the field team track"], from: weekly status 2026-11-07 notes}
+    expected: {A: fail, B: fail, C: pass}
+    why: "The owner is named on the track, not on the rollout; only the track edge links the two files."
+  - id: h5-finance-dashboard
+    item: 1
+    kind: hop
+    needs: S3
+    client: globex
+    title: Globex weekly
+    companies: [Globex]
+    q: "What is holding up the finance dashboard?"
+    start: finance dashboard
+    hops: 2
+    expect:
+      - {any: ["reads from the ledger feed"], from: docs/globex/dashboard-plan.md}
+      - {any: ["paused until the data agreement is signed"], from: data review 2026-11-09 notes}
+    expected: {A: fail, B: fail, C: pass}
+    why: "The wait is on the ledger feed, two edges from the dashboard (dashboard, feed, agreement); the notes share no word with the question, not even in their title."
+  - id: h6-budget-change
+    item: 1
+    kind: hop
+    needs: S3
+    client: globex
+    title: Globex weekly
+    companies: [Globex]
+    q: "Who approves a budget change?"
+    start: budget change
+    hops: 1
+    expect:
+      - {any: ["goes to the steering group"], from: docs/globex/change-control.md}
+      - {any: ["brian chairs the steering group"], from: finance review 2026-11-06 notes}
+    expected: {A: fail, B: fail, C: pass}
+    why: "The person is named on the steering group, one edge from the change rule; 'approves' is in no quote."
+
+  # ------------------------------------------------------------ 2 paraphrase and other language (top 3)
+  - id: p1-login-problem
+    item: 2
+    kind: paraphrase
+    needs: S3
+    client: acme
+    title: Acme weekly status
+    companies: [Acme]
+    q: "Is the login problem fixed yet?"
+    top: 3
+    expect:
+      - {any: ["blocks the sso integration", "waiting for client confirmation", "sso user mapping"]}
+    expected: {A: fail, B: fail, C: pass}
+    why: "No 'SSO', no 'item 13' and no word of the status lines ('open') in the question; C matches the SSO entity by an extracted alias (login)."
+  - id: p2-field-team-uk
+    item: 2
+    kind: paraphrase_uk
+    needs: S3
+    client: acme
+    title: Acme weekly status
+    companies: [Acme]
+    q: "Хто веде польову команду?"
+    top: 3
+    expect:
+      - {any: ["brandon leads the field team track"]}
+    expected: {A: fail, B: fail, C: pass}
+    why: "A Ukrainian question about English notes: no word matches and unicode61 has no Ukrainian stemming; only an extracted Ukrainian alias of the track (S3) or a vector finds it. Reported on its own line in the run without vectors."
+  - id: p3-hours-burned
+    item: 2
+    kind: paraphrase
+    needs: S3
+    client: globex
+    title: Globex weekly
+    companies: [Globex]
+    q: "How much paid time have we burned for Globex so far?"
+    top: 3
+    expect:
+      - {any: ["81 of 120 hours used"]}
+    expected: {A: fail, B: fail, C: pass}
+    why: "Only 'Globex' is shared and it is in every Globex file; the hours claim is reached by the budget entity's alias."
+
+  # ------------------------------------------------------------ 3 global (top 6, in order)
+  - id: g1-sso-timeline
+    item: 3
+    kind: global
+    needs: S4
+    client: acme
+    title: Acme weekly status
+    companies: [Acme]
+    q: "What happened with SSO since October?"
+    order: true
+    expect:
+      - {any: ["maps the acme directory groups"], from: docs/acme item 13 (2026-10-14)}
+      - {any: ["okta"], from: technical sync 2026-11-05 transcript}
+      - {any: ["waiting for client confirmation"], from: weekly status 2026-11-10 notes}
+      - {any: ["saml, not oidc", "saml not oidc"], from: technical sync 2026-11-12 notes}
+    expected: {A: fail, B: fail, C: pass}
+    why: "Four dated facts from three sources in order; a top 6 of snippets ranks them by words, not by time. C answers with ask_global over the SSO topic summary (S4)."
+
+  # ------------------------------------------------------------ 4 time replay
+  - id: t1-golive-nov17
+    item: 4
+    kind: replay
+    needs: S2
+    client: acme
+    title: Acme weekly status
+    companies: [Acme]
+    q: "When is the phase two go-live?"
+    as_of: "2026-11-17T10:00:00Z"
+    expect: [{any: ["january 12"]}]
+    leak: {future: ["february 2"]}
+    expected: {A: fail, B: pass, C: pass}
+    why: "A reads the folder as it is now (February 2, a future leak); B and C read the revision valid on Nov 17."
+  - id: t1-golive-now
+    item: 4
+    kind: replay
+    needs: S2
+    client: acme
+    title: Acme weekly status
+    companies: [Acme]
+    q: "When is the phase two go-live?"
+    expect: [{any: ["february 2"]}]
+    leak: {stale: ["january 12"]}
+    expected: {A: pass, B: pass, C: pass}
+    why: "Asked now every variant reads the current file; the replaced snippet is never current."
+  - id: t1-golive-history
+    item: 4
+    kind: replay
+    needs: S3
+    client: acme
+    title: Acme weekly status
+    companies: [Acme]
+    q: "When is the phase two go-live?"
+    expect: [{any: ["february 2"]}]
+    history: ["january 12"]
+    leak: {stale: ["january 12"]}
+    expected: {A: fail, B: fail, C: pass}
+    why: "The old date must appear only in the timeline marked changed later (a file claim, S3); A and B have no timeline."
+  - id: t2-task-open-nov17
+    item: 4
+    kind: state
+    needs: S2
+    client: acme
+    title: Acme weekly status
+    companies: [Acme]
+    q: "Did we send Mike the updated rollout checklist?"
+    as_of: "2026-11-17T10:00:00Z"
+    expect: [{any: ["updated rollout checklist"]}]
+    state: {name: "updated rollout checklist", status: open}
+    leak: {future: ["done c-cd6930cc17"]}
+    expected: {A: fail, B: fail, C: pass}
+    why: "The register closes the task on Nov 19; only C derives the task status at as_of. A and B return text, no status."
+  - id: t2-task-done-now
+    item: 4
+    kind: state
+    needs: S2
+    client: acme
+    title: Acme weekly status
+    companies: [Acme]
+    q: "Did we send Mike the updated rollout checklist?"
+    expect: [{any: ["updated rollout checklist"]}]
+    state: {name: "updated rollout checklist", status: done}
+    expected: {A: fail, B: fail, C: pass}
+    why: "Asked now the task is done; only C carries the status."
+  - id: t3-decision-nov17
+    item: 4
+    kind: state
+    needs: S2
+    client: acme
+    title: Acme technical sync
+    companies: [Acme]
+    q: "How often are reports exported?"
+    as_of: "2026-11-17T10:00:00Z"
+    expect: [{any: ["exported nightly"]}]
+    state: {name: "reports are exported nightly", status: current}
+    leak: {future: ["every hour"]}
+    expected: {A: fail, B: fail, C: pass}
+    why: "The nightly decision is superseded on Nov 19 (override through the CLI, keyed by the Notion page id of its sidecar); as of Nov 17 it is current and the hourly one does not exist yet. A leaks the Nov 19 notes; B has the text but no status."
+  - id: t3-decision-now
+    item: 4
+    kind: state
+    needs: S2
+    client: acme
+    title: Acme technical sync
+    companies: [Acme]
+    q: "How often are reports exported?"
+    expect: [{any: ["every hour"]}]
+    state: {name: "reports are exported nightly", status: superseded}
+    expected: {A: fail, B: fail, C: pass}
+    why: "Asked now the nightly decision is superseded; only C carries the status."
+  - id: t4-budget-nov17
+    item: 4
+    kind: replay
+    needs: S2
+    client: acme
+    title: Acme weekly status
+    companies: [Acme]
+    q: "What is the phase two budget?"
+    as_of: "2026-11-17T10:00:00Z"
+    expect: [{any: ["340 hours"]}]
+    leak: {future: ["410 hours"]}
+    expected: {A: pass, B: pass, C: pass}
+    why: "The file was reverted to text A on Nov 21, so the current file (A) and the Nov 17 revision say the same."
+  - id: t4-budget-nov20
+    item: 4
+    kind: replay
+    needs: S2
+    client: acme
+    title: Acme weekly status
+    companies: [Acme]
+    q: "What is the phase two budget?"
+    as_of: "2026-11-20T10:00:00Z"
+    expect: [{any: ["410 hours"]}]
+    leak: {stale: ["340 hours"]}
+    expected: {A: fail, B: pass, C: pass}
+    why: "On Nov 20 text B was valid; A sees only the reverted file."
+  - id: t4-budget-now
+    item: 4
+    kind: replay
+    needs: S2
+    client: acme
+    title: Acme weekly status
+    companies: [Acme]
+    q: "What is the phase two budget?"
+    expect: [{any: ["340 hours"]}]
+    leak: {stale: ["410 hours"]}
+    expected: {A: pass, B: pass, C: pass}
+    why: "Asked now the third revision (text A again) is current."
+  - id: t5-notes-as-of-y
+    item: 4
+    kind: replay
+    needs: S2
+    client: acme
+    title: Acme weekly status
+    companies: [Acme]
+    q: "How many engineers are on the Acme team?"
+    as_of: "2026-11-14T15:00:00Z"
+    expect: [{any: ["4 engineers"]}]
+    leak: {future: ["6 engineers"]}
+    expected: {A: fail, B: pass, C: pass}
+    why: "Notes edited after the call (mtime rule): revision 2 starts Nov 15 09:00, so as of call Y only revision 1 is valid. A reads the edited notes."
+  - id: t5-notes-as-of-x
+    item: 4
+    kind: replay
+    needs: S2
+    client: acme
+    title: Acme weekly status
+    companies: [Acme]
+    q: "How many engineers are on the Acme team?"
+    as_of: "2026-11-12T15:00:00Z"
+    expect: []
+    leak: {future: ["4 engineers", "6 engineers"]}
+    expected: {A: fail, B: pass, C: pass}
+    why: "At call X's start the notes did not exist yet (revision 1 starts at its mtime, 16:10)."
+  - id: t5-notes-now
+    item: 4
+    kind: replay
+    needs: S2
+    client: acme
+    title: Acme weekly status
+    companies: [Acme]
+    q: "How many engineers are on the Acme team?"
+    expect: [{any: ["6 engineers"]}]
+    dated: "2026-11-15"
+    leak: {stale: ["4 engineers"]}
+    expected: {A: fail, B: pass, C: pass}
+    why: "Asked now 6 engineers is current and dated Nov 15 (its revision's mtime); A returns no date."
+  - id: t6-same-day-at-call
+    item: 4
+    kind: replay
+    needs: S2
+    client: acme
+    title: Acme technical sync
+    companies: [Acme]
+    q: "When does the onboarding pilot start?"
+    as_of: "2026-11-19T12:00:00Z"
+    expect: [{any: ["starts in january"]}]
+    leak: {future: ["starts in march"]}
+    expected: {A: fail, B: pass, C: pass}
+    why: "Edited later on the call day: revision 1 at 08:30 is valid at the 12:00 call, revision 2 starts 16:45."
+  - id: t6-same-day-now
+    item: 4
+    kind: replay
+    needs: S2
+    client: acme
+    title: Acme technical sync
+    companies: [Acme]
+    q: "When does the onboarding pilot start?"
+    expect: [{any: ["starts in march"]}]
+    leak: {stale: ["starts in january"]}
+    expected: {A: pass, B: pass, C: pass}
+    why: "Asked now every variant reads revision 2."
+  - id: t7-summary-before
+    item: 4
+    kind: replay
+    needs: S4
+    client: acme
+    title: Acme weekly status
+    companies: [Acme]
+    q: "What happened with SSO since October?"
+    as_of: "2026-11-11T10:00:00Z"
+    expect: []
+    leak: {future: ["saml, not oidc", "saml not oidc"]}
+    expected: {A: fail, B: pass, C: pass}
+    why: "A topic summary written after as_of must not be used (summary_at, S4); B filters the Nov 12 notes by time, A does not."
+
+  # ------------------------------------------------------------ 5 modality
+  - id: m1-proposed-hours
+    item: 5
+    kind: modality
+    needs: S3
+    client: globex
+    title: Globex weekly
+    companies: [Globex]
+    q: "Did Globex agree to 39 extra hours?"
+    expect: [{any: ["proposed 39 extra hours"]}]
+    modality: proposal
+    expected: {A: fail, B: fail, C: pass}
+    why: "The hours were only proposed; the answer must carry modality proposal (S3). A and B return text without modality."
+  - id: m2-derived-only
+    item: 5
+    kind: modality
+    needs: S3
+    client: globex
+    title: Globex weekly
+    companies: [Globex]
+    q: "Did Globex confirm the March invoice run?"
+    expect: [{any: ["march invoice run"]}]
+    modality: not_confirmed
+    expected: {A: fail, B: fail, C: pass}
+    why: "Said only in generated notes (derived): it must not count as confirmed (S3). A and B have no confirmation count."
+
+  # ------------------------------------------------------------ 6 exclusion, revocation, absence is not denial, late client
+  - id: x1-pm-excluded
+    item: 6
+    kind: exclusion
+    needs: S2
+    client: acme
+    title: Acme weekly status
+    companies: [Acme]
+    q: "Who is the backup vendor?"
+    expect: []
+    leak: {excluded: ["bluebird analytics"]}
+    expected: {A: fail, B: pass, C: pass}
+    why: "The PM excluded the file; A has no exclusion, B and C take the request's exclude."
+  - id: x2-deleted
+    item: 6
+    kind: exclusion
+    needs: S2
+    client: acme
+    title: Acme weekly status
+    companies: [Acme]
+    q: "What is the proxy host?"
+    expect: []
+    leak: {excluded: ["gateway-seven"]}
+    expected: {A: pass, B: pass, C: pass}
+    why: "The file is gone from the folder (A cannot see it) and deleted in the store (B and C ignore it)."
+  - id: x3-revoked
+    item: 6
+    kind: exclusion
+    needs: S2
+    client: acme
+    title: Acme weekly status
+    companies: [Acme]
+    q: "When does the penetration test window open?"
+    expect: []
+    leak: {excluded: ["penetration test window"]}
+    expected: {A: fail, B: pass, C: pass}
+    why: "The Notion page is revoked (--revoked) but its copy is still on disk; A reads it, B and C deny it."
+  - id: x4-hidden-call
+    item: 6
+    kind: exclusion
+    needs: S2
+    client: acme
+    title: Acme weekly status
+    companies: [Acme]
+    q: "Which palette does the dashboard use?"
+    expect: []
+    leak: {excluded: ["teal palette"]}
+    expected: {A: fail, B: pass, C: pass}
+    why: "The call is hidden (--hidden-calls); its transcript, notes and the decision named from them (an entity name) must never appear. A reads the files."
+  - id: x5-hidden-topic
+    item: 6
+    kind: exclusion
+    needs: S4
+    client: acme
+    title: Acme weekly status
+    companies: [Acme]
+    q: "What did the design review decide?"
+    expect: []
+    leak: {excluded: ["teal palette"]}
+    expected: {A: fail, B: pass, C: pass}
+    why: "A topic sentence summarised before the hide must be filtered per sentence (S4); B filters the snippets."
+  - id: x6-deleted-shared-register
+    item: 6
+    kind: shared
+    needs: S2
+    client: acme
+    title: Acme weekly status
+    companies: [Acme]
+    q: "When does Mike get the risk list?"
+    expect: [{any: ["every monday"], from: live/commitments.jsonl}]
+    sources: ["live/commitments.jsonl"]
+    shared: true
+    evidence: register
+    expected: {A: pass, B: pass, C: pass}
+    why: "The deleted file also stated it; the register still does, and every variant reads the register (A through its client-scoped folder index)."
+  - id: x7-deleted-shared-file
+    item: 6
+    kind: shared
+    needs: S3
+    client: acme
+    title: Acme weekly status
+    companies: [Acme]
+    q: "Who handles escalations?"
+    expect: [{any: ["rachel moore"], from: docs/acme/escalation-contacts.md}]
+    sources: ["docs/acme/escalation-contacts.md"]
+    shared: true
+    expected: {A: pass, B: pass, C: pass}
+    why: "The deleted file's fact is also in another file: as a snippet every variant finds it; as a claim quoted by the surviving file only, it needs S3."
+  - id: x8-moved-call
+    item: 6
+    kind: shared
+    needs: S2
+    client: acme
+    title: Acme weekly status
+    companies: [Acme]
+    q: "Who rotates the API signing key?"
+    expect: [{any: ["rotate the api signing key"]}]
+    sources: ["live/2026-11-07-acme-ops-sync/", "live/commitments.jsonl"]
+    shared: true
+    evidence: register
+    expected: {A: pass, B: pass, C: pass}
+    why: "The call moved into its folder between two passes and kept its source id; the register also holds the task."
+  - id: l1-late-client
+    item: 6
+    kind: late_client
+    needs: S2
+    client: initech
+    title: Initech kickoff
+    companies: [Initech]
+    q: "When should the data migration be finished?"
+    expect: [{any: ["april 30"]}]
+    expected: {A: pass, B: pass, C: pass}
+    why: "Initech has a folder and no call or sheet; decide() makes Acme and Globex other at query time only."
+
+  # ------------------------------------------------------------ register and Tracker facts (evidence recall)
+  - id: e1-register-fact
+    item: 6
+    kind: evidence
+    needs: S2
+    client: globex
+    title: Globex weekly
+    companies: [Globex]
+    q: "Who sends the sample invoice file?"
+    expect: [{any: ["send a sample invoice file"]}]
+    sources: ["live/commitments.jsonl"]
+    evidence: register
+    expected: {A: pass, B: pass, C: pass}
+    why: "A register task: A finds the register line in its folder index, B returns its event snippet with a line locator, C also its task entity."
+  - id: e2-tracker-fact
+    item: 6
+    kind: evidence
+    needs: S2
+    client: acme
+    title: Acme weekly status
+    companies: [Acme]
+    q: "Who orders the hardware security keys?"
+    expect: [{any: ["hardware security keys"]}]
+    sources: ["notion:"]
+    evidence: tracker
+    expected: {A: fail, B: pass, C: pass}
+    why: "A Tracker item, known only from the snapshot file the app writes; A never reads it."

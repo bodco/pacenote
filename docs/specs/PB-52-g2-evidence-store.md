@@ -1813,6 +1813,23 @@ small and scale sets: prep and live leaks 0, future leaks 0 (including both mtim
 evidence recall for register and Tracker facts 100%; A's columns unchanged; `mode="live"` p95 on the scale set at
 most 150 ms.
 
+Implementation notes (S2, PB-85):
+- Gold v2 is its own file, `bench/g0/gold_v2.yaml` (`version: 2`), next to version 1: the existing columns keep their
+  gold and fixture hashes (`fixture_sha` leaves out `fixtures/v2`, `fixtures/revisions` and `fixtures/extract`), so A
+  stays comparable 1:1 with every earlier result. Its full `sha256` is in every results JSON (`v2.gold_sha256`).
+- The project of the gold v2 rows is `fixtures/northpoint` plus `fixtures/v2/files`, built at run time in passes: the
+  base pass, the revision states of `fixtures/revisions/revisions.yaml` in time order (`valid_from` mode through the
+  ingest API's `valid_from`, `mtime` mode through `os.utime` and a normal pass), the move by `call_layout.migrate`, the
+  deletions, the supersede through `evidence override`, then `evidence exclude --hidden-calls --revoked`.
+- S1 has no stored state for a file the PM excluded; the bench passes it in every request's `exclude` (ignored rows,
+  section 11.2), as the app passes the PM's excluded files with a request.
+- The segmenter of section 8.2 (`evidence/segments.py`) was listed under S1 and lands here, with the content-only
+  `seg_hash` the fixture loader keys on. `search` uses `query_vec` (prep and after only) as a second candidate source:
+  cosine over the passing snippets' stored vectors (section 11.2).
+- `READY` in `run.py` names the sub-tasks whose code C has (`{"S2"}`); S3 and S4 add theirs, and only then C evaluates
+  the rows that need them. No fixture file in `fixtures/extract` means "not recorded" (C runs on its deterministic
+  part); a recorded fixture with a miss on the small set fails the run as "fixture stale".
+
 ### S3. LLM extraction, validation, routing, ceiling (core)
 
 Scope: `rules/evidence.yaml`, `rules/evidence_schema.json`, generated `skill_evidence.md` and the skill copy;
@@ -2062,7 +2079,9 @@ for k, lo, hi, per in (("codex %", 68, 84, 10),):
    показ вартості до і після, вимикач і видалення.
 9. G0: варіанти B і C з однаковими кандидатами, фікстура екстракції як сирий вихід моделі, складніший еталон (6+
    питань на кілька кроків, перефразування, глобальні, реплей у часі з двома випадками за mtime, модальність,
-   виключення, масштаб); еталон заморожується з хешем до запису фікстури.
+   виключення, масштаб); еталон заморожується з хешем до запису фікстури. S2 (PB-85): еталон v2 окремим файлом
+   `bench/g0/gold_v2.yaml`, щоб колонки A зберегли свої хеші; сегментер розділу 8.2 і пошук за `query_vec`
+   додано тут; файл, який виключив PM, бенч передає в `exclude` кожного запиту.
 10. Розбиття: S1 сховище і пошук, S2 еталон G0 v2 і варіанти B/C, S3 екстракція і стеля, S4 теми і глобальні
     питання, S5 інтеграція в застосунок; кожен рядок еталону позначає, з якого S його оцінюють, і кожен S
     перевіряється лише своїм кодом;

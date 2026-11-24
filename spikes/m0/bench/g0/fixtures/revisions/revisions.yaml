@@ -1,0 +1,18 @@
+# Gold v2 item 4: the revision states of edited files (spec section 14.1). Each state is written over the file and one
+# pass runs, all states in time order. mode valid_from: the pass is given the content time explicitly (the
+# --valid-from of the CLI and the ingest API, tests and the bench only). mode mtime: the file's mtime is set to `at`
+# with os.utime and a normal pass runs, so the content time rule of section 6 is what is measured. Times are UTC.
+files:
+  docs/acme/phase-two-plan.md:              # three sections; only Dates changes on Nov 19
+    - {state: phase-two-plan.md.v1, at: "2026-11-12T12:00:00Z", mode: valid_from}
+    - {state: phase-two-plan.md.v2, at: "2026-11-19T12:00:00Z", mode: valid_from}
+  docs/acme/phase-two-budget.md:            # reverted: text A, then B, then A again
+    - {state: phase-two-budget.md.v1, at: "2026-11-12T12:00:00Z", mode: valid_from}
+    - {state: phase-two-budget.md.v2, at: "2026-11-19T12:00:00Z", mode: valid_from}
+    - {state: phase-two-budget.md.v1, at: "2026-11-21T12:00:00Z", mode: valid_from}
+  live/2026-11-12-acme-staffing-review/2026-11-12-1500-acme-staffing-review.notes.md:   # notes edited after the call
+    - {state: staffing-review.notes.md.v1, at: "2026-11-12T16:10:00Z", mode: mtime}
+    - {state: staffing-review.notes.md.v2, at: "2026-11-15T09:00:00Z", mode: mtime}
+  docs/acme/onboarding-pilot.md:            # edited later on the call day
+    - {state: onboarding-pilot.md.v1, at: "2026-11-19T08:30:00Z", mode: mtime}
+    - {state: onboarding-pilot.md.v2, at: "2026-11-19T16:45:00Z", mode: mtime}

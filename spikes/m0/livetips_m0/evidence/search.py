@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import re
+import struct
 import time
 from typing import Dict, Iterable, List, Optional
 
@@ -359,6 +360,8 @@ def search(store: S.Store, query: str, *, scope: Optional[dict] = None, as_of=No
             if score < 0:
                 hits.append((r["id"], score))
         hits.sort(key=lambda h: h[1])
+    if query_vec is not None:
+        hits = _with_vectors(store, hits, query_vec)
     candidates = [h[0] for h in hits]
     # entities matched by alias or name (visible only); claims and edges of matched snippets and entities
     qn = " " + S.norm_alias(" ".join(WORD.findall(query or ""))) + " "
@@ -426,6 +429,33 @@ def search(store: S.Store, query: str, *, scope: Optional[dict] = None, as_of=No
         chars += size
     return {"items": out, "entities": list(ents.values()), "truncated": truncated, "scope_stale": stale,
             "candidates": candidates, "relabel": relabel_rep, "ms": round((time.monotonic() - t0) * 1000, 2)}
+
+
+VEC_TOP = 50
+VEC_MIN = 0.35
+
+
+def _with_vectors(store: S.Store, hits: List[tuple], query_vec) -> List[tuple]:
+    """Section 11.2: with query_vec, cosine over the allowed snippets' stored vectors is a second candidate source. A
+    snippet found by both keeps its text score plus the cosine; one found only by its vector enters with the cosine
+    alone (on the bm25 sign: lower is better). Only passing rows are read, so ranking still sees nothing denied."""
+    q = [float(x) for x in query_vec]
+    qn = sum(x * x for x in q) ** 0.5 or 1.0
+    sims = []
+    for r in store.q("SELECT sn.id, sn.vec FROM snippet sn JOIN _snip x ON x.sid=sn.id WHERE x.cls='pass' AND x.tok=1"
+                     " AND sn.vec IS NOT NULL"):
+        v = struct.unpack("<{}e".format(len(r["vec"]) // 2), r["vec"])
+        if len(v) != len(q):
+            continue
+        vn = sum(x * x for x in v) ** 0.5 or 1.0
+        c = sum(a * b for a, b in zip(q, v)) / (qn * vn)
+        if c >= VEC_MIN:
+            sims.append((r["id"], c))
+    sims.sort(key=lambda s: -s[1])
+    score = {sid: sc for sid, sc in hits}
+    for sid, c in sims[:VEC_TOP]:
+        score[sid] = score.get(sid, 0.0) - c
+    return sorted(score.items(), key=lambda h: h[1])
 
 
 def _score(hits, row, store, kind) -> float:

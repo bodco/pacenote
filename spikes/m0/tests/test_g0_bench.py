@@ -89,6 +89,8 @@ def test_pb70_no_fact_of_the_other_client_and_no_loss(result):
     assert t["prep_coverage"] >= 80.0 and t["live_answer_rate"] >= 100.0
 
 
-def test_later_variants_are_not_faked(bench):
+def test_unknown_variants_are_not_faked(bench):
+    """B and C exist since PB-52 S2 (tests/test_g0_gold_v2_pb52_s2.py); any other name is refused."""
+    assert bench.variant("B").name == "B" and bench.variant("C").name == "C"
     with pytest.raises(SystemExit):
-        bench.variant("C")
+        bench.variant("D")

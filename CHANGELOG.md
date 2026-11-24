@@ -5,6 +5,14 @@ Pacenote. Earlier versions are described in the commit messages and in
 
 ## Unreleased
 
+- **Project memory, step 2: a harder benchmark for it (GraphRAG G2 S2, PB-85).** Nothing changes for the PM; the
+  evidence store stays behind the flag `evidence_store`. The G0 benchmark gets a second gold set of 39 questions
+  (questions that need two or three linked facts, other wording and another language, replays as of a past date, a
+  task closed and a decision superseded later, a reverted file, excluded, deleted, revoked and hidden sources, a
+  client folder with no call yet), a seeded 2 MB set of distracting project text, and two new variants over the store:
+  B (text search over every call and file) and C (B plus the store's entities). With the flag on, the store's search
+  also ranks by meaning when the caller passes a query vector from the bundled local embedding server (preparation
+  only, never during a call).
 - **Project memory, step 1: a local evidence store behind a flag (GraphRAG G2 S1, PB-84).** Off by default (feature
   `evidence_store`), nothing changes for the PM yet. With the flag on, `python -m livetips_m0.evidence` keeps one
   SQLite file per project in Application Support (never in the project folder): every file, call, note, the

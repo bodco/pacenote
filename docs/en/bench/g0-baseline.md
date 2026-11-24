@@ -109,6 +109,70 @@ Measured on the same 10 KB fixture by the S1 tests and one ingest:
 `chunks_at` cuts more snippets than `chunks` because a line that names a client or topic folder gets its own snippet
 (the chunk invariant of the spec, section 5.2); this is the price of line-exact client access.
 
+## G2 S2: gold v2, the scale set, variants B and C (2026-11-24)
+
+PB-85 adds gold version 2 (`bench/g0/gold_v2.yaml`, 39 rows, spec section 14.2), the seeded scale set (2.19 MB: 40
+documents and 10 calls of distracting text, the same bytes from the same seed) and two variants over the evidence
+store: **B** (snippets and FTS5 over every call and file, scope and time on, no entities) and **C** (B plus the
+store's entities; its LLM extraction comes from a fixture recorded in S3). Raw numbers:
+`results/{A,B,C}-2026-11-24-s2.json`.
+
+**The existing columns.** A's are unchanged: every column but latency equals `A-2026-11-24-3.json` (and the fixture
+and gold hashes too). B and C replace only the live lookup (preparation and after-call stay A's until G3), so their
+preparation and after-call columns equal A's.
+
+| Variant | Live answer rate | Answer text in top | Live leaks | Lookup p50/p95 ms |
+|---|---:|---:|---:|---:|
+| A (folder index) | 100.0% | 80.0% | 0 | 1.88 / 6.01 |
+| B (store, snippets) | 90.0% | 80.0% | 0 | 3.38 / 19.23 |
+| C (store, snippets, claims, edges) | 100.0% | 80.0% | 0 | 3.38 / 19.15 |
+
+Latency note: the three result files were saved with the three runs in parallel, so their latencies are high. Run one
+after another on the same Mac (not saved): v1 lookup p50/p95 A 1.70/2.82, B 2.91/3.98, C 2.94/4.44 ms; gold v2 live
+p95 on the scale set A 41.38, B 25.17, C 26.28 ms. Every other number is the same in both runs.
+
+B misses the Ukrainian question of the weekly call ("Чого ми чекаємо від служби безпеки Acme?"): it does not rank the
+expected notes in its top 3, while A does (A also reads the call's Meeting Sheet, which B leaves out as the call's own
+file); the cause is not traced further. C has the expected notes in its top 3, most likely
+through the decision and risk claims those notes carry (the items C adds to B); the run does not trace it further.
+A and B also differ in the chunker (B and C cut with `chunks_at`, spec section 5.2), so A versus B includes that
+change; B versus C isolates the entities.
+
+**Gold v2, without vectors** (the run with vectors is `skipped` here: the bge-m3 model folder is not on this Mac):
+
+| Variant, set | Rows passed | Not evaluated | Future leaks | Stale | Excluded leaks | Client leaks | Evidence recall | Quote validity | Shared kept | Live p50/p95 ms |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| A small | 10/39 | 0 | 6 | 1 | 13 | 0 | 75.0% | n/a | 100.0% | 1.88 / 12.33 |
+| A scale | 10/39 | 0 | 6 | 1 | 13 | 0 | 75.0% | n/a | 100.0% | 6.07 / 80.64 |
+| B small | 22/39 | 0 | 0 | 0 | 0 | 0 | 100.0% | 100.0% | 100.0% | 3.28 / 6.46 |
+| B scale | 22/39 | 0 | 0 | 0 | 0 | 0 | 100.0% | 100.0% | 100.0% | 21.32 / 66.29 |
+| C small | 23/23 | 16 | 0 | 0 | 0 | 0 | 100.0% | 100.0% | 100.0% | 3.28 / 5.88 |
+| C scale | 23/23 | 16 | 0 | 0 | 0 | 0 | 100.0% | 100.0% | 100.0% | 21.48 / 64.00 |
+
+Hop, paraphrase and Ukrainian answer rates: 0% for A and B (6, 3 and 1 rows), not evaluated for C until S3. Timeline
+recall: 75% for A, 25% for B (one question, four dated facts), not evaluated for C until S4. Index cost (all
+variants, the same store): 56 segments on the small set and 626 on the scale set; editing one section of a three
+section file re-extracts 1 segment, reverting a file re-extracts 0, moving a call builds no revision. C's extraction
+fixture is not recorded yet (0 hits, 64 misses on the small set: every segment, reported, not a failure); the S3
+recording fills it.
+
+What it says:
+
+- **A cannot replay time or honour exclusions.** It reads the folder as it is now: 6 future leaks (the go-live date,
+  the hourly decision, the edited notes and the same-day edit, each as of a past call), 1 stale value (the budget on
+  Nov 20) and 13 excluded leaks (the PM-excluded file, the revoked page and the hidden call, by text and by source).
+- **B and C hold every S2 zero** on both sets: client, future and excluded leaks 0, quote validity 100%, register and
+  Tracker facts 100%, the deleted and moved facts kept. This is the S2 gate (spec section 17), and it passes for both;
+  live p95 on the scale set is 25 to 27 ms run alone (64 to 66 ms in the parallel saved run) against the 150 ms bar.
+- **C adds the state columns.** The task closed on Nov 19 is open as of Nov 17 and done now; the decision superseded
+  on Nov 19 is current as of Nov 17 and superseded now. B returns the same text with no status, so it fails those 4
+  rows by design.
+- **Multi-hop and paraphrase are still 0** for A and B, as each row expects: no quote shares a word with its question
+  except the start entity. These rows measure S3.
+
+Each row states which variant should pass it and why (`expected`, `why`); A, B and C match every expectation on both
+sets.
+
 ## What is measured
 
 Each target call is replayed on a clean copy of the fixture project, with every file dated by the date in its name
@@ -153,7 +217,9 @@ python3 bench/g0/run.py --compare A C        # the newest result of each variant
 python3 -m pytest -q tests/test_g0_bench.py  # runs the harness, checks the fixture (not the scores)
 ```
 
-A run takes about 2 seconds, makes no model call and opens no connection but the local site (any other host is
-blocked and counted). Variants B (wider text search) and C (graph) are added by the GraphRAG steps that build them;
-until then `--variant B` and `--variant C` stop with a message. After editing the fixture notes, rebuild the register
-with `python3 bench/g0/run.py --regen-register`.
+A run takes 10 to 25 seconds (the v1 targets in about 2, then gold v2 on both sets; `--set small`, `--set scale` or
+`--set none` picks the sets), makes no model call and opens no connection but the local site and, for the run with
+vectors, the bundled embed server on a free loopback port (any other host is blocked and counted). The stores of a run
+live in its temp folder, never in Application Support. `python3 -m pytest -q tests/test_g0_gold_v2_pb52_s2.py` checks
+gold v2, the scale set and the S2 gate. After editing the fixture notes, rebuild the register with
+`python3 bench/g0/run.py --regen-register`.
