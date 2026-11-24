@@ -1353,7 +1353,9 @@ The skill and the app follow the same rules, in `rules/agenda.yaml`, `rules/comm
   its status, "Index now" and "Delete this project's memory" (both unavailable while its pass runs). A pass runs after a call's notes are written, 10
   minutes after the project folder last changed, at most once an hour while the Mac is idle and on power, and on
   "Index now"; never during a call (the app keeps `call-active.json` next to `ai-routes.json` for the whole call).
-  Hiding a call on Home, a Google or Notion document a Meeting Sheet can no longer read, and the supersede click on
+  Hiding a call on Home, a Google document a Meeting Sheet can no longer read, a Notion page the Notion mirror can no
+  longer read (its database stopped sharing with Pacenote, or a full mirror run found the page deleted or unshared and
+  moved it to `_notion/_archived/`; it counts again once the mirror reads it), and the supersede click on
   a call page (after Notion confirmed it) reach the store at once, also during a call, and are sent again until the
   store lists them as applied (a hidden or lost-access list goes again as the current list, never as an older one,
   also when it changed while a pass ran). These requests go one at a time per project, so a newer list always

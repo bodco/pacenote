@@ -48,7 +48,10 @@ final class EvidenceService: ObservableObject {
     func startWorker() {
         guard on, timer == nil else { return }
         ensureUIDs()
-        for p in projects() { resendPending(p, all: true) }
+        for p in projects() {
+            refreshNotionRevoked(p)                       // Notion pages lost while the app was closed
+            resendPending(p, all: true)
+        }
         timer = Timer.scheduledTimer(withTimeInterval: 600, repeats: true) { _ in
             MainActor.assumeIsolated { EvidenceService.shared.tick() }
         }
@@ -129,6 +132,7 @@ final class EvidenceService: ObservableObject {
     func indexNow(_ p: Project) { request(p, .indexNow) }
 
     private func tick() {
+        mirrorFinished()                      // a mirror the PM runs with their own job is picked up within 10 minutes
         guard on, Self.idleSeconds() >= 300, Self.onPower() else { return }
         ensureUIDs()
         for p in projects() { request(p, .idleHourly) }
@@ -152,6 +156,7 @@ final class EvidenceService: ObservableObject {
         busy = true
         running.insert(next.uid)
         writeTrackerSnapshot(p)
+        refreshNotionRevoked(p)                           // the pass carries the current revoked list
         let c = config
         let passed = (hidden: hiddenCalls(p), revoked: loadRequests(next.uid).revoked)
         let args = EvidenceCommand.pass(t, hidden: passed.hidden, revoked: passed.revoked, webDirs: webDirs(p),
@@ -198,6 +203,34 @@ final class EvidenceService: ObservableObject {
         reqs.revoked = next
         saveRequests(uid, reqs)
         stateRequest(p, .exclude(hidden: false, revoked: true))
+    }
+
+    /// The Notion mirror finished a run: a page it can no longer read joins its project's revoked list, one read again
+    /// leaves it, and a project whose list changed gets the state-only pass at once (owner decision 24.11, option a).
+    func mirrorFinished() {
+        guard on else { return }
+        ensureUIDs()
+        for p in projects() where target(p) != nil && refreshNotionRevoked(p) {
+            stateRequest(p, .exclude(hidden: false, revoked: true))
+        }
+    }
+
+    /// The project's revoked list after reading the mirror (its `lost` map and this project's `_notion/` files);
+    /// true when it changed. Local reads only. Also run before every pass and at launch, so a mirror the PM runs with
+    /// their own job is picked up too.
+    @discardableResult
+    private func refreshNotionRevoked(_ p: Project) -> Bool {
+        guard let uid = p.evidenceUid else { return false }
+        let notionDir = ((p.root as NSString).expandingTildeInPath as NSString).appendingPathComponent("_notion")
+        let ids = EvidenceLists.mirrorIDs(notionDir: notionDir)
+        let state = (NotionMirrorService.dir(workRoot: config.workRoot) as NSString).appendingPathComponent("state/state.json")
+        let lost = config.workRoot.isEmpty ? [] : EvidenceLists.mirrorLost(state: FileManager.default.contents(atPath: state))
+        var reqs = loadRequests(uid)
+        let next = EvidenceLists.notionRevoked(current: reqs.revoked, lost: lost, archived: ids.archived, live: ids.live)
+        guard next != reqs.revoked else { return false }
+        reqs.revoked = next
+        saveRequests(uid, reqs)
+        return true
     }
 
     /// The supersede click: the override only after `decision_notion.py --supersede` returned ok (spec section 7.1).

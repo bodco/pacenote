@@ -28,6 +28,10 @@ Python 3.9+, standard library only. Українська версія: [README.u
 - Page and people mentions become names and links, dates become plain text.
 - Pages removed from Notion move to `_notion/_archived/` on a full run; files older than 30 days
   there move to `<work>/_to_delete/`. The script never deletes anything.
+- `state/state.json` `lost` lists the pages the mirror can no longer read: those of a database that
+  answers 403 or 404 (their files stay), a page whose own read answers 403 or 404, and the pages a
+  full run archived. A page read again leaves the list; 401, 429 and 5xx never add one. The app
+  passes these pages to project memory as revoked (PB-88).
 - A project goes to `project_folders` from the config, else `local_paths.project_root` from its
   Control Tower config, else an existing folder with its name, else `<work>/<Workspace>/<Project>/`.
   Never into a git repository (each `_notion/` also gets a `.gitignore` with `*`).

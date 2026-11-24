@@ -126,3 +126,89 @@ def test_page_is_standalone():
     assert not mirror.page_is_standalone({"parent": {"type": "data_source_id"}})
     assert not mirror.page_is_standalone({"parent": {"type": "database_id"}})
     assert not mirror.page_is_standalone({"parent": {"type": "workspace"}, "in_trash": True})
+
+
+def test_lost_pages_listed_for_project_memory(tmp_path, monkeypatch):
+    """PB-88: pages the mirror can no longer read go to state "lost" (the app passes them to project memory as
+    revoked); a page read again leaves it. A database that answers 403 keeps its files, a 401 or 5xx loses nothing."""
+    w = PacenoteWorld()
+    work, _ = setup(tmp_path, monkeypatch, w)
+    run(monkeypatch, "--discover")
+    run(monkeypatch, "--full")
+    sp = tmp_path / "conf" / "state" / "state.json"
+
+    def lost():
+        return json.loads(sp.read_text())["lost"]
+    assert lost() == {}
+    meeting = next((work / "_notion" / "meetings").glob("*.md"))
+    real = w.answer
+
+    def denied(code):
+        def answer(method, path, body=None, version=None):
+            if path == "/data_sources/pmeet/query":
+                raise mirror.NotionError(code, "denied")
+            return real(method, path, body, version)
+        return answer
+    for code in (401, 500):
+        w.answer = denied(code)
+        run(monkeypatch)
+        assert lost() == {}, code                                          # not definitive: nothing lost
+    w.answer = denied(403)
+    run(monkeypatch)
+    assert lost() == {dashed(M1): {"db": "meetings", "why": "no_access"}} and meeting.exists()
+    w.answer = real
+    run(monkeypatch)
+    assert lost() == {}                                                    # shared again
+    # a plain page unshared: gone from search on a full run, archived and lost; back in search, it leaves
+    handbook = w.search.pop(0)
+    run(monkeypatch, "--full")
+    assert lost() == {dashed(P1): {"db": "pages", "why": "gone"}}
+    assert any(P1 in p.name for p in (work / "_notion" / "_archived").rglob("*.md"))
+    w.search.insert(0, handbook)
+    run(monkeypatch, "--full")
+    assert lost() == {}
+
+
+def test_lost_page_level_and_child_pages(tmp_path, monkeypatch):
+    """PB-88: a page whose own read answers 403 is lost; a linked child page that answers 403 does not make its
+    readable parent lost; a database that answers 404 loses its pages like a 403."""
+    w = PacenoteWorld()
+    work, cfgp = setup(tmp_path, monkeypatch, w)
+    run(monkeypatch, "--discover")
+    cfg = json.loads(cfgp.read_text())
+    cfg["child_pages_for"] = ["pages"]
+    cfgp.write_text(json.dumps(cfg))
+    run(monkeypatch, "--full")
+    sp = tmp_path / "conf" / "state" / "state.json"
+
+    def lost():
+        return json.loads(sp.read_text())["lost"]
+    child = uid(45)
+    real = w.answer
+    asked = []
+
+    def answer(method, path, body=None, version=None):
+        if path.startswith("/pages/%s/markdown" % dashed(M1)):
+            raise mirror.NotionError(403, "restricted")
+        if path.startswith("/pages/%s/markdown" % dashed(P1)):
+            return {"markdown": '<page url="https://www.notion.so/%s">Child</page>' % child, "truncated": False}
+        if path.startswith("/pages/%s/markdown" % dashed(child)):
+            asked.append(child)
+            raise mirror.NotionError(403, "restricted")
+        return real(method, path, body, version)
+    w.answer = answer
+    w.ds["pmeet"][0]["last_edited_time"] = "2099-01-01T00:00:00.000Z"
+    w.search[0]["last_edited_time"] = "2099-01-01T00:00:00.000Z"
+    run(monkeypatch, "--full")
+    assert lost() == {dashed(M1): {"db": "meetings", "why": "no_access_page"}} and asked == [child]
+    w.answer = real
+    run(monkeypatch, "--full")
+    assert lost() == {}
+
+    def gone(method, path, body=None, version=None):
+        if path == "/data_sources/pmeet/query":
+            raise mirror.NotionError(404, "object_not_found")
+        return real(method, path, body, version)
+    w.answer = gone
+    run(monkeypatch)
+    assert lost() == {dashed(M1): {"db": "meetings", "why": "no_access"}}

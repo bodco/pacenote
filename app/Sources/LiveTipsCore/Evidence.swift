@@ -289,6 +289,68 @@ public enum EvidenceLists {
         return out.sorted()
     }
 
+    /// A Notion page id as the revoked list keeps it (32 lowercase hex, no dashes); nil for anything else.
+    public static func notionKey32(_ s: String) -> String? {
+        let h = s.replacingOccurrences(of: "-", with: "").lowercased()
+        return h.count == 32 && h.allSatisfy({ $0.isHexDigit }) ? h : nil
+    }
+
+    /// PB-88 (owner decision 24.11, option a): Notion pages the app can no longer read join the project's revoked
+    /// list, the same as Google documents. `lost` is what the Notion mirror lists in its state (a database that answers
+    /// 403 or 404, a page gone from its database or from the shared pages); `archived` and `live` are the page ids of
+    /// this project's `_notion/` files inside and outside `_archived/`. A lost page joins when its file is in this
+    /// project; an archived page joins unless the same id is live again (a renamed page leaves its old file archived).
+    /// A page leaves only when it is live and not lost; an id whose file is gone altogether stays (sticky), and Google
+    /// ids are never touched here.
+    public static func notionRevoked(current: [String], lost: Set<String>, archived: Set<String>, live: Set<String>) -> [String] {
+        var out = Set(current)
+        for id in current {
+            if let k = notionKey32(id), live.contains(k), !lost.contains(k) { out.remove(id) }
+        }
+        out.formUnion(lost.intersection(live.union(archived)))
+        out.formUnion(archived.subtracting(live))
+        return out.sorted()
+    }
+
+    /// The page ids in the mirror state's `lost` map (dashed or not), as 32 hex.
+    public static func mirrorLost(state: Data?) -> Set<String> {
+        guard let d = state, let o = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any],
+              let lost = o["lost"] as? [String: Any] else { return [] }
+        return Set(lost.keys.compactMap(notionKey32))
+    }
+
+    /// The page ids of the `.md` files under a project's `_notion/` folder (the file name's `[<id>]`, else the
+    /// `notion_id:` line of the header), split into those inside `_archived/` and the rest. Hidden folders are skipped,
+    /// the same as the engine's walk. A local read only.
+    public static func mirrorIDs(notionDir: String) -> (live: Set<String>, archived: Set<String>) {
+        var live = Set<String>(), archived = Set<String>()
+        let base = URL(fileURLWithPath: notionDir).standardizedFileURL
+        guard let en = FileManager.default.enumerator(at: base, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) else {
+            return (live, archived)
+        }
+        for case let u as URL in en where u.pathExtension == "md" {
+            let rel = u.standardizedFileURL.path.dropFirst(base.path.count).split(separator: "/").map(String.init)
+            guard let id = pageID(fileName: u.lastPathComponent) ?? pageID(header: u) else { continue }
+            if rel.first == "_archived" { archived.insert(id) } else { live.insert(id) }
+        }
+        return (live, archived)
+    }
+
+    static func pageID(fileName: String) -> String? {
+        guard let r = fileName.range(of: "[0-9a-fA-F]{32}", options: .regularExpression) else { return nil }
+        return String(fileName[r]).lowercased()
+    }
+
+    static func pageID(header url: URL) -> String? {
+        guard let fh = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? fh.close() }
+        let text = String(decoding: fh.readData(ofLength: 2000), as: UTF8.self)
+        for line in text.split(separator: "\n") where line.hasPrefix("notion_id:") {
+            return notionKey32(line.dropFirst("notion_id:".count).trimmingCharacters(in: .whitespaces))
+        }
+        return nil
+    }
+
     /// After a pass: the lists to send again because they changed since the app built the pass. The engine keeps a
     /// request applied while the pass ran, but one applied after the app read the lists and before the pass applied
     /// them at its start is overwritten by the older lists (and counts as applied), so each list that differs now goes

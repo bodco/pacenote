@@ -194,7 +194,14 @@ No content hashing exists in the app today (`file_day` uses the date in the name
    match, so a moved file never drops out of search between two steps. **Revoked**: the worker makes no Google or Notion request, and the
    picked copy `live/google/google-file-<id16>.*` stays on disk after access is lost, so the signal comes from the
    app. The prep already knows each Google source's `google.status: ok | denied | not_found` (`sheet/sources.py`,
-   the `access` field), and the app knows the Notion pages it can no longer read. The app passes the list of
+   the `access` field), and the app knows the Notion pages it can no longer read from the Notion mirror (PB-88, owner
+   decision 24.11 option (a): the mirror's `state.json` `lost` map lists the pages of a database that answers 403 or
+   404, a page whose read answers 403 or 404 and the pages a full run moved to `_notion/_archived/`; the app also
+   reads the page ids of `_notion/_archived/` itself, so a mirror the PM runs with their own job counts for archived
+   pages (a database answering 403 or 404 is listed only by a mirror that writes `lost`: the app's managed copy,
+   which the app replaces with its own `mirror.py` before a run while the flag is on); a page gone
+   from its database or deleted counts like Google `not_found`; 401, 429 and 5xx never count; a deleted or unshared
+   page is noticed on the next full run, `full_every_days`, default 7). The app passes the list of
    `denied` and `not_found` documents (Google file id, Notion page id) with each pass, the same way it passes hidden
    calls (S5), and a document's change to `denied` or `not_found` starts the same immediate state-only pass as a
    hide (section 5.1). The worker maps each id to its sources (the picked copy by `<id16>`, the `_notion/` mirror file
@@ -1626,6 +1633,8 @@ duplicates, wrong identity, item 13 cross-client, false agreed, false proposal.
    off switch stay. Where the flag is turned on, one plain line says that project text will be sent to the chosen AI
    provider for indexing and what the estimated first-index cost is (section 10). Section 12's "the first full index
    asks before it starts" is replaced by this line.
+3. **Notion pages that lost access (asked in PB-88 review):** (a) S5 builds the Notion revoke now, the same as
+   Google; (b) a follow-up task. **Owner decision 24.11: (a).** The signal is the Notion mirror (section 5.2 item 6).
 
 Team defaults, each a setting in section 10, not owner questions: $1.00 per pass and $3.00 per day on paid keys,
 10% per pass and 30% per day of the 5-hour window on plans, 120 and 360 minutes on local, and the same day caps for
@@ -1954,7 +1963,9 @@ Acceptance:
       not listed as applied after the pass is sent again with the current list (pure-logic test on the request
       tracker; a list that changed during a pass goes again after it); a supersede click writes the override only after Notion
       returned ok (pure-logic test on the command builder); a Google document turning
-      `denied` does the same with `--revoked`; the Tracker snapshot file is written only from data the app already
+      `denied` does the same with `--revoked`, and so does a Notion page the mirror can no longer read (pure-logic
+      test on the list builder: archived, lost with its file still live, renamed, read again, swept, Google ids
+      untouched; mirror test on the `lost` map; engine test that the archived page is revoked, not deleted); the Tracker snapshot file is written only from data the app already
       has (no new request; pure-logic tests on the list builders and the writer).
 - [ ] `AIChain` accepts the `evidence` job and never steps it to another cloud route (pure-logic test).
 - [ ] The cost text before and after a pass shows the numbers from the `run` row as a range (typical to cap), using
@@ -1970,7 +1981,11 @@ ceilings are written to `projects.json` and `config.json` only once the flag is 
 ceilings reach the worker as `LT_EVIDENCE_LIMITS` (JSON: `pass`, `day`, `all_day` with `usd`, `pct`, `min`, plus
 `topics`, `extract`, `local_overflow`) for S3 to read. The cost text shows numbers only from an `estimate` object in
 `evidence status` with `calibrated: true` (`typical`, `cap`, `unit`, `parts`) and the `run` row under `last_run`;
-S3 adds both. With neither, every estimate line says it is not available yet. The first-index dialog is not built
+S3 adds both. With neither, every estimate line says it is not available yet. Notion pages that lost access
+(`EvidenceLists.notionRevoked`): the app recomputes the project's revoked list from the mirror's `lost` map and the
+project's `_notion/` files at launch, before every pass, after every mirror run the app starts and on the 10-minute
+evidence timer (a mirror run by the PM's own job), and sends the state-only pass at once when it changed; an id leaves only when its file is live again and the mirror no longer lists
+it, so a page whose archived file was swept after 30 days stays revoked. The first-index dialog is not built
 (owner decision 24.11, section 15).
 
 Order: S1 -> S2 -> S3 -> S4; S5 can start after S1 (it needs only the CLI and the flag), shows cost numbers only after

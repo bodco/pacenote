@@ -197,6 +197,30 @@ func evidenceS5PB88() {
     expect(rv == ["0123456789abcdef0123456789abcdef", "1AbCdEfGhIjKlMnOpQrStUv", "keep-me"], "S5: revoked list: \(rv)")
     let rvArgs = EvidenceCommand.excludeRevoked(tg, revoked: rv, requestID: "r-5")
     expect(rvArgs.contains("--revoked") && !rvArgs.contains("--hidden-calls"), "S5: a lost document runs exclude --revoked")
+    // PB-88 r7 (owner decision 24.11, option a): Notion pages the mirror can no longer read join the revoked list
+    let nA = "0123456789abcdef0123456789abcdef", nB = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", nC = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    let gid = "1AbCdEfGhIjKlMnOpQrStUv"
+    expect(EvidenceLists.notionRevoked(current: [gid], lost: [], archived: [nA], live: []) == [nA, gid],
+           "S5 r7: a page archived by the mirror (deleted or unshared) joins the list")
+    expect(EvidenceLists.notionRevoked(current: [], lost: [], archived: [nA], live: [nA]) == [],
+           "S5 r7: a renamed page (old file archived, same id live) is not revoked")
+    expect(EvidenceLists.notionRevoked(current: [], lost: [nB, nC], archived: [], live: [nB]) == [nB],
+           "S5 r7: a page in a database that answers 403 joins although its file stays; another project's lost page does not")
+    expect(EvidenceLists.notionRevoked(current: [nA, nB, gid], lost: [], archived: [], live: [nB, gid]) == [nA, gid],
+           "S5 r7: a page read again leaves; one whose archived file was swept stays; a Google id is never touched")
+    expect(EvidenceLists.mirrorLost(state: Data("{\"lost\":{\"01234567-89ab-cdef-0123-456789abcdef\":{\"why\":\"gone\"}}}".utf8)) == [nA]
+           && EvidenceLists.mirrorLost(state: nil).isEmpty, "S5 r7: the mirror's lost map as 32 hex")
+    let nd = NSTemporaryDirectory() + "pb88-notion-\(UUID().uuidString)/_notion"
+    let fm = FileManager.default
+    try? fm.createDirectory(atPath: nd + "/_archived/tasks", withIntermediateDirectories: true)
+    try? fm.createDirectory(atPath: nd + "/meetings", withIntermediateDirectories: true)
+    fm.createFile(atPath: nd + "/meetings/2026-11-18 Kickoff with Mike [\(nB)].md", contents: Data("# x\n".utf8))
+    fm.createFile(atPath: nd + "/project.md", contents: Data("---\nnotion_id: aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\n---\n".utf8))
+    fm.createFile(atPath: nd + "/_archived/tasks/2026-10-05 Ship the export [\(nA)].md", contents: Data("# y\n".utf8))
+    let scan = EvidenceLists.mirrorIDs(notionDir: nd)
+    expect(scan.archived == [nA] && scan.live == [nB, nC],
+           "S5 r7: the mirror folder scan by file name and header: \(scan)")
+    try? fm.removeItem(atPath: (nd as NSString).deletingLastPathComponent)
     expect(EvidenceLists.googleID("https://docs.google.com/spreadsheets/d/abc123/edit#gid=0") == "abc123"
            && EvidenceLists.googleID("https://example.com/d/abc") == nil, "S5: Google ids only from Google links")
 

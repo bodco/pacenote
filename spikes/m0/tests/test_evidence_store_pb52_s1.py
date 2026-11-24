@@ -1360,3 +1360,24 @@ def test_hidden_and_revoked_are_never_visible_during_a_pass_or_a_rebuild(env):
     assert [x for x in emb.texts if "Bluebird" in x] and [x for x in emb.texts if "Kestrel" in x]
     assert st.one("SELECT count(*) FROM snippet sn JOIN revision rv ON rv.id=sn.revision_id WHERE rv.superseded_at IS NULL"
                   " AND sn.vec IS NULL")[0] == 0
+
+
+def test_notion_page_archived_by_the_mirror_is_revoked_not_deleted(env):
+    """PB-88 r7 (owner decision 24.11, option a): the mirror moves a page it can no longer read to _notion/_archived/
+    and the app passes its id as revoked: the source is revoked (strict deny), not deleted, and a page shared again
+    (its file live, its id off the list) is active again."""
+    root = env
+    page = "_notion/tasks/2026-10-05 Falcon budget [{}].md".format(NID)
+    put(root, page, "# Falcon budget\n\nThe falcon budget is frozen.\n")
+    st = open_store(root=root)
+    run(st, root)
+    assert st.one("SELECT state FROM source WHERE uri=?", (page,))[0] == "active"
+    arch = Path(root) / "_notion/_archived/tasks" / Path(page).name
+    arch.parent.mkdir(parents=True)
+    os.replace(Path(root) / page, arch)
+    run(st, root, revoked=[NID])
+    assert st.one("SELECT state FROM source WHERE uri=?", (page,))[0] == "revoked"
+    assert "falcon" not in texts(SE.search(st, "falcon budget")).lower()
+    os.replace(arch, Path(root) / page)
+    run(st, root, revoked=[])
+    assert st.one("SELECT state FROM source WHERE uri=?", (page,))[0] == "active"

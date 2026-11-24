@@ -13,7 +13,9 @@ Pacenote. Earlier versions are described in the commit messages and in
   summaries, Pause, and per project its status, Index now and Delete. Each project keeps one memory through a rename
   or a folder change. A pass runs after a call's notes, 10 minutes after folder changes, hourly while the Mac is idle
   on power, or on Index now, and never during a call. Hiding a call, a document that lost access and the supersede
-  click reach the memory at once, also during a call. The Tracker snapshot includes the HubSpot tasks already loaded
+  click reach the memory at once, also during a call. A Notion page the Notion mirror can no longer read (its
+  database no longer shared, or deleted or unshared, found on a full mirror run) leaves the memory the same way as
+  a Google document that lost access, and comes back once the mirror reads it again. The Tracker snapshot includes the HubSpot tasks already loaded
   (keyed by portal and task, so a task linked to a commitment stays one task), and deleting the memories of projects
   no longer in Pacenote asks first. A hide, unhide or lost access that happens while a pass runs is not undone by
   that pass (also when the app quit while the pass ran: at launch the current lists go again), hide, unhide and
