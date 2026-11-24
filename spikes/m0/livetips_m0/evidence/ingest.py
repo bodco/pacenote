@@ -281,8 +281,28 @@ class Ctx:
         self.universe, self.labels = set(universe), set(labels)
         self.embedder, self.observed, self.valid_from = embedder, observed, valid_from
         self.between = between
+        self.stems, self.rids = deny_lists(store)
         self.report = {"new_revisions": 0, "unchanged": 0, "touched": 0, "moved": 0, "deleted": 0, "skipped": 0,
                        "embed_requests": 0, "vectors_copied": 0, "sources": 0}
+
+
+def deny_lists(store: S.Store) -> tuple:
+    """(call stems, document ids) a source is denied for from its first write: the lists the last state-only pass
+    applied plus what the store already denies (spec section 5.2 item 8, section 12: there is no window)."""
+    stems = set(store.meta_json("hidden_calls", []) or [])
+    stems |= {r[0] for r in store.q("SELECT call_key FROM source WHERE state='excluded' AND state_reason='hidden call'")
+              if r[0]}
+    rids = set(store.meta_json("revoked", []) or [])
+    rids |= {r[0] for r in store.q("SELECT ext_id FROM source WHERE state='revoked' AND ext_id IS NOT NULL")}
+    return stems, rids
+
+
+def born_state(ctx: Ctx, kind: str, call_key: Optional[str], ext_id: Optional[str]) -> tuple:
+    if kind in CALL_KINDS and call_key and call_key in ctx.stems:
+        return "excluded", "hidden call"
+    if ext_id and ext_id in ctx.rids:
+        return "revoked", "no longer shared"
+    return "active", None
 
 
 def ingest(store: S.Store, root: str, *, hidden_calls=None, revoked=None, web_dirs=(), valid_from=None,
@@ -296,6 +316,8 @@ def ingest(store: S.Store, root: str, *, hidden_calls=None, revoked=None, web_di
         with store.conn:
             store._meta_defaults(store.meta("evidence_uid") or store.path.stem, root, slug)
     apply_pending(store)
+    # the pass's lists first, so a hidden or revoked source is never active between two sources (section 12)
+    apply_state(store, hidden_calls=hidden_calls, revoked=revoked)
     universe = CS.label_universe(root)
     old_uni = set(store.meta_json("label_universe", []) or [])
     added = sorted(set(universe) - old_uni)
@@ -327,6 +349,11 @@ def ingest(store: S.Store, root: str, *, hidden_calls=None, revoked=None, web_di
             i = found[u]
             store.conn.execute("UPDATE source SET uri=?, call_key=?, last_checked=? WHERE id=?",
                                (u, i.get("call_key"), observed, old["id"]))
+            state, why = born_state(ctx, i["kind"], i.get("call_key"), old["ext_id"])
+            if state != "active":
+                store.conn.execute("UPDATE source SET state=?, state_reason=?, state_at=? WHERE id=?",
+                                   (state, why, observed, old["id"]))
+            remark_path(ctx, old["id"], u)
             try:
                 st = os.stat(i["path"])
                 store.conn.execute("UPDATE revision SET mtime=?, size=? WHERE source_id=? AND superseded_at IS NULL",
@@ -346,7 +373,8 @@ def ingest(store: S.Store, root: str, *, hidden_calls=None, revoked=None, web_di
         ingest_file(ctx, u, i, texts.get(u))
         if between:
             between()
-        apply_pending(store)
+        if apply_pending(store):
+            ctx.stems, ctx.rids = deny_lists(store)
     with store.conn:
         for r in vanished:
             if r["id"] in moved_old:
@@ -359,6 +387,7 @@ def ingest(store: S.Store, root: str, *, hidden_calls=None, revoked=None, web_di
     ingest_tracker(ctx, tracker_path)
     ingest_voices(ctx, voices)
     apply_state(store, hidden_calls=hidden_calls, revoked=revoked)
+    embed_missing(ctx)
     with store.conn:
         store.set_meta("label_universe", json.dumps(sorted(universe)))
         store.set_meta("label_tree_hash", S.sha("\n".join(sorted(universe))))
@@ -412,11 +441,26 @@ def _source(ctx: Ctx, uri: str, info: dict, title: str = "") -> int:
         ctx.conn.execute("UPDATE source SET last_checked=?, call_key=coalesce(?, call_key), ext_id=coalesce(?, ext_id)"
                          " WHERE id=?", (ctx.observed, info.get("call_key"), info.get("ext_id"), r[0]))
         return r[0]
-    cur = ctx.conn.execute("INSERT INTO source(kind, uri, title, origin, call_key, state, first_seen, last_checked, ext_id)"
-                           " VALUES (?,?,?,?,?,'active',?,?,?)",
+    state, why = born_state(ctx, info["kind"], info.get("call_key"), info.get("ext_id"))
+    cur = ctx.conn.execute("INSERT INTO source(kind, uri, title, origin, call_key, state, state_reason, state_at, first_seen,"
+                           " last_checked, ext_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                            (info["kind"], uri, title or uri.rsplit("/", 1)[-1], info["origin"], info.get("call_key"),
-                            ctx.observed, ctx.observed, info.get("ext_id")))
+                            state, why, ctx.observed if why else None, ctx.observed, ctx.observed, info.get("ext_id")))
     return cur.lastrowid
+
+
+def remark_path(ctx: Ctx, sid: int, uri: str) -> None:
+    """A moved source: the path marks of every snippet of every revision from the new path, and client_set again
+    from the path, heading and line marks, as write_snippets would write them (spec sections 5.2 item 6 and 5.3)."""
+    pmarks = path_marks(uri, ctx.universe) if not uri.startswith("/") else set()
+    for (snid,) in ctx.store.q("SELECT sn.id FROM snippet sn JOIN revision rv ON rv.id=sn.revision_id WHERE rv.source_id=?",
+                               (sid,)):
+        ctx.conn.execute("DELETE FROM snippet_mark WHERE snippet_id=? AND kind='path'", (snid,))
+        ctx.conn.executemany("INSERT OR IGNORE INTO snippet_mark(snippet_id, kind, pos, name) VALUES (?,?,0,?)",
+                             [(snid, "path", n) for n in pmarks])
+        names = {r[0] for r in ctx.store.q("SELECT name FROM snippet_mark WHERE snippet_id=? AND kind IN"
+                                           " ('path','heading','line')", (snid,))}
+        ctx.conn.execute("UPDATE snippet SET client_set=? WHERE id=?", (_client_set(names, ctx.labels), snid))
 
 
 def ingest_file(ctx: Ctx, uri: str, info: dict, text: Optional[str] = None) -> None:
@@ -431,15 +475,15 @@ def ingest_file(ctx: Ctx, uri: str, info: dict, text: Optional[str] = None) -> N
         ctx.report["unchanged"] += 1
         if src["state"] == "deleted":          # came back with the same text
             with ctx.conn:
-                ctx.conn.execute("UPDATE source SET state='active', state_reason=NULL, state_at=? WHERE id=?",
-                                 (ctx.observed, src["id"]))
+                ctx.conn.execute("UPDATE source SET state=?, state_reason=?, state_at=? WHERE id=?",
+                                 born_state(ctx, src["kind"], src["call_key"], src["ext_id"]) + (ctx.observed, src["id"]))
         return
     text = read_text(path) if text is None else text
     h = S.sha(text)
     with ctx.conn:
         if src and src["state"] == "deleted":
-            ctx.conn.execute("UPDATE source SET state='active', state_reason=NULL, state_at=? WHERE id=?",
-                             (ctx.observed, src["id"]))
+            ctx.conn.execute("UPDATE source SET state=?, state_reason=?, state_at=? WHERE id=?",
+                             born_state(ctx, src["kind"], src["call_key"], src["ext_id"]) + (ctx.observed, src["id"]))
         if act and act["content_hash"] == h:
             ctx.conn.execute("UPDATE revision SET mtime=?, size=? WHERE id=?", (st.st_mtime, st.st_size, act["id"]))
             ctx.report["touched"] += 1
@@ -519,13 +563,31 @@ def write_snippets(ctx: Ctx, sid: int, rid: int, uri: str, kind: str, text: str,
             ctx.report["vectors_copied"] += 1
         else:
             need.append((snid, c["text"]))
-    if need and ctx.embedder is not None:
+    # a hidden or revoked source is never sent to the embed server; embed_missing catches up once it is active
+    if need and ctx.embedder is not None and ctx.store.one("SELECT state FROM source WHERE id=?", (sid,))[0] == "active":
         vecs = ctx.embedder([t for _i, t in need])
         if vecs:
             ctx.report["embed_requests"] += 1
             for (snid, _t), v in zip(need, vecs):
                 ctx.conn.execute("UPDATE snippet SET vec=? WHERE id=?", (pack(v), snid))
     return ids
+
+
+def embed_missing(ctx: Ctx) -> None:
+    """One embed request for the current snippets of active file sources with no vector: a source restored from
+    hidden or revoked, or a pass when the embed server was down."""
+    if ctx.embedder is None:
+        return
+    rows = ctx.store.q("SELECT sn.id, sn.text FROM snippet sn JOIN revision rv ON rv.id=sn.revision_id JOIN source s"
+                       " ON s.id=rv.source_id WHERE s.state='active' AND rv.superseded_at IS NULL AND sn.vec IS NULL"
+                       " AND s.kind IN ({}) ORDER BY sn.id".format(",".join("?" * len(FILE_KINDS))), FILE_KINDS)
+    if not rows:
+        return
+    vecs = ctx.embedder([r["text"] for r in rows])
+    if vecs:
+        ctx.report["embed_requests"] += 1
+        with ctx.conn:
+            ctx.conn.executemany("UPDATE snippet SET vec=? WHERE id=?", [(pack(v), r["id"]) for r, v in zip(rows, vecs)])
 
 
 def write_marks(conn, snid: int, pmarks: set, chunk: dict, universe: set) -> None:
@@ -908,12 +970,14 @@ def _revoked_ids(ids: Iterable[str]) -> List[str]:
 def apply_state(store: S.Store, hidden_calls=None, revoked=None) -> dict:
     """The state-only pass (spec sections 5.1 and 5.2 item 6): sources of hidden calls -> excluded, revoked documents
     -> revoked, and back to active when they leave the list. Each list is the full current list; None keeps the
-    current state. A local SQLite write only: no model, network or embed request."""
+    current state. The applied lists are kept in meta so a source written later is born denied (deny_lists).
+    A local SQLite write only: no model, network or embed request."""
     now = S.now_utc()
     rep = {"excluded": 0, "revoked": 0, "restored": 0}
     with store.conn:
         if hidden_calls is not None:
             stems = _stems(hidden_calls)
+            store.set_meta("hidden_calls", json.dumps(stems))
             ph = ",".join("?" * len(CALL_KINDS))
             for r in store.q("SELECT id, call_key, state, state_reason FROM source WHERE kind IN ({})".format(ph), CALL_KINDS):
                 hide = r["call_key"] in stems
@@ -926,6 +990,7 @@ def apply_state(store: S.Store, hidden_calls=None, revoked=None) -> dict:
                     rep["restored"] += 1
         if revoked is not None:
             ids = set(_revoked_ids(revoked))
+            store.set_meta("revoked", json.dumps(sorted(ids)))
             for r in store.q("SELECT id, ext_id, state, state_reason FROM source WHERE ext_id IS NOT NULL"):
                 rv = r["ext_id"] in ids
                 if rv and r["state"] in ("active", "deleted"):

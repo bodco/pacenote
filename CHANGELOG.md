@@ -10,7 +10,9 @@ Pacenote. Earlier versions are described in the commit messages and in
   SQLite file per project in Application Support (never in the project folder): every file, call, note, the
   commitments register and the Tracker snapshot as dated revisions and snippets with quotes and locators, decisions
   with stable ids that survive "Add to Notion", the PM's supersede and reject edits, and a search that applies the
-  call's client, hidden calls, revoked documents, deleted files and a replay date before ranking. No model, network
+  call's client, hidden calls, revoked documents, deleted files and a replay date before ranking. A hidden call or
+  revoked document is never searchable or embedded, even while a pass or a rebuild runs, and a renamed or moved file
+  takes the client of its new path. No model, network
   or embedding request is added (vectors only from the bundled local server when it runs). LLM extraction, topic
   summaries and the settings row come in the next steps.
 - **Preparation no longer mixes in another client's facts (PB-70).** When one project folder holds several clients,

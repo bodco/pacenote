@@ -949,3 +949,79 @@ def test_live_mode_refuses_query_vectors_and_stays_fast(tmp_path, monkeypatch):
         SE.search(ro, "item 13", scope=sc, mode="live", query_vec=[0.1])
     ms = sorted(SE.search(ro, q, scope=sc, mode="live")["ms"] for q in ["item 13", "SSO", "pilot users", "go-live"] * 10)
     assert ms[int(len(ms) * 0.95) - 1] <= 150
+
+
+# ---------------------------------------------------------------- review round 1: moves re-mark, no hidden window
+
+def test_move_into_and_out_of_a_client_word_remarks_the_path(env):
+    root = env
+    two_clients(root)
+    put(root, "notes/budget.md", "Budget secret: the rate is 150 per hour.\n")
+    st = open_store(root=root)
+    run(st, root, valid_from="2026-11-10T09:00:00Z")
+    put(root, "notes/budget.md", "Budget secret: the rate is 175 per hour.\n", mtime=OLD + 60)
+    run(st, root, valid_from="2026-11-12T09:00:00Z")
+    sc = acme(root)
+    g = CS.decide(str(root), "Globex weekly", ["Globex"])
+    assert "rate is 175" in passing(st, sc) and "rate is 150" in passing(st, sc, as_of="2026-11-11T09:00:00Z")
+    os.rename(root / "notes/budget.md", root / "notes/globex-budget.md")
+    assert run(st, root)["moved"] == 1
+    assert CS.side(sc, str(root / "notes/globex-budget.md")) == "other"
+    t = passing(st, sc) + texts(SE.search(st, "budget rate", scope=sc, budget=SE.Budget(k=50)))
+    assert "rate is 1" not in t                                        # the current revision follows the new path
+    assert "rate is 150" not in passing(st, sc, as_of="2026-11-11T09:00:00Z")   # and so does the superseded one
+    assert {r[0] for r in st.q("SELECT sn.client_set FROM snippet sn JOIN revision rv ON rv.id=sn.revision_id JOIN source s"
+                                " ON s.id=rv.source_id WHERE s.uri='notes/globex-budget.md'")} == {"globex"}
+    parity(st, sc)
+    parity(st, g)
+    os.rename(root / "notes/globex-budget.md", root / "notes/budget.md")
+    assert run(st, root)["moved"] == 1
+    assert "rate is 175" in passing(st, sc) and "rate is 150" in passing(st, sc, as_of="2026-11-11T09:00:00Z")
+    assert not st.q("SELECT 1 FROM snippet_mark WHERE kind='path' AND name='globex' AND snippet_id IN (SELECT sn.id FROM"
+                    " snippet sn JOIN revision rv ON rv.id=sn.revision_id JOIN source s ON s.id=rv.source_id"
+                    " WHERE s.uri='notes/budget.md')")
+    parity(st, sc)
+    parity(st, g)
+
+
+def test_hidden_and_revoked_are_never_visible_during_a_pass_or_a_rebuild(env):
+    root = env
+    put(root, "live/2026-11-05-acme-weekly/2026-11-05-1000-acme-weekly.md",
+        "# Live transcript\n\n- Start: 2026-11-05 10:00:00\n\n[10:00:10] Mike (en): the hidden merger codename is Bluebird.\n")
+    put(root, "live/google/google-file-{}.md".format(GID[:16]), "# G\n\nThe shared codename is Kestrel.\n")
+    put(root, "zz/a.md", "# A\n\nFiller about the codename list.\n")
+    put(root, "zz/b.md", "# B\n\nMore filler about the codename list.\n")
+    st = open_store(root=root)
+    emb = StubEmbed()
+    seen = []
+
+    def between():
+        r = S.Store.open(uid="p-1", readonly=True)
+        t = texts(SE.search(r, "Bluebird Kestrel codename", mode="live", budget=SE.Budget(k=50)))
+        seen.append(("Bluebird" in t, "Kestrel" in t))
+
+    def check():
+        assert seen and seen == [(False, False)] * len(seen)
+        assert not [x for x in emb.texts if "Bluebird" in x or "Kestrel" in x]
+        assert {r[0] for r in st.q("SELECT state FROM source WHERE uri LIKE 'live/%'")} == {"excluded", "revoked"}
+        seen.clear()
+
+    hide = {"hidden_calls": ["2026-11-05-1000-acme-weekly.md"], "revoked": [GID]}
+    run(st, root, embedder=emb, between=between, **hide)                   # a first index
+    check()
+    CLI.rebuild(st, str(root), quiet_s=0, voices={}, embedder=emb, between=between, **hide)
+    check()
+    CLI.rebuild(st, str(root), quiet_s=0, voices={}, embedder=emb, between=between)   # no lists: the app's states stay
+    check()
+    # the call's notes arrive later in a pass with no lists: born excluded like the rest of the call
+    put(root, "live/2026-11-05-acme-weekly/2026-11-05-1000-acme-weekly.notes.md", "# Notes\n\n### TL;DR\nBluebird again.\n")
+    run(st, root, embedder=emb, between=between)
+    check()
+    # leaving the lists makes them searchable and the next pass embeds them
+    run(st, root, embedder=emb, hidden_calls=[], revoked=[])
+    run(st, root, embedder=emb)
+    t = texts(SE.search(st, "Bluebird Kestrel codename", budget=SE.Budget(k=50)))
+    assert "Bluebird" in t and "Kestrel" in t
+    assert [x for x in emb.texts if "Bluebird" in x] and [x for x in emb.texts if "Kestrel" in x]
+    assert st.one("SELECT count(*) FROM snippet sn JOIN revision rv ON rv.id=sn.revision_id WHERE rv.superseded_at IS NULL"
+                  " AND sn.vec IS NULL")[0] == 0

@@ -109,7 +109,7 @@ def cmd_ingest(a) -> dict:
                             quiet_s=float(a.quiet_seconds), slug=a.slug or "")
             with st.conn:
                 st.conn.execute("UPDATE run SET status='done', ended_at=? WHERE id=?", (S.now_utc(), run))
-            st.compact_log()
+            st.compact_log()                    # under both locks (section 13.1)
     return {"ok": True, "status": "done", "report": rep,
             "note": "deterministic ingest only; LLM extraction comes with S3" if a.cmd == "pass" else ""}
 
@@ -172,23 +172,17 @@ DERIVED = ("evidence", "alias_seen", "alias", "claim", "edge", "entity_mark", "e
 
 
 def rebuild(st: S.Store, root: str, **kw) -> dict:
-    """Derived tables again from the files (free). pm_override rows the PM wrote (not via the register) and
-    state_request rows stay; source states set by the app (hidden, revoked) are kept by uri."""
-    keep = {r["uri"]: (r["state"], r["state_reason"]) for r in st.q("SELECT uri, state, state_reason FROM source"
-                                                                      " WHERE state IN ('excluded','revoked')")}
+    """Derived tables again from the files (free, spec section 13.4). pm_override rows the PM wrote (not via the
+    register), state_request rows and the source rows stay, so a hidden or revoked source keeps its state for the
+    whole rebuild and is never searchable or embedded in between."""
     with st.conn:
         for t in DERIVED:
             st.conn.execute("DELETE FROM {}".format(t))
-        st.conn.execute("DELETE FROM source")
         st.conn.execute("DELETE FROM pm_override WHERE via='register'")
         if st.fts:
             st.conn.execute("INSERT INTO snippet_fts(snippet_fts) VALUES ('rebuild')")
         st.set_meta("label_universe", "[]")
-    rep = IG.ingest(st, root, **kw)
-    with st.conn:
-        for uri, (state, reason) in keep.items():
-            st.conn.execute("UPDATE source SET state=?, state_reason=? WHERE uri=?", (state, reason, uri))
-    return rep
+    return IG.ingest(st, root, **kw)
 
 
 def vacuum(st: S.Store) -> dict:
