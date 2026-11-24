@@ -1053,6 +1053,24 @@ def test_tracker_item_of_a_register_task_keeps_the_register_name(env, tmp_path):
     assert tuple(st.one("SELECT name, status FROM entity WHERE id='c-3333333333'")) == ("send the plover checklist", "open")
 
 
+def test_app_snapshot_hubspot_key_links_the_register_task(env, tmp_path):
+    """PB-88 (S5): the app keys a HubSpot task crm:<portal>:<task> with project and no last_edited; a register task
+    linked to that task in that portal is the same task, never a second one."""
+    root = env
+    reg = [{"v": 1, "op": "add", "id": "c-4444444444", "text": "send the revised sow", "owner": "me",
+            "created": "2026-11-10T10:00:00+00:00"},
+           {"v": 1, "op": "crm_link", "id": "c-4444444444", "crm_task": "9001", "crm_portal": "111",
+            "at": "2026-11-10T11:00:00+00:00"}]
+    put(root, "live/commitments.jsonl", "\n".join(json.dumps(e) for e in reg) + "\n")
+    snap = tmp_path / "tracker.json"
+    snap.write_text(json.dumps({"items": [{"id": "crm:111:9001", "text": "Send the revised SOW", "status": "NOT_STARTED",
+                                           "owner": "me", "project": "northpoint", "kind": "task"}]}), encoding="utf-8")
+    st = open_store(root=root)
+    run(st, root, tracker_path=str(snap))
+    assert SE.resolve_key(st, "crm:111:9001") == ["c-4444444444"]
+    assert st.one("SELECT count(*) FROM entity WHERE type='task'")[0] == 1
+
+
 def test_edge_modality_rows(env):
     root = env
     put(root, "docs/one.md", "# One\n\nMaybe Globex blocks Northpoint next week.\n", mtime=ts("2026-11-05T09:00:00Z"))

@@ -1911,7 +1911,9 @@ S3 unchanged.
 Scope: Swift: `evidence_uid` in `projects.json` with the slug passed on every pass (slug history), `LT_PROJECT_UID`,
 `call-active.json` written at call start and removed at the end, the Tracker snapshot file
 (`tracker-snapshot/<uid>.json` in the state folder next to `ai-routes.json`, from the Notion and HubSpot items the
-app already holds), the lists passed to each pass (hidden calls from `history.json`; Google and Notion documents with
+app already holds; a HubSpot task keyed `crm:<portal>:<task>` as `identity.tracker_id` keys it and placed in the
+project of its linked register item; each item with `project` and, for Notion, `last_edited` from the mirror
+header), the lists passed to each pass (hidden calls from `history.json`; Google and Notion documents with
 status `denied` or `not_found`; stored page folders under `SheetCLI.stateDir/web` for this project's sheets), the
 state-only pass on hide, unhide and loss of access, at once also during a call, each with a `--request-id` kept
 until `evidence status` lists it applied and re-sent otherwise (section 13.1), the supersede click in

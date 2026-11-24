@@ -257,15 +257,42 @@ public enum EvidenceLists {
 /// Notion and HubSpot items the app already holds, never a new request. The engine diffs it item by item.
 public enum TrackerSnapshot {
     public struct Item: Equatable {
-        public var id: String            // a Notion page id, or "crm:<task id>" for a HubSpot task
+        public var id: String            // a Notion page id, or "crm:<portal>:<task id>" for a HubSpot task (crmID)
         public var text: String
         public var status: String
         public var owner: String
         public var due: String
         public var kind: String
-        public init(id: String, text: String, status: String = "", owner: String = "", due: String = "", kind: String = "task") {
+        public var lastEdited: String    // the Notion page's last edit (the mirror header); "" for a HubSpot task
+        public var project: String       // the project's slug
+        public init(id: String, text: String, status: String = "", owner: String = "", due: String = "", kind: String = "task",
+                    lastEdited: String = "", project: String = "") {
             self.id = id; self.text = text; self.status = status; self.owner = owner; self.due = due; self.kind = kind
+            self.lastEdited = lastEdited; self.project = project
         }
+    }
+
+    /// A HubSpot task's id as the engine keys it (`identity.tracker_id`): task ids repeat across portals, so the portal
+    /// is part of it; nil without a portal or a task.
+    public static func crmID(portal: String, task: String) -> String? {
+        portal.isEmpty || task.isEmpty ? nil : "crm:\(portal):\(task)"
+    }
+
+    /// The mirror's `last_edited` (Notion's ISO time, with or without fractions) as a plain UTC time the engine reads;
+    /// "" for anything else, so a malformed header never stops a pass.
+    public static func edited(_ raw: String) -> String {
+        let s = raw.trimmingCharacters(in: CharacterSet(charactersIn: " \"'"))
+        let plain = ISO8601DateFormatter(), frac = ISO8601DateFormatter()
+        frac.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        guard let d = plain.date(from: s) ?? frac.date(from: s) else { return "" }
+        return plain.string(from: d)
+    }
+
+    /// A Tracker item's project (the mirror's Project value, or a register item's slug) is this project when it is
+    /// its name, slug or Notion value, any case.
+    public static func belongs(_ project: String, name: String, slug: String, notionValue: String) -> Bool {
+        let p = project.trimmingCharacters(in: .whitespaces).lowercased()
+        return !p.isEmpty && [name, slug, notionValue].contains { !$0.isEmpty && $0.trimmingCharacters(in: .whitespaces).lowercased() == p }
     }
 
     public static func path(statePath: String, uid: String) -> String {
@@ -280,6 +307,8 @@ public enum TrackerSnapshot {
             if !i.status.isEmpty { o["status"] = i.status }
             if !i.owner.isEmpty { o["owner"] = i.owner }
             if !i.due.isEmpty { o["due"] = i.due }
+            if !i.lastEdited.isEmpty { o["last_edited"] = i.lastEdited }
+            if !i.project.isEmpty { o["project"] = i.project }
             return o
         }
         return (try? JSONSerialization.data(withJSONObject: ["items": rows], options: [.sortedKeys, .prettyPrinted])) ?? Data()

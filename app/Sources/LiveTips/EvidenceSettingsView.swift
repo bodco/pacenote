@@ -9,6 +9,7 @@ struct ProjectMemorySection: View {
     @ObservedObject var model: SettingsModel
     @ObservedObject private var service = EvidenceService.shared
     @State private var deleting: Project?
+    @State private var deletingOrphans = false              // spec section 13.4: orphan stores go only after the PM confirms
 
     static func visible(_ c: AppConfig) -> Bool { EvidenceFlag.on(c) }
 
@@ -62,7 +63,7 @@ struct ProjectMemorySection: View {
             if !orphans.isEmpty {
                 HStack {
                     Text(L("mem.orphans", ["count": "\(orphans.count)"])).font(PN.Font.caption).foregroundStyle(PN.C.text3)
-                    Button(L("mem.orphans.delete")) { service.deleteOrphans() }
+                    Button(L("mem.orphans.delete")) { deletingOrphans = true }
                 }
             }
         } header: { Text(L("mem.title")).settingsAnchor("ai.memory") }
@@ -72,6 +73,9 @@ struct ProjectMemorySection: View {
         }
         .confirmationDialog(L("mem.delete.confirm", ["project": deleting?.name ?? ""]), isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })) {
             Button(L("mem.delete"), role: .destructive) { if let p = deleting { service.delete(p) }; deleting = nil }
+        }
+        .confirmationDialog(L("mem.orphans.confirm", ["count": "\(service.orphans().count)"]), isPresented: $deletingOrphans) {
+            Button(L("mem.orphans.delete"), role: .destructive) { service.deleteOrphans(); deletingOrphans = false }
         }
     }
 

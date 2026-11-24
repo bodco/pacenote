@@ -131,14 +131,32 @@ func evidenceS5PB88() {
     expect(web == ["/app/state/sheet/web/northwindlabs.com"], "S5: web dirs: \(web)")
 
     // the Tracker snapshot only from items the app holds, stable bytes
-    let items = [TrackerSnapshot.Item(id: "crm:9001", text: "Send the revised SOW", status: "open", owner: "Mike"),
-                 TrackerSnapshot.Item(id: "1234abcd", text: "Plover checklist", status: "Done", due: "2026-11-30"),
+    // a HubSpot task is keyed with its portal, as identity.tracker_id keys a register item linked to it
+    expect(TrackerSnapshot.crmID(portal: "111", task: "9001") == "crm:111:9001", "S5: a HubSpot task is crm:<portal>:<task>")
+    expect(TrackerSnapshot.crmID(portal: "", task: "9001") == nil && TrackerSnapshot.crmID(portal: "111", task: "") == nil,
+           "S5: no portal or no task, no snapshot item")
+    expect(TrackerSnapshot.belongs("Northpoint", name: "Northpoint", slug: "northpoint", notionValue: "")
+           && TrackerSnapshot.belongs("northpoint", name: "Northpoint", slug: "northpoint", notionValue: "")
+           && TrackerSnapshot.belongs("Northpoint Labs", name: "Northpoint", slug: "northpoint", notionValue: "Northpoint Labs")
+           && !TrackerSnapshot.belongs("Globex", name: "Northpoint", slug: "northpoint", notionValue: "")
+           && !TrackerSnapshot.belongs("", name: "Northpoint", slug: "northpoint", notionValue: ""),
+           "S5: a Tracker item belongs by the project's name, slug or Notion value")
+    expect(TrackerSnapshot.edited("2026-11-20T10:15:00.000Z") == "2026-11-20T10:15:00Z"
+           && TrackerSnapshot.edited("\"2026-11-20T12:15:00+02:00\"") == "2026-11-20T10:15:00Z"
+           && TrackerSnapshot.edited("yesterday") == "" && TrackerSnapshot.edited("") == "",
+           "S5: last_edited only as a UTC time the engine reads")
+    let items = [TrackerSnapshot.Item(id: TrackerSnapshot.crmID(portal: "111", task: "9001") ?? "", text: "Send the revised SOW",
+                                      status: "NOT_STARTED", owner: "Mike", project: "northpoint"),
+                 TrackerSnapshot.Item(id: "1234abcd", text: "Plover checklist", status: "Done", due: "2026-11-30",
+                                      lastEdited: "2026-11-20T10:15:00Z", project: "northpoint"),
                  TrackerSnapshot.Item(id: "", text: "no id"), TrackerSnapshot.Item(id: "x", text: "")]
     let snap = TrackerSnapshot.json(items)
     expect(snap == TrackerSnapshot.json(items.reversed()), "S5: the snapshot is the same bytes for the same items")
     if let o = (try? JSONSerialization.jsonObject(with: snap)) as? [String: Any], let rows = o["items"] as? [[String: Any]] {
-        expect(rows.map { $0["id"] as? String ?? "" } == ["1234abcd", "crm:9001"] && rows[1]["owner"] as? String == "Mike"
+        expect(rows.map { $0["id"] as? String ?? "" } == ["1234abcd", "crm:111:9001"] && rows[1]["owner"] as? String == "Mike"
                && rows[0]["due"] as? String == "2026-11-30", "S5: items with id and text, in the engine's keys")
+        expect(rows[0]["last_edited"] as? String == "2026-11-20T10:15:00Z" && rows[1]["last_edited"] == nil
+               && rows.allSatisfy { $0["project"] as? String == "northpoint" }, "S5: items carry last_edited and project (spec 5.2 item 5)")
     } else { expect(false, "S5: the snapshot parses") }
     expect(TrackerSnapshot.path(statePath: state, uid: "uid-1") == "/app/state/tracker-snapshot/uid-1.json", "S5: the snapshot path")
     let env = EvidenceCommand.env(base: ["PATH": "/usr/bin", "LT_EVIDENCE": "1"], support: "/Users/you/Library/Application Support/LiveTips",

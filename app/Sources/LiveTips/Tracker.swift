@@ -27,6 +27,7 @@ struct TrackerItem: Identifiable, Hashable {
     var orgItem: OrgRegister.Item? = nil  // 0.17.0 (block 4): a colleague's item from an organization project's registers
     var orgProject = ""                   // its organization project
     var crmTask = ""                      // PB-17: a HubSpot task (HubSpotTasks)
+    var lastEdited = ""                   // PB-88: the mirror header's last_edited (the Project memory snapshot)
 
     static func == (a: TrackerItem, b: TrackerItem) -> Bool { a.id == b.id && a.status == b.status && a.orgItem == b.orgItem }
     func hash(into h: inout Hasher) { h.combine(id) }
@@ -141,7 +142,7 @@ final class TrackerModel: ObservableObject {
                            workspace: p(["Workspace"]), owner: p(["Owner", "Assignee", "Stated by", "Assigned to"]),
                            due: p(["Due date", "Due", "Deadline"]), date: p(["Date", "First Seen", "Created"]),
                            status: p(["Status"]), impact: p(["Severity", "Impact", "Likelihood"]), url: top["url"] ?? "",
-                           callTitle: p(["Meeting", "Meetings", "Source call"]))
+                           callTitle: p(["Meeting", "Meetings", "Source call"]), lastEdited: top["last_edited"] ?? "")
     }
 }
 

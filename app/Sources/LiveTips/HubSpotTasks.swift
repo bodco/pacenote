@@ -113,6 +113,17 @@ final class HubSpotTasks: ObservableObject {
         }
     }
 
+    /// PB-88: this project's tasks for the Project memory snapshot, from the list already loaded (no request): a task is
+    /// placed by its linked register item, keyed `crm:<portal>:<task>` as the engine keys it; the status is HubSpot's own value, so the snapshot does not
+    /// change with the app language. A task with no linked item
+    /// has no project and stays out.
+    func snapshotItems(slug: String) -> [TrackerSnapshot.Item] {
+        shown.compactMap { t in
+            guard let c = linkedCommitment(t), c.project == slug, let id = TrackerSnapshot.crmID(portal: c.crmPortal, task: t.id) else { return nil }
+            return TrackerSnapshot.Item(id: id, text: t.title, status: t.status, owner: ownerName(t), due: t.due, project: slug)
+        }
+    }
+
     // MARK: actions
 
     /// A tick on a HubSpot task (or on a linked commitment): COMPLETED at once, Undo for 8 s writes the status before.

@@ -1351,8 +1351,10 @@ The skill and the app follow the same rules, in `rules/agenda.yaml`, `rules/comm
   "Index now"; never during a call (the app keeps `call-active.json` next to `ai-routes.json` for the whole call).
   Hiding a call on Home, a Google or Notion document a Meeting Sheet can no longer read, and the supersede click on
   a call page (after Notion confirmed it) reach the store at once, also during a call, and are sent again until the
-  store lists them as applied. For now a pass is the free part only (no AI request): AI reading comes with the next
-  step.
+  store lists them as applied. The Tracker items come from what the app already holds (the Notion mirror and the
+  HubSpot tasks last loaded, a HubSpot task in the project of its linked commitment), with no new request. Memories
+  of projects no longer in Pacenote are listed in the row and deleted only after you confirm. For now a pass is the
+  free part only (no AI request): AI reading comes with the next step.
 - **Brief freshness.** Home, Later and the call form compare when the brief was made with the files of the project
   folder (and the folders added in the form): "Brief is 2 days old · 3 changes since". Refresh updates only the
   sections the changed files touch and keeps your edits and the checklist. Nothing is refreshed by itself.

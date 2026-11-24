@@ -216,9 +216,14 @@ final class EvidenceService: ObservableObject {
         guard on, let uid = p.evidenceUid, let t = target(p) else { return }
         run(EvidenceCommand.delete(t), env: [:], uid: uid, nice: false) { [weak self] _ in
             self?.status[uid] = [:]
-            try? FileManager.default.removeItem(atPath: self?.requestsPath(uid) ?? "")
-            try? FileManager.default.removeItem(atPath: TrackerSnapshot.path(statePath: AIRoute.statePath, uid: uid))
+            self?.removeAppFiles(uid)
         }
+    }
+
+    /// The files the app keeps next to a store: its request list and its Tracker snapshot (task text).
+    private func removeAppFiles(_ uid: String) {
+        try? FileManager.default.removeItem(atPath: requestsPath(uid))
+        try? FileManager.default.removeItem(atPath: TrackerSnapshot.path(statePath: AIRoute.statePath, uid: uid))
     }
 
     /// Stores of projects that are no longer in Pacenote (spec section 13.4); deleted only after the PM confirms.
@@ -232,7 +237,7 @@ final class EvidenceService: ObservableObject {
         let c = config
         for uid in orphans() {
             let t = EvidenceCommand.Target(uid: uid, root: "", slug: "", config: AppPaths.config.path)
-            run(EvidenceCommand.delete(t), env: [:], uid: uid, nice: false, engine: c.engine) { _ in }
+            run(EvidenceCommand.delete(t), env: [:], uid: uid, nice: false, engine: c.engine) { [weak self] _ in self?.removeAppFiles(uid) }
         }
     }
 
@@ -291,18 +296,23 @@ final class EvidenceService: ObservableObject {
         return EvidenceLists.webDirs(sources: sources, root: p.root, webBase: (SheetCLI.stateDir as NSString).appendingPathComponent("web"))
     }
 
-    /// The Tracker snapshot from the Notion and HubSpot items the app already holds (no new request). The engine reads a
-    /// present file as the full list, so nothing is written before the Tracker has loaded (an empty list would delete
-    /// every Tracker item); the older file stays meanwhile. Tasks only: the engine makes every snapshot item a task.
+    /// The Tracker snapshot from the Notion and HubSpot items the app already holds (no new request: the Notion items
+    /// are the mirror the Tracker read, the HubSpot ones the list HubSpotTasks last synced). The engine reads a present
+    /// file as the full list, so nothing is written before both lists have loaded (an empty list would delete every
+    /// Tracker item); the older file stays meanwhile. Tasks only: the engine makes every snapshot item a task.
     private func writeTrackerSnapshot(_ p: Project) {
         guard let uid = p.evidenceUid else { return }
-        let tm = TrackerModel.shared
+        let tm = TrackerModel.shared, hs = HubSpotTasks.shared
         guard !tm.loading, !tm.items.isEmpty else { if !tm.loading { tm.reload() }; return }
-        let names = Set([p.name, p.slug].map { $0.lowercased() })
-        let items = tm.items.filter { $0.kind == .task && !$0.local && $0.orgItem == nil && names.contains($0.project.lowercased()) }.map {
-            TrackerSnapshot.Item(id: $0.crmTask.isEmpty ? $0.id : "crm:" + $0.crmTask, text: $0.title, status: $0.status,
-                                 owner: $0.owner, due: $0.due, kind: $0.kind.rawValue)
+        guard !hs.ready || hs.syncedAt != nil else { return }
+        let notion = tm.items.filter {
+            $0.kind == .task && !$0.local && $0.orgItem == nil && $0.crmTask.isEmpty
+                && TrackerSnapshot.belongs($0.project, name: p.name, slug: p.slug, notionValue: p.notionValue)
+        }.map {
+            TrackerSnapshot.Item(id: $0.id, text: $0.title, status: $0.status, owner: $0.owner, due: $0.due, kind: $0.kind.rawValue,
+                                 lastEdited: TrackerSnapshot.edited($0.lastEdited), project: p.slug)
         }
+        let items = notion + hs.snapshotItems(slug: p.slug)
         let path = TrackerSnapshot.path(statePath: AIRoute.statePath, uid: uid)
         try? FileManager.default.createDirectory(atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
         let data = TrackerSnapshot.json(items)

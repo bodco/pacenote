@@ -4624,5 +4624,6 @@
  "mem.delete.confirm": "Delete the memory of {project}? Your files stay as they are.",
  "mem.deleted": "Deleted.",
  "mem.orphans": "{count} memory files of projects that are no longer in Pacenote.",
+ "mem.orphans.confirm": "Delete the memory of {count} projects that are no longer in Pacenote? A project added again is indexed from the start.",
  "mem.orphans.delete": "Delete them"
 }
