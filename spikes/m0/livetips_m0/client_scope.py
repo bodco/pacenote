@@ -81,6 +81,36 @@ def _client_dirs(root: str, hints: set) -> Dict[str, Dict[str, str]]:
     return out
 
 
+def label_universe(root: str) -> List[str]:
+    """PB-52 G2 (S1): the slug of every folder _client_dirs could ever return (within MAX_DEPTH, outside SKIP_DIRS and
+    the skipped prefixes), without the hint filter. Every label decide() can return for this tree is in it, whatever
+    companies a call brings. The evidence store cuts snippets and stores marks on it (spec section 5.3)."""
+    root = os.path.realpath(os.path.expanduser(root or ""))
+    if not root or not os.path.isdir(root):
+        return []
+    out = set()
+    for d, dirs, _files in os.walk(root):
+        rel_d = os.path.relpath(d, root)
+        depth = 0 if rel_d == "." else rel_d.count(os.sep) + 1
+        dirs[:] = sorted(x for x in dirs if not x.startswith((".", "_archived", "_to_delete")) and x.lower() not in SKIP_DIRS)
+        if depth >= MAX_DEPTH:
+            dirs[:] = []
+        out.update(lb for lb in (slug(x) for x in dirs) if lb)
+    return sorted(out)
+
+
+def labels(root: str) -> List[str]:
+    """PB-52 G2 (S1): the client folders the project's own hints name (meeting series and earlier sheets), even when
+    there is only one. For segments, topics and display only; access never reads it (spec section 5.3)."""
+    root = os.path.realpath(os.path.expanduser(root or ""))
+    if not root or not os.path.isdir(root):
+        return []
+    live = os.path.join(root, "live")
+    recorded = _recorded_companies(live)
+    hints = _series_words(live) | {slug(c) for c in recorded} | set().union(*[_names(c) for c in recorded])
+    return sorted({lb for g in _client_dirs(root, hints).values() for lb in g})
+
+
 def _recorded_companies(live: str) -> List[str]:
     """The other side's companies kept in the project's earlier Meeting Sheets (live/, call folders and their .work/)."""
     out: List[str] = []

@@ -5,6 +5,14 @@ Pacenote. Earlier versions are described in the commit messages and in
 
 ## Unreleased
 
+- **Project memory, step 1: a local evidence store behind a flag (GraphRAG G2 S1, PB-84).** Off by default (feature
+  `evidence_store`), nothing changes for the PM yet. With the flag on, `python -m livetips_m0.evidence` keeps one
+  SQLite file per project in Application Support (never in the project folder): every file, call, note, the
+  commitments register and the Tracker snapshot as dated revisions and snippets with quotes and locators, decisions
+  with stable ids that survive "Add to Notion", the PM's supersede and reject edits, and a search that applies the
+  call's client, hidden calls, revoked documents, deleted files and a replay date before ranking. No model, network
+  or embedding request is added (vectors only from the bundled local server when it runs). LLM extraction, topic
+  summaries and the settings row come in the next steps.
 - **Preparation no longer mixes in another client's facts (PB-70).** When one project folder holds several clients,
   Pacenote first decides whose call it is (the other side's company, else the call's title, matched to the client
   folders of the project, such as `docs/acme` and `docs/globex`; the call's own folder must match a company of this

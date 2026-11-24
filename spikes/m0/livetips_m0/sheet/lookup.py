@@ -138,6 +138,91 @@ def chunks(text: str, width: int = 900) -> List[tuple]:
     return [c for c in out if c[1]]
 
 
+def chunks_at(text: str, universe=(), width: int = 900) -> List[dict]:
+    """PB-52 G2 (S1): chunks with locators for the evidence store, the chunks() size rules with four changes (spec
+    section 5.2): the character and line range of every chunk, the full heading path, headings found as filter_text
+    finds them (client_scope.HEADING on every stripped line) and no cut inside a line. The chunk invariant: a chunk is a
+    run of consecutive non-blank lines with one heading path and one line mark set (the names of `universe` the line
+    carries, client_scope._names); a heading line belongs to its own section with an empty mark set. The size rules
+    only split a run further, at line ends. Variant A keeps chunks() unchanged.
+
+    -> [{"text", "lines": [first, last] (1-based), "chars": [start, end), "path": [[level, title], ...], "heading",
+         "marks": {line number: [names]}}]"""
+    uni = set(universe or ())
+    lines = (text or "").split("\n")
+    starts, pos = [], 0
+    for ln in lines:
+        starts.append(pos)
+        pos += len(ln) + 1
+    out: List[dict] = []
+    path: List[list] = []
+    buf: List[int] = []                 # line indexes of the current chunk
+    cur = {"marks": None, "size": 0}
+
+    def flush():
+        if buf:
+            a, b = buf[0], buf[-1]
+            marks = {}
+            for i in buf:
+                h = CS.HEADING.match(lines[i].strip())
+                found = set() if h else (CS._names(lines[i]) & uni)
+                if found and lines[i].strip():
+                    marks[i + 1] = sorted(found)
+            out.append({"text": text[starts[a]:starts[b] + len(lines[b])], "lines": [a + 1, b + 1],
+                        "chars": [starts[a], starts[b] + len(lines[b])], "path": [list(p) for p in path],
+                        "heading": " > ".join(p[1] for p in path)[:300], "marks": marks})
+        buf.clear()
+        cur.update(marks=None, size=0)
+
+    # paragraphs (consecutive non-blank lines), each cut into pieces at headings and at a change of line mark set
+    pieces: List[tuple] = []            # (kind, [line indexes], mark set, heading match)
+    para_start = True
+    for i, ln in enumerate(lines):
+        s = ln.strip()
+        if not s:
+            para_start = True
+            continue
+        h = CS.HEADING.match(s)
+        if h:
+            pieces.append(("head", [i], frozenset(), h))
+            para_start = True           # the line under a heading opens a new piece
+            continue
+        m = frozenset(CS._names(ln) & uni)
+        if not para_start and pieces and pieces[-1][0] == "body" and pieces[-1][2] == m and pieces[-1][1][-1] == i - 1:
+            pieces[-1][1].append(i)
+        else:
+            pieces.append(("body", [i], m, None))
+        para_start = False
+
+    for kind, idx, m, h in pieces:
+        if kind == "head":
+            flush()
+            level = len(h.group(1))
+            while path and path[-1][0] >= level:
+                path.pop()
+            path.append([level, h.group(2).strip()[:120]])
+            buf.append(idx[0])
+            cur.update(marks=frozenset(), size=len(lines[idx[0]]))
+            continue
+        size = sum(len(lines[i]) + 1 for i in idx)
+        if buf and cur["marks"] != m:
+            flush()
+        elif buf and cur["size"] + size > width:
+            flush()
+        if size > width * 2:            # one huge run: split at line ends, never inside a line
+            for i in idx:
+                n = len(lines[i]) + 1
+                if buf and cur["size"] + n > width:
+                    flush()
+                buf.append(i)
+                cur.update(marks=m, size=cur["size"] + n)
+            continue
+        buf.extend(idx)
+        cur.update(marks=m, size=cur["size"] + size)
+    flush()
+    return out
+
+
 def _read(path: Path, max_bytes: int) -> str:
     try:
         if path.stat().st_size > max_bytes:

@@ -94,6 +94,44 @@ def scope_match(a: dict, b: dict) -> str:
     return "suggest" if sa and sa == sb else ""
 
 
+# ---------------------------------------------------------------- decisions and risks (PB-52 G2, S1)
+
+def _sha10(raw: str) -> str:
+    import hashlib
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:10]
+
+
+def call_stem(call: str) -> str:
+    """The call file's stem: the base name without folders, the call file suffixes and the app's .app part
+    (call_layout.migrate keeps names, so the stem survives a move into a call folder)."""
+    n = os.path.basename(str(call or ""))
+    for suf in (".notion.json", ".notes.md", ".brief.md", ".sheet.md", ".sheet.json", ".md"):
+        if n.endswith(suf):
+            n = n[: -len(suf)]
+            break
+    return n[:-4] if n.endswith(".app") else n
+
+
+def item_id(kind: str, call: str, text: str) -> str:
+    """d- (decision) or r- (risk) id of an item of a call: sha1(call stem | notion_links.norm(text)), the dedupe key
+    of rules/decisions.yaml that notion_links.put writes into <stem>.notion.json. It never changes once minted: it
+    does not depend on whether the item was sent to Notion."""
+    from .notion_links import norm
+    return "{}-{}".format("r" if kind.startswith("r") else "d", _sha10("{}|{}".format(call_stem(call), norm(text))))
+
+
+def register_decision_id(date: str, title: str) -> str:
+    """d- id of a pacenote/decisions.md line (date, title; no page id and no call file). Joining it to a call's d- id
+    is a same_as suggestion only."""
+    from .notion_links import norm
+    return "d-" + _sha10("decisions.md|{}|{}".format((date or "").strip(), norm(title)))
+
+
+def notion_alias(page_id: str) -> str:
+    """notion:<page id> without dashes, lower case (as tracker_id writes it)."""
+    return "notion:" + str(page_id or "").replace("-", "").strip().lower()
+
+
 # ---------------------------------------------------------------- people
 
 def voices_path() -> str:

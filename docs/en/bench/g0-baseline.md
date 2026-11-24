@@ -91,6 +91,24 @@ The two changes add up without moving each other's numbers: the fixture's older 
 the after-call columns are G1's, and the preparation and live columns are PB-70's. Item 13 cross-client stays 4 for
 the reason given above.
 
+## G2 S1: the evidence store behind the flag (2026-11-24)
+
+The store of PB-52 (sub-task S1, `livetips_m0/evidence/`, flag `evidence_store`, off by default) is not on the
+variant A path, so A's columns are unchanged (`results/A-2026-11-24.json` equals `A-2026-11-23-g1-pb70.json` apart
+from the date, commit, label and run time; lookup p50 1.67 ms, p95 2.44 ms on this run). Variants B and C come with S2.
+Measured on the same 10 KB fixture by the S1 tests and one ingest:
+
+| What | Value |
+|---|---:|
+| Deterministic ingest of the fixture (22 sources) | 0.06 s |
+| Snippets: `lookup.chunks` (A) / `lookup.chunks_at` (store) | 30 / 84 |
+| Non-blank lines in runs that name a folder of the label universe | 13.7% |
+| `search(mode="live")` p95, Acme scope / Globex scope (10 questions, 5 times) | 1.7 ms / 1.9 ms |
+| Leaks in the store tests (other client, excluded, hidden call, revoked, deleted-only, future) | 0 |
+
+`chunks_at` cuts more snippets than `chunks` because a line that names a client or topic folder gets its own snippet
+(the chunk invariant of the spec, section 5.2); this is the price of line-exact client access.
+
 ## What is measured
 
 Each target call is replayed on a clean copy of the fixture project, with every file dated by the date in its name
