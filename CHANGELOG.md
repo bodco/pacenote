@@ -5,6 +5,21 @@ Pacenote. Earlier versions are described in the commit messages and in
 
 ## Unreleased
 
+- **Project memory, step 3b: which AI reads the sources and how much it may spend (GraphRAG G2 S3b, PB-103).**
+  Nothing changes for the PM: the evidence store stays behind the flag `evidence_store` (off by default), no setting
+  is shown and no AI is asked while the flag is off. With the flag on, indexing is its own AI job (`evidence`): the
+  cheapest model of the chosen AI reads the sources (Claude Haiku, GPT-6 Luna, Gemini 3.5 Flash-Lite, the Codex
+  default, Claude Code's smallest model or the model on this Mac) and the after-call model will write topic summaries,
+  as the owner decided on 24.11; the models are listed in `rules/ai.yaml`. When that AI is not connected, out or at its
+  monthly limit, indexing moves only to the model on this Mac, never to another cloud AI. A cut answer from OpenAI or
+  Gemini is now paid once (the second, longer request those providers make for other jobs is off for indexing) and is
+  split into smaller parts instead; the model on this Mac gets exactly the 2,000-token limit and says when it cut an
+  answer. Every pass stops before the request that could cross the per-pass, per-project-day or all-projects-day
+  ceiling (dollars, percent of a plan's 5-hour limit, or minutes on this Mac), pauses when a call starts and stops a
+  request in flight within 2 seconds. An opt-in setting goes on with the model on this Mac at a ceiling (off by
+  default); a missing local model stops the pass with "off". `run.py --extract <route>` now also records precision,
+  recall and the multi-step and paraphrase answer rates of a real AI's extraction next to its size and cost; it has
+  not been run on a real AI yet, so the estimates still use the assumed 500 output tokens and 2,000-token catalog.
 - **Project memory, step 3a: how an AI will read the project's sources, tested offline (GraphRAG G2 S3a, PB-86).**
   Nothing changes for the PM: the evidence store stays behind the flag `evidence_store` (off by default), no setting
   is shown and no AI is asked yet. This step adds the extraction rules (`rules/evidence.yaml`, the output schema and

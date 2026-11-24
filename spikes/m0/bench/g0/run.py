@@ -83,9 +83,10 @@ READY = {"S2"}          # the sub-tasks whose code C has: S3 adds "S3" with the 
 MANIFEST = EXTRACT / "manifest.json"    # the recorded extraction fixture: gold sha256, route, model, calibration
 
 
-def ready_set() -> set:
+def ready_set(fixture_dir: Optional[Path] = None) -> set:
     """S3 counts as ready for C only with a recorded extraction fixture (raw model output, recorded by --extract)."""
-    return READY | ({"S3"} if MANIFEST.is_file() else set())
+    m = (fixture_dir / "manifest.json") if fixture_dir else MANIFEST
+    return READY | ({"S3"} if m.is_file() else set())
 SETS = ("small", "scale")
 SEED = 52               # the scale set's noise generator
 VARIANTS = ("A", "B", "C")
@@ -804,6 +805,7 @@ def replay_fixture(ctx: dict, fixture_dir: Path, small: bool) -> dict:
     rules = EX.load_rules()
     labels = EX.project_labels(str(ctx["root"]))
     hits = misses = tokens = 0
+    kept = dropped = 0
     extractors = set()
     for r in st.q("SELECT rv.id FROM revision rv JOIN source s ON s.id=rv.source_id WHERE rv.extract_state='pending'"
                   " ORDER BY rv.id"):
@@ -835,11 +837,13 @@ def replay_fixture(ctx: dict, fixture_dir: Path, small: bool) -> dict:
                     parts.append(obj1)
                 obj = W.rebase(EX.merge(parts) if len(parts) > 1 else parts[0], {"snippets": [{"lines": (shift, 0)}]}, +1)
                 cat = EX.catalog(st, view, str(ctx["root"]), labels, int(rules.get("catalog_max", 60)))
-                items, _c = EX.validate(st, view, obj, rules, cat, str(ctx["root"]), labels)
+                items, c = EX.validate(st, view, obj, rules, cat, str(ctx["root"]), labels)
+                kept, dropped = kept + int(c["kept"]), dropped + int(c["dropped"])
                 ES.apply_extraction(st, r["id"], items, mark_done=False)
             else:
                 ES.apply_extraction(st, r["id"], data.get("items") or {})
-    out = {"recorded": recorded, "hits": hits, "misses": misses, "tokens": tokens, "extractors": sorted(extractors)}
+    out = {"recorded": recorded, "hits": hits, "misses": misses, "tokens": tokens, "extractors": sorted(extractors),
+           "items_kept": kept, "items_dropped": dropped}       # PB-103: the validator's share kept (--extract precision)
     out["state"] = "not_recorded" if not recorded else ("stale" if misses else "ok")
     if recorded and misses and small:
         raise SystemExit("G0 C: fixture stale: {} segments of the small set have no fixture file for their seg_hash "
@@ -1081,15 +1085,16 @@ def derived_confirmed(ctx: dict, items: List[dict]) -> List[int]:
 
 # ---------------------------------------------------------------- gold v2: one set, one vector mode
 
-def evaluate_v2(v, ctx: dict, gold2: dict, set_name: str, embedder=None) -> dict:
-    fixture = replay_fixture(ctx, EXTRACT, set_name == "small") if v.name == "C" else None
+def evaluate_v2(v, ctx: dict, gold2: dict, set_name: str, embedder=None, fixture_dir: Optional[Path] = None) -> dict:
+    fixture = replay_fixture(ctx, fixture_dir or EXTRACT, set_name == "small") if v.name == "C" else None
+    ready = ready_set(fixture_dir)
     if embedder is not None and not ctx["store"].one("SELECT 1 FROM snippet WHERE vec IS NOT NULL"):
         raise SystemExit("G0 {}: the run with vectors stored no snippet vector (the embed server answered nothing)"
                          .format(v.name))
     rows = []
     top = int(gold2.get("top", 6))
     for row in gold2["rows"]:
-        if v.name == "C" and row["needs"] not in ready_set():
+        if v.name == "C" and row["needs"] not in ready:
             rows.append({"id": row["id"], "kind": row["kind"], "needs": row["needs"], "status": "not_evaluated",
                          "missing": "{} ({})".format(row["needs"], {"S3": "LLM extraction", "S4": "topic summaries"}[row["needs"]]),
                          "expected": row["expected"]["C"]})
@@ -1611,17 +1616,52 @@ def record_extract(route: str, gold_path: Path = GOLD, gold2_path: Path = GOLD2,
             encoding="utf-8")
     sent = sum(int(r.get("requests") or 0) for r in runs)
     outs = sum(int(r.get("out_tokens") or 0) for r in runs)
-    cal = {"segments_recorded": len(rec.answers), "requests": sent,
+    pcts = [max(0.0, float(r["pct_after"]) - float(r["pct_before"])) for r in runs
+            if r.get("pct_after") is not None and r.get("pct_before") is not None]
+    cal = {"measured": True, "segments_recorded": len(rec.answers), "requests": sent,
            "out_tokens_per_segment": round(outs / len(rec.answers), 1) if rec.answers else None,
            "catalog_tokens_per_request": round(sum(float(r.get("catalog_tokens") or 0) for r in runs) / sent, 1) if sent else None,
            "segments_per_document": cost["segments_per_document"],
            "usd": round(sum(float(r.get("usd") or 0) for r in runs), 4),
+           "pct_of_5h_window": round(sum(pcts), 2) if pcts else None,
+           "seconds": round(sum(float(r.get("seconds") or 0) for r in runs), 1),
            "statuses": sorted({r["status"] for r in runs})}
     manifest = {"gold_sha256": hashlib.sha256(Path(gold2_path).read_bytes()).hexdigest(), "route": route,
                 "model": runs[0]["model"] if runs else "", "extractor": ex, "recorded_at": dt.datetime.now().isoformat(
                     timespec="seconds"), "calibration": cal}
     (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=1) + "\n", encoding="utf-8")
+    cal.update(extract_quality(out_dir, gold, gold2, Path(gold2_path)))     # recorded, not gated (spec section 17 S3)
+    (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=1) + "\n", encoding="utf-8")
     return manifest
+
+
+def extract_quality(fixture_dir: Path, gold: dict, gold2: dict, gold2_path: Path) -> dict:
+    """--extract calibration of quality: C on the small set (no vectors) replaying `fixture_dir`. precision = items the
+    validator kept / items the model returned (a quote that is not verbatim at its lines, an unknown enum, another
+    client's quote or a link without a word of both ends is dropped); recall = gold v2 facts found / gold facts over
+    the rows C evaluates; hop and paraphrase answer rates as in the results JSON. Recorded, not gated."""
+    EVIDENCE_ROWS.clear()
+    EVIDENCE_ROWS.update(r["id"] for r in gold2["rows"] if r.get("evidence"))
+    SHARED_ROWS.clear()
+    SHARED_ROWS.update(r["id"] for r in gold2["rows"] if r.get("shared"))
+    with tempfile.TemporaryDirectory(prefix="g0-extract-q-") as tmp, store_env(Path(tmp)):
+        ctx = build_v2(Path(tmp) / "q", gold, gold2, False, None)
+        ctx["gold_sha256"] = hashlib.sha256(gold2_path.read_bytes()).hexdigest()
+        try:
+            r = evaluate_v2(variant("C"), ctx, gold2, "small", None, fixture_dir=fixture_dir)
+        finally:
+            ctx["store"].close()
+    fx = r["fixture"] or {}
+    returned = int(fx.get("items_kept") or 0) + int(fx.get("items_dropped") or 0)
+    ev = [x for x in r["rows"] if x["status"] != "not_evaluated"]
+    found = sum(1 for x in ev for f in x.get("facts") or [] if f["found"])
+    facts = sum(len(x.get("facts") or []) for x in ev)
+    return {"precision": pct(int(fx.get("items_kept") or 0), returned), "items_returned": returned,
+            "recall": pct(found, facts), "facts_asked": facts,
+            "hop_answer_rate": r["hop_answer_rate"], "paraphrase_answer_rate": r["paraphrase_answer_rate"],
+            "rows_passed": r["rows_passed"], "rows_evaluated": r["rows_evaluated"],
+            "definitions": {"precision": "items the validator kept / items the model returned (not against gold)",
+                            "recall": "gold v2 facts found / gold facts over the rows C evaluates, small set, no vectors"}}
 
 
 def main(argv=None) -> int:

@@ -681,7 +681,8 @@ def test_route_with_no_cached_tokens_is_estimated_without_cache(env):
 
 
 def test_models_without_the_map_fall_back_to_routing(env):
-    """S3a: rules/ai.yaml has no evidence map yet (PB-103 S3b adds it); the worker uses routing.PING_MODEL."""
+    """The extract models of rules/ai.yaml > evidence (PB-103) equal routing.PING_MODEL on these routes; the fallback
+    without the map is tested in test_evidence_routing_pb52_s3b."""
     assert W.models("openai")["extract"] == R.PING_MODEL["openai"]
     assert W.models("api")["extract"] == R.PING_MODEL["api"]
 

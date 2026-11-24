@@ -37,7 +37,9 @@ from typing import Callable, Dict, Optional
 from .providers import AnthropicProvider, Completion, Provider, gist_closed, user_text
 
 ROUTES = ("api", "code", "local", "openai", "codex", "gemini")   # 0.8.5: "local" = a model on this Mac (rules/ai.yaml)
-JOBS = ("prep", "tips", "after")
+# PB-103 (GraphRAG G2 S3b, behind the flag evidence_store): "evidence" is the project memory's extraction job; its
+# chain steps only to the model on this Mac, never to another cloud AI (rules/ai.yaml > chain, evidence)
+JOBS = ("prep", "tips", "after", "evidence")
 # 0.10.0 (AI chain, owner 12.11): an AI out without a known reset time is checked again every 15 minutes
 PROBE_EVERY_S = 900
 # 0.10.0 (AI chain, owner 12.11): one fallback chain for every job (LiveTipsCore/AIChain.swift, rules/ai.yaml > chain):
@@ -95,7 +97,10 @@ def cc_model(model: str) -> str:
 
 
 def chain_allowed(route: str, job: str) -> bool:
-    """0.10.0 (AI chain): live tips never run on the model on this Mac (19-59 s)."""
+    """0.10.0 (AI chain): live tips never run on the model on this Mac (19-59 s). PB-103: the evidence job steps
+    only to the model on this Mac (the chosen AI still goes first)."""
+    if job == "evidence":
+        return route == "local"
     return not (job == "tips" and route == "local")
 
 

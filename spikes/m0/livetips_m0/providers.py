@@ -340,8 +340,11 @@ class OllamaProvider(Provider):
     def complete(self, *, model, system, user, max_tokens, cache_ttl, on_text=None, extra=None):
         c = Completion(model=model, t_start=time.monotonic())
         ensure_ollama(self.base_url)       # 0.8.6: starts Ollama when it is not running
+        # PB-103 (evidence job, spec 8.6): extra num_predict is the exact output cap; other jobs keep twice the limit
+        exact = int((extra or {}).get("num_predict") or 0)
+        cap = exact or max(256, int(max_tokens) * 2)
         body = {"model": model, "stream": True, "keep_alive": "5m", "think": False,   # Gemma 4 thinks by default
-                "options": {"num_ctx": self.num_ctx, "num_predict": max(256, int(max_tokens) * 2), "temperature": 0.2},
+                "options": {"num_ctx": self.num_ctx, "num_predict": cap, "temperature": 0.2},
                 "messages": [{"role": "system", "content": "\n\n".join(b["text"] for b in system)},
                              {"role": "user", "content": user_text(user)}]}
         req = urllib.request.Request(self.base_url + "/api/chat", data=json.dumps(body).encode(),
@@ -358,6 +361,10 @@ class OllamaProvider(Provider):
                     if piece:
                         take_piece(c, piece, on_text)
                     if ev.get("done"):
+                        if exact and ev.get("done_reason"):           # evidence job only: other jobs unchanged
+                            c.stop_reason = str(ev["done_reason"])     # "length": cut at num_predict
+                            if c.stop_reason == "length":
+                                c.incomplete = "max_output_tokens"
                         c.input_tokens = int(ev.get("prompt_eval_count") or 0)
                         c.output_tokens = int(ev.get("eval_count") or 0)
             c.t_done = time.monotonic()

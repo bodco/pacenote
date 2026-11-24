@@ -6,7 +6,8 @@
     ingest    deterministic pass: --hidden-calls, --revoked, --web-dirs, --tracker, --valid-from (tests and the bench
               only), --quiet-seconds, --no-embed
     pass      ingest, then LLM extraction of the pending revisions on the evidence route (S3): --route, --model,
-              --settings-json (ceilings, poll_s), --no-extract (the switch "Use AI to read sources" off)
+              --settings-json (ceilings, poll_s, local_overflow: go on with the model on this Mac at a ceiling,
+              off by default), --no-extract (the switch "Use AI to read sources" off)
     estimate  the pending segments and the cost of extracting them on --route, typical to cap
     exclude   the state-only pass: --hidden-calls and/or --revoked (full current lists), --request-id
     override  one pm_override row: --target --key --field --value --at --via, --request-id (any field is stored;
