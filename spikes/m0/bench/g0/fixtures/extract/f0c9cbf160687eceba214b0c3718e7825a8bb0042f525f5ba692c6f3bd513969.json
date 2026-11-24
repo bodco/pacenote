@@ -1,0 +1,11 @@
+{
+ "seg_hash": "f0c9cbf160687eceba214b0c3718e7825a8bb0042f525f5ba692c6f3bd513969",
+ "extractor": "g2-s3-1:b7b1324472",
+ "route": "authored",
+ "base_line": 1,
+ "answers": [
+  "{\"entities\": [\n{\"ref\": \"n1\", \"type\": \"date_event\", \"name\": \"Acme go-live rehearsal\", \"aliases\": [\"go-live rehearsal\", \"rehearsal\"], \"quote\": \"Go-live rehearsal: December 3, with Emily.\", \"lines\": [3, 3]},\n{\"ref\": \"n2\", \"known_id\": \"e-8cbd02b69e\", \"type\": \"date_event\", \"name\": \"Acme go-live\", \"aliases\": [\"go-live\"], \"quote\": \"Go-live: December 8.\", \"lines\": [4, 4]},\n{\"ref\": \"n3\", \"type\": \"topic\", \"name\": \"Acme rollback window\", \"aliases\": [\"rollback window\"], \"quote\": \"Rollback window: 48 hours after go-live.\", \"lines\": [5, 5]},\n{\"ref\": \"n4\", \"type\": \"person\", \"name\": \"Emily\", \"aliases\": [], \"quote\": \"Emily\", \"lines\": [3, 3]},\n{\"ref\": \"n5\", \"type\": \"document\", \"name\": \"Acme release plan\", \"aliases\": [\"release plan\"], \"quote\": \"# Acme release plan\", \"lines\": [1, 1]}\n],\n\"claims\": [\n{\"subject\": \"n1\", \"predicate\": \"due\", \"value\": \"December 3\", \"modality\": \"statement\", \"said_by\": null, \"due\": \"December 3\", \"quote\": \"Go-live rehearsal: December 3, with Emily.\", \"lines\": [3, 3], \"confidence\": 0.9},\n{\"subject\": \"e-8cbd02b69e\", \"predicate\": \"due\", \"value\": \"December 8\", \"modality\": \"statement\", \"said_by\": null, \"due\": \"December 8\", \"quote\": \"Go-live: December 8.\", \"lines\": [4, 4], \"confidence\": 0.9},\n{\"subject\": \"n3\", \"predicate\": \"value\", \"value\": \"48 hours after go-live\", \"modality\": \"statement\", \"said_by\": null, \"due\": null, \"quote\": \"Rollback window: 48 hours after go-live.\", \"lines\": [5, 5], \"confidence\": 0.9}\n],\n\"relations\": []}\n"
+ ],
+ "in_tokens": 0,
+ "out_tokens": 0
+}

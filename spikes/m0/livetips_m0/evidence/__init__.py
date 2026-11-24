@@ -2,13 +2,18 @@
 
 Behind the flag `evidence_store` (config `features`, off by default; LT_EVIDENCE=1 for tests). Nothing in the app
 imports this package while the flag is off. One SQLite file per project under <support>/evidence/<uid>.sqlite, never
-inside the project folder. Nothing leaves the Mac: ingest reads the project folder and the lists the app passes,
-vectors come from the bundled loopback embed server or stay NULL.
+inside the project folder. Ingest reads the project folder and the lists the app passes, vectors come from the
+bundled loopback embed server or stay NULL. Only `pass --route <route>` (S3) sends text out: segments of the project's
+sources to the AI the PM chose for the evidence job, or to the model on this Mac.
 
-    store.py   schema, open, locks, the state-request log, apply_extraction
-    ingest.py  deterministic ingest per source type, change detection with moves, the state-only pass
-    search.py  search and entity_card with access and time applied in SQL before ranking
-    __main__   the CLI: python -m livetips_m0.evidence status|ingest|pass|exclude|override|search|card|rebuild|delete
+    store.py    schema, open, locks, the state-request log, apply_extraction
+    ingest.py   deterministic ingest per source type, change detection with moves, the state-only pass
+    search.py   search and entity_card with access and time applied in SQL before ranking
+    extract.py  S3: prompt, catalog, validator, cut detection (pure)
+    worker.py   S3: the extraction pass, segment cache, ceilings, the call-active abort, estimate
+    request.py  S3: one model request in its own process group
+    __main__    the CLI: python -m livetips_m0.evidence status|ingest|pass|estimate|exclude|override|search|card|
+                rebuild|vacuum|delete
 """
 import json
 import os

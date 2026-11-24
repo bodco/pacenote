@@ -1,0 +1,11 @@
+{
+ "seg_hash": "b7e75e21bd1d20ec964461801bb24c8d833583a31d741bff28b9afd25b562068",
+ "extractor": "g2-s3-1:b7b1324472",
+ "route": "authored",
+ "base_line": 1,
+ "answers": [
+  "{\"entities\": [\n{\"ref\": \"n1\", \"type\": \"system\", \"name\": \"Globex ledger feed\", \"aliases\": [\"ledger feed\", \"the ledger feed\"], \"quote\": \"The ledger feed is paused\", \"lines\": [5, 5]},\n{\"ref\": \"n2\", \"type\": \"document\", \"name\": \"Globex data agreement\", \"aliases\": [\"data agreement\", \"the data agreement\"], \"quote\": \"the data agreement is signed\", \"lines\": [5, 5]}\n],\n\"claims\": [\n{\"subject\": \"n1\", \"predicate\": \"status\", \"value\": \"paused until the data agreement is signed\", \"modality\": \"statement\", \"said_by\": null, \"due\": null, \"quote\": \"The ledger feed is paused until the data agreement is signed.\", \"lines\": [5, 5], \"confidence\": 0.9},\n{\"subject\": \"n2\", \"predicate\": \"status\", \"value\": \"not signed\", \"modality\": \"statement\", \"said_by\": null, \"due\": null, \"quote\": \"until the data agreement is signed\", \"lines\": [5, 5], \"confidence\": 0.7}\n],\n\"relations\": [\n{\"from\": \"n1\", \"rel\": \"waiting_on\", \"to\": \"n2\", \"modality\": \"statement\", \"quote\": \"The ledger feed is paused until the data agreement is signed.\", \"lines\": [5, 5], \"confidence\": 0.9}\n]}\n"
+ ],
+ "in_tokens": 0,
+ "out_tokens": 0
+}

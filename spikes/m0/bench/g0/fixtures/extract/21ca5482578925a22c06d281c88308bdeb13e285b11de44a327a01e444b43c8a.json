@@ -1,0 +1,11 @@
+{
+ "seg_hash": "21ca5482578925a22c06d281c88308bdeb13e285b11de44a327a01e444b43c8a",
+ "extractor": "g2-s3-1:b7b1324472",
+ "route": "authored",
+ "base_line": 9,
+ "answers": [
+  "{\"entities\": [\n{\"ref\": \"n1\", \"known_id\": \"e-c38f9190fc\", \"type\": \"person\", \"name\": \"David\", \"aliases\": [], \"quote\": \"Northpoint owner: David.\", \"lines\": [10, 10]}\n],\n\"claims\": [\n{\"subject\": \"e-c38f9190fc\", \"predicate\": \"value\", \"value\": \"Northpoint owner\", \"modality\": \"statement\", \"said_by\": null, \"due\": null, \"quote\": \"Northpoint owner: David.\", \"lines\": [10, 10], \"confidence\": 0.7}\n],\n\"relations\": []}\n"
+ ],
+ "in_tokens": 0,
+ "out_tokens": 0
+}

@@ -1,0 +1,11 @@
+{
+ "seg_hash": "230174e855cebeaebcd95716f5a4dfe4ee434ceea1827bd88607fab866d6aa6d",
+ "extractor": "g2-s3-1:b7b1324472",
+ "route": "authored",
+ "base_line": 1,
+ "answers": [
+  "{\"entities\": [\n{\"ref\": \"n1\", \"type\": \"document\", \"name\": \"Globex change request\", \"aliases\": [\"change request\", \"change request draft\"], \"quote\": \"# Globex change request (draft)\", \"lines\": [1, 1]},\n{\"ref\": \"n2\", \"type\": \"task\", \"name\": \"Globex PDF export\", \"aliases\": [\"PDF export\", \"the PDF export\"], \"quote\": \"the PDF export\", \"lines\": [3, 3]}\n],\n\"claims\": [\n{\"subject\": \"n2\", \"predicate\": \"value\", \"value\": \"39 extra hours proposed\", \"modality\": \"proposal\", \"said_by\": null, \"due\": null, \"quote\": \"Northpoint proposed 39 extra hours for the PDF export; Globex has not agreed yet.\", \"lines\": [3, 3], \"confidence\": 0.9},\n{\"subject\": \"n1\", \"predicate\": \"status\", \"value\": \"draft, not agreed by Globex\", \"modality\": \"statement\", \"said_by\": null, \"due\": null, \"quote\": \"Globex has not agreed yet.\", \"lines\": [3, 3], \"confidence\": 0.85}\n],\n\"relations\": []}\n"
+ ],
+ "in_tokens": 0,
+ "out_tokens": 0
+}

@@ -1,0 +1,11 @@
+{
+ "seg_hash": "7b4da6b1b69a27c18c9e6ab3e4502fa21c2760de22832a11fb2cc701214689c5",
+ "extractor": "g2-s3-1:b7b1324472",
+ "route": "authored",
+ "base_line": 3,
+ "answers": [
+  "{\"entities\": [\n{\"ref\": \"n1\", \"known_id\": \"e-93a5a7a389\", \"type\": \"topic\", \"name\": \"Acme phase two budget\", \"aliases\": [\"phase two\"], \"quote\": \"Phase two\", \"lines\": [4, 4]},\n{\"ref\": \"n2\", \"type\": \"system\", \"name\": \"Acme billing portal\", \"aliases\": [\"billing portal\", \"the billing portal\"], \"quote\": \"the billing portal\", \"lines\": [4, 4]}\n],\n\"claims\": [\n{\"subject\": \"e-93a5a7a389\", \"predicate\": \"value\", \"value\": \"phase two adds the billing portal\", \"modality\": \"statement\", \"said_by\": null, \"due\": null, \"quote\": \"Phase two adds the billing portal.\", \"lines\": [4, 4], \"confidence\": 0.8}\n],\n\"relations\": []}\n"
+ ],
+ "in_tokens": 0,
+ "out_tokens": 0
+}

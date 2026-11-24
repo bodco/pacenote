@@ -1,0 +1,11 @@
+{
+ "seg_hash": "c9f02e52506a572a7863c15b8079ba0a0d64e593ab4b021789bd675fb06fe9d8",
+ "extractor": "g2-s3-1:b7b1324472",
+ "route": "authored",
+ "base_line": 1,
+ "answers": [
+  "{\"entities\": [\n{\"ref\": \"n1\", \"known_id\": \"c-2b2d6ef4aa\", \"type\": \"task\", \"name\": \"send Mike a short risk list every Monday\", \"aliases\": [\"weekly risk list\"], \"quote\": \"David sends Mike a short risk list every Monday.\", \"lines\": [3, 3]},\n{\"ref\": \"n2\", \"known_id\": \"e-c38f9190fc\", \"type\": \"person\", \"name\": \"David\", \"aliases\": [], \"quote\": \"David\", \"lines\": [3, 3]},\n{\"ref\": \"n3\", \"known_id\": \"e-3a38c11061\", \"type\": \"person\", \"name\": \"Mike\", \"aliases\": [], \"quote\": \"Mike\", \"lines\": [3, 3]}\n],\n\"claims\": [\n{\"subject\": \"c-2b2d6ef4aa\", \"predicate\": \"owner\", \"value\": \"David\", \"modality\": \"statement\", \"said_by\": null, \"due\": null, \"quote\": \"David sends Mike a short risk list every Monday.\", \"lines\": [3, 3], \"confidence\": 0.85},\n{\"subject\": \"c-2b2d6ef4aa\", \"predicate\": \"due\", \"value\": \"every Monday\", \"modality\": \"statement\", \"said_by\": null, \"due\": \"every Monday\", \"quote\": \"David sends Mike a short risk list every Monday.\", \"lines\": [3, 3], \"confidence\": 0.8}\n],\n\"relations\": []}\n"
+ ],
+ "in_tokens": 0,
+ "out_tokens": 0
+}

@@ -1,0 +1,11 @@
+{
+ "seg_hash": "9f500a632e1fd03a346b26661842fae1e983a692b50776e0d840b1e661ca24fc",
+ "extractor": "g2-s3-1:b7b1324472",
+ "route": "authored",
+ "base_line": 1,
+ "answers": [
+  "{\"entities\": [\n{\"ref\": \"n1\", \"known_id\": \"e-ccce516fac\", \"type\": \"person\", \"name\": \"Rachel\", \"aliases\": [\"Rachel Moore\"], \"quote\": \"Rachel Moore\", \"lines\": [3, 3]},\n{\"ref\": \"n2\", \"known_id\": \"e-d299d832a2\", \"type\": \"topic\", \"name\": \"Acme escalations\", \"aliases\": [\"escalations\"], \"quote\": \"Escalations go to Rachel Moore.\", \"lines\": [3, 3]}\n],\n\"claims\": [\n{\"subject\": \"e-d299d832a2\", \"predicate\": \"owner\", \"value\": \"Rachel Moore\", \"modality\": \"statement\", \"said_by\": null, \"due\": null, \"quote\": \"Escalations go to Rachel Moore.\", \"lines\": [3, 3], \"confidence\": 0.8}\n],\n\"relations\": []}\n"
+ ],
+ "in_tokens": 0,
+ "out_tokens": 0
+}

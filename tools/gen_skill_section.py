@@ -28,6 +28,8 @@ OUT_SALES = RULES / "generated" / "skill_sales.md"
 SALES_HEAD = "### Sales mode and CRM"
 OUT_DEC = RULES / "generated" / "skill_decisions.md"
 DEC_HEAD = "### Decision register"
+OUT_EVI = RULES / "generated" / "skill_evidence.md"
+EVI_HEAD = "### Evidence extraction (project memory)"
 
 
 def render(rules_dir: Path = RULES) -> str:
@@ -139,6 +141,29 @@ def render_decisions(rules_dir: Path = RULES) -> str:
     return "\n".join(out) + "\n"
 
 
+def render_evidence(rules_dir: Path = RULES) -> str:
+    """PB-52 G2 S3: the extraction contract of the evidence store (rules/evidence.yaml), so the skill extracts with the
+    same rules when it writes notes. Behind the flag evidence_store."""
+    ev = yaml.safe_load((rules_dir / "evidence.yaml").read_text(encoding="utf-8"))
+    out = ["Generated from `rules/evidence.yaml` and `rules/evidence_schema.json`; do not edit here. Only with the flag "
+           "`evidence_store` on.", ""]
+    out.append("**Rules** (`{}`):".format(ev["rules_version"]))
+    out += ["- " + ln.strip().split(". ", 1)[-1] for ln in ev["prompt"].strip().split("\n")[1:] if ln.strip()]
+    out.append("- Entity types: " + ", ".join("`{}`".format(t) for t in ev["types"]) + ".")
+    out.append("- Relations: " + ", ".join("`{}`".format(t) for t in ev["relations"]) + " (`supersedes` only by the PM).")
+    out.append("- Claim predicates: " + ", ".join("`{}`".format(t) for t in ev["predicates"]) + ".")
+    for k, v in ev["modality"].items():
+        out.append("- Modality `{}`: {}".format(k, v))
+    out.append("- A hedge word anywhere in a quote turns `confirmation` into `proposal`; notes, briefs and other derived "
+               "sources never confirm (`statement`).")
+    caps = ev["caps"]
+    out.append("- At most {} entities, {} claims and {} relations per part; quotes at most {} characters; confidence "
+               "under {} is a suggestion.".format(caps["entities"], caps["claims"], caps["relations"],
+                                                 ev["thresholds"]["quote_chars"], ev["thresholds"]["confidence"]))
+    out.append("- Output: JSON with `entities`, `claims` and `relations` (`rules/evidence_schema.json`).")
+    return "\n".join(out) + "\n"
+
+
 def extract_section(skill_md: str, head: str) -> str:
     """The body of the SKILL.md section `head` up to the next heading, blank lines at the ends removed."""
     lines = skill_md.split("\n")
@@ -175,9 +200,9 @@ def compare(path: Path, text: str, sections) -> int:
     return bad
 
 
-def outputs(text, reg, after, sales=None, dec=None):
+def outputs(text, reg, after, sales=None, dec=None, evi=None):
     return ((OUT, text), (OUT_REG, reg), (OUT_AFTER, after)) + (((OUT_SALES, sales),) if sales is not None else ()) \
-        + (((OUT_DEC, dec),) if dec is not None else ())
+        + (((OUT_DEC, dec),) if dec is not None else ()) + (((OUT_EVI, evi),) if evi is not None else ())
 
 
 def check(files) -> int:
@@ -204,9 +229,12 @@ def main(argv=None) -> int:
     a = ap.parse_args(argv)
     text, reg, after, sales = render(RULES), render_register(RULES), render_after(RULES), render_sales(RULES)
     dec = render_decisions(RULES)
+    evi = render_evidence(RULES)
     if a.compare:
-        return compare(a.compare, text, ((REG_HEAD, reg), (AFTER_HEAD, after), (SALES_HEAD, sales), (DEC_HEAD, dec)))
-    return check(outputs(text, reg, after, sales, dec)) if a.check else write(outputs(text, reg, after, sales, dec))
+        return compare(a.compare, text, ((REG_HEAD, reg), (AFTER_HEAD, after), (SALES_HEAD, sales), (DEC_HEAD, dec),
+                                         (EVI_HEAD, evi)))
+    files = outputs(text, reg, after, sales, dec, evi)
+    return check(files) if a.check else write(files)
 
 
 if __name__ == "__main__":

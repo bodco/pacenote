@@ -60,7 +60,9 @@ from livetips_m0 import call_layout as CL  # noqa: E402
 from livetips_m0 import client_scope as CS  # noqa: E402
 from livetips_m0 import commitments as CM  # noqa: E402
 from livetips_m0.evidence import __main__ as ECLI  # noqa: E402
+from livetips_m0.evidence import extract as EX  # noqa: E402
 from livetips_m0.evidence import ingest as IG  # noqa: E402
+from livetips_m0.evidence import worker as W  # noqa: E402
 from livetips_m0.evidence import search as SE  # noqa: E402
 from livetips_m0.evidence import segments as SG  # noqa: E402
 from livetips_m0.evidence import store as ES  # noqa: E402
@@ -78,6 +80,12 @@ REVISIONS = FIX / "revisions"           # the revision states of section 14.1 an
 EXTRACT = FIX / "extract"               # C's extraction fixture, <seg_hash>.json (recorded in S3)
 V2_DIRS = ("v2", "revisions", "extract")    # outside fixture_sha, so the v1 columns keep their hash
 READY = {"S2"}          # the sub-tasks whose code C has: S3 adds "S3" with the extraction, S4 adds "S4" with topics
+MANIFEST = EXTRACT / "manifest.json"    # the recorded extraction fixture: gold sha256, route, model, calibration
+
+
+def ready_set() -> set:
+    """S3 counts as ready for C only with a recorded extraction fixture (raw model output, recorded by --extract)."""
+    return READY | ({"S3"} if MANIFEST.is_file() else set())
 SETS = ("small", "scale")
 SEED = 52               # the scale set's noise generator
 VARIANTS = ("A", "B", "C")
@@ -695,7 +703,7 @@ def new_segments(ctx: dict) -> int:
     return n
 
 
-def build_v2(base: Path, gold: dict, gold2: dict, scale: bool, embedder=None) -> dict:
+def build_v2(base: Path, gold: dict, gold2: dict, scale: bool, embedder=None, after_pass=None) -> dict:
     """The gold v2 project and its store, pass by pass (gold_v2.yaml header): the base pass, the decision sidecars
     (*.notion.json) in a pass of their own on notes already ingested (spec 14.2 item 4), the revision states in
     time order, the move, the deletions, the supersede override and the state-only pass through the CLI."""
@@ -734,6 +742,8 @@ def build_v2(base: Path, gold: dict, gold2: dict, scale: bool, embedder=None) ->
         rep = IG.ingest(st, str(root), valid_from=valid_from, embedder=embedder, tracker_path=str(tracker), voices={},
                         quiet_s=0)
         ctx["passes"].append(rep)
+        if after_pass is not None:
+            after_pass(ctx)                 # --extract: the recorder extracts each revision state as it is built
         return rep
 
     one_pass()
@@ -781,7 +791,18 @@ def replay_fixture(ctx: dict, fixture_dir: Path, small: bool) -> dict:
     a recorded fixture with a miss on the small set fails the run as "fixture stale" (a chunker, segmenter or client
     label change moved seg_hash). No file at all = not recorded yet (S3 records it): C runs on its deterministic part."""
     st = ctx["store"]
-    recorded = fixture_dir.is_dir() and any(fixture_dir.glob("*.json"))
+    recorded = fixture_dir.is_dir() and any(p.name != "manifest.json" for p in fixture_dir.glob("*.json"))
+    manifest = fixture_dir / "manifest.json"
+    gold_checked = False
+    if recorded and manifest.is_file() and ctx.get("gold_sha256"):
+        gold_checked = True
+        rec_gold = json.loads(manifest.read_text(encoding="utf-8")).get("gold_sha256")
+        if rec_gold != ctx["gold_sha256"]:
+            raise SystemExit("G0 C: gold changed: the extraction fixture was recorded against gold v2 {}..., the current "
+                             "gold is {}...; re-record it (run.py --extract <route>)".format(str(rec_gold)[:12],
+                                                                                            ctx["gold_sha256"][:12]))
+    rules = EX.load_rules()
+    labels = EX.project_labels(str(ctx["root"]))
     hits = misses = tokens = 0
     extractors = set()
     for r in st.q("SELECT rv.id FROM revision rv JOIN source s ON s.id=rv.source_id WHERE rv.extract_state='pending'"
@@ -798,7 +819,26 @@ def replay_fixture(ctx: dict, fixture_dir: Path, small: bool) -> dict:
             data = json.loads(p.read_text(encoding="utf-8"))
             extractors.add(str(data.get("extractor") or ""))
             tokens += int(data.get("out_tokens") or 0)
-            ES.apply_extraction(st, r["id"], data.get("items") or {})
+            if "answers" in data:
+                # S3: raw model output (reviewed by deletion only) through the same validator as the worker
+                if not gold_checked:
+                    raise SystemExit("G0 C: gold unverifiable: the extraction fixture has recorded answers but no "
+                                     "manifest.json with the gold v2 sha256; re-record it (run.py --extract <route>)")
+                view = EX.segment_view(st, r["id"], seg)
+                shift = view["snippets"][0]["lines"][0] - int(data.get("base_line") or 0)
+                parts = []
+                for t in data["answers"]:
+                    obj1, err = EX.parse(t, rules["schema"])
+                    if obj1 is None:
+                        raise SystemExit("G0 C: fixture answer invalid: {} does not parse ({}); re-record it or fix the "
+                                         "answer by deletion".format(p.name, err))
+                    parts.append(obj1)
+                obj = W.rebase(EX.merge(parts) if len(parts) > 1 else parts[0], {"snippets": [{"lines": (shift, 0)}]}, +1)
+                cat = EX.catalog(st, view, str(ctx["root"]), labels, int(rules.get("catalog_max", 60)))
+                items, _c = EX.validate(st, view, obj, rules, cat, str(ctx["root"]), labels)
+                ES.apply_extraction(st, r["id"], items, mark_done=False)
+            else:
+                ES.apply_extraction(st, r["id"], data.get("items") or {})
     out = {"recorded": recorded, "hits": hits, "misses": misses, "tokens": tokens, "extractors": sorted(extractors)}
     out["state"] = "not_recorded" if not recorded else ("stale" if misses else "ok")
     if recorded and misses and small:
@@ -857,22 +897,32 @@ def own_entities(st, items: List[dict], as_of: Optional[str], fold) -> List[dict
 
 
 def hop_items(st, ents: List[dict], scope, as_of, exclude, k: int, hops: int = 2) -> List[dict]:
-    """C's graph step: the claims of entities one and two edges away from the entities the search matched."""
+    """C's graph step: the edges walked and the claims of entities one and two edges away from the entities the search
+    matched, walked from each matched entity in the search's own order, the best match's neighborhood first (S3a: a
+    set's order changed between runs, the edge's quote is the hop, and weak matches no longer fill the k slots)."""
     seen = {e["id"] for e in ents}
-    frontier, out = list(seen)[:6], []
-    for _ in range(hops):
-        nxt = []
-        for eid in frontier:
-            card = SE.entity_card(st, eid, scope=scope, as_of=as_of, exclude=exclude) or {}
-            for e in card.get("edges") or []:
-                other = e.get("dst") if e.get("src") == eid else e.get("src")
-                if other and other not in seen and e.get("rel") != "same_as":
+    out, took = [], set()
+    for root in [e["id"] for e in ents][:6]:
+        frontier = [root]
+        for _ in range(hops):
+            nxt = []
+            for eid in frontier:
+                card = SE.entity_card(st, eid, scope=scope, as_of=as_of, exclude=exclude) or {}
+                for e in card.get("edges") or []:
+                    other = e.get("dst") if e.get("src") == eid else e.get("src")
+                    if not other or other in seen or e.get("rel") == "same_as":
+                        continue
                     seen.add(other)
                     nxt.append(other)
-        for eid in nxt:
-            card = SE.entity_card(st, eid, scope=scope, as_of=as_of, exclude=exclude) or {}
-            out += [dict(c, hop=True) for c in card.get("claims") or []]
-        frontier = nxt[:6]
+                    if e.get("id") not in took:
+                        took.add(e.get("id"))
+                        out.append(dict(e, hop=True))
+            for eid in nxt:
+                card = SE.entity_card(st, eid, scope=scope, as_of=as_of, exclude=exclude) or {}
+                out += [dict(c, hop=True) for c in card.get("claims") or []]
+            frontier = nxt[:6]
+            if len(out) >= k:
+                return out[:k]
     return out[:k]
 
 
@@ -939,10 +989,12 @@ def quote_valid(ctx: dict, item: dict) -> List[bool]:
         return [snippet_ok(item["id"])]
     out = []
     for q in item.get("quotes") or []:
-        sn = st.one("SELECT sn.id, sn.text FROM snippet sn JOIN revision rv ON rv.id=sn.revision_id JOIN source s"
-                    " ON s.id=rv.source_id WHERE s.uri=? AND sn.locator=?", (q.get("uri"), json.dumps(q.get("locator"),
-                                                                                                       ensure_ascii=False)))
-        out.append(bool(sn) and (q.get("quote") or "") in sn["text"] and snippet_ok(sn["id"]))
+        # S3a: a file's revisions share locators (an edited section keeps its heading), and a quote of an LLM claim
+        # may come from an earlier revision (history, as_of); the quote is valid at the revision it sits on
+        sns = st.q("SELECT sn.id, sn.text FROM snippet sn JOIN revision rv ON rv.id=sn.revision_id JOIN source s"
+                   " ON s.id=rv.source_id WHERE s.uri=? AND sn.locator=? ORDER BY rv.id DESC",
+                   (q.get("uri"), json.dumps(q.get("locator"), ensure_ascii=False)))
+        out.append(any((q.get("quote") or "") in sn["text"] and snippet_ok(sn["id"]) for sn in sns))
     return out
 
 
@@ -992,14 +1044,39 @@ def judge(v, ctx: dict, gold2: dict, row: dict, res: dict) -> dict:
         order_ok = all(dates) and dates == sorted(dates)
     ok = all(f["found"] for f in facts) and state_ok is not False and order_ok is not False \
         and not any(leaks[k] for k in ("future", "stale", "excluded", "client"))
+    facts_found = [i for i in items if i.get("kind") in ("claim", "edge") and any(
+        has_phrase(item_text(i), f["any"]) for f in row.get("expect") or [])]
+    derived = derived_confirmed(ctx, items) if v.name != "A" else None
     if row["kind"] == "modality":
-        ok = False                     # modality is carried by claims (S3); text alone never answers it
+        # S3a: modality is carried by claims and edges, text alone never answers it. "proposal": a matching fact
+        # says proposal and none counts as confirmed; "not_confirmed": a matching fact and none counts as confirmed
+        # (spec 7.4: modality confirmation with a primary or pm source)
+        confirmed = [i for i in facts_found if i.get("modality") == "confirmation" and (i.get("confirmations") or 0) > 0]
+        want_mod = row.get("modality")
+        ok = ok and bool(facts_found) and not confirmed and (
+            want_mod != "proposal" or any(i.get("modality") == "proposal" for i in facts_found))
     if row.get("history") and v.name != "C":
         ok = False                     # "changed later" lives in the entity timeline only
     return {"id": row["id"], "kind": row["kind"], "needs": row["needs"], "status": "pass" if ok else "fail",
             "expected": row["expected"][v.name], "facts": facts, "leaks": leaks, "state_ok": state_ok,
             "order_ok": order_ok, "quotes_valid": sum(checks), "quotes": len(checks),
-            "top": [i.get("source") or "" for i in items]}
+            "top": [i.get("source") or "" for i in items], "derived_confirmed": derived}
+
+
+def derived_confirmed(ctx: dict, items: List[dict]) -> List[int]:
+    """Spec 7.4, checked against the store and not the item's own count: returned claims and edges shown as confirmed
+    (modality confirmation, confirmations > 0) whose evidence holds no primary or pm source. Must be []."""
+    st, bad = ctx["store"], []
+    for i in items:
+        if i.get("kind") not in ("claim", "edge") or i.get("modality") != "confirmation" or not i.get("confirmations"):
+            continue
+        if i.get("origin") == "pm" or not isinstance(i.get("id"), int):
+            continue                    # a PM supersede or override row is its own primary source
+        if not st.one("SELECT 1 FROM evidence ev JOIN snippet sn ON sn.id=ev.snippet_id JOIN revision rv ON"
+                      " rv.id=sn.revision_id JOIN source s ON s.id=rv.source_id WHERE ev.target=? AND ev.target_id=?"
+                      " AND s.origin IN ('primary', 'pm')", (i["kind"], i["id"])):
+            bad.append(i["id"])
+    return bad
 
 
 # ---------------------------------------------------------------- gold v2: one set, one vector mode
@@ -1012,7 +1089,7 @@ def evaluate_v2(v, ctx: dict, gold2: dict, set_name: str, embedder=None) -> dict
     rows = []
     top = int(gold2.get("top", 6))
     for row in gold2["rows"]:
-        if v.name == "C" and row["needs"] not in READY:
+        if v.name == "C" and row["needs"] not in ready_set():
             rows.append({"id": row["id"], "kind": row["kind"], "needs": row["needs"], "status": "not_evaluated",
                          "missing": "{} ({})".format(row["needs"], {"S3": "LLM extraction", "S4": "topic summaries"}[row["needs"]]),
                          "expected": row["expected"]["C"]})
@@ -1098,13 +1175,16 @@ def metrics(rows: List[dict], ctx: dict, set_name: str) -> dict:
     evid = [r for r in ev if r["id"] in EVIDENCE_ROWS]
     shared = [r for r in ev if r["id"] in SHARED_ROWS]
     q_ok, q_all = sum(r.get("quotes_valid", 0) for r in ev), sum(r.get("quotes", 0) for r in ev)
+    store_rows = any(r.get("derived_confirmed") is not None for r in ev)      # B and C (A has no store)
     out = {"rows_evaluated": len(ev), "rows_not_evaluated": len(rows) - len(ev), "rows_passed": rate(ev)["n"],
            "expected_mismatch": [r["id"] for r in ev if r["status"] != r["expected"]],
            "hop_answer_rate": rate(by("hop")), "paraphrase_answer_rate": rate(by("paraphrase", "paraphrase_uk")),
            "paraphrase_uk": rate(by("paraphrase_uk")),
            "timeline_recall": pct(tl_found, tl_total), "timeline_order": all(r["order_ok"] for r in glob_rows) if glob_rows else None,
            "evidence_recall": rate(evid), "quote_validity": pct(q_ok, q_all), "quotes_checked": q_all,
-           "modality_accuracy": None, "derived_confirmed": None,     # claims with modality come with S3
+           # S3a: modality rows passed, and confirmed facts with only derived evidence (None for A: no store)
+           "modality_accuracy": rate(by("modality"))["rate"] if store_rows else None,
+           "derived_confirmed": len({x for r in ev for x in r.get("derived_confirmed") or []}) if store_rows else None,
            "future_leaks": sum(len(r["leaks"]["future"]) for r in ev),
            "stale_returned": sum(len(r["leaks"]["stale"]) for r in ev),
            "excluded_leaks": sum(len(r["leaks"]["excluded"]) for r in ev),
@@ -1128,7 +1208,7 @@ def run_v2(v, gold: dict, gold2: dict, gold2_path: Path, tmp: Path, sets, mdir: 
     SHARED_ROWS.clear()
     SHARED_ROWS.update(r["id"] for r in gold2["rows"] if r.get("shared"))
     out = {"gold_version": 2, "gold_sha256": hashlib.sha256(gold2_path.read_bytes()).hexdigest(),
-           "fixture_v2_sha": tree_sha(OVERLAY, REVISIONS), "ready": sorted(READY), "sets": {}}
+           "fixture_v2_sha": tree_sha(OVERLAY, REVISIONS), "ready": sorted(ready_set()), "sets": {}}
     modes = ("no_vectors",) if v.name == "A" else ("no_vectors", "vectors")
     with embed_server(mdir if v.name != "A" else None) as emb:
         for s in sets:
@@ -1141,6 +1221,7 @@ def run_v2(v, gold: dict, gold2: dict, gold2_path: Path, tmp: Path, sets, mdir: 
                     out["sets"][s][m] = {"skipped": why}
                     continue
                 ctx = build_v2(tmp / "v2-{}-{}".format(s, m), gold, gold2, s == "scale", emb if m == "vectors" else None)
+                ctx["gold_sha256"] = out["gold_sha256"]
                 try:
                     out["sets"][s][m] = evaluate_v2(v, ctx, gold2, s, emb if m == "vectors" else None)
                 finally:
@@ -1171,6 +1252,32 @@ def s2_gate(res: dict) -> Optional[dict]:
             if s == "scale":
                 checks[k + "live_p95_le_150ms"] = r["latency"]["live_p95_ms"] <= 150
     return {"pass": all(x for x in checks.values() if x is not None), "checks": checks}
+
+
+def s3_gate(res: dict, b_res: Optional[dict] = None) -> Optional[dict]:
+    """The S3a G0 gate (spec section 17, S3) for C with a recorded extraction fixture whose gold hash is current (the
+    replay stops on "gold changed" otherwise): on the small set hop answer rate at least 4 of 6 and at least 2 more
+    than B (B's newest saved result), fixture misses 0, modality accuracy 100%; derived counted as confirmed 0 on every
+    evaluated run; the S2 checks still pass (added by the caller). Paraphrase rates are reported, not gated here."""
+    if res["variant"] != "C" or "S3" not in res.get("v2", {}).get("ready", []):
+        return None
+    checks: Dict[str, Optional[bool]] = {}
+    small = res["v2"]["sets"].get("small", {}).get("no_vectors")
+    if small and "skipped" not in small:
+        hop = small["hop_answer_rate"]["n"]
+        checks["small hop_ge_4_of_6"] = hop >= 4 and small["hop_answer_rate"]["of"] >= 6
+        try:
+            b = (b_res or newest("B"))["v2"]["sets"]["small"]["no_vectors"]["hop_answer_rate"]["n"]
+            checks["small hop_ge_B_plus_2"] = hop >= b + 2
+        except (SystemExit, KeyError, TypeError):
+            checks["small hop_ge_B_plus_2"] = False      # no B result saved: the gate cannot pass without it
+        checks["small fixture_misses_0"] = (small.get("fixture") or {}).get("misses") == 0
+        checks["small modality_accuracy_100"] = small["modality_accuracy"] == 100.0
+    for s, modes in res["v2"]["sets"].items():
+        for m, r in modes.items():
+            if "skipped" not in r:
+                checks["{}/{} derived_confirmed_0".format(s, m)] = r["derived_confirmed"] == 0
+    return checks
 
 
 # ---------------------------------------------------------------- the whole run
@@ -1225,6 +1332,11 @@ def run(variant_name: str = "A", gold_path: Path = GOLD, sets=SETS, gold2_path: 
     out["totals"] = totals(out["targets"], samples)
     if "v2" in out:
         out["v2"]["gate"] = s2_gate(out)
+        s3 = s3_gate(out)
+        if s3 and out["v2"]["gate"]:          # S3a: one gate, the S2 zeros still 0 plus the S3 checks
+            out["v2"]["gate"]["checks"].update(s3)
+            out["v2"]["gate"]["pass"] = all(x for x in out["v2"]["gate"]["checks"].values() if x is not None)
+            out["v2"]["gate"]["s3"] = True
     out["seconds"] = round(time.time() - t_all, 2)
     return out
 
@@ -1303,6 +1415,8 @@ V2_COLUMNS = [("Rows passed", lambda r: "{}/{}".format(r["rows_passed"], r["rows
               ("Hop rate", lambda r: fmt(r["hop_answer_rate"]["rate"], "%")),
               ("Paraphrase rate", lambda r: fmt(r["paraphrase_answer_rate"]["rate"], "%")),
               ("Ukrainian", lambda r: fmt(r["paraphrase_uk"]["rate"], "%")),
+              ("Modality", lambda r: fmt(r.get("modality_accuracy"), "%")),
+              ("Derived as confirmed", lambda r: fmt(r.get("derived_confirmed"), "")),
               ("Timeline recall", lambda r: fmt(r["timeline_recall"], "%")),
               ("Evidence recall", lambda r: fmt(r["evidence_recall"]["rate"], "%")),
               ("Quote validity", lambda r: fmt(r["quote_validity"], "%")),
@@ -1339,7 +1453,7 @@ def table_v2(res: dict) -> str:
         failed = [k for k, x in gate["checks"].items() if x is False]
         skipped = [k.split(" ")[0] for k, x in gate["checks"].items() if x is None]
         note = " ({} not evaluated)".format(", ".join(skipped)) if skipped else ""
-        lines += ["", "S2 gate: {}".format("PASS" + note if gate["pass"] else "FAIL: " + ", ".join(failed))]
+        lines += ["", "{} gate: {}".format("S2+S3" if gate.get("s3") else "S2","PASS" + note if gate["pass"] else "FAIL: " + ", ".join(failed))]
     return "\n".join(lines)
 
 
@@ -1442,6 +1556,74 @@ def regen_register(gold_path: Path = GOLD) -> Path:
     return reg
 
 
+class Recorder:
+    """Wraps the worker's transport and keeps every raw answer by the seg_hash of the segment it was asked for."""
+
+    def __init__(self, inner):
+        self.inner = inner
+        self.answers: Dict[str, List[str]] = {}
+        self.base: Dict[str, int] = {}
+        self.tokens: Dict[str, List[int]] = {}
+
+    def start(self, req: dict):
+        h = self.inner.start(req)
+        rec = self
+
+        class H:
+            def done(self):
+                return h.done()
+
+            def cancel(self):
+                h.cancel()
+
+            def result(self):
+                a = h.result()
+                if not a.get("error") and req.get("seg_hash"):
+                    rec.answers.setdefault(req["seg_hash"], []).append(a.get("text") or "")
+                    rec.base.setdefault(req["seg_hash"], int(req.get("base_line") or 0))
+                    t = rec.tokens.setdefault(req["seg_hash"], [0, 0])
+                    t[0] += int(a.get("in_tokens") or 0)
+                    t[1] += int(a.get("out_tokens") or 0)
+                return a
+        return H()
+
+
+def record_extract(route: str, gold_path: Path = GOLD, gold2_path: Path = GOLD2, out_dir: Path = EXTRACT,
+                   transport=None) -> dict:
+    """--extract <route>: extract the gold v2 small set on a real route through the worker (this sends the invented
+    fixture text to that route's provider; never run by the gate), write fixtures/extract/<seg_hash>.json (raw model
+    output, review by deletion only) and manifest.json (gold sha256, route, model, extractor, calibration)."""
+    gold, gold2 = load_gold(gold_path), load_gold(gold2_path)
+    rec = Recorder(transport or W.ChildTransport())
+    runs: List[dict] = []
+    with tempfile.TemporaryDirectory(prefix="g0-extract-") as tmp, store_env(Path(tmp)):
+        def extract(ctx):
+            runs.append(W.extract_pass(ctx["store"], str(ctx["root"]), {"route": route, "record": True}, rec))
+        ctx = build_v2(Path(tmp) / "rec", gold, gold2, False, None, after_pass=extract)
+        cost = index_cost(ctx, None)
+        ctx["store"].close()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    ex = runs[0]["extractor"] if runs else ""
+    for h, answers in rec.answers.items():
+        (out_dir / (h + ".json")).write_text(json.dumps(
+            {"seg_hash": h, "extractor": ex, "route": route, "base_line": rec.base.get(h, 0), "answers": answers,
+             "in_tokens": rec.tokens[h][0], "out_tokens": rec.tokens[h][1]}, ensure_ascii=False, indent=1) + "\n",
+            encoding="utf-8")
+    sent = sum(int(r.get("requests") or 0) for r in runs)
+    outs = sum(int(r.get("out_tokens") or 0) for r in runs)
+    cal = {"segments_recorded": len(rec.answers), "requests": sent,
+           "out_tokens_per_segment": round(outs / len(rec.answers), 1) if rec.answers else None,
+           "catalog_tokens_per_request": round(sum(float(r.get("catalog_tokens") or 0) for r in runs) / sent, 1) if sent else None,
+           "segments_per_document": cost["segments_per_document"],
+           "usd": round(sum(float(r.get("usd") or 0) for r in runs), 4),
+           "statuses": sorted({r["status"] for r in runs})}
+    manifest = {"gold_sha256": hashlib.sha256(Path(gold2_path).read_bytes()).hexdigest(), "route": route,
+                "model": runs[0]["model"] if runs else "", "extractor": ex, "recorded_at": dt.datetime.now().isoformat(
+                    timespec="seconds"), "calibration": cal}
+    (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=1) + "\n", encoding="utf-8")
+    return manifest
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--variant", choices=VARIANTS, default="A")
@@ -1452,7 +1634,13 @@ def main(argv=None) -> int:
     ap.add_argument("--set", choices=("small", "scale", "both", "none"), default="both",
                     help="gold v2 sets to run (none: the v1 targets only)")
     ap.add_argument("--regen-register", action="store_true")
+    ap.add_argument("--extract", metavar="ROUTE", choices=("api", "code", "local", "openai", "codex", "gemini"),
+                    help="record C's extraction fixture on a real route (sends the invented fixture text to it)")
     a = ap.parse_args(argv)
+    if a.extract:
+        m = record_extract(a.extract)
+        print(json.dumps(m, indent=1))
+        return 0
     if a.regen_register:
         print("wrote", regen_register().relative_to(HERE))
         return 0

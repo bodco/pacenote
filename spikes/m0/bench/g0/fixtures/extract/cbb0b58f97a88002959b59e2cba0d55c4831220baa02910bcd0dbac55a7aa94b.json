@@ -1,0 +1,11 @@
+{
+ "seg_hash": "cbb0b58f97a88002959b59e2cba0d55c4831220baa02910bcd0dbac55a7aa94b",
+ "extractor": "g2-s3-1:b7b1324472",
+ "route": "authored",
+ "base_line": 1,
+ "answers": [
+  "{\"entities\": [\n{\"ref\": \"n1\", \"known_id\": \"c-40ad1729b3\", \"type\": \"task\", \"name\": \"rotate the API signing key\", \"aliases\": [\"API signing key rotation\"], \"quote\": \"rotate the API signing key\", \"lines\": [5, 5]},\n{\"ref\": \"n2\", \"type\": \"person\", \"name\": \"Kevin\", \"aliases\": [], \"quote\": \"**Kevin**\", \"lines\": [5, 5]}\n],\n\"claims\": [\n{\"subject\": \"c-40ad1729b3\", \"predicate\": \"owner\", \"value\": \"Kevin\", \"modality\": \"confirmation\", \"said_by\": null, \"due\": null, \"quote\": \"**Kevin**: rotate the API signing key\", \"lines\": [5, 5], \"confidence\": 0.85}\n],\n\"relations\": []}\n"
+ ],
+ "in_tokens": 0,
+ "out_tokens": 0
+}

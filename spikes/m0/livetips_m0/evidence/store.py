@@ -423,10 +423,12 @@ FIXED_MODALITY = {"supersedes": "confirmation", "same_as": "statement"}
 
 
 def apply_extraction(store: Store, revision_id: int, items: dict, run_id: Optional[int] = None,
-                     threshold: float = 0.7) -> dict:
+                     threshold: float = 0.7, mark_done: bool = True) -> dict:
     """Write already validated items onto one revision (spec section 8.2): entity, alias (+ alias_seen), claim, edge and
     evidence rows. Every quote is located again in the revision's own snippets (the model's offsets are never
-    trusted); an item whose quote is not found is dropped. The same statement found again adds evidence rows."""
+    trusted); an item whose quote is not found is dropped. The same statement found again adds evidence rows.
+    S3: an item with "suggestion": true is stored as a suggestion (validator items 5 and 7.5); mark_done=False leaves
+    extract_state to the worker, which marks a revision done only once every segment of it has settled."""
     conn = store.conn
     snips = conn.execute("SELECT id, text, locator, said_at, speaker FROM snippet WHERE revision_id=? ORDER BY ord",
                          (revision_id,)).fetchall()
@@ -487,7 +489,7 @@ def apply_extraction(store: Store, revision_id: int, items: dict, run_id: Option
             mod = str(c.get("modality") or "statement")
             nkey = claim_nkey(subj, str(c.get("predicate") or "said"), mod, c.get("value"))
             conf = c.get("confidence")
-            status = "suggestion" if (conf is not None and float(conf) < threshold) else "accepted"
+            status = "suggestion" if (c.get("suggestion") or (conf is not None and float(conf) < threshold)) else "accepted"
             conn.execute("INSERT OR IGNORE INTO claim(subject_id, predicate, value, modality, said_by, said_at, due, status,"
                          " origin, confidence, run_id, nkey) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                          (subj, str(c.get("predicate") or "said"), None if c.get("value") is None else str(c.get("value")),
@@ -509,7 +511,8 @@ def apply_extraction(store: Store, revision_id: int, items: dict, run_id: Option
             rel = str(r.get("rel") or "mentions")
             mod = FIXED_MODALITY.get(rel, str(r.get("modality") or "statement"))
             conf = r.get("confidence")
-            status = "suggestion" if (rel == "same_as" or a == b or (conf is not None and float(conf) < threshold)) else "accepted"
+            status = "suggestion" if (r.get("suggestion") or rel == "same_as" or a == b or
+                                      (conf is not None and float(conf) < threshold)) else "accepted"
             said = s["said_at"] or now
             conn.execute("INSERT OR IGNORE INTO edge(src_id, rel, dst_id, modality, status, origin, confidence, first_said_at,"
                          " last_said_at, run_id) VALUES (?,?,?,?,?,?,?,?,?,?)",
@@ -525,7 +528,8 @@ def apply_extraction(store: Store, revision_id: int, items: dict, run_id: Option
         conn.execute("UPDATE claim SET said_at=(SELECT min(sn.said_at) FROM evidence ev JOIN snippet sn ON sn.id=ev.snippet_id"
                      " WHERE ev.target='claim' AND ev.target_id=claim.id) WHERE id IN (SELECT target_id FROM evidence"
                      " ev JOIN snippet sn ON sn.id=ev.snippet_id WHERE ev.target='claim' AND sn.revision_id=?)", (revision_id,))
-        conn.execute("UPDATE revision SET extract_state='done' WHERE id=?", (revision_id,))
+        if mark_done:
+            conn.execute("UPDATE revision SET extract_state='done' WHERE id=?", (revision_id,))
     return counts
 
 

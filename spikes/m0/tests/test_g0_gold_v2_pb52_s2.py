@@ -274,14 +274,16 @@ def test_needs_on_every_row_a_b_everywhere_c_only_where_its_code_is(bench, resul
         run = results[v]["v2"]["sets"]["small"]["no_vectors"]
         assert run["rows_not_evaluated"] == 0 and len(run["rows"]) == len(needs)
     run = results["C"]["v2"]["sets"]["small"]["no_vectors"]
+    ready = bench.ready_set()          # S3a (PB-86): S3 is ready once the extraction fixture is checked in
     for row in run["rows"]:
-        if needs[row["id"]] in bench.READY:
+        if needs[row["id"]] in ready:
             assert row["status"] in ("pass", "fail"), row["id"]
         else:
             assert row["status"] == "not_evaluated" and row["missing"].startswith(needs[row["id"]]), row["id"]
-    assert run["rows_evaluated"] == sum(1 for n in needs.values() if n == "S2")
-    # items 1, 2, 3 and 5 are S3 or S4: C's rates over them are empty, never a pass or a fail
-    assert run["hop_answer_rate"]["of"] == 0 and run["paraphrase_answer_rate"]["of"] == 0
+    assert run["rows_evaluated"] == sum(1 for n in needs.values() if n in ready)
+    # rows whose sub-task C lacks give empty rates, never a pass or a fail (S4: item 3, the timeline)
+    hops = sum(1 for r in gold2["rows"] if r["kind"] == "hop")
+    assert run["hop_answer_rate"]["of"] == (hops if "S3" in ready else 0)
     assert run["timeline_recall"] is None
     item_needs = {(r["item"], r["needs"]) for r in gold2["rows"]}
     assert {(1, "S3"), (2, "S3"), (3, "S4"), (5, "S3"), (4, "S2"), (4, "S3"), (4, "S4"), (6, "S2"), (6, "S3"),

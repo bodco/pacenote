@@ -1,0 +1,13 @@
+{
+ "gold_sha256": "7167c20c603811f61ffe47d8fa400d0cdeea2c4f9ac8a519b5533c113b265792",
+ "route": "authored",
+ "model": "none",
+ "extractor": "g2-s3-1:b7b1324472",
+ "recorded_at": "2026-11-24T21:13:29",
+ "calibration": {
+  "segments_recorded": 60,
+  "segments_per_document": 1.14,
+  "measured": false
+ },
+ "note": "PB-86 S3a: answers authored offline in the agent session, recorded through record_extract with a replay transport; no provider was called. The authoring agent opened only the rendered prompts (not the gold), but its instructions were written after the developer had read the gold hop rows and carry example wordings and linking verbs from them, so the fixture is not independent of the gold. Not a measurement of a real model: PB-103 S3b re-records it with --extract <route> and calibrates."
+}

@@ -1,0 +1,11 @@
+{
+ "seg_hash": "efb9b41e63876518c223bf8968eb3327f1766dbb3ab9d70d9b01650d8bad8d98",
+ "extractor": "g2-s3-1:b7b1324472",
+ "route": "authored",
+ "base_line": 1,
+ "answers": [
+  "{\"entities\": [\n{\"ref\": \"n1\", \"known_id\": \"d-1d972693f6\", \"type\": \"decision\", \"name\": \"Reports are exported nightly.\", \"aliases\": [], \"quote\": \"Reports are exported nightly.\", \"lines\": [5, 5]},\n{\"ref\": \"n2\", \"type\": \"call\", \"name\": \"Acme architecture review 2026-11-14\", \"aliases\": [\"Acme architecture review\"], \"quote\": \"# Acme architecture review, 2026-11-14\", \"lines\": [1, 1]}\n],\n\"claims\": [\n{\"subject\": \"d-1d972693f6\", \"predicate\": \"decided\", \"value\": \"Reports are exported nightly.\", \"modality\": \"confirmation\", \"said_by\": null, \"due\": null, \"quote\": \"Reports are exported nightly.\", \"lines\": [5, 5], \"confidence\": 0.85}\n],\n\"relations\": []}\n"
+ ],
+ "in_tokens": 0,
+ "out_tokens": 0
+}

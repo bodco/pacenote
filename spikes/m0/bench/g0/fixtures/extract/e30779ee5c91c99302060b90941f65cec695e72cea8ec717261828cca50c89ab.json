@@ -1,0 +1,11 @@
+{
+ "seg_hash": "e30779ee5c91c99302060b90941f65cec695e72cea8ec717261828cca50c89ab",
+ "extractor": "g2-s3-1:b7b1324472",
+ "route": "authored",
+ "base_line": 6,
+ "answers": [
+  "{\"entities\": [\n{\"ref\": \"n1\", \"type\": \"date_event\", \"name\": \"Acme phase two go-live\", \"aliases\": [\"phase two go-live\"], \"quote\": \"Phase two go-live: January 12.\", \"lines\": [7, 7]}\n],\n\"claims\": [\n{\"subject\": \"n1\", \"predicate\": \"due\", \"value\": \"January 12\", \"modality\": \"statement\", \"said_by\": null, \"due\": \"January 12\", \"quote\": \"Phase two go-live: January 12.\", \"lines\": [7, 7], \"confidence\": 0.9}\n],\n\"relations\": []}\n"
+ ],
+ "in_tokens": 0,
+ "out_tokens": 0
+}

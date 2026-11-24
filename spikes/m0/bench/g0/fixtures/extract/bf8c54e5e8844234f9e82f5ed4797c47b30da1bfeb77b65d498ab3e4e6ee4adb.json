@@ -1,0 +1,11 @@
+{
+ "seg_hash": "bf8c54e5e8844234f9e82f5ed4797c47b30da1bfeb77b65d498ab3e4e6ee4adb",
+ "extractor": "g2-s3-1:b7b1324472",
+ "route": "authored",
+ "base_line": 1,
+ "answers": [
+  "{\"entities\": [\n{\"ref\": \"n1\", \"type\": \"topic\", \"name\": \"Acme phase two budget\", \"aliases\": [\"phase two budget\", \"phase two\"], \"quote\": \"Phase two budget: 340 hours.\", \"lines\": [3, 3]}\n],\n\"claims\": [\n{\"subject\": \"n1\", \"predicate\": \"value\", \"value\": \"340 hours\", \"modality\": \"statement\", \"said_by\": null, \"due\": null, \"quote\": \"Phase two budget: 340 hours.\", \"lines\": [3, 3], \"confidence\": 0.9}\n],\n\"relations\": []}\n"
+ ],
+ "in_tokens": 0,
+ "out_tokens": 0
+}

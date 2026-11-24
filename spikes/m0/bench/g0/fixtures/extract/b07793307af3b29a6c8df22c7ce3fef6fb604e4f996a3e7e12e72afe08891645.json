@@ -1,0 +1,11 @@
+{
+ "seg_hash": "b07793307af3b29a6c8df22c7ce3fef6fb604e4f996a3e7e12e72afe08891645",
+ "extractor": "g2-s3-1:b7b1324472",
+ "route": "authored",
+ "base_line": 1,
+ "answers": [
+  "{\"entities\": [], \"claims\": [], \"relations\": []}\n"
+ ],
+ "in_tokens": 0,
+ "out_tokens": 0
+}

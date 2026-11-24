@@ -1,0 +1,11 @@
+{
+ "seg_hash": "6498fd8a30b36e0ec6309d3c4d859a9554aacc37c12c6f82076ce442fa0c02e6",
+ "extractor": "g2-s3-1:b7b1324472",
+ "route": "authored",
+ "base_line": 1,
+ "answers": [
+  "{\"entities\": [\n{\"ref\": \"n1\", \"type\": \"client\", \"name\": \"Initech\", \"aliases\": [], \"quote\": \"Initech wants the data migration finished by April 30.\", \"lines\": [3, 3]},\n{\"ref\": \"n2\", \"type\": \"task\", \"name\": \"Initech data migration\", \"aliases\": [\"data migration\", \"the data migration\"], \"quote\": \"the data migration finished by April 30\", \"lines\": [3, 3]},\n{\"ref\": \"n3\", \"type\": \"person\", \"name\": \"Jessica\", \"aliases\": [], \"quote\": \"Initech contact: Jessica.\", \"lines\": [4, 4]}\n],\n\"claims\": [\n{\"subject\": \"n2\", \"predicate\": \"due\", \"value\": \"April 30\", \"modality\": \"expectation\", \"said_by\": \"n1\", \"due\": \"April 30\", \"quote\": \"Initech wants the data migration finished by April 30.\", \"lines\": [3, 3], \"confidence\": 0.9},\n{\"subject\": \"n1\", \"predicate\": \"value\", \"value\": \"contact: Jessica\", \"modality\": \"statement\", \"said_by\": null, \"due\": null, \"quote\": \"Initech contact: Jessica.\", \"lines\": [4, 4], \"confidence\": 0.8}\n],\n\"relations\": []}\n"
+ ],
+ "in_tokens": 0,
+ "out_tokens": 0
+}

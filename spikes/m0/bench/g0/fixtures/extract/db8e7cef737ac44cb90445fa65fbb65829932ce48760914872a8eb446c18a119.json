@@ -1,0 +1,11 @@
+{
+ "seg_hash": "db8e7cef737ac44cb90445fa65fbb65829932ce48760914872a8eb446c18a119",
+ "extractor": "g2-s3-1:b7b1324472",
+ "route": "authored",
+ "base_line": 1,
+ "answers": [
+  "{\"entities\": [\n{\"ref\": \"n1\", \"type\": \"client\", \"name\": \"Bluebird Analytics\", \"aliases\": [\"backup vendor\", \"Bluebird\"], \"quote\": \"The backup vendor is Bluebird Analytics.\", \"lines\": [3, 3]},\n{\"ref\": \"n2\", \"type\": \"document\", \"name\": \"Acme vendor shortlist\", \"aliases\": [\"vendor shortlist\"], \"quote\": \"# Acme vendor shortlist\", \"lines\": [1, 1]}\n],\n\"claims\": [\n{\"subject\": \"n1\", \"predicate\": \"value\", \"value\": \"backup vendor\", \"modality\": \"statement\", \"said_by\": null, \"due\": null, \"quote\": \"The backup vendor is Bluebird Analytics.\", \"lines\": [3, 3], \"confidence\": 0.9}\n],\n\"relations\": []}\n"
+ ],
+ "in_tokens": 0,
+ "out_tokens": 0
+}

@@ -1,0 +1,11 @@
+{
+ "seg_hash": "65ed80fbbd43334b5ed5bd8e3a7942c68bc521560f605aff6745a0e549a078b3",
+ "extractor": "g2-s3-1:b7b1324472",
+ "route": "authored",
+ "base_line": 1,
+ "answers": [
+  "{\"entities\": [\n{\"ref\": \"n1\", \"type\": \"person\", \"name\": \"Rachel\", \"aliases\": [], \"quote\": \"Rachel signs the retention policy for Acme legal.\", \"lines\": [5, 5]},\n{\"ref\": \"n2\", \"type\": \"document\", \"name\": \"Acme retention policy\", \"aliases\": [\"retention policy\", \"the retention policy\"], \"quote\": \"the retention policy for Acme legal\", \"lines\": [5, 5]},\n{\"ref\": \"n3\", \"type\": \"client\", \"name\": \"Acme legal\", \"aliases\": [\"legal\"], \"quote\": \"Acme legal\", \"lines\": [5, 5]},\n{\"ref\": \"n4\", \"type\": \"person\", \"name\": \"Brandon\", \"aliases\": [], \"quote\": \"Brandon leads the field team track.\", \"lines\": [5, 5]},\n{\"ref\": \"n5\", \"type\": \"topic\", \"name\": \"Acme field team track\", \"aliases\": [\"field team track\", \"the field team track\"], \"quote\": \"the field team track\", \"lines\": [5, 5]}\n],\n\"claims\": [\n{\"subject\": \"n2\", \"predicate\": \"owner\", \"value\": \"Rachel\", \"modality\": \"statement\", \"said_by\": null, \"due\": null, \"quote\": \"Rachel signs the retention policy for Acme legal.\", \"lines\": [5, 5], \"confidence\": 0.85},\n{\"subject\": \"n5\", \"predicate\": \"owner\", \"value\": \"Brandon\", \"modality\": \"statement\", \"said_by\": null, \"due\": null, \"quote\": \"Brandon leads the field team track.\", \"lines\": [5, 5], \"confidence\": 0.9}\n],\n\"relations\": [\n{\"from\": \"n1\", \"rel\": \"owns\", \"to\": \"n2\", \"modality\": \"statement\", \"quote\": \"Rachel signs the retention policy for Acme legal.\", \"lines\": [5, 5], \"confidence\": 0.85},\n{\"from\": \"n4\", \"rel\": \"owns\", \"to\": \"n5\", \"modality\": \"statement\", \"quote\": \"Brandon leads the field team track.\", \"lines\": [5, 5], \"confidence\": 0.9}\n]}\n"
+ ],
+ "in_tokens": 0,
+ "out_tokens": 0
+}

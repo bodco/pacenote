@@ -1,0 +1,11 @@
+{
+ "seg_hash": "ede4f66cf0e8662e954e8d7b037d72be6252d4f1ce6effdfa1843db8cd0781f0",
+ "extractor": "g2-s3-1:b7b1324472",
+ "route": "authored",
+ "base_line": 1,
+ "answers": [
+  "{\"entities\": [\n{\"ref\": \"n1\", \"known_id\": \"e-9fc59eddc9\", \"type\": \"topic\", \"name\": \"Acme pilot\", \"aliases\": [\"pilot launch\", \"the pilot launch\"], \"quote\": \"The pilot launch\", \"lines\": [3, 3]},\n{\"ref\": \"n2\", \"known_id\": \"e-793bcb1a37\", \"type\": \"system\", \"name\": \"Acme SSO integration\", \"aliases\": [\"single sign-on\"], \"quote\": \"single sign-on\", \"lines\": [3, 3]},\n{\"ref\": \"n3\", \"type\": \"task\", \"name\": \"Acme pilot training sessions\", \"aliases\": [\"training sessions\"], \"quote\": \"Training sessions follow one week later.\", \"lines\": [4, 4]}\n],\n\"claims\": [\n{\"subject\": \"e-9fc59eddc9\", \"predicate\": \"value\", \"value\": \"60 users\", \"modality\": \"statement\", \"said_by\": null, \"due\": null, \"quote\": \"single sign-on for all 60 users\", \"lines\": [3, 3], \"confidence\": 0.8},\n{\"subject\": \"n3\", \"predicate\": \"due\", \"value\": \"one week after the pilot launch\", \"modality\": \"statement\", \"said_by\": null, \"due\": \"one week after the pilot launch\", \"quote\": \"Training sessions follow one week later.\", \"lines\": [4, 4], \"confidence\": 0.75}\n],\n\"relations\": [\n{\"from\": \"n1\", \"rel\": \"depends_on\", \"to\": \"n2\", \"modality\": \"statement\", \"quote\": \"The pilot launch depends on single sign-on for all 60 users.\", \"lines\": [3, 3], \"confidence\": 0.9}\n]}\n"
+ ],
+ "in_tokens": 0,
+ "out_tokens": 0
+}

@@ -5,6 +5,21 @@ Pacenote. Earlier versions are described in the commit messages and in
 
 ## Unreleased
 
+- **Project memory, step 3a: how an AI will read the project's sources, tested offline (GraphRAG G2 S3a, PB-86).**
+  Nothing changes for the PM: the evidence store stays behind the flag `evidence_store` (off by default), no setting
+  is shown and no AI is asked yet. This step adds the extraction rules (`rules/evidence.yaml`, the output schema and
+  the generated skill section), the prompt with a fixed cacheable start and a catalog that never holds a name only
+  another client may see, the check of every answer (each quote verbatim at its lines, a hedge word anywhere keeps a
+  promise a proposal, notes never confirm), the cache that never reads an unchanged part again (after an edit
+  elsewhere in the file, a revert or a move) and the indexing pass, all driven by a fake AI in tests. The G0 benchmark
+  now replays a checked-in extraction of its test project: answers written offline for the test, not by a real AI.
+  With it, C answers 5 of 6 questions that need linked facts (B: 0), modality is right on every modality question,
+  and no fact said only in notes counts as confirmed. An answer item of the wrong shape (a missing key, a wrong
+  type, lines that are not two numbers) is dropped on its own, an answer without one of its three lists gets the one
+  repair retry, a known task is named in the catalog only as the part's own client sees it, and a cached part keeps
+  every item even when one of its passages runs over 60 lines. The benchmark run fails when a recorded answer does not
+  parse, when the recording has no gold hash to check, or when no B result exists to compare C with. Sending text to a
+  real AI, the spending ceilings and the per-AI models come in step 3b (PB-103).
 - **Project memory, step 2: a harder benchmark for it (GraphRAG G2 S2, PB-85).** Nothing changes for the PM; the
   evidence store stays behind the flag `evidence_store`. The G0 benchmark gets a second gold set of 39 questions
   (questions that need two or three linked facts, other wording and another language, replays as of a past date, a

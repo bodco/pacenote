@@ -1,0 +1,11 @@
+{
+ "seg_hash": "e420d5b5dcd5baabef315856674c294ef11ccd440a2ab942420aedb4e1abd871",
+ "extractor": "g2-s3-1:b7b1324472",
+ "route": "authored",
+ "base_line": 1,
+ "answers": [
+  "{\"entities\": [\n{\"ref\": \"n1\", \"known_id\": \"e-ccce516fac\", \"type\": \"person\", \"name\": \"Rachel\", \"aliases\": [\"Rachel Moore\"], \"quote\": \"Escalations go to Rachel Moore.\", \"lines\": [3, 3]},\n{\"ref\": \"n2\", \"type\": \"topic\", \"name\": \"Acme escalations\", \"aliases\": [\"escalations\", \"escalation contacts\"], \"quote\": \"Escalations go to Rachel Moore.\", \"lines\": [3, 3]},\n{\"ref\": \"n3\", \"type\": \"system\", \"name\": \"Northpoint on-call phone\", \"aliases\": [\"on-call phone\", \"weekend pager\"], \"quote\": \"Weekend pager: the Northpoint on-call phone.\", \"lines\": [4, 4]}\n],\n\"claims\": [\n{\"subject\": \"n2\", \"predicate\": \"owner\", \"value\": \"Rachel Moore\", \"modality\": \"statement\", \"said_by\": null, \"due\": null, \"quote\": \"Escalations go to Rachel Moore.\", \"lines\": [3, 3], \"confidence\": 0.8},\n{\"subject\": \"n3\", \"predicate\": \"value\", \"value\": \"weekend pager\", \"modality\": \"statement\", \"said_by\": null, \"due\": null, \"quote\": \"Weekend pager: the Northpoint on-call phone.\", \"lines\": [4, 4], \"confidence\": 0.8}\n],\n\"relations\": []}\n"
+ ],
+ "in_tokens": 0,
+ "out_tokens": 0
+}
