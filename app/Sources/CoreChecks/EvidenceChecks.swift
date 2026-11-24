@@ -254,6 +254,8 @@ func evidenceS5PB88() {
     expect(!run(.folderChange, change: t0.addingTimeInterval(-300)) && run(.folderChange, change: t0.addingTimeInterval(-600)), "S5: folder change after 10 quiet minutes")
     expect(run(.idleHourly, last: t0.addingTimeInterval(-3600)) && !run(.idleHourly, last: t0.addingTimeInterval(-1800))
            && !run(.idleHourly, idle: false) && !run(.idleHourly, power: false), "S5: idle hourly only on power")
+    expect(!EvidenceSchedule.countsAsPass(["ok": false, "status": "busy"]) && EvidenceSchedule.countsAsPass(["ok": true, "status": "ok"])
+           && EvidenceSchedule.countsAsPass([:]), "S5: a pass the engine skipped as busy does not count for the hourly idle check")
 
     // 5. AIChain: the evidence job runs on any AI and never steps to another cloud AI
     let conn: Set<String> = ["code", "codex", "api", "openai", "gemini", "local"]
@@ -292,6 +294,20 @@ func evidenceS5PB88() {
            "S5 (spec 8.6): after moves off a missing local model, indexing stays local: \(followed2.after) \(String(describing: followed2.evidence))")
     var onCloud = AppConfig.AIRoutes(); onCloud.after = "code"; onCloud.evidence = nil
     expect(onCloud.keepingIndexing(from: onCloud).evidence == nil, "S5: unchanged after-call AI leaves indexing as it is")
+    // review round 4: indexing that follows a cloud after-call AI never moves to another cloud AI with it
+    var onApi = AppConfig.AIRoutes(); onApi.after = "api"; onApi.evidence = nil; onApi.seen = ["api"]
+    let run = AIDefaults.runtime(onApi, connected: ["codex"], holdIndexing: true)
+    expect(run.after == "codex" && run.route("evidence") == "api",
+           "S5 (spec 8.6): run-time after-call AI replaced, indexing stays on the AI it followed: \(run.after) \(run.route("evidence"))")
+    let runOff = AIDefaults.runtime(onApi, connected: ["codex"], holdIndexing: false)
+    expect(runOff.after == "codex" && runOff.evidence == nil, "S5: flag off, indexing is not touched at run time")
+    let runSame = AIDefaults.runtime(onApi, connected: ["api", "codex"], holdIndexing: true)
+    expect(runSame.after == "api" && runSame.route("evidence") == "api", "S5: a connected after-call AI keeps indexing on it")
+    var chosen = onApi; chosen.evidence = "openai"
+    expect(AIDefaults.runtime(chosen, connected: ["codex"], holdIndexing: true).evidence == "openai", "S5: a chosen indexing AI is kept as is")
+    let saved = AIDefaults.apply(onApi, connected: ["codex"]).keepingIndexing(from: onApi)
+    expect(saved.after == "codex" && saved.evidence == "api",
+           "S5 (spec 8.6): saved switch of the after-call AI (a newly connected account) keeps indexing on the old AI: \(saved.after) \(String(describing: saved.evidence))")
 
     // 6. Cost text: a range typical to cap from S3's calibrated estimate; until then "not available yet"
     typealias T = EvidenceText

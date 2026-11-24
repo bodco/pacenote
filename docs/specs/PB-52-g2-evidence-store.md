@@ -967,6 +967,12 @@ All of this is pure code and runs the same for every route.
   it (`AIRoute.effective`, and the saved `AIDefaults.apply` in `AIRoute.autoAssign`) keeps indexing on `local`
   when it was there, chosen or following a local `after` (`AppConfig.AIRoutes.pinnedEvidence` and
   `keepingIndexing`, flag on only, PB-88 review round 4); with S3 the pass then stops with `off`.
+  The same holds for a cloud AI (PB-88 review round 5): when `after` is replaced, at run time because its AI is not
+  connected (`AIDefaults.runtime` in `AIRoute.effective`) or saved because another account was connected or a key
+  removed (`AIDefaults.apply` plus `keepingIndexing` in `AIRoute.autoAssign`, also when a newly connected account is
+  adopted), indexing that followed it stays on the AI it ran on (`evidence` = that AI); it never moves to the new
+  after-call AI. A not connected indexing AI is left to the engine (local or `off`). Economy mode does not change
+  the indexing AI. The PM moves indexing to another AI only by choosing it in Settings > AI > Project memory.
 
 ### 8.7 Topic summaries and global questions
 

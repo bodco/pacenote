@@ -42,7 +42,7 @@ final class EvidenceService: ObservableObject {
         startWorker()
     }
 
-    /// With the flag on (at launch, or when the PM turns it on): uids, requests not yet applied, the idle check. Every
+    /// With the flag on, at launch (config.json is read once at launch and Settings can only turn the flag off): uids, requests not yet applied, the idle check. Every
     /// project with a store also gets one fresh `exclude` with its current hidden and revoked lists: a pass the app
     /// left running when it quit may have applied older lists, and nothing else would send them again.
     func startWorker() {
@@ -159,10 +159,12 @@ final class EvidenceService: ObservableObject {
         var env = AIRoute.env(job: AIChain.evidenceJob, config: c)
         if let d = try? JSONSerialization.data(withJSONObject: (c.evidencePrefs ?? EvidencePrefs()).limits),
            let s = String(data: d, encoding: .utf8) { env["LT_EVIDENCE_LIMITS"] = s }
-        run(args, env: env, uid: next.uid, nice: true) { [weak self] _ in
+        run(args, env: env, uid: next.uid, nice: true) { [weak self] o in
             guard let self = self else { return }
             self.running.remove(next.uid)
-            self.lastPassAt[next.uid] = Date()          // the hourly idle pass counts from here, whatever the status says
+            // the hourly idle pass counts from here, except when the engine was busy (its worker lock held, e.g. by the
+            // skill): then nothing ran and the next idle check tries again
+            if EvidenceSchedule.countsAsPass(o) { self.lastPassAt[next.uid] = Date() }
             self.busy = false
             // A hide, unhide or revoke that landed between reading the lists here and the pass applying them was
             // overwritten by them: the lists that changed go again (spec section 13.1).

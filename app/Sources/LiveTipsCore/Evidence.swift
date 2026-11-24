@@ -382,6 +382,10 @@ public enum EvidenceSchedule {
     public static let debounce: TimeInterval = 600
     public static let hourly: TimeInterval = 3600
 
+    /// A finished pass counts for the hourly idle check unless the engine answered busy (its worker or project lock
+    /// held, e.g. by the skill): then nothing ran and the next idle check may try again.
+    public static func countsAsPass(_ output: [String: Any]) -> Bool { (output["status"] as? String) != "busy" }
+
     public static func shouldRun(_ t: Trigger, now: Date, lastPass: Date?, lastChange: Date?, callActive: Bool,
                                  idle: Bool, onPower: Bool, paused: Bool) -> Bool {
         if callActive { return false }

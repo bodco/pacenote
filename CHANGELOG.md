@@ -23,7 +23,10 @@ Pacenote. Earlier versions are described in the commit messages and in
   launch gets its memory at its first hide, sheet, folder change or pass instead of at the next launch. Indexing set
   to the model on this Mac (also through "same as after the call") stays on it when that model is removed or
   missing, so project text never moves to a cloud AI (once AI reading lands, that pass stops with "Local model not
-  installed"). With the
+  installed"). Indexing that follows the AI of after the call also stays on that AI when after the call moves to
+  another AI by itself (a key removed, an account signed out or a new one connected), so project text never goes
+  to a provider not chosen for indexing. A pass the engine skipped as busy no longer counts as a pass for the hourly
+  idle check. With the
   flag off nothing changes.
 - **Project memory, step 1: a local evidence store behind a flag (GraphRAG G2 S1, PB-84).** Off by default (feature
   `evidence_store`), nothing changes for the PM yet. With the flag on, `python -m livetips_m0.evidence` keeps one

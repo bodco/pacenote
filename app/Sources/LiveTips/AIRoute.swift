@@ -80,7 +80,7 @@ enum AIRoute {
         let conn = confirmed()
         if let m = SettingsModel.live {
             var n = AIDefaults.apply(m.config.ai, connected: conn)
-            // PB-52 G2 (S5, spec 8.6): indexing on the model on this Mac stays on it when after moves to a cloud AI
+            // PB-52 G2 (S5, spec 8.6): indexing stays on the AI it used when after moves to another AI
             if EvidenceFlag.on(m.config) { n = n.keepingIndexing(from: m.config.ai) }
             if n != m.config.ai { logSwitch(m.config.ai, n); m.config.ai = n }        // the model saves the file
             return
@@ -211,13 +211,10 @@ enum AIRoute {
         // 0.24.1 (F3): a job never starts on an AI that is not there: the chosen one when it can run, else the first
         // that can (AIDefaults.pick over the AIs with a key or a tool), the same rule Settings saves.
         var c = c0
-        // PB-52 G2 (S5, spec 8.6): indexing that follows a local after-call AI stays local when `after` is replaced
-        if EvidenceFlag.on(c0) { c.ai.evidence = AppConfig.AIRoutes.pinnedEvidence(c0.ai.evidence, after: c0.ai.after) }
         let avail = Set(([api, code, codex, openai, gemini] as [String]).filter { available($0) }
                         + (LocalLLM.downloaded().isEmpty ? [] : [local]))
-        c.ai.prep = AIDefaults.pick(job: "prep", chosen: c.ai.prep, connected: avail)
-        c.ai.after = AIDefaults.pick(job: "after", chosen: c.ai.after, connected: avail)
-        c.ai.tips = AIDefaults.pick(job: "tips", chosen: c.ai.tips, connected: avail)
+        // PB-52 G2 (S5, spec 8.6): with the flag on, indexing stays on its AI when `after` is replaced (AIDefaults.runtime)
+        c.ai = AIDefaults.runtime(c0.ai, connected: avail, holdIndexing: EvidenceFlag.on(c0))
         return EconomyPlan.apply(c, on: Economy.isOn(stateDir: (statePath as NSString).deletingLastPathComponent),
                           accounts: EconomyPlan.Accounts(claude: PrepRunner.claudePath != nil, chatgpt: CodexAccount.cliPath != nil))
     }

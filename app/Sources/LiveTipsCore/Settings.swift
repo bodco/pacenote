@@ -137,7 +137,8 @@ public struct AppConfig: Codable, Equatable {
         public var seen: [String]? = nil
         public var geminiAccountNoticePending = false
         /// PB-52 G2 (S5): the AI that indexes project memory (job `evidence`, only with the flag `evidence_store` on).
-        /// nil = the same as after the call; written only once the PM picks one. It steps only to the model on this Mac.
+        /// nil = the same as after the call; written when the PM picks one, or set to the AI it followed when the
+        /// after-call AI is switched by itself (keepingIndexing). It steps only to the model on this Mac.
         public var evidence: String? = nil
         public func order(_ job: String, connected: Set<String>) -> [String] {
             AIChain.order(job: job, chosen: route(job), chain: chain, connected: connected, auto: autoSwitch)
@@ -176,10 +177,12 @@ public struct AppConfig: Codable, Equatable {
         public static func pinnedEvidence(_ evidence: String?, after: String) -> String? {
             evidence ?? (after == "local" ? "local" : nil)
         }
-        /// These routes after the after-call AI was changed from `old` (AIDefaults.apply): indexing pinned as above.
+        /// These routes after the after-call AI was changed from `old` (AIDefaults.apply at launch, a sign-in or a key
+        /// change): indexing is saved on the AI it ran on before, chosen or followed (any AI, not only the model on this
+        /// Mac, review round 4), so it never moves to another AI the PM did not choose for it.
         public func keepingIndexing(from old: AIRoutes) -> AIRoutes {
             guard old.after != after else { return self }
-            var r = self; r.evidence = Self.pinnedEvidence(old.evidence, after: old.after); return r
+            var r = self; r.evidence = old.route("evidence"); return r
         }
         public func openaiModel(_ job: String) -> String { job == "prep" ? openaiPrep : job == "tips" ? openaiTips : openaiAfter }
         public func geminiModel(_ job: String) -> String { job == "prep" ? geminiPrep : job == "tips" ? geminiTips : geminiAfter }
