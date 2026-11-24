@@ -492,8 +492,10 @@ def entity_card(store: S.Store, entity_id: str, *, scope: Optional[dict] = None,
             "SELECT ev.quote, sn.said_at, s.uri FROM evidence ev JOIN _snip x ON x.sid=ev.snippet_id AND x.cls='pass'"
             " JOIN snippet sn ON sn.id=ev.snippet_id JOIN revision rv ON rv.id=sn.revision_id JOIN source s"
             " ON s.id=rv.source_id WHERE ev.target='claim' AND ev.target_id=? AND (?='' OR sn.said_at<=?)"
+            " AND coalesce(sn.said_at, rv.valid_from)>=? AND coalesce(sn.said_at, rv.valid_from)<=?"   # window, as prepare
             " AND NOT EXISTS (SELECT 1 FROM evidence e2 JOIN _snip y ON y.sid=e2.snippet_id WHERE e2.target='claim'"
-            " AND e2.target_id=ev.target_id AND y.cls='denied')", (r["id"], as_of or "", as_of or ""))]
+            " AND e2.target_id=ev.target_id AND y.cls='denied')",
+            (r["id"], as_of or "", as_of or "", (window or ("", ""))[0] or "", (window or ("", "9999"))[1] or "9999"))]
         if rows and r["id"] not in current:
             history.append({"kind": "claim", "id": r["id"], "predicate": r["predicate"], "value": r["value"],
                             "modality": r["modality"], "quotes": rows, "said_at": rows[0]["said_at"],

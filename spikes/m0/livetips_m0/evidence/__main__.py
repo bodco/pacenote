@@ -188,13 +188,25 @@ def rebuild(st: S.Store, root: str, **kw) -> dict:
 
 def vacuum(st: S.Store) -> dict:
     """Purge revoked sources and superseded snippets nobody cites, then, in the same transaction, every claim and
-    edge left with no evidence and every llm alias with no alias_seen row (spec sections 6 and 13.4)."""
+    edge left with no evidence and every llm alias with no alias_seen row (spec sections 6 and 13.4). A claim or edge
+    a revoked source quotes goes first, with all its evidence, even when another file quotes it too (spec 13.4)."""
     with st.conn:
-        n_rev = st.conn.execute("DELETE FROM revision WHERE source_id IN (SELECT id FROM source WHERE state='revoked')").rowcount
-        n_sn = st.conn.execute("DELETE FROM snippet WHERE revision_id IN (SELECT id FROM revision WHERE superseded_at IS NOT"
-                               " NULL) AND id NOT IN (SELECT snippet_id FROM evidence)").rowcount
-        n_cl = st.conn.execute("DELETE FROM claim WHERE id NOT IN (SELECT target_id FROM evidence WHERE target='claim')").rowcount
-        n_ed = st.conn.execute("DELETE FROM edge WHERE id NOT IN (SELECT target_id FROM evidence WHERE target='edge')").rowcount
+        c = st.conn
+        c.execute("DROP TABLE IF EXISTS _gone")
+        c.execute("CREATE TEMP TABLE _gone AS SELECT DISTINCT ev.target, ev.target_id FROM evidence ev"
+                  " JOIN snippet sn ON sn.id=ev.snippet_id JOIN revision r ON r.id=sn.revision_id"
+                  " JOIN source s ON s.id=r.source_id WHERE s.state='revoked'")
+        n_cl = c.execute("DELETE FROM claim WHERE id IN (SELECT target_id FROM _gone WHERE target='claim')").rowcount
+        n_ed = c.execute("DELETE FROM edge WHERE id IN (SELECT target_id FROM _gone WHERE target='edge')").rowcount
+        for t in ("evidence", "topic_cite"):
+            c.execute("DELETE FROM {} WHERE EXISTS (SELECT 1 FROM _gone g WHERE g.target={}.target AND"
+                      " g.target_id={}.target_id)".format(t, t, t))
+        c.execute("DROP TABLE _gone")
+        n_rev = c.execute("DELETE FROM revision WHERE source_id IN (SELECT id FROM source WHERE state='revoked')").rowcount
+        n_sn = c.execute("DELETE FROM snippet WHERE revision_id IN (SELECT id FROM revision WHERE superseded_at IS NOT"
+                         " NULL) AND id NOT IN (SELECT snippet_id FROM evidence)").rowcount
+        n_cl += c.execute("DELETE FROM claim WHERE id NOT IN (SELECT target_id FROM evidence WHERE target='claim')").rowcount
+        n_ed += c.execute("DELETE FROM edge WHERE id NOT IN (SELECT target_id FROM evidence WHERE target='edge')").rowcount
         st.conn.execute("DELETE FROM alias WHERE origin='llm' AND NOT EXISTS (SELECT 1 FROM alias_seen s WHERE"
                         " s.alias_norm=alias.alias_norm AND s.entity_id=alias.entity_id)")
         if st.fts:

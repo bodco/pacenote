@@ -1407,7 +1407,9 @@ them `pending` (it costs money, so it is never automatic).
   `pm_override` rows stay in store A and do not follow the call.
 - **Vacuum** (weekly, and right after a source is revoked; always outside calls: a revoke that arrives during a call
   is applied at once by the state-only pass, which already hides it, and its vacuum runs after the call ends,
-  section 8.5): purge snippets of superseded revisions
+  section 8.5): first delete every claim and edge that has an evidence row on a revoked source, with all its
+  evidence and topic citations, even when another file quotes it too (a fact the revoked file states stays out of
+  search after the purge as it was before); then purge snippets of superseded revisions
   nobody cites, purged sources, then, in the same transaction, every claim and edge left with no evidence row and
   every `segment_cache` row whose `seg_hash` no segment of a remaining revision has, or whose `extractor` is not the
   current one and is older than 30 days; old `run_item` and `state_request` rows (keep 90 days); then `VACUUM`.

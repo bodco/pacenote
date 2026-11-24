@@ -94,8 +94,8 @@ the reason given above.
 ## G2 S1: the evidence store behind the flag (2026-11-24)
 
 The store of PB-52 (sub-task S1, `livetips_m0/evidence/`, flag `evidence_store`, off by default) is not on the
-variant A path, so A's columns are unchanged (`results/A-2026-11-24.json` equals `A-2026-11-23-g1-pb70.json` apart
-from the date, commit, label and run time; lookup p50 1.67 ms, p95 2.44 ms on this run). Variants B and C come with S2.
+variant A path, so A's columns are unchanged (`results/A-2026-11-24-3.json` equals `A-2026-11-23-g1-pb70.json` apart
+from the date, commit, label and run time; lookup p50 1.66 ms, p95 2.64 ms on this run). Variants B and C come with S2.
 Measured on the same 10 KB fixture by the S1 tests and one ingest:
 
 | What | Value |

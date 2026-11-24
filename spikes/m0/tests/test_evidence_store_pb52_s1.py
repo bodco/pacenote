@@ -943,6 +943,7 @@ def test_time_replay_on_content_time(env):
     assert [c["value"] for c in now] == ["January 12"]                                     # the old date is history
     card = SE.entity_card(st, "e-golive")
     assert [h["value"] for h in card["history"]] == ["December 8"] and card["history"][0]["note"] == "changed later"
+    assert SE.entity_card(st, "e-golive", window=("2026-11-15T00:00:00Z", None))["history"] == []   # before the window
     assert SE.entity_state(st, "c-1111111111", "2026-11-17T00:00:00Z")["status"] == "open"
     assert SE.entity_state(st, "c-1111111111", None)["status"] == "done"
     assert SE.entity_state(st, "c-2222222222", "2026-11-11T00:00:00Z") == {}               # not said yet
@@ -1104,6 +1105,33 @@ def test_purge_after_revoke_and_vacuum(env):
     assert st.one("SELECT count(*) FROM alias WHERE origin='llm'")[0] == 0
     t = texts(SE.search(st, "ibex budget team"))
     assert "90 hours" not in t and "three people" in t
+
+
+def test_vacuum_drops_a_claim_and_edge_the_revoked_file_shares_with_another(env):
+    root = env
+    g = "live/google/google-file-{}.md".format(GID[:16])
+    put(root, g, "# G\n\nThe ibex sync is blocked.\n")
+    put(root, "docs/a.md", "# A\n\nThe ibex sync is blocked.\n")
+    put(root, "docs/b.md", "# B\n\nThe heron report is late.\n")
+    st = open_store(root=root)
+    run(st, root)
+    for uri in (g, "docs/a.md"):
+        _claim_on(st, uri, "The ibex sync is blocked", subject="e-ibex", value="blocked")
+        _claim_on(st, uri, "The ibex sync is blocked", subject="e-ibex", rel="blocks", dst="e-sync")
+    _claim_on(st, "docs/b.md", "The heron report is late", subject="e-heron", value="late")
+    assert st.one("SELECT count(*) FROM claim WHERE subject_id='e-ibex'")[0] == 1      # one claim, two files quote it
+    facts = lambda q: [i for i in SE.search(st, q)["items"] if i["kind"] in ("claim", "edge")]
+    assert len(facts("ibex sync blocked")) == 2
+    IG.apply_state(st, revoked=[GID])
+    assert facts("ibex sync blocked") == []
+    rep = CLI.vacuum(st)
+    assert rep["claims"] == 1 and rep["edges"] == 1
+    assert st.one("SELECT count(*) FROM claim WHERE subject_id='e-ibex'")[0] == 0
+    assert st.one("SELECT count(*) FROM edge WHERE src_id='e-ibex'")[0] == 0
+    assert st.one("SELECT count(*) FROM evidence ev WHERE (ev.target='claim' AND ev.target_id NOT IN (SELECT id FROM"
+                  " claim)) OR (ev.target='edge' AND ev.target_id NOT IN (SELECT id FROM edge))")[0] == 0
+    assert facts("ibex sync blocked") == []
+    assert [i["value"] for i in facts("heron report late")] == ["late"]
 
 
 def test_register_item_before_a_rename_joins_one_after(env):
