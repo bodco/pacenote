@@ -157,6 +157,7 @@ final class IndexService: @unchecked Sendable {
                 }
                 if Self.skippedFolder(rel) || (ignores[w]?.matches(rel) ?? false) { continue }
                 changedAt[root] = Date()
+                MainActor.assumeIsolated { EvidenceService.shared.folderChanged(root: root) }   // PB-52 S5: debounced 10 minutes
             }
         }
     }

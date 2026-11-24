@@ -136,6 +136,10 @@ public struct AppConfig: Codable, Equatable {
         /// nil until the first look, so an update never takes over a choice.
         public var seen: [String]? = nil
         public var geminiAccountNoticePending = false
+        /// PB-52 G2 (S5): the AI that indexes project memory (job `evidence`, only with the flag `evidence_store` on).
+        /// nil = the same as after the call; written when the PM picks one, or set to the AI it followed when the
+        /// after-call AI is switched by itself (keepingIndexing). It steps only to the model on this Mac.
+        public var evidence: String? = nil
         public func order(_ job: String, connected: Set<String>) -> [String] {
             AIChain.order(job: job, chosen: route(job), chain: chain, connected: connected, auto: autoSwitch)
         }
@@ -161,14 +165,30 @@ public struct AppConfig: Codable, Equatable {
             let usesGeminiAccount = [prep, tips, after].contains("agy")
             geminiAccountNoticePending = usesGeminiAccount ||
                 ((try? c.decodeIfPresent(Bool.self, forKey: .geminiAccountNoticePending)) ?? false)
+            evidence = (try? c.decodeIfPresent(String.self, forKey: .evidence)).map(Self.migratedRoute)
             prep = Self.migratedRoute(prep)
             tips = Self.migratedRoute(tips)
             after = Self.migratedRoute(after)
         }
         public static func migratedRoute(_ route: String) -> String { route == "agy" ? "gemini" : route }
+        /// PB-52 G2 (S5, spec 8.6): the indexing AI before the after-call AI is changed (the model on this Mac removed or
+        /// missing): indexing that follows a local after-call AI (nil) is pinned to the model on this Mac, so it never
+        /// moves to a cloud AI the PM did not choose for it; any other value is kept.
+        public static func pinnedEvidence(_ evidence: String?, after: String) -> String? {
+            evidence ?? (after == "local" ? "local" : nil)
+        }
+        /// These routes after the after-call AI was changed from `old` (AIDefaults.apply at launch, a sign-in or a key
+        /// change): indexing is saved on the AI it ran on before, chosen or followed (any AI, not only the model on this
+        /// Mac, review round 4), so it never moves to another AI the PM did not choose for it.
+        public func keepingIndexing(from old: AIRoutes) -> AIRoutes {
+            guard old.after != after else { return self }
+            var r = self; r.evidence = old.route("evidence"); return r
+        }
         public func openaiModel(_ job: String) -> String { job == "prep" ? openaiPrep : job == "tips" ? openaiTips : openaiAfter }
         public func geminiModel(_ job: String) -> String { job == "prep" ? geminiPrep : job == "tips" ? geminiTips : geminiAfter }
-        public func route(_ job: String) -> String { job == "prep" ? prep : job == "tips" ? tips : after }
+        public func route(_ job: String) -> String {
+            job == "prep" ? prep : job == "tips" ? tips : job == "evidence" ? (evidence ?? after) : after
+        }
     }
     /// Engine processes (M1-M2: Python core). Not shown in the UI; set by the installer.
     public struct Engine: Codable, Equatable {
@@ -323,6 +343,12 @@ public struct AppConfig: Codable, Equatable {
     public var appRoot = ""
     /// Model ids the API returned on the last successful key test (for the model pickers).
     public var knownModels: [String] = []
+    /// PB-52 G2: feature flags, {"evidence_store": true}. nil = none set (and not written, so config.json does not change
+    /// while every flag is off). The engine reads the same key from this file (`--config`, livetips_m0.evidence.enabled).
+    public var features: [String: Bool]? = nil
+    /// PB-52 G2 (S5): the settings of project memory (ceilings, topic summaries, AI reading, pause); nil until the PM
+    /// changes one, so config.json does not change while the flag is off.
+    public var evidencePrefs: EvidencePrefs? = nil
     public init() {}
 
     public init(from decoder: Decoder) throws {
@@ -398,6 +424,8 @@ public struct AppConfig: Codable, Equatable {
         workRoot = (try? c.decode(String.self, forKey: .workRoot)) ?? d.workRoot
         appRoot = (try? c.decode(String.self, forKey: .appRoot)) ?? d.appRoot
         knownModels = (try? c.decode([String].self, forKey: .knownModels)) ?? d.knownModels
+        features = try? c.decodeIfPresent([String: Bool].self, forKey: .features)
+        evidencePrefs = try? c.decodeIfPresent(EvidencePrefs.self, forKey: .evidencePrefs)
     }
 
     /// 0.8.7 (F3): per-project meeting databases become one. The most used database wins (the old default counts

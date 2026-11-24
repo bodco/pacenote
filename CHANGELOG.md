@@ -5,6 +5,31 @@ Pacenote. Earlier versions are described in the commit messages and in
 
 ## Unreleased
 
+- **Project memory in the app, behind the same flag (GraphRAG G2 S5, PB-88).** Still off by default; with
+  `"features": {"evidence_store": true}` in `config.json`, Settings > AI gets a Project memory row: one line saying
+  that project text goes to the AI provider chosen for indexing and what the first index is estimated to cost (not
+  available yet until AI reading is calibrated), the off switch, the AI used for indexing (it never falls back to
+  another cloud AI, only to the model on this Mac), ceilings per pass, per day and for all projects a day, topic
+  summaries, Pause, and per project its status, Index now and Delete. Each project keeps one memory through a rename
+  or a folder change. A pass runs after a call's notes, 10 minutes after folder changes, hourly while the Mac is idle
+  on power, or on Index now, and never during a call. Hiding a call, a document that lost access and the supersede
+  click reach the memory at once, also during a call. A Notion page the Notion mirror can no longer read (its
+  database no longer shared, or deleted or unshared, found on a full mirror run) leaves the memory the same way as
+  a Google document that lost access, and comes back once the mirror reads it again. The Tracker snapshot includes the HubSpot tasks already loaded
+  (keyed by portal and task, so a task linked to a commitment stays one task), and deleting the memories of projects
+  no longer in Pacenote asks first. A hide, unhide or lost access that happens while a pass runs is not undone by
+  that pass (also when the app quit while the pass ran: at launch the current lists go again), hide, unhide and
+  lost-access requests of a project go one at a time so a newer list always lands last, Delete is unavailable while
+  that project's pass runs, deleting a project's memory keeps its list of
+  documents that lost access, a pass queued before a call waits until the call ends, and a project added since
+  launch gets its memory at its first hide, sheet, folder change or pass instead of at the next launch. Indexing set
+  to the model on this Mac (also through "same as after the call") stays on it when that model is removed or
+  missing, so project text never moves to a cloud AI (once AI reading lands, that pass stops with "Local model not
+  installed"). Indexing that follows the AI of after the call also stays on that AI when after the call moves to
+  another AI by itself (a key removed, an account signed out or a new one connected), so project text never goes
+  to a provider not chosen for indexing. A pass the engine skipped as busy no longer counts as a pass for the hourly
+  idle check. With the
+  flag off nothing changes.
 - **Project memory, step 3a: how an AI will read the project's sources, tested offline (GraphRAG G2 S3a, PB-86).**
   Nothing changes for the PM: the evidence store stays behind the flag `evidence_store` (off by default), no setting
   is shown and no AI is asked yet. This step adds the extraction rules (`rules/evidence.yaml`, the output schema and

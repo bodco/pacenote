@@ -79,12 +79,15 @@ enum AIRoute {
     @MainActor static func autoAssign() {
         let conn = confirmed()
         if let m = SettingsModel.live {
-            let n = AIDefaults.apply(m.config.ai, connected: conn)
+            var n = AIDefaults.apply(m.config.ai, connected: conn)
+            // PB-52 G2 (S5, spec 8.6): indexing stays on the AI it used when after moves to another AI
+            if EvidenceFlag.on(m.config) { n = n.keepingIndexing(from: m.config.ai) }
             if n != m.config.ai { logSwitch(m.config.ai, n); m.config.ai = n }        // the model saves the file
             return
         }
         var c = AppConfig.load(from: AppPaths.config)
-        let n = AIDefaults.apply(c.ai, connected: conn)
+        var n = AIDefaults.apply(c.ai, connected: conn)
+        if EvidenceFlag.on(c) { n = n.keepingIndexing(from: c.ai) }
         guard n != c.ai else { return }
         logSwitch(c.ai, n)
         c.ai = n
@@ -210,9 +213,8 @@ enum AIRoute {
         var c = c0
         let avail = Set(([api, code, codex, openai, gemini] as [String]).filter { available($0) }
                         + (LocalLLM.downloaded().isEmpty ? [] : [local]))
-        c.ai.prep = AIDefaults.pick(job: "prep", chosen: c.ai.prep, connected: avail)
-        c.ai.after = AIDefaults.pick(job: "after", chosen: c.ai.after, connected: avail)
-        c.ai.tips = AIDefaults.pick(job: "tips", chosen: c.ai.tips, connected: avail)
+        // PB-52 G2 (S5, spec 8.6): with the flag on, indexing stays on its AI when `after` is replaced (AIDefaults.runtime)
+        c.ai = AIDefaults.runtime(c0.ai, connected: avail, holdIndexing: EvidenceFlag.on(c0))
         return EconomyPlan.apply(c, on: Economy.isOn(stateDir: (statePath as NSString).deletingLastPathComponent),
                           accounts: EconomyPlan.Accounts(claude: PrepRunner.claudePath != nil, chatgpt: CodexAccount.cliPath != nil))
     }

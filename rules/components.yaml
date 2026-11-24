@@ -65,6 +65,8 @@ remove: >-
   link downloader through `setup.sh remove agent|linkdl` (pip uninstall in the private venv). Required parts are
   never removed (setup.sh exits 3). After the model goes, jobs set to "On this Mac" move to the next connected AI
   in the chain and the chain's local step is switched off (LiveTipsCore ComponentCatalog.afterRemovingLocal).
+  Exception (PB-52 G2, flag evidence_store only): project memory indexing on the model on this Mac stays on it and
+  never moves to a cloud AI (with S3 its pass stops with "Local model not installed").
 sizes: >-
   Measured, never written from a table: `setup.sh size <step>` prints "SIZE <bytes>" (du), the model from its
   Ollama manifest. Freed = size before minus size after. The numbers in this file are only what is shown before

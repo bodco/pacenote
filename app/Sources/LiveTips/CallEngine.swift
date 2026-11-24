@@ -300,6 +300,7 @@ final class CallEngine {
                 }
             }
         }
+        EvidenceService.callStarted()          // PB-52 G2 (S5): call-active.json, no indexing request while it exists
         return nil
     }
 
@@ -544,6 +545,7 @@ final class CallEngine {
         let t0 = Date(), prov = Analytics.provider(route: c.ai.after)
         p.terminationHandler = { proc in
             Self.notesInWork.remove(notes)
+            EvidenceService.notesWritten(file: file)          // PB-52 G2 (S5): a project memory pass after the notes
             let ok = proc.terminationStatus == 0 && FileManager.default.fileExists(atPath: notes)
             let ms = Int(Date().timeIntervalSince(t0) * 1000), code = proc.terminationReason == .uncaughtSignal ? "crashed" : "other"
             // 0.24.1 (F7): the AI that really wrote the notes (after a switch), the chosen one as fallback_to's origin

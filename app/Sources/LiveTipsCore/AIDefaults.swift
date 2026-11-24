@@ -21,6 +21,19 @@ public enum AIDefaults {
         return preference(job: job).first { connected.contains($0) && AIChain.allowed($0, job: job) } ?? chosen
     }
 
+    /// The routes the jobs run with (AIRoute.effective): each job on its AI while connected, else `pick`.
+    /// PB-52 G2 (S5, spec 8.6): with the evidence_store flag on (`holdIndexing`), indexing is first held on the AI it
+    /// is set to, chosen or the after-call AI it follows, so replacing the after-call AI never moves project text to
+    /// another AI; a not connected indexing AI is left to the engine (the model on this Mac or off).
+    public static func runtime(_ r: AppConfig.AIRoutes, connected: Set<String>, holdIndexing: Bool) -> AppConfig.AIRoutes {
+        var out = r
+        if holdIndexing { out.evidence = r.route("evidence") }
+        out.prep = pick(job: "prep", chosen: r.prep, connected: connected)
+        out.after = pick(job: "after", chosen: r.after, connected: connected)
+        out.tips = pick(job: "tips", chosen: r.tips, connected: connected)
+        return out
+    }
+
     /// The routes after a change of what is connected. `seen` is what was connected the last time (nil: never looked,
     /// e.g. the first launch after the update: nothing is adopted then, only routes whose AI is not connected move).
     /// An account connected since the last look becomes the preparation and after-the-call AI.

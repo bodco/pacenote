@@ -319,6 +319,7 @@ def ingest(store: S.Store, root: str, *, hidden_calls=None, revoked=None, web_di
     apply_pending(store)
     # the pass's lists first, so a hidden or revoked source is never active between two sources (section 12)
     apply_state(store, hidden_calls=hidden_calls, revoked=revoked)
+    started_lists = (store.meta("hidden_calls"), store.meta("revoked"))
     universe = CS.label_universe(root)
     old_uni = set(store.meta_json("label_universe", []) or [])
     added = sorted(set(universe) - old_uni)
@@ -387,7 +388,10 @@ def ingest(store: S.Store, root: str, *, hidden_calls=None, revoked=None, web_di
             ctx.report["deleted"] += 1
     ingest_tracker(ctx, tracker_path)
     ingest_voices(ctx, voices)
-    apply_state(store, hidden_calls=hidden_calls, revoked=revoked)
+    # a hide, unhide or revoke applied while the pass ran is newer than the lists it started with: that list stays
+    # (section 13.1; the app may have quit before it could send it again)
+    apply_state(store, hidden_calls=hidden_calls if store.meta("hidden_calls") == started_lists[0] else None,
+                revoked=revoked if store.meta("revoked") == started_lists[1] else None)
     embed_missing(ctx)
     with store.conn:
         store.set_meta("label_universe", json.dumps(sorted(universe)))

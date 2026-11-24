@@ -108,6 +108,18 @@ final class NotionMirrorService: @unchecked Sendable {
         }
     }
 
+    /// PB-88: with project memory on, a managed copy of mirror.py older than the app's is replaced before a run, so it
+    /// lists the pages it can no longer read (`lost`) for project memory. With the flag off, or for the person's own
+    /// mirror, nothing changes.
+    private static func refreshScript(_ c: AppConfig) {
+        guard EvidenceFlag.on(c), mode(workRoot: c.workRoot) == "managed",
+              let src = Bundle.main.resourceURL?.appendingPathComponent("notion-mirror/mirror.py").path else { return }
+        let dst = (dir(workRoot: c.workRoot) as NSString).appendingPathComponent("mirror.py")
+        let fm = FileManager.default
+        guard let new = fm.contents(atPath: src), fm.contents(atPath: dst) != new else { return }
+        try? new.write(to: URL(fileURLWithPath: dst), options: .atomic)
+    }
+
     /// "pacenote" (no Control Tower) or "control_tower", from the managed config; "" when there is none.
     static func layout(workRoot: String) -> String {
         guard !workRoot.isEmpty, let d = try? Data(contentsOf: URL(fileURLWithPath: configPath(workRoot: workRoot))),
@@ -126,6 +138,7 @@ final class NotionMirrorService: @unchecked Sendable {
     private func launch(_ args: [String], token tok: String, done: (@Sendable (Bool, String) -> Void)?) {
         let c = config
         Self.refreshSection(c)
+        Self.refreshScript(c)
         let dir = Self.dir(workRoot: c.workRoot)
         let p = Process()
         p.executableURL = URL(fileURLWithPath: c.engine.python.isEmpty ? "/usr/bin/python3" : c.engine.python)
@@ -149,6 +162,8 @@ final class NotionMirrorService: @unchecked Sendable {
                 self?.lastMessage = tail
                 if self?.running === proc { self?.running = nil }
                 done?(proc.terminationStatus == 0, tail)
+                // PB-88: pages the mirror can no longer read leave project memory at once (nothing with the flag off)
+                MainActor.assumeIsolated { EvidenceService.shared.mirrorFinished() }
             }
         }
         do { try p.run(); if args.first != "--discover" { running = p } } catch { done?(false, error.localizedDescription) }

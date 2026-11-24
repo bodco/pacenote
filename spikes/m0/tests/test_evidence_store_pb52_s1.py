@@ -485,6 +485,32 @@ def test_state_requests(env, monkeypatch):
     assert st.read_log() == []
 
 
+def test_a_request_applied_during_a_pass_is_not_undone_by_its_lists(env):
+    """PB-88 round 3: a hide or revoke that lands while a pass runs (the app quit, its re-send never came) stays."""
+    root = env
+    hidden_world(root)
+    st = open_store("p-m", root)
+    osprey_tr = HIDDEN + ".md"
+    run(st, root, hidden_calls=[], revoked=[])
+    assert st.one("SELECT state FROM source WHERE uri=?", (osprey_tr,))[0] == "active"
+    sent = []
+
+    def between():
+        if not sent:
+            st.append_request("hidden_calls", {"hidden_calls": [osprey_tr]}, "r-mid")
+            st.append_request("revoked", {"revoked": [NID]}, "r-mid-revoked")
+            sent.append(1)
+    put(root, "docs/new.md", "# New\n\nA new file, so the pass has a source to write.\n")
+    run(st, root, hidden_calls=[], revoked=[], between=between)       # the pass started with empty lists
+    assert sent and st.applied_ids() >= {"r-mid", "r-mid-revoked"}
+    assert st.one("SELECT state FROM source WHERE uri=?", (osprey_tr,))[0] == "excluded"
+    assert json.loads(st.meta("hidden_calls")) and json.loads(st.meta("revoked"))
+    assert "osprey migration slips" not in texts(SE.search(st, "osprey migration"))
+    # a later pass with the app's current lists applies them as usual
+    run(st, root, hidden_calls=[], revoked=[])
+    assert st.one("SELECT state FROM source WHERE uri=?", (osprey_tr,))[0] == "active"
+
+
 def test_partial_log_line_is_skipped(env):
     st = open_store("p-l", env)
     st.append_request("hidden_calls", {"hidden_calls": ["a.md"]}, "r-a")
@@ -1053,6 +1079,24 @@ def test_tracker_item_of_a_register_task_keeps_the_register_name(env, tmp_path):
     assert tuple(st.one("SELECT name, status FROM entity WHERE id='c-3333333333'")) == ("send the plover checklist", "open")
 
 
+def test_app_snapshot_hubspot_key_links_the_register_task(env, tmp_path):
+    """PB-88 (S5): the app keys a HubSpot task crm:<portal>:<task> with project and no last_edited; a register task
+    linked to that task in that portal is the same task, never a second one."""
+    root = env
+    reg = [{"v": 1, "op": "add", "id": "c-4444444444", "text": "send the revised sow", "owner": "me",
+            "created": "2026-11-10T10:00:00+00:00"},
+           {"v": 1, "op": "crm_link", "id": "c-4444444444", "crm_task": "9001", "crm_portal": "111",
+            "at": "2026-11-10T11:00:00+00:00"}]
+    put(root, "live/commitments.jsonl", "\n".join(json.dumps(e) for e in reg) + "\n")
+    snap = tmp_path / "tracker.json"
+    snap.write_text(json.dumps({"items": [{"id": "crm:111:9001", "text": "Send the revised SOW", "status": "NOT_STARTED",
+                                           "owner": "me", "project": "northpoint", "kind": "task"}]}), encoding="utf-8")
+    st = open_store(root=root)
+    run(st, root, tracker_path=str(snap))
+    assert SE.resolve_key(st, "crm:111:9001") == ["c-4444444444"]
+    assert st.one("SELECT count(*) FROM entity WHERE type='task'")[0] == 1
+
+
 def test_edge_modality_rows(env):
     root = env
     put(root, "docs/one.md", "# One\n\nMaybe Globex blocks Northpoint next week.\n", mtime=ts("2026-11-05T09:00:00Z"))
@@ -1316,3 +1360,24 @@ def test_hidden_and_revoked_are_never_visible_during_a_pass_or_a_rebuild(env):
     assert [x for x in emb.texts if "Bluebird" in x] and [x for x in emb.texts if "Kestrel" in x]
     assert st.one("SELECT count(*) FROM snippet sn JOIN revision rv ON rv.id=sn.revision_id WHERE rv.superseded_at IS NULL"
                   " AND sn.vec IS NULL")[0] == 0
+
+
+def test_notion_page_archived_by_the_mirror_is_revoked_not_deleted(env):
+    """PB-88 r7 (owner decision 24.11, option a): the mirror moves a page it can no longer read to _notion/_archived/
+    and the app passes its id as revoked: the source is revoked (strict deny), not deleted, and a page shared again
+    (its file live, its id off the list) is active again."""
+    root = env
+    page = "_notion/tasks/2026-10-05 Falcon budget [{}].md".format(NID)
+    put(root, page, "# Falcon budget\n\nThe falcon budget is frozen.\n")
+    st = open_store(root=root)
+    run(st, root)
+    assert st.one("SELECT state FROM source WHERE uri=?", (page,))[0] == "active"
+    arch = Path(root) / "_notion/_archived/tasks" / Path(page).name
+    arch.parent.mkdir(parents=True)
+    os.replace(Path(root) / page, arch)
+    run(st, root, revoked=[NID])
+    assert st.one("SELECT state FROM source WHERE uri=?", (page,))[0] == "revoked"
+    assert "falcon" not in texts(SE.search(st, "falcon budget")).lower()
+    os.replace(arch, Path(root) / page)
+    run(st, root, revoked=[])
+    assert st.one("SELECT state FROM source WHERE uri=?", (page,))[0] == "active"

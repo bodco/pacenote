@@ -194,7 +194,14 @@ No content hashing exists in the app today (`file_day` uses the date in the name
    match, so a moved file never drops out of search between two steps. **Revoked**: the worker makes no Google or Notion request, and the
    picked copy `live/google/google-file-<id16>.*` stays on disk after access is lost, so the signal comes from the
    app. The prep already knows each Google source's `google.status: ok | denied | not_found` (`sheet/sources.py`,
-   the `access` field), and the app knows the Notion pages it can no longer read. The app passes the list of
+   the `access` field), and the app knows the Notion pages it can no longer read from the Notion mirror (PB-88, owner
+   decision 24.11 option (a): the mirror's `state.json` `lost` map lists the pages of a database that answers 403 or
+   404, a page whose read answers 403 or 404 and the pages a full run moved to `_notion/_archived/`; the app also
+   reads the page ids of `_notion/_archived/` itself, so a mirror the PM runs with their own job counts for archived
+   pages (a database answering 403 or 404 is listed only by a mirror that writes `lost`: the app's managed copy,
+   which the app replaces with its own `mirror.py` before a run while the flag is on); a page gone
+   from its database or deleted counts like Google `not_found`; 401, 429 and 5xx never count; a deleted or unshared
+   page is noticed on the next full run, `full_every_days`, default 7). The app passes the list of
    `denied` and `not_found` documents (Google file id, Notion page id) with each pass, the same way it passes hidden
    calls (S5), and a document's change to `denied` or `not_found` starts the same immediate state-only pass as a
    hide (section 5.1). The worker maps each id to its sources (the picked copy by `<id16>`, the `_notion/` mirror file
@@ -980,7 +987,16 @@ All of this is pure code and runs the same for every route.
   by `cost.ProviderCaps`, or the pass ceiling is reached and the PM turned on local overflow (a setting, off by
   default, section 9.1). If Ollama or the model is not installed, the pass stops with `status = off` and says so;
   it never picks another cloud route
-  the PM did not choose.
+  the PM did not choose. Removing the model on this Mac (`ComponentCatalog.afterRemovingLocal`) or running without
+  it (`AIRoute.effective`, and the saved `AIDefaults.apply` in `AIRoute.autoAssign`) keeps indexing on `local`
+  when it was there, chosen or following a local `after` (`AppConfig.AIRoutes.pinnedEvidence` and
+  `keepingIndexing`, flag on only, PB-88 review round 4); with S3 the pass then stops with `off`.
+  The same holds for a cloud AI (PB-88 review round 5): when `after` is replaced, at run time because its AI is not
+  connected (`AIDefaults.runtime` in `AIRoute.effective`) or saved because another account was connected or a key
+  removed (`AIDefaults.apply` plus `keepingIndexing` in `AIRoute.autoAssign`, also when a newly connected account is
+  adopted), indexing that followed it stays on the AI it ran on (`evidence` = that AI); it never moves to the new
+  after-call AI. A not connected indexing AI is left to the engine (local or `off`). Economy mode does not change
+  the indexing AI. The PM moves indexing to another AI only by choosing it in Settings > AI > Project memory.
 
 ### 8.7 Topic summaries and global questions
 
@@ -1146,16 +1162,23 @@ Settings > AI, a new row under the routes (only when the flag is on):
   360 minutes", and for all projects together "Never more than $3.00 / 30% / 360 minutes a day for all projects"),
   "Topic summaries: after each pass / only when asked", the switch "Use AI to read
   sources" (off = deterministic links only, no model requests), and "Delete this project's memory".
-- **No confirmation before the first index** (owner decision 24.11, section 15 decision 2): turning the flag on is
-  the consent. Where the flag is turned on, one plain line under the switch says what will be sent and what the
-  first index is estimated to cost, for example: "Project text will be sent to Claude key (Haiku) for indexing. First
-  index of Northpoint: about $1.34 to $1.85." On a plan route: "... to your ChatGPT plan for indexing. First index:
-  about 68% to 84% of a 5-hour limit, over about 3 days." On this Mac: "Project text stays on this Mac. First index:
-  about 5 to 29 hours." When the indexing provider is not the one used for preparation, the same line adds: "Your
-  project files have so far gone only to <prep provider>." The range comes from `evidence estimate` (typical output
-  to the output cap, the real segment count of the pending revisions); after the S3 calibration (G0 `--extract`)
-  the typical end uses the measured output per segment. The per-pass and per-day ceilings, the cost shown before
-  and after each pass and the off switch ("Use AI to read sources") stay.
+- **Owner decision 24.11 (section 15, question 2, option b): no confirmation before the first index.** Turning the
+  flag on is the consent. Where it is turned on, the row's first line says in plain words that project text will be
+  sent to the provider chosen for indexing and what the first index is estimated to cost: "Project text will be sent
+  to Anthropic for indexing. Estimated first index: about $1.34 to $1.85." Until S3's calibration is on main the
+  second sentence is "The estimated cost of the first index is not available yet." On the model on this Mac it says
+  "Indexing runs on the model on this Mac. Project text does not leave the Mac." When the indexing provider is not
+  the one used for preparation, the line below it stays: "Your project files have so far gone only to <prep
+  provider>; indexing sends them to <index provider>." The per-pass, per-day and all-projects ceilings, the cost
+  before and after a pass and the off switch stay as above. The dialog below is kept only as the record of what was
+  proposed; S5 does not build it.
+- (Superseded by the owner decision above.) Before the first full index of a project, a confirmation: "First index of Northpoint: 192 sources, about 3.9M
+  characters. On Claude key (Haiku reads, Sonnet writes topic summaries): about $1.34 to $1.85, in 2 passes. On your
+  ChatGPT plan: about 68% to 84% of a 5-hour limit, in 7 to 9 passes over about 3 days. On this Mac: 5 to 29 hours,
+  free. Your files are sent only to the AI you chose
+  for this job." When the indexing provider is not the one used for preparation, one more line: "Your project files
+  have so far gone only to <prep provider>; indexing sends them to <index provider>." Buttons: "Start", "Use this Mac only", "Not now". The range comes from the estimate with typical
+  output and with the output cap; after S3 calibration the typical end uses the measured output per segment.
 - After a pass, in the same row: "Done: 230 parts, 0.9M tokens, $0.29 (estimate was $0.31)". A stopped pass says
   why: "Stopped at your $1.00 ceiling", "Paused: a call started", "Local model not installed".
 
@@ -1388,7 +1411,16 @@ ids (`--request-id <id>` asks about one).
     and `os.rename`s it over the old one, so a reader without the lock sees the old file or the new one, never a
     truncated one.
   - Retry: the app keeps the ids it sent until `evidence status` lists them as applied, and re-sends any id not
-    listed after the pass ends (or at the next launch); a re-sent id that is already applied is a no-op.
+    listed after the pass ends (or at the next launch); a re-sent id that is already applied is a no-op. Only an
+    override is re-sent as it was; an unapplied `exclude` is dropped and replaced by one fresh request with the
+    current hidden and revoked lists, so an older list never lands after a newer one (PB-88 review round 2).
+  - A pass applies the lists it started with again at its end only for a list no request changed while it ran: a
+    hide, unhide or revoke applied during the pass is newer and stays (PB-88 review round 3; this also covers an app
+    that quit while its pass ran). The app still compares the lists it gave the pass with the current ones when the
+    pass ends and sends each changed list again as a fresh request.
+  - Order: the app runs the state-only requests of a project one CLI process at a time (the lock keeps no waiting
+    order), and queued `exclude` requests merge into one that reads the current lists when it starts. At launch it
+    sends one fresh `exclude` with both current lists for every project that has a store (PB-88 review round 3).
 - One pass at a time across all projects (`evidence/worker.lock`), so the global daily cap (section 9.1) is summed
   without a race.
 - Many readers (prep, the live engine, the skill CLI) use WAL snapshots and never block the writer.
@@ -1628,10 +1660,19 @@ The questions as they were asked:
    are a **lower bound**: they assume one segment per 6,000 characters of a document, and a folder document with
    many short sections has one segment per section (section 8.2); the real count is shown before the first index.
    **Recommendation: (a)**; G0 `--extract` compares quality and we switch if the cheap model misses too much.
+   **Owner decision 24.11: (a).** The cheapest model of the PM's route reads sources for extraction; the route's
+   after-call model writes topic summaries.
 2. **Consent before spending on a cloud route.** Options: (a) ask once per project before the first full index,
    showing the volume, provider and cost range (section 10), then run increments in the background without asking,
    under the per-pass and daily caps; (b) no prompt at all, the flag is consent enough; (c) local only for the first
    index, cloud for increments; (d) ask before every pass. **Recommendation: (a)**.
+   **Owner decision 24.11: (b).** No consent prompt before the first cloud index: turning the flag `evidence_store`
+   on is the consent. The per-pass, per-day and all-projects ceilings, the cost shown before and after a pass and the
+   off switch stay. Where the flag is turned on, one plain line says that project text will be sent to the chosen AI
+   provider for indexing and what the estimated first-index cost is (section 10). Section 12's "the first full index
+   asks before it starts" is replaced by this line.
+3. **Notion pages that lost access (asked in PB-88 review):** (a) S5 builds the Notion revoke now, the same as
+   Google; (b) a follow-up task. **Owner decision 24.11: (a).** The signal is the Notion mirror (section 5.2 item 6).
 
 Team defaults, each a setting in section 10, not owner questions: $1.00 per pass and $3.00 per day on paid keys,
 10% per pass and 30% per day of the 5-hour window on plans, 120 and 360 minutes on local, and the same day caps for
@@ -2004,10 +2045,14 @@ S3 unchanged.
 Scope: Swift: `evidence_uid` in `projects.json` with the slug passed on every pass (slug history), `LT_PROJECT_UID`,
 `call-active.json` written at call start and removed at the end, the Tracker snapshot file
 (`tracker-snapshot/<uid>.json` in the state folder next to `ai-routes.json`, from the Notion and HubSpot items the
-app already holds), the lists passed to each pass (hidden calls from `history.json`; Google and Notion documents with
+app already holds; a HubSpot task keyed `crm:<portal>:<task>` as `identity.tracker_id` keys it and placed in the
+project of its linked register item; each item with `project` and, for Notion, `last_edited` from the mirror
+header), the lists passed to each pass (hidden calls from `history.json`; Google and Notion documents with
 status `denied` or `not_found`; stored page folders under `SheetCLI.stateDir/web` for this project's sheets), the
 state-only pass on hide, unhide and loss of access, at once also during a call, each with a `--request-id` kept
-until `evidence status` lists it applied and re-sent otherwise (section 13.1), the supersede click in
+until `evidence status` lists it applied and otherwise re-sent (an override as it was, a hide, unhide or revoke as
+one fresh request with the current lists, section 13.1; one request at a time per project, queued excludes merged,
+both lists sent once more at launch), the supersede click in
 `CallPage.swift` running `evidence override --key notion:<old> --field supersede --value notion:<new>` after `decision_notion.py --supersede` returns ok (section 7.1), triggers (after notes, folder change debounce, idle hourly, "Index now"), the `evidence` job in Swift
 `AIChain` (`allowed`, Settings list, stepping only to the model on this Mac; the `evidence` parameter of
 `ComponentCatalog.afterRemovingLocal` with its three call sites, section 8.6), the settings row with the all-projects
@@ -2023,9 +2068,12 @@ Acceptance:
 - [ ] `call-active.json` exists for the whole call and is removed after it, including after a crash on the next
       launch.
 - [ ] Hiding a call on Home starts the state-only pass at once (also during a call) with a request id, and an id
-      not listed as applied after the pass is re-sent (pure-logic test on the request tracker); a supersede click writes the override only after Notion
+      not listed as applied after the pass is sent again with the current list (pure-logic test on the request
+      tracker; a list that changed during a pass goes again after it); a supersede click writes the override only after Notion
       returned ok (pure-logic test on the command builder); a Google document turning
-      `denied` does the same with `--revoked`; the Tracker snapshot file is written only from data the app already
+      `denied` does the same with `--revoked`, and so does a Notion page the mirror can no longer read (pure-logic
+      test on the list builder: archived, lost with its file still live, renamed, read again, swept, Google ids
+      untouched; mirror test on the `lost` map; engine test that the archived page is revoked, not deleted); the Tracker snapshot file is written only from data the app already
       has (no new request; pure-logic tests on the list builders and the writer).
 - [ ] `AIChain` accepts the `evidence` job and never steps it to another cloud route (pure-logic test).
 - [ ] The cost text before and after a pass shows the numbers from the `run` row as a range (typical to cap), using
@@ -2033,6 +2081,20 @@ Acceptance:
       gate (L33).
 
 G0 gate: no change to any G0 column (the app wiring is not on the bench); `CoreChecks` and `swift build` green.
+
+S5 as built (PB-88): the flag is `features.evidence_store` in the app's `config.json`, the file the CLI reads through
+`--config` (the app never sets `LT_EVIDENCE`); the store is passed `LT_SUPPORT_DIR` = Application Support so it is
+never under the work folder the app root may sit in; `evidence_uid`, `features`, the `evidence` route and the
+ceilings are written to `projects.json` and `config.json` only once the flag is on or the PM changes them. The
+ceilings reach the worker as `LT_EVIDENCE_LIMITS` (JSON: `pass`, `day`, `all_day` with `usd`, `pct`, `min`, plus
+`topics`, `extract`, `local_overflow`) for S3 to read. The cost text shows numbers only from an `estimate` object in
+`evidence status` with `calibrated: true` (`typical`, `cap`, `unit`, `parts`) and the `run` row under `last_run`;
+S3 adds both. With neither, every estimate line says it is not available yet. Notion pages that lost access
+(`EvidenceLists.notionRevoked`): the app recomputes the project's revoked list from the mirror's `lost` map and the
+project's `_notion/` files at launch, before every pass, after every mirror run the app starts and on the 10-minute
+evidence timer (a mirror run by the PM's own job), and sends the state-only pass at once when it changed; an id leaves only when its file is live again and the mirror no longer lists
+it, so a page whose archived file was swept after 30 days stays revoked. The first-index dialog is not built
+(owner decision 24.11, section 15).
 
 Order: S1 -> S2 -> S3 -> S4; S5 can start after S1 (it needs only the CLI and the flag), shows cost numbers only after
 S3's calibration, and must land before the flag is offered to the owner. S1 and S2 go first because they make every

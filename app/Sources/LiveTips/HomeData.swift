@@ -290,7 +290,10 @@ final class CallHistory: ObservableObject {
         Array(records.filter { !$0.hidden && FileManager.default.fileExists(atPath: $0.file) }.sorted { $0.start > $1.start }.prefix(40))
     }
 
-    func hide(_ r: Record) { update(r.file) { $0.hidden = true } }
+    func hide(_ r: Record) {
+        update(r.file) { $0.hidden = true }
+        EvidenceService.shared.hiddenChanged(file: r.file)     // PB-52 G2 (S5): the state-only pass at once, also during a call
+    }
 
     /// A call that has just ended.
     func recordEnd(file: String, title: String, project: String, lines: Int, cost: Double?) {

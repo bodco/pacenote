@@ -1334,6 +1334,38 @@ The skill and the app follow the same rules, in `rules/agenda.yaml`, `rules/comm
   the engine's register (what the tips and the skill read), and the suggestions are in its command line
   (`commitments suggest`, `same`, `reject`, `split`): the app's Tracker window still lists each joined mention and
   each "we will try" item as open, and does not show the suggestions yet.
+- **Project memory (GraphRAG G2, PB-52; behind a flag, off by default).** A local store per project in
+  `~/Library/Application Support/LiveTips/evidence/` (never in the project folder, never synced, never sent to the
+  Pacenote server) that keeps who and what your calls, notes, files, the commitments register, the Tracker items and
+  the stored site pages of your Meeting Sheets mention, with quotes. It is off until the feature `evidence_store` is
+  on in `config.json` (`"features": {"evidence_store": true}`); with it off nothing runs, nothing is written and
+  Settings shows nothing new. With it on, Settings > AI > Project memory says in one line that project text will be
+  sent to the AI provider chosen for indexing and the estimated cost of the first index (for now: "not available
+  yet"; the numbers come once extraction is calibrated). Turning the feature on is the consent: there is no extra
+  question before the first index (owner decision 24.11). The row has the off switch, "Use for indexing" (by
+  default the AI of after the call; it falls back only to the model on this Mac, never to another cloud AI; when
+  indexing runs on the model on this Mac and that model is removed or missing, it stays set to it, also when after
+  the call moves to a cloud AI; once AI reading lands, that pass stops with "Local model not installed"; when the AI
+  of after the call changes by itself, for example a key removed or another account connected, indexing stays on
+  the AI it used, and you move it in "Use for indexing"), the
+  ceilings per pass, per project and day and for all projects a day (in USD, percent of the 5-hour limit or minutes
+  on this Mac), topic summaries after each pass or only when asked, "Use AI to read sources", Pause, and per project
+  its status, "Index now" and "Delete this project's memory" (both unavailable while its pass runs). A pass runs after a call's notes are written, 10
+  minutes after the project folder last changed, at most once an hour while the Mac is idle and on power, and on
+  "Index now"; never during a call (the app keeps `call-active.json` next to `ai-routes.json` for the whole call).
+  Hiding a call on Home, a Google document a Meeting Sheet can no longer read, a Notion page the Notion mirror can no
+  longer read (its database stopped sharing with Pacenote, or a full mirror run found the page deleted or unshared and
+  moved it to `_notion/_archived/`; it counts again once the mirror reads it), and the supersede click on
+  a call page (after Notion confirmed it) reach the store at once, also during a call, and are sent again until the
+  store lists them as applied (a hidden or lost-access list goes again as the current list, never as an older one,
+  also when it changed while a pass ran). These requests go one at a time per project, so a newer list always
+  lands last; a pass does not undo a hide or lost access that reached the store while it ran, and at launch the app
+  sends each project's current lists once more, so a pass left running when the app quit cannot leave a hidden call
+  searchable. A pass that was waiting when a call began starts after the call. Deleting a
+  project's memory keeps its list of documents that lost access. The Tracker items come from what the app already holds (the Notion mirror and the
+  HubSpot tasks last loaded, a HubSpot task in the project of its linked commitment), with no new request. Memories
+  of projects no longer in Pacenote are listed in the row and deleted only after you confirm. For now a pass is the
+  free part only (no AI request): AI reading comes with the next step.
 - **Brief freshness.** Home, Later and the call form compare when the brief was made with the files of the project
   folder (and the folders added in the form): "Brief is 2 days old · 3 changes since". Refresh updates only the
   sections the changed files touch and keeps your edits and the checklist. Nothing is refreshed by itself.

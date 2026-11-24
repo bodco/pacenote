@@ -1310,6 +1310,7 @@ struct CallPageView: View {
         let p = PyTool.project(of: file).project
         guard let old = s["id"], let new = NotionCallLinks.pageId(file, "decisions", d), !new.isEmpty else { return }
         PyTool.run("decision_notion", ["--db", NotionTargets.decisionsDB(c, p), "--supersede", old, "--new", new], notion: true, needsAI: false) { r in
+            EvidenceService.shared.superseded(file: file, old: old, new: new, notionResult: r)   // PB-52 S5: only after Notion said ok
             if (r["ok"] as? Bool) == true {
                 supersede[d] = nil; note = L("dec.superseded", ["title": s["title"] ?? ""]); UsageLog.log("decision_superseded")
             } else { note = L("dec.failed", ["err": r["error"] as? String ?? ""]) }
