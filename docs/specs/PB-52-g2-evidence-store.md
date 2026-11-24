@@ -1219,12 +1219,15 @@ filters on a ranked list:
    - an entity's status and name come from its `status` and name claims with `said_at <= as_of` (for tasks these are
      the register events that pass step 1 folded up to `as_of`, the same `commitments.fold()` cut at that time, section
      5.3), so a task closed on
-     Nov 19 is open in a replay as of Nov 17; an entity with no name claim keeps the name of its earliest evidence at
+     Nov 19 is open in a replay as of Nov 17; a Tracker item's name and status come from the `text` and `status` its
+     snippet locator keeps on the Tracker revision valid at `as_of` (the active revision without `as_of`, so each
+     snapshot renames and closes the item; PB-84 review round 5); an entity with no name claim keeps the name of its earliest evidence at
      or before `as_of`, and an entity with no row at or before `as_of` is not visible at all;
    - a merge applies only when its register event or `pm_override` has `at <= as_of`;
    - a claim or edge is `superseded` only when the superseding claim (or the PM's `supersedes` edge) is dated at or
      before `as_of`, and `rejected` only when the rejecting override has `at <= as_of`; one exception: a PM rejection
-     of an extracted claim, edge or alias corrects the store, not the world, so it applies in every replay;
+     of an extracted claim, edge or alias corrects the store, not the world, so it applies in every replay, and a
+     rejected claim is not in an `entity_card` timeline either (PB-84 review round 5);
    - a decision superseded after `as_of` (its `supersede` override, section 7.1, has `at > as_of`) is current in
      that replay.
 3. **Candidates**: FTS5 on snippets and topics; alias match of query words to entities (casefolded, both languages);
@@ -1744,7 +1747,7 @@ Acceptance:
       `''` after ingest and the access results of all access tests above are unchanged.
 - [ ] Time tests on content time: a first index of files with past content times, replayed as of a past call, sees
       the files valid then; `as_of` before a revision or before a claim returns none of them; a claim whose evidence
-      sits only on a replaced revision is not current; a task closed after `as_of` is open, a merge after `as_of` is
+      sits only on a replaced revision is not current; a task closed after `as_of` is open (register and Tracker), a merge after `as_of` is
       not applied, a decision superseded after `as_of` is current, and a PM rejection applies at every `as_of`.
 - [ ] Edge modality (each sub-case fails on the old key `src_id|rel|dst_id`): "Globex blocks Northpoint" quoted as
       `proposal` in file 1 and as `confirmation` in file 2 gives two edge rows; `exclude` of file 2 returns only the

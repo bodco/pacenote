@@ -247,6 +247,18 @@ def entity_state(store: S.Store, eid: str, as_of: Optional[str], fold: Optional[
             name, status = it.get("text") or it["id"], it.get("status") or status
             if eid not in (it.get("ids") or [it["id"]]):
                 shown = it["id"]                # only the joined mention is visible: it is named by its own id
+    elif e["type"] == "task" and e["origin"] == "tracker":
+        # a Tracker item: name and status of the Tracker revision valid at as_of (the current one without as_of)
+        r = store.one("SELECT sn.locator FROM entity_source es JOIN source s ON s.id=es.source_id AND s.kind='tracker'"
+                      " JOIN revision rv ON rv.source_id=s.id JOIN snippet sn ON sn.revision_id=rv.id WHERE es.entity_id=?"
+                      " AND {} ORDER BY rv.valid_from DESC, rv.id DESC LIMIT 1".format(
+                          "rv.valid_from<=? AND (rv.valid_to IS NULL OR rv.valid_to>?)" if as_of else "rv.superseded_at IS NULL"),
+                      (eid, as_of, as_of) if as_of else (eid,))
+        if r is None and as_of:
+            return {}
+        loc = json.loads(r["locator"]) if r else {}
+        name = name if e["pm_locked"] else (loc.get("text") or name)
+        status = loc.get("status") or (None if as_of else status)
     if as_of and merged and (e["merged_at"] or "") > as_of:
         merged = None
     if any(s["old"] == eid for s in supersedes(store, as_of)):
@@ -473,7 +485,9 @@ def entity_card(store: S.Store, entity_id: str, *, scope: Optional[dict] = None,
         "SELECT cl.* FROM claim cl JOIN _claim x ON x.id=cl.id WHERE cl.subject_id=?", (entity_id,))]
     current = {c["id"] for c in claims}
     history = []
-    for r in store.q("SELECT cl.* FROM claim cl WHERE cl.subject_id=? AND cl.id NOT IN (SELECT id FROM _claim)", (entity_id,)):
+    for r in store.q("SELECT cl.* FROM claim cl WHERE cl.subject_id=? AND cl.id NOT IN (SELECT id FROM _claim) AND NOT EXISTS"
+                     " (SELECT 1 FROM pm_override o WHERE o.target='claim' AND o.target_key=cl.nkey AND o.field='reject')",
+                     (entity_id,)):           # a claim the PM rejected is not history either, at every as_of
         rows = [dict(x) for x in store.q(
             "SELECT ev.quote, sn.said_at, s.uri FROM evidence ev JOIN _snip x ON x.sid=ev.snippet_id AND x.cls='pass'"
             " JOIN snippet sn ON sn.id=ev.snippet_id JOIN revision rv ON rv.id=sn.revision_id JOIN source s"

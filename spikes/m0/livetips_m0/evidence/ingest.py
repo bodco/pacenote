@@ -934,14 +934,18 @@ def ingest_tracker(ctx: Ctx, path: Optional[str]) -> None:
                                    " VALUES (?,?,?,?,?, 'not_needed')", (sid, h, len(txt), max(vf, act["valid_from"]) if act else vf,
                                                                         ctx.observed)).lastrowid
             snid = ctx.conn.execute("INSERT INTO snippet(revision_id, ord, text, locator, said_at) VALUES (?,?,?,?,?)",
-                                    (rid, 0, txt, json.dumps({"field": "item", "uri": uri}), vf)).lastrowid
+                                    (rid, 0, txt, json.dumps({"field": "item", "uri": uri, "text": it.get("text"),
+                                                              "status": it.get("status")}, ensure_ascii=False),
+                                     vf)).lastrowid
             if ctx.store.fts:
                 ctx.conn.execute("INSERT INTO snippet_fts(rowid, text, heading) VALUES (?,?,?)", (snid, txt, ""))
-            linked = ctx.store.one("SELECT entity_id FROM alias WHERE alias_norm=? AND origin='tracker'", (uri,))
+            linked = ctx.store.one("SELECT a.entity_id, en.origin FROM alias a JOIN entity en ON en.id=a.entity_id"
+                                   " WHERE a.alias_norm=? AND a.origin='tracker'", (S.norm_alias(uri),))
             eid = linked[0] if linked else "e-" + ID._sha10("task|" + uri)
             ctx.conn.execute("INSERT OR IGNORE INTO snippet_mark(snippet_id, kind, pos, name) VALUES (?, 'item', 0, ?)",
                              (snid, eid))
-            if not linked:
+            # the item's own entity follows every snapshot; a register task linked by its Tracker id keeps the register's
+            if not linked or linked[1] == "tracker":
                 _entity(ctx, eid, "task", str(it.get("text") or uri), "tracker", sid,
                         {"text": CS._names(str(it.get("text") or ""))}, status=it.get("status"))
                 _alias(ctx.conn, uri, eid, "tracker")

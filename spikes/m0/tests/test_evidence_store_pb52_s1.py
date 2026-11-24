@@ -952,6 +952,56 @@ def test_time_replay_on_content_time(env):
     nkey = st.one("SELECT nkey FROM claim WHERE value='December 8'")[0]
     IG.write_override(st, {"target": "claim", "key": nkey, "field": "reject", "at": "2026-11-23T00:00:00Z"})
     assert _claims(st, "go-live date", as_of="2026-11-17T00:00:00Z") == []
+    card = SE.entity_card(st, "e-golive")                                                 # nor in the card's history
+    assert [c["value"] for c in card["claims"]] == ["January 12"] and card["history"] == []
+    assert SE.entity_card(st, "e-golive", as_of="2026-11-17T00:00:00Z") is None            # its only claim then
+
+
+@pytest.mark.parametrize("raw,key", [("1234abcd", "notion:1234abcd"), ("crm:Sow-1", "crm:Sow-1")])
+def test_tracker_task_closed_after_as_of_is_open(env, tmp_path, raw, key):
+    """A Tracker item renamed and closed in a later snapshot: now it is done under its new name; a replay before the
+    change reads the Tracker revision valid then (open, the old name), never the current entity row."""
+    root = env
+    put(root, "docs/plan.md", "# Plan\n\nAcme pilot starts in January.\n")
+    snap = tmp_path / "tracker.json"
+    item = {"id": raw, "text": "Send the revised SOW", "status": "open", "last_edited": "2026-11-06T10:00:00Z"}
+    snap.write_text(json.dumps({"items": [item]}), encoding="utf-8")
+    st = open_store(root=root)
+    run(st, root, tracker_path=str(snap))
+    snap.write_text(json.dumps({"items": [dict(item, text="Send the revised SOW to Mike", status="done",
+                                               last_edited="2026-11-20T10:00:00Z")]}), encoding="utf-8")
+    run(st, root, tracker_path=str(snap))
+    eid, = SE.resolve_key(st, key)
+    SE.prepare(st, None, None, ())
+    now = SE.entity_state(st, eid, None)
+    assert (now["status"], now["name"]) == ("done", "Send the revised SOW to Mike")
+    SE.prepare(st, None, "2026-11-15T00:00:00Z", ())
+    old = SE.entity_state(st, eid, "2026-11-15T00:00:00Z")
+    assert (old["status"], old["name"]) == ("open", "Send the revised SOW")
+    assert SE.entity_state(st, eid, "2026-11-01T00:00:00Z") == {}                         # not in the Tracker yet
+    card = SE.entity_card(st, eid)
+    assert (card["status"], card["name"]) == ("done", "Send the revised SOW to Mike")
+    card = SE.entity_card(st, eid, as_of="2026-11-15T00:00:00Z")
+    assert (card["status"], card["name"]) == ("open", "Send the revised SOW")
+
+
+def test_tracker_item_of_a_register_task_keeps_the_register_name(env, tmp_path):
+    """A snapshot item whose Notion page a register task carries links to that task and never renames it."""
+    root = env
+    reg = [{"v": 1, "op": "add", "id": "c-3333333333", "text": "send the plover checklist", "owner": "me",
+            "created": "2026-11-10T10:00:00+00:00"},
+           {"v": 1, "op": "link", "id": "c-3333333333", "notion_page": "1234abcd", "at": "2026-11-10T11:00:00+00:00"}]
+    put(root, "live/commitments.jsonl", "\n".join(json.dumps(e) for e in reg) + "\n")
+    snap = tmp_path / "tracker.json"
+    snap.write_text(json.dumps({"items": [{"id": "1234abcd", "text": "Plover checklist (Notion title)", "status": "done",
+                                           "last_edited": "2026-11-12T10:00:00Z"}]}), encoding="utf-8")
+    st = open_store(root=root)
+    run(st, root, tracker_path=str(snap))
+    assert SE.resolve_key(st, "notion:1234abcd") == ["c-3333333333"]
+    SE.prepare(st, None, None, ())
+    st_now = SE.entity_state(st, "c-3333333333", None)
+    assert (st_now["name"], st_now["status"]) == ("send the plover checklist", "open")
+    assert tuple(st.one("SELECT name, status FROM entity WHERE id='c-3333333333'")) == ("send the plover checklist", "open")
 
 
 def test_edge_modality_rows(env):
