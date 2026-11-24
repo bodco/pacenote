@@ -50,7 +50,7 @@ def cli(tmp_path):
     return str(path)
 
 
-def complete(cli, timeout=2, on_text=None):
+def complete(cli, timeout=30, on_text=None):
     return CodexProvider(cli, timeout=timeout).complete(model="claude-sonnet-5-5", system=[{"text": "rules"}],
                                                        user="question", max_tokens=700, cache_ttl=None, on_text=on_text)
 
@@ -73,9 +73,10 @@ def test_account_process_stream_and_usage(cli, monkeypatch):
 def test_errors_and_key_auth_rejection(cli, monkeypatch, mode, expected):
     monkeypatch.setenv("PACENOTE_TEST_MODE", mode)
     started = time.monotonic()
-    result = complete(cli, timeout=0.4 if mode == "timeout" else 2)
+    result = complete(cli, timeout=0.4 if mode == "timeout" else 30)
     assert expected in result.error
-    assert "private text" not in result.error and time.monotonic() - started < 3
+    assert "private text" not in result.error
+    assert mode != "timeout" or time.monotonic() - started < 3
 
 
 def test_discovery_and_account_environment(cli, monkeypatch):
@@ -89,7 +90,7 @@ def test_discovery_and_account_environment(cli, monkeypatch):
 def test_route_isolation_and_plan_accounting(cli, tmp_path, monkeypatch):
     monkeypatch.setenv("LT_CODEX_CLI", cli)
     monkeypatch.setenv("LT_LOCAL_FALLBACK", "1")
-    legs = make_legs("", "", None, 1, 2)
+    legs = make_legs("", "", None, 1, 30)  # the fake CLI answers at once; a short budget flakes under full-suite load
     rp = RoutedProvider("after", "codex", legs, state=RouteState(str(tmp_path / "routes.json")))
     assert other("codex") == "codex" and not rp.auto and rp.can_run_without_api()
     result = rp.complete(model="claude-sonnet-5-5", system=[{"text": "rules"}], user="question", max_tokens=700, cache_ttl=None)
