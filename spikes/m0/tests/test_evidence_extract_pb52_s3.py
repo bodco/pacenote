@@ -732,6 +732,21 @@ def test_fixture_records_the_gold_hash_and_a_changed_gold_fails(tmp_path, monkey
         with pytest.raises(SystemExit, match="gold changed"):
             bench.replay_fixture(ctx, out, True)
         ctx["store"].close()
+    # review round 2: a recorded answer that does not parse fails the run, it never becomes an empty answer
+    bad = files[0]
+    data = json.loads(bad.read_text())
+    bad.write_text(json.dumps(dict(data, answers=["not json at all"])))
+    with bench.store_env(tmp_path / "replay2"):
+        ctx = bench.build_v2(tmp_path / "replay2" / "v2", gold, gold2, False)
+        ctx["gold_sha256"] = gold_sha
+        with pytest.raises(SystemExit, match="fixture answer invalid"):
+            bench.replay_fixture(ctx, out, True)
+        # answers with no manifest.json: the gold hash cannot be checked, the run fails
+        bad.write_text(json.dumps(data))
+        (out / "manifest.json").unlink()
+        with pytest.raises(SystemExit, match="gold unverifiable"):
+            bench.replay_fixture(ctx, out, True)
+        ctx["store"].close()
 
 
 def g0_bench():
@@ -762,8 +777,14 @@ def gate_res(hop=5, misses=0, modality=100.0, derived=0, b_hop=0):
     return res, b
 
 
-def test_s3_gate_checks():
+def test_s3_gate_checks(monkeypatch):
     bench = g0_bench()
+    res, _b = gate_res()
+
+    def no_b(_v):
+        raise SystemExit("no B result saved")
+    monkeypatch.setattr(bench, "newest", no_b)
+    assert bench.s3_gate(res, None)["small hop_ge_B_plus_2"] is False      # no B result: the gate does not pass
     res, b = gate_res()
     assert all(bench.s3_gate(res, b).values())
     for kw, key in ((dict(hop=3), "small hop_ge_4_of_6"), (dict(b_hop=4), "small hop_ge_B_plus_2"),
@@ -873,3 +894,141 @@ def test_cache_write_is_inside_the_estimate(env):
 def test_hedge_start_matches_identity():
     from livetips_m0 import identity as ID
     assert RULES["hedge_start"] == [ID.TENTATIVE_RX.pattern, ID.HEDGE_RX.pattern]
+
+
+# ---------------------------------------------------------------- review round 2 (PB-86)
+
+def test_items_that_break_the_item_schema_are_dropped_not_crashing(env):
+    """Section 8.4 item 1 per item: wrong types, a missing key, lines that are not two integers. Each such item is
+    dropped as "shape" (never the segment, never an exception), and what is kept writes cleanly."""
+    root = env
+    two_clients(root)
+    st = open_store(root)
+    ingest(st, root)
+    labels = X.project_labels(str(root))
+    v = view_of(st, "docs/acme/plan.md", "Acme rollout")
+    a = line_in(v, "Acme rollout")
+    q = "Acme rollout starts in March"
+    good = {"ref": "n1", "type": "topic", "name": "Acme rollout", "quote": q, "lines": [a, a]}
+    claim = {"subject": "n1", "predicate": "said", "value": "March", "modality": "statement", "quote": q, "lines": [a, a]}
+    rel = {"from": "n1", "rel": "mentions", "to": "n1", "modality": "statement", "quote": q, "lines": [a, a]}
+    obj = {"entities": [good,
+                        dict(good, ref="n2", type=["topic"]),                 # a list as the type
+                        dict(good, ref="n3", aliases="Acme"),                 # a string as the aliases
+                        dict(good, ref="n4", lines=[a, a, a]),                # three lines
+                        dict(good, ref="n5", lines=[True, True]),             # booleans, not integers
+                        dict(good, ref="n6", known_id={"id": "x"}),           # a dict as the known id
+                        {k: x for k, x in good.items() if k != "ref"},        # a required key missing
+                        "n7"],                                                # not an object
+           "claims": [claim,
+                      dict(claim, confidence="high"),                         # a string as the confidence
+                      dict(claim, predicate=["said"]),
+                      dict(claim, value={"a": 1})],
+           "relations": [dict(rel, rel={"x": 1}), dict(rel, lines=["1", "2"])]}
+    items, c = X.validate(st, v, obj, RULES, [], str(root), labels)
+    assert [e["ref"] for e in items["entities"]] == ["n1"] and len(items["claims"]) == 1 and items["relations"] == []
+    assert c["reasons"] == {"shape": 12}
+    S.apply_extraction(st, v["revision_id"], items, mark_done=False)
+
+
+def test_an_answer_missing_a_top_level_list_gets_the_repair_retry(env):
+    """{} or an answer without "claims" does not match the schema: it is not cached as empty, it gets the one repair
+    retry, and a second such answer makes the segment invalid."""
+    assert X.parse("{}", RULES["schema"])[0] is None
+    assert "claims" in X.parse('{"entities": [], "relations": []}', RULES["schema"])[1]
+    assert X.parse('{"entities": [], "claims": [], "relations": []}', RULES["schema"])[1] is None
+    root = env
+    put(root, "docs/one.md", "# One\nThe pilot starts in March for the team.\n")
+    st = open_store(root)
+    ingest(st, root)
+    answers = iter([{"text": "{}"}, None])
+    tr = FakeTransport(lambda req: next(answers) or {"text": json.dumps(honest(req["user"]))})
+    res = run_pass(st, root, tr)
+    assert len(tr.requests) == 2 and "missing" in tr.requests[1]["user"]
+    assert st.one("SELECT status FROM run_item WHERE run_id=?", (res["id"],))["status"] == "done"
+    put(root, "docs/one.md", "# One\nThe pilot starts in April for the team.\n", mtime=OLD + 100)
+    ingest(st, root)
+    tr = FakeTransport(lambda req: {"text": '{"entities": []}'})
+    res = run_pass(st, root, tr)
+    assert len(tr.requests) == 2
+    assert st.one("SELECT status FROM run_item WHERE run_id=?", (res["id"],))["status"] == "invalid"
+
+
+def test_cache_hit_on_a_snippet_longer_than_60_lines_keeps_every_item(env):
+    """The validated item keeps the lines its quote sits on, not the whole snippet's range: a cached segment whose
+    snippet spans more than 60 lines re-validates in full when a section above moves its lines."""
+    root = env
+    rows = "".join("row {} ok\n".format(i) for i in range(75))
+    put(root, "docs/long.md", "# Top\nThe intro line is here.\n## Long\n" + rows)
+    st = open_store(root)
+    ingest(st, root)
+    v = view_of(st, "docs/long.md", "row 0 ok")
+    assert any(sn["lines"][1] - sn["lines"][0] > 60 for sn in v["snippets"])       # the case under test
+    run_pass(st, root, FakeTransport())
+
+    def written():
+        rv = st.one("SELECT rv.id FROM revision rv JOIN source s ON s.id=rv.source_id WHERE s.uri='docs/long.md' AND"
+                    " rv.superseded_at IS NULL")[0]
+        return st.one("SELECT count(*) FROM evidence ev JOIN snippet sn ON sn.id=ev.snippet_id WHERE sn.revision_id=?"
+                      " AND sn.text LIKE '%row %'", (rv,))[0]
+    first = written()
+    assert first == 40                         # one claim per entity kept, the cap of 40 entities per segment
+    put(root, "docs/long.md", "# Top\nThe intro line is here.\nA second intro line.\nA third.\n## Long\n" + rows,
+        mtime=OLD + 100)
+    ingest(st, root)
+    tr = FakeTransport()
+    res = run_pass(st, root, tr)
+    assert all("row 0 ok" not in r["user"] for r in tr.requests)                    # Long came from the cache
+    cached = st.q("SELECT dropped FROM run_item WHERE run_id=? AND status='cached'", (res["id"],))
+    assert cached and all(r["dropped"] == 0 for r in cached)
+    assert written() == first
+
+
+def test_catalog_names_a_joined_task_only_as_the_segment_may_see_it(env):
+    """A Globex mention joined to an Acme register task and edited: the Acme segment's catalog never carries the
+    Globex text or id (the name search shows the Acme scope), and the Globex segment never gets the Acme task's id."""
+    root = env
+    two_clients(root)
+    reg = [{"v": 1, "op": "add", "id": "c-aaaaaaaaaa", "text": "book the heron demo", "owner": "me",
+            "series": "|acmeweeklystatus", "created": "2026-11-03T10:00:00+00:00"},
+           {"v": 1, "op": "add", "id": "c-hhhhhhhhhh", "text": "Globex heron demo slides", "owner": "me",
+            "series": "|globexweekly", "created": "2026-11-04T11:05:00+00:00"},
+           {"v": 1, "op": "same", "id": "c-hhhhhhhhhh", "to": "c-aaaaaaaaaa", "at": "2026-11-05T11:00:00+00:00"},
+           {"v": 1, "op": "edit", "id": "c-hhhhhhhhhh", "text": "pelican secret price heron demo",
+            "at": "2026-11-06T10:00:00+00:00"}]
+    put(root, IG.REGISTER, "\n".join(json.dumps(e) for e in reg) + "\n")
+    put(root, "docs/acme/demo.md", "# Demo\nAcme asks us to book the heron demo soon.\n")
+    put(root, "docs/globex/demo.md", "# Demo\nGlobex asks about the heron demo slides and pelican.\n")
+    st = open_store(root)
+    ingest(st, root)
+    labels = X.project_labels(str(root))
+    acme = X.catalog(st, view_of(st, "docs/acme/demo.md", "heron"), str(root), labels)
+    assert any(c["id"] == "c-aaaaaaaaaa" for c in acme)
+    text = json.dumps(acme).lower()
+    assert "pelican" not in text and "hhhhhhhhhh" not in text and "globex" not in text, text
+    glob = X.catalog(st, view_of(st, "docs/globex/demo.md", "heron"), str(root), labels)
+    assert "aaaaaaaaaa" not in json.dumps(glob).lower()
+
+
+def test_catalog_drops_an_alias_only_another_client_saw(env):
+    root = env
+    two_clients(root)
+    put(root, "pacenote/topics.md", "# Topics\nThe Mondays meeting is short.\n")
+    put(root, "docs/globex/alias.md", "# Alias\nGlobex calls the Mondays meeting the kestrel sync.\n")
+    put(root, "docs/acme/more.md", "# More\nAcme joins the Mondays meeting and the kestrel sync.\n")
+    st = open_store(root)
+    ingest(st, root)
+    labels = X.project_labels(str(root))
+    mondays = _seed_entity(st, root, "pacenote/topics.md", "Mondays")
+    v = view_of(st, "docs/globex/alias.md", "kestrel")
+    n = line_in(v, "kestrel")
+    line = "Globex calls the Mondays meeting the kestrel sync."
+    items, _ = X.validate(st, v, {"entities": [{"ref": "n1", "known_id": mondays, "type": "system", "name": "Mondays",
+                                                "aliases": ["kestrel sync"], "quote": line, "lines": [n, n]}],
+                                  "claims": [], "relations": []},
+                          RULES, [{"id": mondays, "type": "system", "name": "Mondays", "aliases": []}], str(root), labels)
+    S.apply_extraction(st, v["revision_id"], items, mark_done=False)
+    assert st.one("SELECT 1 FROM alias WHERE alias_norm='kestrel sync' AND entity_id=?", (mondays,))
+    acme = X.catalog(st, view_of(st, "docs/acme/more.md", "kestrel"), str(root), labels)
+    hit = [c for c in acme if c["id"] == mondays]
+    assert hit and "kestrel sync" not in hit[0]["aliases"]

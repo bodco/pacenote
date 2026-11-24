@@ -793,7 +793,9 @@ def replay_fixture(ctx: dict, fixture_dir: Path, small: bool) -> dict:
     st = ctx["store"]
     recorded = fixture_dir.is_dir() and any(p.name != "manifest.json" for p in fixture_dir.glob("*.json"))
     manifest = fixture_dir / "manifest.json"
+    gold_checked = False
     if recorded and manifest.is_file() and ctx.get("gold_sha256"):
+        gold_checked = True
         rec_gold = json.loads(manifest.read_text(encoding="utf-8")).get("gold_sha256")
         if rec_gold != ctx["gold_sha256"]:
             raise SystemExit("G0 C: gold changed: the extraction fixture was recorded against gold v2 {}..., the current "
@@ -819,9 +821,18 @@ def replay_fixture(ctx: dict, fixture_dir: Path, small: bool) -> dict:
             tokens += int(data.get("out_tokens") or 0)
             if "answers" in data:
                 # S3: raw model output (reviewed by deletion only) through the same validator as the worker
+                if not gold_checked:
+                    raise SystemExit("G0 C: gold unverifiable: the extraction fixture has recorded answers but no "
+                                     "manifest.json with the gold v2 sha256; re-record it (run.py --extract <route>)")
                 view = EX.segment_view(st, r["id"], seg)
                 shift = view["snippets"][0]["lines"][0] - int(data.get("base_line") or 0)
-                parts = [EX.parse(t, rules["schema"])[0] or {} for t in data["answers"]]
+                parts = []
+                for t in data["answers"]:
+                    obj1, err = EX.parse(t, rules["schema"])
+                    if obj1 is None:
+                        raise SystemExit("G0 C: fixture answer invalid: {} does not parse ({}); re-record it or fix the "
+                                         "answer by deletion".format(p.name, err))
+                    parts.append(obj1)
                 obj = W.rebase(EX.merge(parts) if len(parts) > 1 else parts[0], {"snippets": [{"lines": (shift, 0)}]}, +1)
                 cat = EX.catalog(st, view, str(ctx["root"]), labels, int(rules.get("catalog_max", 60)))
                 items, _c = EX.validate(st, view, obj, rules, cat, str(ctx["root"]), labels)
@@ -1259,7 +1270,7 @@ def s3_gate(res: dict, b_res: Optional[dict] = None) -> Optional[dict]:
             b = (b_res or newest("B"))["v2"]["sets"]["small"]["no_vectors"]["hop_answer_rate"]["n"]
             checks["small hop_ge_B_plus_2"] = hop >= b + 2
         except (SystemExit, KeyError, TypeError):
-            checks["small hop_ge_B_plus_2"] = None       # no B result saved: not evaluated
+            checks["small hop_ge_B_plus_2"] = False      # no B result saved: the gate cannot pass without it
         checks["small fixture_misses_0"] = (small.get("fixture") or {}).get("misses") == 0
         checks["small modality_accuracy_100"] = small["modality_accuracy"] == 100.0
     for s, modes in res["v2"]["sets"].items():

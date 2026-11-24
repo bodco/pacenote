@@ -304,7 +304,7 @@ class Pass:
         self.prefix = X.prefix(self.rules)
         self.transport = transport or ChildTransport()
         self.sleep = sleep
-        self.route = self.set.get("route") or os.environ.get("LT_AI_ROUTE") or ""   # no route: no request (off)
+        self.route = self.set.get("route") or os.environ.get("LT_AI_ROUTE") or ""   # neither set: no request (off)
         self.fallback_from: Optional[str] = None
         self.kind = ceiling_kind(self.route)
         self.model = self.set.get("model") or models(self.route, self.set.get("ai_yaml"))["extract"]

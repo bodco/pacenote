@@ -200,6 +200,10 @@ section keeps its locator); the hop step starts from the search's best match in 
 between runs) and returns the edges it walks; modality rows pass on a matching claim with the expected modality and
 none confirmed by a primary source; `modality_accuracy` and `derived_confirmed` (confirmed facts whose evidence is only
 a derived source, checked in the store) are filled for B and C; and C with a fixture gets the S3 checks in its gate.
+Review round 2: the replay goes through the same validator as the pass (each answer item checked against its item
+schema), and the run fails when a recorded answer does not parse ("fixture answer invalid"), when recorded answers
+have no `manifest.json` to check the gold hash against ("gold unverifiable"), and the S3 gate fails when no B result
+is saved to compare the hop rate with.
 
 Results at this commit (`results/{A,B,C}-2026-11-24-s3a.json`, against the `-s2` results on main):
 

@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
 import yaml
+from jsonschema import Draft202012Validator
 
 from .. import client_scope as CS
 from . import ingest as IG
@@ -40,7 +41,31 @@ def load_rules(rules_dir: Optional[Path] = None) -> dict:
     r = yaml.safe_load((d / "evidence.yaml").read_text(encoding="utf-8"))
     r["schema"] = json.loads((d / "evidence_schema.json").read_text(encoding="utf-8"))
     r["_hedge"] = [re.compile(p, re.I | re.U) for p in r.get("hedge_anywhere") or []]
+    item_checks(r)
     return r
+
+
+LISTS = ("entities", "claims", "relations")
+
+
+def item_checks(rules: dict) -> Dict[str, Draft202012Validator]:
+    """One validator per top-level list, built from the item schema in rules/evidence_schema.json (section 8.4 item 1),
+    so the code and the schema cannot drift. Cached on the rules dict."""
+    v = rules.get("_items")
+    if v is None:
+        props = (rules.get("schema") or {}).get("properties") or {}
+        v = {k: Draft202012Validator(props[k]["items"]) for k in LISTS if (props.get(k) or {}).get("items")}
+        rules["_items"] = v
+    return v
+
+
+def item_error(rules: dict, key: str, item) -> Optional[str]:
+    """The first schema error of one item (missing key, wrong type, lines not two integers), or None."""
+    v = item_checks(rules).get(key)
+    if v is None:
+        return None if isinstance(item, dict) else "not an object"
+    err = next(iter(v.iter_errors(item)), None)
+    return err.message[:120] if err is not None else None
 
 
 def prefix(rules: dict) -> str:
@@ -135,13 +160,18 @@ def neutral_scope(root: str, label: str, labels: Iterable[str]) -> Optional[dict
             "why": "evidence catalog"}
 
 
-def _visible(store: S.Store, scope: Optional[dict]) -> Dict[str, List[str]]:
-    """{entity id: visible aliases} for one scope (search.prepare's _ent and the alias rule of section 11.2)."""
+def _visible(store: S.Store, scope: Optional[dict]) -> Dict[str, Tuple[str, List[str]]]:
+    """{entity id: (visible name, visible aliases)} for one scope (search.prepare's _ent and the alias rule of section
+    11.2). The name is the one search shows this scope (search.entity_state with the scope's register fold): a
+    register task joined with another client's mention is named from the visible mention, never by the stored name."""
     SE.prepare(store, scope, None)
     fold = SE.IG.register_fold_at(store, None, passing=True)
     out = {}
     for r in store.q("SELECT en.id FROM entity en JOIN _ent x ON x.id=en.id WHERE en.merged_into IS NULL"):
-        out[r["id"]] = SE.visible_aliases(store, r["id"], fold)
+        st = SE.entity_state(store, r["id"], None, fold)
+        if not st or not str(st.get("name") or "").strip() or st.get("id") != r["id"]:
+            continue                            # nothing visible names it, or the scope sees it only by another id
+        out[r["id"]] = (str(st["name"]), SE.visible_aliases(store, r["id"], fold))
     return out
 
 
@@ -152,24 +182,26 @@ def catalog(store: S.Store, view: dict, root: str = "", labels: Optional[List[st
     segment, then by shared words."""
     labels = project_labels(root) if labels is None else labels
     parts = [x for x in (view["label"] or "").split("|")] or [""]
-    vis: Optional[Dict[str, List[str]]] = None
+    vis: Optional[Dict[str, Tuple[str, List[str]]]] = None
     for lb in parts:
         v = _visible(store, neutral_scope(root, lb, labels))
-        vis = v if vis is None else {k: [a for a in al if a in v[k]] for k, al in vis.items() if k in v}
+        # a two-client segment: an entity both may see, the aliases both may see, a name both are shown alike
+        vis = v if vis is None else {k: (nm, [a for a in al if a in v[k][1]]) for k, (nm, al) in vis.items()
+                                     if k in v and v[k][0] == nm}
     vis = vis or {}
     seg = S._fold(" ".join(s["text"] for s in view["snippets"]))
     words = {w for w in re.findall(r"\w{4,}", seg)}
     scored = []
-    for eid, aliases in vis.items():
-        e = store.one("SELECT id, type, name FROM entity WHERE id=?", (eid,))
-        names = [S._fold(e["name"])] + list(aliases)
+    for eid, (name, aliases) in vis.items():
+        e = store.one("SELECT id, type FROM entity WHERE id=?", (eid,))
+        names = [S._fold(name)] + list(aliases)
         hits = sum(seg.count(n) for n in names if n)
         shared = len(words & set(re.findall(r"\w{4,}", " ".join(names))))
         if hits or shared:
-            scored.append((-hits, -shared, eid, e, aliases))
+            scored.append((-hits, -shared, eid, e, name, aliases))
     scored.sort(key=lambda x: (x[0], x[1], x[2]))
-    return [{"id": e["id"], "type": e["type"], "name": e["name"],
-             "aliases": [a for a in al if a != S._fold(e["name"])][:5]} for _h, _s, _i, e, al in scored[:limit]]
+    return [{"id": e["id"], "type": e["type"], "name": nm,
+             "aliases": [a for a in al if a != S._fold(nm)][:5]} for _h, _s, _i, e, nm, al in scored[:limit]]
 
 
 def request_text(view: dict, cat: List[dict], clients: List[str]) -> str:
@@ -203,9 +235,10 @@ def parse(text: str, schema: dict) -> Tuple[Optional[dict], Optional[str]]:
     if not isinstance(obj, dict):
         return None, "the answer is not a JSON object"
     for key in schema.get("required") or ():
-        if not isinstance(obj.get(key, []), list):
+        if key not in obj:
+            return None, "the key {} is missing (use an empty list when there is nothing)".format(key)
+        if not isinstance(obj[key], list):
             return None, "{} must be a list".format(key)
-        obj.setdefault(key, [])
     return obj, None
 
 
@@ -242,9 +275,11 @@ def merge(parts: List[dict]) -> dict:
 
 # ---------------------------------------------------------------- validation (section 8.4)
 
-def _quote_in(view: dict, quote: str, lines) -> Optional[dict]:
+def _quote_in(view: dict, quote: str, lines) -> Optional[Tuple[dict, List[int]]]:
     """The segment snippet that holds the quote (whitespace collapse and case fold) with its file lines covering
-    `lines`. Only the segment's own snippets: never the context snippet, never the rest of the revision."""
+    `lines`, and the file lines the quote itself sits on (stored with the item, so a cached item re-validates on a
+    snippet longer than 60 lines). Only the segment's own snippets: never the context snippet, never the rest of the
+    revision."""
     if not quote or len(quote) > 300 * 2:
         return None
     try:
@@ -262,7 +297,8 @@ def _quote_in(view: dict, quote: str, lines) -> Optional[dict]:
         qa = sa + s["text"][:hit[0]].count("\n")
         qb = sa + s["text"][:hit[1]].count("\n")
         if a <= qa and qb <= b and b - a <= 60:   # the range covers the quote (section 8.4 item 3)
-            return s
+            # a snippet with no file lines (locator without "lines") keeps its own (0, 0): the store locates by it
+            return s, ([qa, qb] if sa else list(s["lines"]))
     return None
 
 
@@ -275,8 +311,10 @@ def _overrides(store: S.Store) -> dict:
 def validate(store: S.Store, view: dict, obj: dict, rules: dict, cat: List[dict], root: str = "",
              labels: Optional[List[str]] = None) -> Tuple[dict, dict]:
     """Items that pass section 8.4 in its order, each failure dropping the item (never the segment). Returns the
-    items for store.apply_extraction (lines set to the snippet's own lines, so the write path finds the same snippet)
-    and the counts {"kept", "dropped", "downgraded", "suggested", "reasons": {...}}."""
+    items for store.apply_extraction (lines set to the file lines the quote sits on, inside the snippet that holds it,
+    so the write path finds the same snippet) and the counts. An item that does not match its item schema in
+    rules/evidence_schema.json is dropped as "shape".
+    Counts: {"kept", "dropped", "downgraded", "suggested", "reasons": {...}}."""
     labels = project_labels(root) if labels is None else labels
     types, rels, preds = set(rules["types"]), set(rules["relations"]), set(rules["predicates"])
     mods = set(rules["modality"])
@@ -302,15 +340,21 @@ def validate(store: S.Store, view: dict, obj: dict, rules: dict, cat: List[dict]
     def two_clients(quote: str) -> bool:
         return len(CS._names(quote) & set(labels)) > 1
 
-    def at_snippet(item: dict) -> Optional[dict]:
-        sn = _quote_in(view, str(item.get("quote") or ""), item.get("lines"))
-        if not sn:
+    def at_snippet(item: dict) -> Optional[List[int]]:
+        hit = _quote_in(view, str(item.get("quote") or ""), item.get("lines"))
+        if not hit:
             drop("quote")
             return None
         if not client_ok(str(item.get("quote"))):
             drop("client")
             return None
-        return sn
+        return hit[1]
+
+    def bad_shape(key: str, item) -> bool:
+        if item_error(rules, key, item) is None:
+            return False
+        drop("shape")
+        return True
 
     def modality(item: dict) -> Optional[str]:
         m = str(item.get("modality") or "")
@@ -329,8 +373,10 @@ def validate(store: S.Store, view: dict, obj: dict, rules: dict, cat: List[dict]
     names: Dict[str, List[str]] = {}            # ref -> folded name and aliases (item 5)
     resolved: Dict[str, str] = {}               # ref -> entity id
     for e in (obj.get("entities") or []):
-        if not isinstance(e, dict) or not str(e.get("name") or "").strip() or e.get("type") not in types:
-            drop("enum" if isinstance(e, dict) and e.get("type") not in types else "shape")
+        if bad_shape("entities", e):
+            continue
+        if not e["name"].strip() or e["type"] not in types:
+            drop("enum" if e["type"] not in types else "shape")
             continue
         if len(out["entities"]) >= int(caps.get("entities", 40)):
             drop("cap")
@@ -348,7 +394,7 @@ def validate(store: S.Store, view: dict, obj: dict, rules: dict, cat: List[dict]
         names[ref] = [S._fold(x) for x in [e["name"]] + list(e.get("aliases") or [])] + cat_aliases
         out["entities"].append({"ref": ref, "known_id": kid, "type": e["type"], "name": str(e["name"]).strip()[:200],
                                 "aliases": [str(a)[:120] for a in (e.get("aliases") or [])][:8],
-                                "quote": str(e["quote"])[:300], "lines": list(sn["lines"])})
+                                "quote": str(e["quote"])[:300], "lines": sn})
         counts["kept"] += 1
 
     def ref_ok(x) -> bool:
@@ -358,7 +404,9 @@ def validate(store: S.Store, view: dict, obj: dict, rules: dict, cat: List[dict]
         return resolved.get(str(x), str(x))
 
     for c in (obj.get("claims") or []):
-        if not isinstance(c, dict) or not ref_ok(c.get("subject")):
+        if bad_shape("claims", c):
+            continue
+        if not ref_ok(c.get("subject")):
             drop("ref")
             continue
         if c.get("predicate") not in preds:
@@ -381,7 +429,7 @@ def validate(store: S.Store, view: dict, obj: dict, rules: dict, cat: List[dict]
             continue
         item = {"subject": c["subject"], "predicate": c["predicate"], "value": c.get("value"), "modality": m,
                 "said_by": c.get("said_by") if ref_ok(c.get("said_by")) else None, "due": c.get("due"),
-                "quote": str(c["quote"])[:300], "lines": list(sn["lines"]), "confidence": c.get("confidence")}
+                "quote": str(c["quote"])[:300], "lines": sn, "confidence": c.get("confidence")}
         if two_clients(item["quote"]):
             item["suggestion"] = True              # section 7.5
             counts["suggested"] += 1
@@ -389,7 +437,9 @@ def validate(store: S.Store, view: dict, obj: dict, rules: dict, cat: List[dict]
         counts["kept"] += 1
 
     for r in (obj.get("relations") or []):
-        if not isinstance(r, dict) or not ref_ok(r.get("from")) or not ref_ok(r.get("to")):
+        if bad_shape("relations", r):
+            continue
+        if not ref_ok(r.get("from")) or not ref_ok(r.get("to")):
             drop("ref")
             continue
         if r.get("rel") not in rels:
@@ -414,7 +464,7 @@ def validate(store: S.Store, view: dict, obj: dict, rules: dict, cat: List[dict]
             drop("override")                       # item 8: a pair the PM rejected is never re-suggested
             continue
         item = {"from": r["from"], "rel": r["rel"], "to": r["to"], "modality": m, "quote": str(r["quote"])[:300],
-                "lines": list(sn["lines"]), "confidence": r.get("confidence")}
+                "lines": sn, "confidence": r.get("confidence")}
         q = S._fold(item["quote"])
 
         def named(ref) -> bool:
