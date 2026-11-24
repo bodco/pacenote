@@ -113,6 +113,11 @@ a key. G2 adds one:
 | `web_page` | `<live>/<date>-<slug>/.work/web/<host>/*.txt` and, for a sheet without a call folder, `<SheetCLI.stateDir>/web/<host>/*.txt` (G6, `MeetingSheetDraft.swift:279`; title line, URL line, body); the app passes the second location's folders of this project's sheets with each pass (S5) | text | primary (external) | URL + stored path + char range | yes |
 | `gdoc` / `notion` copies | `live/google/google-file-<id16>.<ext>`, `_notion/` mirror files | as `file` | primary | as `file` + original URL | yes |
 
+**The `_notion/` mirror.** The `file` rules skip `_notion/` only so it is not read twice: the whole mirror is ingested
+once, through the `notion` copies row (and the Current State page through `project_state`), as today's live lookup
+includes `_notion/`. It is extracted and sent to the `evidence` route like any file, so the first-index confirmation
+(section 10) counts its sources and characters.
+
 The column "origin" is what the confirmation rule (section 7.4) counts on. Git commits and the 14-day digest stay
 prep-only sources and are not ingested. `sheet/tracker.py` `collect()` is not a source of its own: it folds the same
 local commitments registers (`CM.load`) that the `register` kind already reads, so ingesting it would duplicate
@@ -222,29 +227,58 @@ from A, which the G0 report states next to the A versus B numbers (B exists to s
 A versus B includes the chunker change, and B versus C isolates the graph). Extraction uses bigger segments
 (section 8.2) made of whole snippets, so every quote maps back to snippets.
 
-### 5.3 Client label at ingest
+### 5.3 Client marks at ingest, client decision at query time
 
-The PB-70 functions (`side`, `text_side`, `item_side`) answer `own`, `other` or None relative to one call's scope from
-`decide()`, and `decide()` returns None for a call without a backing company or title. There is no project-wide list
-of clients today. S1 adds one:
+**Rule: no access decision reads a client label computed at ingest.** The client of a call is known only at query
+time: `decide()` also counts the call's own companies (`client_scope.py:125`), so a folder can be "another client"
+for one call while nothing at ingest could know it. Checked in this step with the real `decide()` on a temporary
+project (`docs/acme`, `docs/globex`, a `live/2026-11-04-globex-weekly` call, no sheets): the ingest-time hints
+(`_series_words`, `_recorded_companies`) give only `globex`, one client folder, while `decide(root, "Kickoff",
+["Acme"])` returns client `acme`, others `["globex"]`, and `side()` of `docs/globex/plan.md` is `other`. A store that
+stamped labels from the hints would have called every Globex snippet shared and leaked it into the Acme call. So the
+store keeps **marks** (which names a row carries) at ingest and decides **own / other / shared** at query time from the
+request's scope, with the same rules as `side`, `side_of_name`, `series_side`, `text_side` and `filter_text`.
 
-- **`client_scope.labels(root)`**: every client label of the project, built from the same parts `decide()` uses
-  (`_client_dirs` with the hints from `_series_words` and `_recorded_companies`), without picking an own client. It
-  returns `{label: [rel paths]}`, empty when the project has fewer than 2 client folders.
-- A label check at ingest builds a neutral scope per label (`{"client": label, "others": [all other labels], ...}`)
-  and asks the existing `side`, `text_side` and `item_side`, so the store uses PB-70's rules, not a copy of them.
+- **Label universe.** S1 adds `client_scope.label_universe(root)`: the slug of every folder `_client_dirs` could ever
+  return, that is every folder within `MAX_DEPTH` outside `SKIP_DIRS` and the skipped prefixes, **without** the hint
+  filter, plus the first word of every call name in `live/` (`CALL_NAME`). Every label `decide()` can return for the
+  same tree is in it, whatever companies the call brings. The set is stored in `meta` (`label_universe`, JSON) at the
+  end of every pass, with the tree's folder list hash.
+- **Marks.** For each snippet the store writes `snippet_mark` rows (section 6): the universe names (`client_scope._names`
+  intersected with the universe) of the source path's folder and file-name words (`kind = path`, the word rule of
+  `side`), of each ancestor heading with its level (`kind = heading`), and of each line (`kind = line`, with the line
+  number). For a deterministic entity (register and Tracker items) the store writes `entity_mark` rows: the series
+  slug (`kind = series`), the first word of its call's file name (`kind = call`) and the universe names of its text
+  (`kind = text`), the inputs of `item_side`. Extra marks are harmless: only names in the request's `scope.client` and
+  `scope.others` are ever consulted.
+- **Query-time side of a snippet** (section 11.2 step 1), evaluated in SQL with the scope bound as parameters, in the
+  order of `side()` then `filter_text`:
+  1. the source path under a folder of `scope.folders[scope.client]`: own; under a folder of `scope.folders[o]` for an
+     `o` in `scope.others`: **other** (denied). This is the PB-70 path rule of `sheet/lookup.py:277` and
+     `sheet/sources.py:554`, `:865`, applied to `source.uri` directly, so it needs no mark at all;
+  2. else the `path` marks: `scope.client` among them: own; an `o` among them: other;
+  3. else (a shared file) the text rule of `filter_text`: the snippet is other when any ancestor heading's marks hold
+     an `o` and not `scope.client`, or any line's marks hold an `o` and not `scope.client` (a line that names the own
+     client passes even if it names another).
+  A deterministic entity's side is `series_side`, then `side_of_name`, then `text_side` on its `entity_mark` rows.
+- **Stale universe.** When `scope.client` or a label of `scope.others` is not in the stored `label_universe` (a
+  folder added or renamed after the last pass), marks cannot answer the text rule for that label. Non-live callers
+  (`mode = prep`, `after`, the CLI) first run a local relabel (marks only: no model, network or embed request; S1
+  measures its time) and then search. The live reader (`mode=ro`, section 11.4) cannot write: it
+  passes only rows whose source path is under the own client's folders and reports `scope_stale`.
+  Coverage loss for that call, never a leak.
+- **Labels for chunking only.** `client_scope.labels(root)` still exists, now labelling every client folder it finds,
+  even when there is only one (the "fewer than 2 means no scope" rule stays in `decide()`). It shapes the chunks
+  (`chunks_at` cuts at client boundaries, section 5.2), the segments (one client per segment, section 8.2) and the
+  topic split (section 8.7), and fills the `client_set` cache columns for display. Those are quality choices: a
+  wrong label there costs coverage or a mixed segment, never access, because step 1 never reads `client_set` or
+  `entity.client`. When `labels(root)` changes, the caches are recomputed deterministically (no model call).
 
-Each snippet gets `client_set` at ingest: the client folder it sits in, the client its heading section names, the
-clients its lines name, or empty (shared). Because `chunks_at` cuts at client boundaries (section 5.2), a snippet holds
-at most one client's lines plus shared lines, except a line that names two clients, which keeps both. Claims and
-edges inherit the union of their evidence snippets' labels. When `labels(root)` changes, labels are recomputed
-deterministically (no model call).
-
-The search filter (section 11.2) uses the call's scope: a row passes when `client_set` is empty, contains
-`scope.client`, or has no label in `scope.others`. This is the same outcome as `client_scope.filter_text` (a line that
-names only another client never passes; a line that names the own client passes even if it names another), and S1
-has a parity test: on the G0 fixture, the snippets that pass for a scope cover exactly the lines `filter_text`
-keeps for that scope.
+S1 tests the rule against the query-time functions, not against ingest labels (section 17, S1): for every scope
+`decide()` can return on the G0 fixture **and** on the case above (a client folder backed only by the call's
+company), the snippets that pass cover exactly the lines that `side()` and `filter_text` keep for that scope, and
+nothing under another client's folder passes as a snippet, claim, edge, entity, alias or topic sentence. The negative
+control is named in the test: a filter on `client_set` from ingest labels fails the second case.
 
 ## 6. SQLite schema
 
@@ -291,7 +325,8 @@ UTC ISO strings. Two clocks, used for different things:
 
 ```sql
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
--- schema_version, rules_version, evidence_uid, root_hint, slug_hint, created_at, flag_state
+-- schema_version, rules_version, evidence_uid, root_hint, slug_hint, created_at, flag_state,
+-- label_universe (JSON list of slugs, section 5.3), label_tree_hash
 
 CREATE TABLE source (
   id            INTEGER PRIMARY KEY,
@@ -335,11 +370,20 @@ CREATE TABLE snippet (
   heading      TEXT,
   speaker      TEXT,                    -- person entity id for transcript lines when known
   said_at      TEXT,
-  client_set   TEXT NOT NULL DEFAULT '',-- '' shared, 'acme', 'acme|globex'
+  client_set   TEXT NOT NULL DEFAULT '',-- cache for chunking, segments, topics, display ('' shared, 'acme',
+                                        -- 'acme|globex'); never read by access (section 5.3)
   vec          BLOB,                    -- bge-m3 1024 float16, computed at ingest (section 7.6), NULL until then
   UNIQUE (revision_id, ord)
 );
 CREATE INDEX snippet_rev ON snippet(revision_id);
+CREATE TABLE snippet_mark (             -- the label-universe names a snippet carries; access decides with them at
+  snippet_id  INTEGER NOT NULL REFERENCES snippet(id) ON DELETE CASCADE,  -- query time (section 5.3)
+  kind        TEXT NOT NULL,            -- path (folder and file-name words), heading (ancestor), line
+  pos         INTEGER NOT NULL,         -- 0 for path, heading level, or line number inside the snippet
+  name        TEXT NOT NULL,            -- a slug from meta.label_universe
+  PRIMARY KEY (snippet_id, kind, pos, name)
+);
+CREATE INDEX snippet_mark_name ON snippet_mark(name, snippet_id);
 CREATE VIRTUAL TABLE snippet_fts USING fts5(text, heading, content='snippet', content_rowid='id',
   tokenize='unicode61 remove_diacritics 2');
 
@@ -348,7 +392,8 @@ CREATE TABLE entity (
                                         -- client:<slug>, e-<sha1(type|norm name):10> (section 7.1)
   type        TEXT NOT NULL,            -- person, client, task, decision, risk, topic, document, system, call, date_event
   name        TEXT NOT NULL,            -- cache of the current name (section 11.2 step 2 derives it under as_of)
-  client      TEXT NOT NULL DEFAULT '', -- home client label of a deterministic entity; '' for llm entities
+  client      TEXT NOT NULL DEFAULT '', -- cache: home client label of a deterministic entity for display and topics;
+                                        -- '' for llm entities; never read by access (entity_mark is, section 5.3)
   status      TEXT,                     -- cache of the current status: open, proposal, done, dropped (tasks)
   origin      TEXT NOT NULL,            -- g1, tracker, voices, llm, pm
   merged_into TEXT REFERENCES entity(id),  -- cache of the current merge
@@ -358,6 +403,12 @@ CREATE TABLE entity (
   updated_at  TEXT NOT NULL
 );
 CREATE INDEX entity_type ON entity(type, client);
+CREATE TABLE entity_mark (              -- the inputs of item_side for a deterministic entity (section 5.3)
+  entity_id   TEXT NOT NULL REFERENCES entity(id) ON DELETE CASCADE,
+  kind        TEXT NOT NULL,            -- series (full series slug), call (first word of the call file name), text
+  name        TEXT NOT NULL,
+  PRIMARY KEY (entity_id, kind, name)
+);
 
 CREATE TABLE alias (
   alias_norm  TEXT NOT NULL,            -- casefolded, whitespace collapsed
@@ -365,11 +416,19 @@ CREATE TABLE alias (
   lang        TEXT,                     -- en, uk, ''
   origin      TEXT NOT NULL,            -- voices, g1, tracker, notion (notion:<page id> from a link sidecar), llm, pm
   status      TEXT NOT NULL,            -- confirmed, suggested, rejected
-  client_set  TEXT NOT NULL DEFAULT '', -- labels of the snippets the alias was found in; filtered like a snippet
+  client_set  TEXT NOT NULL DEFAULT '', -- cache: labels of the snippets the alias was found in (display only)
   vec         BLOB,
   PRIMARY KEY (alias_norm, entity_id)
 );
 CREATE INDEX alias_entity ON alias(entity_id);
+CREATE TABLE alias_seen (               -- the snippets an llm alias was found in; access uses these rows
+  alias_norm  TEXT NOT NULL,
+  entity_id   TEXT NOT NULL,
+  snippet_id  INTEGER NOT NULL REFERENCES snippet(id) ON DELETE CASCADE,
+  PRIMARY KEY (alias_norm, entity_id, snippet_id),
+  FOREIGN KEY (alias_norm, entity_id) REFERENCES alias(alias_norm, entity_id) ON DELETE CASCADE
+);
+CREATE INDEX alias_seen_snippet ON alias_seen(snippet_id);
 
 CREATE TABLE claim (                    -- a statement about one entity
   id          INTEGER PRIMARY KEY,
@@ -517,7 +576,8 @@ Notes on the schema:
   (section 13.4).
 - **No claim or edge without evidence.** `snippet -> evidence` cascades on delete, so a purge can leave a claim or
   edge with zero evidence rows. The vacuum step deletes every claim and edge that has no evidence left (in the same
-  transaction as the purge), and the search never relies on "every evidence row passes" alone: it also requires at
+  transaction as the purge, together with every `llm` alias that has no `alias_seen` row left), and the search
+  never relies on "every evidence row passes" alone: it also requires at
   least one passing row (section 11.2). A claim whose only evidence came from a revoked source therefore disappears,
   it is never shown without a quote.
 - **One key rule for claims and edges.** The natural key of a claim or an edge holds every field that a PM edit,
@@ -537,8 +597,10 @@ Notes on the schema:
 - **Columns that hold "now".** `entity.name`, `entity.status`, `entity.merged_into` and `claim.status` / `edge.status`
   are caches of the current state, used only without `as_of`. Under `as_of` they are derived, never read (section
   11.2 step 2), so they need no history columns and a rebuild gets them right for free.
-- **Client labels live on evidence.** `claim.client_set`, `edge.client_set` and `alias.client_set` are caches for
-  display and the topic split; access is decided on the evidence snippets' own labels (section 11.2 step 1), so one
+- **Client access is decided at query time on evidence.** Every `client_set` column and `entity.client` are caches
+  for chunking, segments, display and the topic split, filled from `labels(root)`; access never reads them. It
+  decides each evidence snippet's side from the request's scope, `source.uri` and `snippet_mark` (deterministic
+  entities: `entity_mark`; llm aliases: `alias_seen`), section 5.3 and section 11.2 step 1, so one
   edge found with the same modality in a shared file and in client A's file is one row that passes for A and is dropped for client B
   (strict denial); an edge quoted only in shared files passes for both (section 7.1).
 - There is no table per relation type and no recursive graph engine. A graph walk is 1 or 2 indexed SQL lookups on
@@ -601,8 +663,9 @@ Notes on the schema:
 - **Everything the LLM finds** (topics, systems, documents, people not in the voice library):
   `e-<sha1(type|normalised name)>`, without the client, so "the SSO integration" in a shared file and in a client file
   is one node and a hop from a shared file into that client's file works. Client scope is not on the node but on its
-  evidence: every claim, edge and alias of it carries the labels of the snippets it was quoted from, and the entity
-  itself is visible to a scope only through them (section 11.2 step 1), so a node found only in one client's files
+  evidence: every claim, edge and alias of it points at the snippets it was quoted from, whose side is decided for
+  the request's scope at query time (section 5.3), and the entity itself is visible to a scope only through them
+  (section 11.2 step 1), so a node found only in one client's files
   never shows in another client's call. Access denial is strict (section 11.2 step 1): an edge quoted in a shared
   file and in client A's file passes for A and is dropped for client B; only an edge quoted in shared files alone
   passes for both, so B reaches the shared node through its own or shared-only edges, never through A's. When the same name is used for two different things by two clients (the model resolves it to a known id of
@@ -730,9 +793,13 @@ The prompt has a fixed, cacheable prefix (instructions, the type and relation li
 - source meta: kind, origin, date, title, client label;
 - the project's clients and a catalog of at most 60 known entities relevant to the segment (G1 task ids with their
   text, people with aliases, recent topics), chosen by FTS and alias match on the segment, and **only from entities
-  and aliases visible to the segment's own scope**: the visibility rule of section 11.2 step 1 with
-  `scope.client` = the segment's client label (shared only for a shared segment), so another client's task names,
-  people or aliases are never sent with this segment;
+  and aliases visible to the segment's own scope**: the visibility rule of section 11.2 step 1 with a neutral
+  scope built at the pass from the segment's client label (`client` = that label, `others` = every other label of
+  `labels(root)`, which now labels a client folder even when it is the only one; a shared segment gets only entities
+  and aliases with no label at all), so entities and aliases labelled another client are never sent with this
+  segment. A client unknown at the pass (no series, no sheet yet) is labelled shared and its entities can appear in
+  another segment's catalog until the next relabel: a prompt-quality limit on the same provider, not an access
+  decision. Search access still decides on the request's scope at query time;
 - the segment with line numbers.
 
 Instructions in short: extract only what the text says; every entity, claim and relation must quote the text
@@ -810,8 +877,12 @@ All of this is pure code and runs the same for every route.
   for Python and the rules).
 - Model per route: the cheaper model of each route for extraction (api `haiku-5-5`, openai `gpt-6-luna`, gemini
   `gemini-3.5-flash-lite`, codex `codex/default`, code with its smallest model, local `LT_LOCAL_MODEL` or
-  `gemma4:26b`) and the route's `after` model for topic summaries. The model names come from `rules/ai.yaml`, not
-  code. Section 15, question 1 asks the owner about this default.
+  `gemma4:26b`) and the route's `after` model for topic summaries. Today `rules/ai.yaml` names the defaults only in
+  prose; the model choices live in Python (`openai_provider.py:11` and `gemini_provider.py:17` `JOB_DEFAULTS`,
+  `routing.PING_MODEL`, which already holds the cheap model of each route). S3 adds a real model map for the
+  `evidence` job (extract and summary model per route) to `rules/ai.yaml` and the worker reads it from there, with
+  `PING_MODEL` and the `after` entries of `JOB_DEFAULTS` as the fallback. Section 15, question 1 asks the owner
+  about this default.
 - **Output cap**: every extraction request sets a per-request output limit of 2,000 tokens (`max_tokens` on api
   and code, the equivalent field on openai, gemini and codex, `num_predict` on local), from `rules/evidence.yaml`
   (`max_output_tokens`). A reply cut at the cap (the provider's stop reason says so, or the JSON ends early) is
@@ -874,8 +945,8 @@ follow-up step already caps transcripts at 60,000, `followup.py:49`) and 4,000 c
 documents of 12,000 characters of extracted text; 15 site pages of 5,000; 30,000 of project state; half the text in
 Ukrainian. That is 3.87M characters and 678 segments (a notes file is one segment, section 8.2; the script counts
 the 15 site pages as one 75,000-character block, 13 segments, where per page it would be 15, a difference under
-0.3%). Per segment: a 1,500-token cacheable prefix, a 500-token
-entity catalog, and output between **500 tokens (typical)** and **2,000 tokens (the per-request cap, section 8.6)**.
+0.3%). Per segment: a 1,500-token cacheable prefix, a 2,000-token
+entity catalog (60 entities with ids, text and aliases; `CATALOG` in the script, measured in S3), and output between **500 tokens (typical)** and **2,000 tokens (the per-request cap, section 8.6)**.
 The contract allows 40 entities, 60 claims and 60 relations with quotes up to 300 characters, which would exceed the
 cap; the cap, not the item limits, bounds the output. 40 topic summaries of 6,000 input and 600 output tokens, priced
 in the table on the same model as extraction (summaries on the `after` model are added below the table). A typical week after the first index: 3 calls, 10 changed documents, 5,000
@@ -893,50 +964,46 @@ any route where it stays 0.
 
 | Route and model | First full index (typical to cap) | One week incremental (typical to cap) |
 |---|---:|---:|
-| tokens on api (fresh in / cached prefix / out) | 2.56M / 1.08M / 0.36M to 1.38M | 0.20M / 0.08M / 0.03M to 0.10M |
-| api `haiku-5-5` (no cache) | $0.55 to $1.05 | $0.04 to $0.08 |
-| api `sonnet-5-5` | $8.86 to $19.03 (no cache $10.90 to $21.07) | $0.68 to $1.40 |
-| openai `gpt-6-luna` | $0.37 to $0.88 | $0.03 to $0.07 |
-| openai `gpt-6.1-sol` | $7.35 to $17.52 | $0.58 to $1.30 |
-| gemini `gemini-3.5-flash-lite` | $1.47 to $4.01 | $0.11 to $0.29 |
-| gemini `gemini-3.8-flash` now | $2.76 to $6.57 | $0.22 to $0.49 |
-| gemini `gemini-3.8-flash` from 2027-01-01 | $5.51 to $13.14 | $0.43 to $0.97 |
-| codex plan, 3.25M to 4.26M tokens | about 52% to 68% of a 5-hour window (assumed anchor) | about 4% to 5% |
-| code plan (Claude Code), 4.0M to 5.0M tokens | not measured: no anchor for the Claude plan yet | not measured |
-| local `gemma4:26b`, 3.33M to 4.35M tokens | $0, 4.7 to 28 hours (assumed 300 to 600 tokens/s prefill, 15 to 30 tokens/s output; not measured) | 0.4 to 2.1 hours |
+| tokens on api (fresh in / cached prefix / out) | 3.58M / 1.08M / 0.36M to 1.38M | 0.27M / 0.08M / 0.03M to 0.10M |
+| api `haiku-5-5` (no cache) | $0.65 to $1.16 | $0.05 to $0.09 |
+| api `sonnet-5-5` | $10.89 to $21.06 (no cache $12.94 to $23.11) | $0.83 to $1.55 |
+| openai `gpt-6-luna` | $0.47 to $0.98 | $0.04 to $0.07 |
+| openai `gpt-6.1-sol` | $9.38 to $19.55 | $0.72 to $1.44 |
+| gemini `gemini-3.5-flash-lite` | $1.77 to $4.31 | $0.14 to $0.32 |
+| gemini `gemini-3.8-flash` now | $3.52 to $7.33 | $0.27 to $0.54 |
+| gemini `gemini-3.8-flash` from 2027-01-01 | $7.04 to $14.67 | $0.54 to $1.08 |
+| codex plan, 4.26M to 5.28M tokens | about 68% to 84% of a 5-hour window (assumed anchor) | about 5% to 6% |
+| code plan (Claude Code), 5.0M to 6.0M tokens | not measured: no anchor for the Claude plan yet | not measured |
+| local `gemma4:26b`, 4.35M to 5.37M tokens | $0, 5.2 to 29 hours (assumed 300 to 600 tokens/s prefill, 15 to 30 tokens/s output; not measured) | 0.4 to 2.1 hours |
 
-Two corrections to the table, computed in this step with the second script of Appendix A:
+Every row includes the 2,000-token catalog. One correction to the table, computed in this step with the second
+script of Appendix A:
 
 - **Topic summaries run on the `after` model** (section 8.7), not the extraction model. 40 summaries cost $0.73 on
   Sonnet or GPT-6.1 Sol and $0.27 on Gemini 3.8 Flash ($0.55 from 2027-01-01), against $0.04 on Haiku or GPT-6 Luna
   and $0.13 on Flash-Lite in the table. With recommendation (a) of section 15 (cheap model extracts, `after` model
-  summarises), a first index costs $1.24 to $1.74 on Claude key (Haiku plus Sonnet), $1.06 to $1.57 on OpenAI
-  (GPT-6 Luna plus GPT-6.1 Sol) and $1.61 to $4.15 on Gemini (Flash-Lite plus 3.8 Flash) with the 500-token
-  catalog; with the catalog correction below these become the ranges used everywhere else in this spec. A typical week (6
-  topics) then costs $0.14 to $0.18 on Claude key, $0.13 to $0.17 on OpenAI and $0.13 to $0.31 on Gemini (the 2,000-token catalog adds about 0.07M tokens a week on 48 segments, under
-  a cent on Haiku or GPT-6 Luna and about 2 cents on Flash-Lite, so the weekly ranges keep these values). The S3 estimator prices
-  each request on the model that sends it, so summaries are priced on the summary model.
-- **The entity catalog is closer to 2,000 tokens than 500** on api (60 entities with ids, text and aliases). That
-  adds 1.02M fresh input tokens to a first index: +$0.10 on Haiku, +$2.03 on Sonnet, up to +16% of a 5-hour window
-  on Codex (fewer tokens per character there). With both corrections a first index costs **$1.34 to $1.84** on
-  Claude key, **$1.16 to $1.67** on OpenAI and **$1.92 to $4.46** on Gemini (the last lines of the second script);
-  these are the ranges of sections 10 and 15. Output still dominates the dollar cost; S3 measures the real catalog
-  size with the output per segment and its calibration replaces these numbers.
+  summarises), a first index costs **$1.34 to $1.85** on Claude key (Haiku plus Sonnet), **$1.16 to $1.67** on
+  OpenAI (GPT-6 Luna plus GPT-6.1 Sol) and **$1.91 to $4.45** on Gemini (Flash-Lite plus 3.8 Flash); these are the
+  ranges of sections 10 and 15. A typical week (6 topics) then costs $0.15 to $0.19 on Claude key, $0.14 to $0.17
+  on OpenAI and $0.16 to $0.34 on Gemini. The S3 estimator prices each request on the model that sends it, so
+  summaries are priced on the summary model. S3 measures the real catalog size and output per segment, and its
+  calibration replaces every number of this section.
 
 What the numbers say:
 
-- Output is 40% to 62% of the dollar cost at the typical output and 72% to 86% at the cap (output prices are 5 to 8
-  times input), so the output cap and short quotes matter more than input trimming. This is why the cap is part of
-  the contract and S3 measures the real output per segment.
-- On api and openai, where the cache applies, the cacheable prefix saves about 18% to 22% at the typical output and
-  about 10% at the cap (e.g. Sonnet $10.90 -> $8.86, $21.07 -> $19.03). S3 sends the prefix first and identical on
+- Output is 33% to 51% of the dollar cost at the typical output and 65% to 80% at the cap (output prices are 5 to 8
+  times input), so the output cap and short quotes matter as much as the catalog size. This is why the cap is part
+  of the contract and S3 measures the real output per segment and the real catalog size.
+- On api and openai, where the cache applies, the cacheable prefix saves about 15% to 18% at the typical output and
+  about 9% at the cap (e.g. Sonnet $12.94 -> $10.89, $23.11 -> $21.06). S3 sends the prefix first and identical on
   every request so the providers' prompt cache applies.
-- On the cheap model of each route the first full index costs $0.37 to $4.01 for extraction ($1.16 to $4.46 with
-  summaries on the `after` model and the 2,000-token catalog); on the `after` models of api and openai it costs $7.35 to $19.03. The weekly
-  incremental is $0.13 to $0.31 with recommendation (a) (cents for extraction, the rest summaries) and up to $1.40
+- On the cheap model of each route the first full index costs $0.47 to $4.31 for extraction ($1.16 to $4.45 with
+  summaries on the `after` model); on the `after` models of api and openai it costs $9.38 to $21.06. The weekly
+  incremental is $0.14 to $0.34 with recommendation (a) (cents for extraction, the rest summaries) and up to $1.55
   on the `after` models.
 - On the Codex plan the first full index does not fit one 5-hour window next to normal work; it has to spread over
-  several passes under the ceiling. On local it is an overnight job at best and more than a day at the cap.
+  7 to 9 passes under the 10% pass ceiling, about 3 days at the 30% daily cap. On local it is an overnight job at
+  best and more than a day at the cap.
 - The G0 fixture is 10,383 bytes (20 files): about 3 segments, far below one cent on any route; it is not a cost
   reference.
 
@@ -976,7 +1043,7 @@ Settings > AI, a new row under the routes (only when the flag is on):
 - Title: "Project memory". Help line: "Pacenote reads your project's calls, notes and files on this Mac and keeps
   who and what they mention, with quotes. It never runs during a call."
 - Per project: "Indexed 412 of 678 parts. Last pass: Nov 23, 14:10, 1.2M tokens, $0.31 on Claude key (Haiku).
-  Next pass: about 48 parts and 6 topic summaries, about $0.14 to $0.18." On plan routes: "about 4% of your 5-hour ChatGPT limit". On
+  Next pass: about 48 parts and 6 topic summaries, about $0.15 to $0.19." On plan routes: "about 5% of your 5-hour ChatGPT limit". On
   local: "about 0.5 to 2 hours on this Mac, free" (the weekly local row of section 9: 0.4 to 2.1 hours).
 - Controls: "Index now", "Pause", the route ("Use for indexing: same as after the call / <route list>"), the ceiling
   ("Stop each pass at $1.00 / 10% of the 5-hour limit / 120 minutes on this Mac", "and each day at $3.00 / 30% /
@@ -984,8 +1051,8 @@ Settings > AI, a new row under the routes (only when the flag is on):
   "Topic summaries: after each pass / only when asked", the switch "Use AI to read
   sources" (off = deterministic links only, no model requests), and "Delete this project's memory".
 - Before the first full index of a project, a confirmation: "First index of Northpoint: 192 sources, about 3.9M
-  characters. On Claude key (Haiku reads, Sonnet writes topic summaries): about $1.34 to $1.84, in 2 passes. On your
-  ChatGPT plan: about 52% to 68% of a 5-hour limit, in 6 to 7 passes over 2 to 3 days. On this Mac: 5 to 28 hours,
+  characters. On Claude key (Haiku reads, Sonnet writes topic summaries): about $1.34 to $1.85, in 2 passes. On your
+  ChatGPT plan: about 68% to 84% of a 5-hour limit, in 7 to 9 passes over about 3 days. On this Mac: 5 to 29 hours,
   free. Your files are sent only to the AI you chose
   for this job." When the indexing provider is not the one used for preparation, one more line: "Your project files
   have so far gone only to <prep provider>; indexing sends them to <index provider>." Buttons: "Start", "Use this Mac only", "Not now". The range comes from the estimate with typical
@@ -1026,12 +1093,14 @@ Every query is built in this order, and steps 1 and 2 are SQL `WHERE` clauses on
 filters on a ranked list:
 
 1. **Access**: a snippet passes when its source has `state = 'active'` (a snippet of a source that is not `active`
-   never passes on its own), its source is not in `exclude`, and its `client_set` is empty, contains `scope.client`, or has no
-   label in `scope.others` (section 5.3, the `client_scope.filter_text` outcome). A failing row belongs to exactly
+   never passes on its own), its source is not in `exclude`, and its query-time side for the request's scope is not
+   **other** (section 5.3: the source path against `scope.folders`, then the `path` marks, then the heading and line
+   marks, the `side()` then `filter_text` outcome; with a stale label universe the live reader passes only rows under
+   the own client's folders). No `client_set` column and no `entity.client` is an input here. A failing row belongs to exactly
    one of two classes, and every other section of this spec refers to the class, never to a list of states:
    - **Denied** (an access decision: source `state` in `excluded` (PM exclusion, `.livetipsignore`, hidden call) or
-     `revoked`, a source named by a pending hide or revoke in the state-request log, section 13.1, or a label in
-     `scope.others`): strict. The claim or edge passes only when `EXISTS` a passing evidence row and `NOT EXISTS` a
+     `revoked`, a source named by a pending hide or revoke in the state-request log, section 13.1, or the side
+     **other** for the request's scope): strict. The claim or edge passes only when `EXISTS` a passing evidence row and `NOT EXISTS` a
      denied row, so a claim with one out-of-scope or revoked quote is dropped, not shown with fewer quotes.
    - **Ignored** (absence, not access: source `state = 'deleted'`, or source in the request's `exclude`): those rows
      are left out and the claim or edge passes when a remaining row passes. So G5's "what changed" with this call's
@@ -1047,10 +1116,13 @@ filters on a ranked list:
    No scope (`decide()` returned None, or a one-client project) passes everything of the project that is not denied
    or ignored. The same check covers the rows that have no evidence of their own:
    - **Entity**: visible when at least one of its claims or edges passes (with its evidence, as above), or it has a
-     deterministic origin (`g1`, `tracker`, `voices`, `pm`) whose source passes and whose `entity.client` is empty
-     or `scope.client`. An entity that is not visible is never a match, a graph step end, a catalog entry (section
+     deterministic origin (`g1`, `tracker`, `voices`, `pm`) whose source passes and whose query-time side from its
+     `entity_mark` rows (`series_side`, then `side_of_name`, then `text_side`, the `item_side` order) is not
+     **other**. An entity that is not visible is never a match, a graph step end, a catalog entry (section
      8.3) or a `why` path element, and its name is not returned.
-   - **Alias**: matched only when its entity is visible and its `client_set` passes like a snippet's.
+   - **Alias**: matched only when its entity is visible and, for an `llm` alias, `EXISTS` a passing `alias_seen`
+     snippet and `NOT EXISTS` a denied one (strict, like a claim); a deterministic alias (`voices`, `g1`, `tracker`,
+     `notion`, `pm`) follows its entity's visibility.
    - **Topic summary sentence**: returned only when every claim and edge it cites passes and none of them has an ignored
      row (a source in `exclude` or a deleted source: strict for sentences, section 8.7); a topic with no passing sentence is not returned.
 2. **Time** (content time, section 6): with `as_of`, a revision is valid when `valid_from <= as_of` and
@@ -1117,6 +1189,9 @@ from the copy loaded at call start. The only store access G2 allows on the live 
   extraction worker is stopped during a call, section 8.5; the short state-only and `override` writes of sections
   5.1 and 11.6 are WAL transactions a `mode=ro` reader never waits on);
 - refuses `query_vec` (a query embedding is a model call) and any `ask_global`;
+- takes the scope the preparation kept in the sheet (`client_scope.from_sheet`) and applies it at query time like
+  every caller (section 11.2 step 1); with a stale label universe it cannot relabel (read-only), so it returns only
+  rows under the own client's folders and says `scope_stale` (section 5.3);
 - answers within `budget.ms` (default 150 ms, measured in G0) from FTS5, aliases and one hop; vectors are used only
   between stored rows (the snapshot entities' alias vectors against stored snippet vectors, both computed at ingest),
   never for the question itself.
@@ -1362,6 +1437,11 @@ New gold (`gold.yaml` version 2, all invented, US names, same two clients) that 
    stated in another file, and a call moved by `call_layout.migrate` between two passes whose fact is also stated in
    the register. Both facts must still be answered, quoted and dated by the surviving source (the moved call by its
    own source, which kept its id); the move re-extracts no segment.
+   **Late client** (section 5.3, `needs: S2`): a third client folder (`docs/initech`) backed by no call and no
+   sheet, and one question asked with the call's companies `["Initech"]`, so `decide()` makes Globex and Acme
+   "other" only at query time. The answer must hold Initech's fact and none of the other two clients' unique facts
+   (as a snippet, claim, edge, entity name, alias or topic sentence); the store is indexed before the question, when
+   `labels(root)` does not yet know Initech.
 7. **Scale**: a seeded noise generator adds about 2 MB of plausible project text (40 extra documents, 10 extra
    calls) so that ranking and latency are measured with distractors; the 10 KB set stays as the "small" set.
 
@@ -1413,10 +1493,10 @@ duplicates, wrong identity, item 13 cross-client, false agreed, false proposal.
 ## 15. Questions for the owner (product choices only)
 
 1. **Which model reads sources.** Options: (a) the cheapest model of the chosen route (Haiku, GPT-6 Luna, Gemini
-   3.5 Flash-Lite) for extraction and the after-call model for topic summaries: $1.16 to $4.46 for a first index,
+   3.5 Flash-Lite) for extraction and the after-call model for topic summaries: $1.16 to $4.45 for a first index,
    typical to cap, in 2 to 5 passes (1 to 2 days at the daily cap); (b) the route's after-call model (Sonnet,
-   GPT-6.1 Sol) for both: $7.35 to $19.03, which at the $3.00 daily cap takes **3 to 7 days** to finish. On the Codex
-   plan either option takes 6 to 7 passes over **2 to 3 days** (52% to 68% of a window at 30% a day). These figures
+   GPT-6.1 Sol) for both: $9.38 to $21.06, which at the $3.00 daily cap takes **4 to 7 days** to finish. On the Codex
+   plan either option takes 7 to 9 passes over **about 3 days** (68% to 84% of a window at 10% a pass and 30% a day). These figures
    are a **lower bound**: they assume one segment per 6,000 characters of a document, and a folder document with
    many short sections has one segment per section (section 8.2); the real count is shown before the first index.
    **Recommendation: (a)**; G0 `--extract` compares quality and we switch if the cheap model misses too much.
@@ -1429,21 +1509,21 @@ Team defaults, each a setting in section 10, not owner questions: $1.00 per pass
 10% per pass and 30% per day of the 5-hour window on plans, 120 and 360 minutes on local, and the same day caps for
 all projects together; at the ceiling wait for the next pass, local overflow off; topic summaries eager on the
 after-call model (40 topics: about $0.73 on Sonnet or GPT-6.1 Sol, $0.27 on Gemini 3.8 Flash). With these defaults
-and option (a), a first index of the typical project finishes in 2 passes on Claude key or OpenAI ($1.34 to $1.84,
-$1.16 to $1.67), 2 to 5 passes (up to 2 days at the daily cap) on Gemini ($1.92 to $4.46), and in 6 to 7 passes
-over 2 to 3 days on the Codex plan.
+and option (a), a first index of the typical project finishes in 2 passes on Claude key or OpenAI ($1.34 to $1.85,
+$1.16 to $1.67), 2 to 5 passes (up to 2 days at the daily cap) on Gemini ($1.91 to $4.45), and in 7 to 9 passes
+over about 3 days on the Codex plan.
 
 ## 16. Risks
 
 - **Invented links** (V3's main risk): every edge needs a verbatim quote and a word of both ends, ambiguous ones stay
   suggestions, the G0 extraction fixture is raw model output (review may only delete), and `--extract` measures
   precision and the hop and paraphrase rates per route.
-- **Output size drives cost**: the first-index range is wide ($0.37 to $4.01 for extraction on cheap models, $1.16
-  to $4.46 with summaries on the `after` model and the larger catalog) because output per
-  segment is not measured yet; the per-request cap bounds it and S3 calibrates it before any number reaches the PM.
+- **Output size drives cost**: the first-index range is wide ($0.47 to $4.31 for extraction on cheap models, $1.16
+  to $4.45 with summaries on the `after` model) because output per segment and the catalog size are not measured
+  yet; the per-request cap bounds it and S3 calibrates it before any number reaches the PM.
 - **Synthetic gold proves correctness, not usefulness**: gains on the owner's real calls stay "not verified" until
   G3 runs on live calls (the plan's section 10 risk, unchanged).
-- **Cost of the first index on plan routes**: about 52% to 68% of a Codex 5-hour window for a typical project (on an
+- **Cost of the first index on plan routes**: about 68% to 84% of a Codex 5-hour window for a typical project (on an
   assumed anchor); the ceiling
   and the 80% stop keep it from blocking preparation, at the price of an index that takes days to complete.
 - **Local model speed and quality**: not measured; S3 measures tokens per second on the owner's Mac class before the
@@ -1456,8 +1536,11 @@ over 2 to 3 days on the Codex plan.
 - **Concurrency with the live call**: the extraction worker never runs while `call-active.json` exists (only the
   short local state-only and `override` writes do, which make no model, network or embed request); a crash that leaves the
   file stale is caught by the 6-hour and pid checks.
-- **Scope drift**: client labels are computed at ingest; a change in the client list relabels everything (free), and
-  the search re-checks labels on every evidence row before ranking.
+- **Scope drift**: the client of a call is known only at query time (`decide()` counts the call's own companies), so
+  ingest stores marks over a label universe of every possible client folder and the search decides own / other per
+  evidence row from the request's scope before ranking (section 5.3); ingest labels shape chunks, segments and
+  topics only. A folder added after the last pass is a stale universe: non-live callers relabel first (free), the
+  live reader keeps only the own client's folders (coverage loss for that call, never a leak).
 - **Coverage loss across clients (follow-up task under GraphRAG, out of PB-52 scope)**: when client A's file and
   client B's file each state the same fact, LLM entity ids and `nkey` carry no client, so it becomes one claim with
   evidence from both; strict denial (section 11.2 step 1) then drops it for both clients. Nothing leaks, but each
@@ -1478,14 +1561,15 @@ S1 is the largest sub-task. If it overruns, it may merge in two parts behind the
 rest of the acceptance list below; the G0 gate applies to S1b.
 
 Scope: `livetips_m0/evidence/` (schema, migrations, store open/lock and the global worker lock, ingest per source
-type with change detection and client labels, deterministic entities and claims from the register, the Tracker
+type with change detection and client marks, deterministic entities and claims from the register, the Tracker
 snapshot file reader, sheets, voice aliases, the state-only pass with hidden calls and revoked documents from the
 passed lists and the append-only state-request log with request ids (apply at start, between segments and at
 exit; readers deny pending hides and revokes), `d-`/`r-` ids from the dedupe key in `identity.py` with `notion:`
 aliases from `<stem>.notion.json` and `decisions.md` lines keyed by date and title, `pm_override` from register
 events with alias-key resolution), the segmenter of section 8.2 (deterministic, free, next to `chunks_at`, so S2's
 fixture loader can compute `seg_hash`),
-`client_scope.labels(root)`, `lookup.chunks_at` (offsets and client boundaries), snippet vectors at ingest through
+`client_scope.label_universe(root)` with `snippet_mark`, `entity_mark` and `alias_seen` (section 5.3),
+`client_scope.labels(root)` for chunking only, `lookup.chunks_at` (offsets and client boundaries), snippet vectors at ingest through
 the bundled `embed_server.py` with the copy of a text-equal snippet's vector (sections 5.2 item 3 and 7.6), content
 time with full UTC `valid_from` and `said_at` (section 6), the write path `store.apply_extraction(revision_id,
 items)` that S3 calls after validation (it writes `entity`, `alias`, `claim`, `edge` and `evidence` rows for
@@ -1546,8 +1630,24 @@ Acceptance:
       through the CLI, once with no store file yet and once before the sidecar is ingested) makes the call-keyed old
       decision `superseded` with a `supersedes` edge dated by the override's `at`; the decision is current in a
       replay before that date.
-- [ ] Client parity: on the G0 fixture, for each scope, the snippets that pass cover exactly the lines
-      `client_scope.filter_text` keeps.
+- [ ] Client parity at query time (section 5.3): on the G0 fixture and on the late-client project below, for every
+      scope `decide()` returns (each client as own, with and without the call's companies), the snippets that pass
+      cover exactly the lines that `client_scope.side()` and `filter_text` keep for that scope; the scopes are taken
+      from `decide()` at query time, never from `labels(root)`.
+- [ ] Late client (fails on a filter on ingest `client_set`, the named negative control): a project with
+      `docs/acme` and `docs/globex`, Globex known from `live/2026-11-04-globex-weekly` calls, Acme backed by no call
+      and no sheet, and a shared `pacenote/decisions.md` with one line that names only Globex. Ingest runs first, so
+      `labels(root)` at ingest knows only `globex`. Then `search` with the scope of `decide(root, "Kickoff",
+      ["Acme"])` (client `acme`, others `["globex"]`) returns nothing from `docs/globex`, nothing from the Globex call,
+      not the Globex line of `decisions.md`, and no claim, edge, entity, alias or name known only from them; the
+      Acme folder's facts and the shared lines are returned. Second half: after an Acme sheet is recorded (so Acme is
+      backed), a Globex call's scope (client `globex`, others `["acme"]`, a label `labels(root)` did not know at
+      ingest) returns the Globex facts and nothing from `docs/acme`.
+- [ ] Stale label universe: a client folder created after the last pass (its label not in `meta.label_universe`):
+      `mode="prep"` relabels first (no model, network or embed request) and then applies the full rule; `mode="live"`
+      returns only rows under the own client's folders and reports `scope_stale`.
+- [ ] No access query reads `client_set` or `entity.client`: a test sets every `client_set` and `entity.client` to
+      `''` after ingest and the access results of all access tests above are unchanged.
 - [ ] Time tests on content time: a first index of files with past content times, replayed as of a past call, sees
       the files valid then; `as_of` before a revision or before a claim returns none of them; a claim whose evidence
       sits only on a replaced revision is not current; a task closed after `as_of` is open, a merge after `as_of` is
@@ -1559,15 +1659,16 @@ Acceptance:
       row returned and survives a rebuild; as of a date between the two quotes only the proposal is returned.
 - [ ] One edge found with the same modality in a shared file and in client A's file is one row; it passes for A and is dropped for client B
       (denied row, strict); an edge quoted only in shared files passes for both (section 11.2 step 1).
-- [ ] A snippet under a nested subheading of a client heading carries that client's label (heading path).
+- [ ] A snippet under a nested subheading of a client heading carries that client's `heading` mark from the ancestor
+      (heading path) and is denied for the other client's scope.
 - [ ] PM edits from the register and `pm_override` rows on a claim and on an edge survive a rebuild (natural keys).
 - [ ] Purge: after a source is revoked and vacuumed, no claim or edge is left without evidence, and none of its
       facts is returned.
 - [ ] A register item written before a project rename joins one written after it.
 - [ ] Two processes: a reader during a write sees the previous complete revision.
 
-G0 gate: A's columns unchanged; the store unit tests above run on the current 10 KB G0 fixture with leaks 0 (client,
-excluded, future); `mode="live"` p95 on that fixture at most 150 ms. (The new variants and gold come in S2, so S1
+G0 gate: A's columns unchanged; the store unit tests above run on the current 10 KB G0 fixture and the late-client
+project with leaks 0 (client, excluded, future); `mode="live"` p95 on that fixture at most 150 ms. (The new variants and gold come in S2, so S1
 merges on its own without them.)
 
 ### S2. G0 gold v2, scale set, variants B and C (core)
@@ -1642,6 +1743,9 @@ Acceptance:
 - [ ] The extraction fixture records the gold v2 `sha256` it was recorded against; a run whose current gold hash
       differs fails as "gold changed".
 - [ ] A route whose cached-token count stays 0 is estimated without cache.
+- [ ] The extract and summary model per route come from the new `evidence` map in `rules/ai.yaml` (section 8.6); a
+      test changes the map and the next request uses the new name; without the map the worker falls back to
+      `routing.PING_MODEL` and the `after` entry of `JOB_DEFAULTS`.
 
 G0 gate: C with the extraction fixture, over the rows marked `needs: S2` or `S3` and with the fixture's gold hash
 equal to the current one: hop answer rate at least 4 of 6 multi-hop questions and at least 2 more than
@@ -1650,7 +1754,8 @@ model folder is present; `skipped` in CI) and above B in the run without vectors
 result without vectors is reported on its own line), modality accuracy 100%,
 derived counted as confirmed 0, all S1 and S2 zeros still 0; `--extract` on one cheap route reports precision,
 recall, its own hop and paraphrase rates, output tokens per segment, catalog tokens, segments per document and cost
-(recorded, not gated; the measured values replace the 500-token output and catalog assumptions in the estimates
+(recorded, not gated; the measured values replace the 500-token typical output and the 2,000-token catalog
+assumptions in the estimates
 before S5 shows any number).
 
 ### S4. Topic summaries and global questions (core)
@@ -1723,7 +1828,7 @@ and `python3 -I cost_model.py 2000` (the per-request output cap); it prints the 
 ```python
 import sys
 
-SEG = 6000; PREFIX = 1500; CATALOG = 500
+SEG = 6000; PREFIX = 1500; CATALOG = 2000  # entity catalog per segment, section 9
 OUT = int(sys.argv[1]) if len(sys.argv) > 1 else 500   # output tokens per segment; 2000 = the max_tokens cap
 CYR = 0.5
 CPT = {"api": (2.5, 1.6), "codex": (4.0, 2.6), "openai": (4.0, 2.6), "gemini": (4.0, 2.8), "local": (3.8, 2.4)}
@@ -1783,8 +1888,8 @@ for name, (ch, segs, topics) in (("FULL", FULL), ("WEEK", WEEK)):
         print("  local gemma4:26b at %d tok/s prefill, %d tok/s out: %.1f h" % (pre, gen, ((f + c) / pre + o / gen) / 3600))
 ```
 
-The second script (`python3 -I extra.py`) gives the corrections under the section 9 table: topic summaries priced
-on the `after` model, the larger entity catalog and the days to finish at the daily cap. The table rows it starts
+The second script (`python3 -I extra.py`) gives the correction under the section 9 table (topic summaries priced
+on the `after` model), the days to finish at the daily cap and the Codex passes at the per-pass ceiling. The table rows it starts
 from are the outputs of the first script.
 
 ```python
@@ -1795,27 +1900,22 @@ SUM = {"sonnet-5-5": (2.0, 0.10, 10.0), "gpt-6.1-sol": (2.0, 0.10, 10.0),
 s = {k: T * (FRESH * pi + PRE * pc + OUT * po) / 1e6 for k, (pi, pc, po) in SUM.items()}
 for k, v in s.items():
     print("summaries %s: $%.4f" % (k, v))
-rows = {"haiku-5-5 (no cache)": ((0.55, 1.05), "haiku-5-5", "sonnet-5-5"),
-        "gpt-6-luna": ((0.37, 0.88), "gpt-6-luna", "gpt-6.1-sol"),
-        "gemini-3.5-flash-lite": ((1.47, 4.01), "gemini-3.5-flash-lite", "gemini-3.8-flash now")}
+rows = {"haiku-5-5 (no cache)": ((0.65, 1.16), "haiku-5-5", "sonnet-5-5"),  # first-script rows, typical to cap
+        "gpt-6-luna": ((0.47, 0.98), "gpt-6-luna", "gpt-6.1-sol"),
+        "gemini-3.5-flash-lite": ((1.77, 4.31), "gemini-3.5-flash-lite", "gemini-3.8-flash now")}
 for k, ((lo, hi), cheap, after) in rows.items():
     d = s[after] - s[cheap]
     print("first index %s + after-model summaries: $%.2f to $%.2f" % (k, lo + d, hi + d))
-extra = 678 * 1500  # catalog 2,000 instead of 500 tokens on 678 segments
-for k, pi in (("haiku-5-5", 0.10), ("sonnet-5-5", 2.0)):
-    print("catalog %s: +%.2fM tokens, +$%.2f" % (k, extra / 1e6, extra * pi / 1e6))
-print("catalog codex: +%.0f%% of a window (upper bound)" % (extra / 250000 * 4))
-for k, ((lo, hi), cheap, after) in rows.items():  # both corrections together: the ranges of sections 9, 10 and 15
-    d = s[after] - s[cheap] + extra * SUM[cheap][0] / 1e6
-    print("first index %s + after-model summaries + 2,000-token catalog: $%.2f to $%.2f" % (k, lo + d, hi + d))
-week = {"haiku-5-5 (no cache)": ((0.04, 0.08), "haiku-5-5", "sonnet-5-5"),  # 6 topics a week, section 9
-        "gpt-6-luna": ((0.03, 0.07), "gpt-6-luna", "gpt-6.1-sol"),
-        "gemini-3.5-flash-lite": ((0.11, 0.29), "gemini-3.5-flash-lite", "gemini-3.8-flash now")}
+week = {"haiku-5-5 (no cache)": ((0.05, 0.09), "haiku-5-5", "sonnet-5-5"),  # 6 topics a week, section 9
+        "gpt-6-luna": ((0.04, 0.07), "gpt-6-luna", "gpt-6.1-sol"),
+        "gemini-3.5-flash-lite": ((0.14, 0.32), "gemini-3.5-flash-lite", "gemini-3.8-flash now")}
 for k, ((lo, hi), cheap, after) in week.items():
     d = (s[after] - s[cheap]) * 6 / T
     print("week %s + after-model summaries: $%.2f to $%.2f" % (k, lo + d, hi + d))
-for k, lo, hi, cap in (("Sonnet $", 8.86, 19.03, 3.0), ("GPT-6.1 Sol $", 7.35, 17.52, 3.0), ("codex %", 52, 68, 30)):
+for k, lo, hi, cap in (("Sonnet $", 10.89, 21.06, 3.0), ("GPT-6.1 Sol $", 9.38, 19.55, 3.0), ("codex %", 68, 84, 30)):
     print("days at the daily cap, %s: %.1f to %.1f" % (k, lo / cap, hi / cap))
+for k, lo, hi, per in (("codex %", 68, 84, 10),):
+    print("passes at the per-pass ceiling, %s: %d to %d" % (k, -(-lo // per), -(-hi // per)))
 ```
 
 ## Підсумок українською
@@ -1834,7 +1934,9 @@ for k, lo, hi, cap in (("Sonnet $", 8.86, 19.03, 3.0), ("GPT-6.1 Sol $", 7.35, 1
 5. Модальність: proposal / expectation / confirmation / statement, мапінг зі значень G1; модальність входить у
    ключ твердження і ребра, тож пропозиція і підтвердження одного звʼязку це два рядки з власними доказами; підсумки й нотатки ніколи
    не рахуються незалежним підтвердженням.
-6. Пошук: доступ, клієнт (PB-70, точна мітка на кожен уривок) і час (`as_of` за часом змісту з точністю до секунди
+6. Пошук: доступ, клієнт (PB-70: при індексації лише позначки назв папок у шляху, заголовках і рядках, а свій чи
+   чужий клієнт вирішується під час запиту за scope цього дзвінка, тож клієнт, відомий лише з компанії дзвінка, теж
+   відсікається; мітки індексації ніколи не вирішують доступ) і час (`as_of` за часом змісту з точністю до секунди
    в UTC: ревізія 2 і далі від mtime, а не від дня чи початку дзвінка, тож пізніша правка не потрапляє в реплей;
    статуси й злиття теж на момент `as_of`) фільтруються в SQL до ранжування, також для сутностей, аліасів і кожного речення підсумку
    теми; виключення на запит і видалений файл лише ігнорують рядки доказів цих файлів (факт, який підтверджує
@@ -1842,9 +1944,10 @@ for k, lo, hi, cap in (("Sonnet $", 8.86, 19.03, 3.0), ("GPT-6.1 Sol $", 7.35, 1
    повністю; переміщений файл з тим самим вмістом зберігає своє джерело; id рішення завжди з ключа дедупу, id сторінки
    Notion лише аліас; заміну рішення PM записує локально з датою;
    правки PM за природними ключами переживають перебудову; режим live без нових викликів.
-7. Вартість першого індексу типового проєкту (оцінка, від типового виходу до ліміту 2000 токенів): $1.16-4.46 з
-   дешевою моделлю для екстракції і моделлю after для підсумків, $7.35-19.03 на Sonnet або GPT-6.1 Sol (3-7 днів
-   за денної стелі), 52-68% 5-годинного вікна Codex (2-3 дні), 5-28 годин локально.
+7. Вартість першого індексу типового проєкту (оцінка, від типового виходу до ліміту 2000 токенів): $1.16-4.45 з
+   дешевою моделлю для екстракції і моделлю after для підсумків, $9.38-21.06 на Sonnet або GPT-6.1 Sol (4-7 днів
+   за денної стелі), 68-84% 5-годинного вікна Codex (7-9 проходів, близько 3 днів), 5-29 годин локально; усе з
+   каталогом сутностей 2000 токенів.
 8. Стеля на прохід, на день для проєкту і на день для всіх проєктів разом у долари, відсотки ліміту або хвилини,
    показ вартості до і після, вимикач і видалення.
 9. G0: варіанти B і C з однаковими кандидатами, фікстура екстракції як сирий вихід моделі, складніший еталон (6+
