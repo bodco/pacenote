@@ -19,6 +19,7 @@ final class EvidenceService: ObservableObject {
     private var changeWait: Set<String> = []
     private var lastPassAt: [String: Date] = [:]
     private var queue = EvidenceQueue()
+    private var stateQueue = EvidenceStateQueue()
     private var busy = false
 
     /// The settings in memory (the Settings model keeps config.json and itself in step), so a folder event with the
@@ -41,11 +42,13 @@ final class EvidenceService: ObservableObject {
         startWorker()
     }
 
-    /// With the flag on (at launch, or when the PM turns it on): uids, requests not yet applied, the idle check.
+    /// With the flag on (at launch, or when the PM turns it on): uids, requests not yet applied, the idle check. Every
+    /// project with a store also gets one fresh `exclude` with its current hidden and revoked lists: a pass the app
+    /// left running when it quit may have applied older lists, and nothing else would send them again.
     func startWorker() {
         guard on, timer == nil else { return }
         ensureUIDs()
-        for p in projects() { resendPending(p) }
+        for p in projects() { resendPending(p, all: true) }
         timer = Timer.scheduledTimer(withTimeInterval: 600, repeats: true) { _ in
             MainActor.assumeIsolated { EvidenceService.shared.tick() }
         }
@@ -161,8 +164,8 @@ final class EvidenceService: ObservableObject {
             self.running.remove(next.uid)
             self.lastPassAt[next.uid] = Date()          // the hourly idle pass counts from here, whatever the status says
             self.busy = false
-            // The pass applied the lists it started with over any hide, unhide or revoke that came meanwhile: the lists
-            // that changed go again (spec section 13.1).
+            // A hide, unhide or revoke that landed between reading the lists here and the pass applying them was
+            // overwritten by them: the lists that changed go again (spec section 13.1).
             let now = self.projects().first(where: { $0.evidenceUid == next.uid }) ?? p
             self.resendPending(now, passed: passed)
             self.drain()
@@ -173,8 +176,8 @@ final class EvidenceService: ObservableObject {
 
     /// A call hidden or shown again on Home: the full hidden list of its project, with a request id.
     func hiddenChanged(file: String) {
-        guard on, let p = PyTool.project(of: file).project.map(current), let t = target(p) else { return }
-        stateRequest(p, EvidenceCommand.excludeHidden(t, hidden: hiddenCalls(p), requestID: UUID().uuidString.lowercased()))
+        guard on, let p = PyTool.project(of: file).project.map(current), target(p) != nil else { return }
+        stateRequest(p, .exclude(hidden: true, revoked: false))
     }
 
     /// A Meeting Sheet reported the access of its sources: a Google or Notion document that turned denied or not found
@@ -183,7 +186,7 @@ final class EvidenceService: ObservableObject {
         guard on, let sheet = sheet else { return }
         ensureUIDs()
         guard let p = projects().first(where: { ProjectRegistry.norm($0.root) == ProjectRegistry.norm(root) }),
-              let uid = p.evidenceUid, let t = target(p) else { return }
+              let uid = p.evidenceUid, target(p) != nil else { return }
         let json = sheet.hasSuffix(".md") ? String(sheet.dropLast(3)) + ".json" : sheet
         guard let d = FileManager.default.contents(atPath: json), let o = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any],
               let sources = o["sources"] as? [[String: Any]] else { return }
@@ -192,7 +195,7 @@ final class EvidenceService: ObservableObject {
         guard next != reqs.revoked else { return }
         reqs.revoked = next
         saveRequests(uid, reqs)
-        stateRequest(p, EvidenceCommand.excludeRevoked(t, revoked: next, requestID: UUID().uuidString.lowercased()))
+        stateRequest(p, .exclude(hidden: false, revoked: true))
     }
 
     /// The supersede click: the override only after `decision_notion.py --supersede` returned ok (spec section 7.1).
@@ -200,41 +203,74 @@ final class EvidenceService: ObservableObject {
         guard on, let p = PyTool.project(of: file).project.map(current), let t = target(p),
               let args = EvidenceCommand.supersede(t, notionResult: notionResult, old: old, new: new,
                                                    requestID: UUID().uuidString.lowercased(), at: Date()) else { return }
-        stateRequest(p, args)
+        record(uid: p.evidenceUid, args)                 // kept at once, so a quit before it runs still re-sends it
+        stateRequest(p, .args(args))
     }
 
-    private func stateRequest(_ p: Project, _ args: [String]) {
-        guard let uid = p.evidenceUid, let i = args.firstIndex(of: "--request-id"), i + 1 < args.count else { return }
+    /// Queues a state-only request; one process at a time per project (EvidenceStateQueue).
+    private func stateRequest(_ p: Project, _ job: EvidenceStateQueue.Job) {
+        guard let uid = p.evidenceUid else { return }
+        stateQueue.add(uid, job)
+        pumpState(uid)
+    }
+
+    /// Starts the next state-only request of this project once the previous one has exited. An `exclude` reads the
+    /// current lists and gets its request id only now.
+    private func pumpState(_ uid: String) {
+        guard let job = stateQueue.next(uid) else { return }
+        guard let p = projects().first(where: { $0.evidenceUid == uid }), let t = target(p) else {
+            stateQueue.finished(uid); pumpState(uid); return
+        }
+        let args: [String]?
+        switch job {
+        case let .exclude(h, r):
+            args = EvidenceCommand.exclude(t, hidden: h ? hiddenCalls(p) : nil, revoked: r ? loadRequests(uid).revoked : nil,
+                                           requestID: UUID().uuidString.lowercased())
+            if let a = args { record(uid: uid, a) }
+        case let .args(a):
+            args = a
+        }
+        guard let a = args else { stateQueue.finished(uid); pumpState(uid); return }
+        run(a, env: [:], uid: uid, nice: false) { [weak self] _ in
+            guard let self = self else { return }
+            self.stateQueue.finished(uid)
+            self.refreshStatus(p) {}
+            self.pumpState(uid)
+        }
+    }
+
+    /// Keeps a sent request until `evidence status` lists it as applied.
+    private func record(uid: String?, _ args: [String]) {
+        guard let uid = uid, let i = args.firstIndex(of: "--request-id"), i + 1 < args.count else { return }
         var reqs = loadRequests(uid)
         reqs.add(.init(id: args[i + 1], args: args, sentAt: Date()))
         saveRequests(uid, reqs)
-        run(args, env: [:], uid: uid, nice: false) { [weak self] _ in self?.refreshStatus(p) {} }
     }
 
     /// Overrides not listed as applied by `evidence status` are sent again (a re-sent applied id is a no-op). An
     /// unapplied hide, unhide or revoke is not replayed (an old list could land after a newer one): one fresh request
-    /// with the current lists replaces them. After a pass (`passed`), each list that changed while it ran goes again.
-    private func resendPending(_ p: Project, passed: (hidden: [String], revoked: [String])? = nil) {
+    /// with the current lists replaces them. After a pass (`passed`), each list that changed while it ran goes again;
+    /// with `all` (at launch) both lists go again whenever the project has a store. Everything goes through the
+    /// per-project queue.
+    private func resendPending(_ p: Project, passed: (hidden: [String], revoked: [String])? = nil, all: Bool = false) {
         guard let uid = p.evidenceUid else { return }
         refreshStatus(p) { [weak self] in
-            guard let self = self, let t = self.target(p) else { return }
+            guard let self = self, self.target(p) != nil else { return }
             var reqs = self.loadRequests(uid)
             let applied = EvidenceRequests.appliedIDs(status: self.status[uid] ?? [:])
             reqs.applied(applied)
-            let hidden = self.hiddenCalls(p)
             var send = (hidden: false, revoked: false)
             if reqs.staleExcludes(applied: applied) { reqs.dropExcludes(); send = (true, true) }
+            if all, FileManager.default.fileExists(atPath: self.storePath(uid)) { send = (true, true) }
             if let passed = passed {
-                let r = EvidenceLists.resync(passedHidden: passed.hidden, passedRevoked: passed.revoked, hidden: hidden, revoked: reqs.revoked)
+                let r = EvidenceLists.resync(passedHidden: passed.hidden, passedRevoked: passed.revoked,
+                                             hidden: self.hiddenCalls(p), revoked: reqs.revoked)
                 send.hidden = send.hidden || r.hidden != nil
                 send.revoked = send.revoked || r.revoked != nil
             }
             self.saveRequests(uid, reqs)
-            for r in reqs.toResend(applied: applied) { self.run(r.args, env: [:], uid: uid, nice: false) { _ in } }
-            if let args = EvidenceCommand.exclude(t, hidden: send.hidden ? hidden : nil, revoked: send.revoked ? reqs.revoked : nil,
-                                                  requestID: UUID().uuidString.lowercased()) {
-                self.stateRequest(p, args)
-            }
+            for r in reqs.toResend(applied: applied) { self.stateRequest(p, .args(r.args)) }
+            if send.hidden || send.revoked { self.stateRequest(p, .exclude(hidden: send.hidden, revoked: send.revoked)) }
         }
     }
 
@@ -250,7 +286,7 @@ final class EvidenceService: ObservableObject {
     }
 
     func delete(_ p: Project) {
-        guard on, let uid = p.evidenceUid, let t = target(p) else { return }
+        guard on, let uid = p.evidenceUid, let t = target(p), !running.contains(uid) else { return }   // not under a running pass
         run(EvidenceCommand.delete(t), env: [:], uid: uid, nice: false) { [weak self] _ in
             guard let self = self else { return }
             self.status[uid] = [:]

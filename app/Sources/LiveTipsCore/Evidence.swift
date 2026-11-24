@@ -289,9 +289,10 @@ public enum EvidenceLists {
         return out.sorted()
     }
 
-    /// After a pass: the lists to send again because they changed while it ran. The pass applies the lists it started
-    /// with at its end, over a hide, unhide or revoke that arrived meanwhile (and counts that request as applied), so
-    /// each list that differs now goes again as a fresh request; nil for a list that did not change.
+    /// After a pass: the lists to send again because they changed since the app built the pass. The engine keeps a
+    /// request applied while the pass ran, but one applied after the app read the lists and before the pass applied
+    /// them at its start is overwritten by the older lists (and counts as applied), so each list that differs now goes
+    /// again as a fresh request; nil for a list that did not change.
     public static func resync(passedHidden: [String], passedRevoked: [String], hidden: [String], revoked: [String])
         -> (hidden: [String]?, revoked: [String]?) {
         (Set(passedHidden) == Set(hidden) ? nil : hidden.sorted(), Set(passedRevoked) == Set(revoked) ? nil : revoked.sorted())
@@ -417,6 +418,46 @@ public struct EvidenceQueue: Equatable {
         guard !busy, !callActive, !entries.isEmpty else { return nil }
         return entries.removeFirst()
     }
+}
+
+/// The state-only requests of each project (hide, unhide, revoke, supersede), one CLI process at a time per project,
+/// so a newer hidden or revoked list never lands before an older one (the engine's lock keeps no waiting order; spec
+/// section 13.1). An `exclude` waits as a marker of the lists it wants, not as arguments: queued excludes merge into
+/// one, and its lists and request id are read when it starts, so it always carries the current lists.
+public struct EvidenceStateQueue: Equatable {
+    public enum Job: Equatable {
+        case exclude(hidden: Bool, revoked: Bool)
+        case args([String])                 // a supersede, or a stored override sent again, as it was
+    }
+    public private(set) var running: Set<String> = []
+    public private(set) var waiting: [String: [Job]] = [:]
+    public init() {}
+
+    /// Queues a job; an `exclude` joins one already waiting (its lists are ORed), so it keeps that place.
+    public mutating func add(_ uid: String, _ job: Job) {
+        var w = waiting[uid] ?? []
+        if case let .exclude(h, r) = job, let i = w.firstIndex(where: { if case .exclude = $0 { return true }; return false }),
+           case let .exclude(h0, r0) = w[i] {
+            w[i] = .exclude(hidden: h0 || h, revoked: r0 || r)
+        } else if case .args = job, w.contains(job) {
+            return
+        } else {
+            w.append(job)
+        }
+        waiting[uid] = w
+    }
+
+    /// The job to start now for this project, or nil while one of its jobs runs or none waits.
+    public mutating func next(_ uid: String) -> Job? {
+        guard !running.contains(uid), var w = waiting[uid], !w.isEmpty else { return nil }
+        let j = w.removeFirst()
+        waiting[uid] = w.isEmpty ? nil : w
+        running.insert(uid)
+        return j
+    }
+
+    /// The running job of this project ended (however it ended: exit, failed start, flag off).
+    public mutating func finished(_ uid: String) { running.remove(uid) }
 }
 
 /// The settings of project memory (Settings > AI, only with the flag on): ceilings per pass, per project and day and

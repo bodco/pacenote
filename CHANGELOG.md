@@ -16,7 +16,9 @@ Pacenote. Earlier versions are described in the commit messages and in
   click reach the memory at once, also during a call. The Tracker snapshot includes the HubSpot tasks already loaded
   (keyed by portal and task, so a task linked to a commitment stays one task), and deleting the memories of projects
   no longer in Pacenote asks first. A hide, unhide or lost access that happens while a pass runs is not undone by
-  that pass, an older hidden list is never sent after a newer one, deleting a project's memory keeps its list of
+  that pass (also when the app quit while the pass ran: at launch the current lists go again), hide, unhide and
+  lost-access requests of a project go one at a time so a newer list always lands last, Delete is unavailable while
+  that project's pass runs, deleting a project's memory keeps its list of
   documents that lost access, a pass queued before a call waits until the call ends, and a project added since
   launch gets its memory at its first hide, sheet, folder change or pass instead of at the next launch. With the flag off nothing changes.
 - **Project memory, step 1: a local evidence store behind a flag (GraphRAG G2 S1, PB-84).** Off by default (feature

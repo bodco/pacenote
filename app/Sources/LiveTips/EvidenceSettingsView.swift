@@ -108,9 +108,10 @@ struct ProjectMemorySection: View {
                 let l = EvidenceText.after(run)
                 Text(L(l.key, l.vars)).font(PN.Font.caption).foregroundStyle(PN.C.text3)
             }
+            let passRunning = p.evidenceUid.map { service.running.contains($0) } ?? true
             HStack {
-                Button(L("mem.indexNow")) { service.indexNow(p) }.disabled(p.evidenceUid.map { service.running.contains($0) } ?? true)
-                Button(L("mem.delete")) { deleting = p }
+                Button(L("mem.indexNow")) { service.indexNow(p) }.disabled(passRunning)
+                Button(L("mem.delete")) { deleting = p }.disabled(passRunning)   // not under a running pass
             }
         }
     }

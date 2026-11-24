@@ -117,8 +117,8 @@ func evidenceS5PB88() {
     let onlyRev = EvidenceCommand.exclude(tg, hidden: nil, revoked: [], requestID: "r-y") ?? []
     expect(!onlyRev.contains("--hidden-calls") && onlyRev[onlyRev.firstIndex(of: "--revoked")! + 1] == "[]", "S5 r2: a list left out stays as it is")
 
-    // PB-88 r2: a pass applies the lists it started with at its end, over a hide that came meanwhile; the changed list
-    // goes again after the pass, an unchanged one does not.
+    // PB-88 r2/r3: a hide that landed before the pass applied its (older) lists is overwritten by them; the changed
+    // list goes again after the pass, an unchanged one does not.
     let rs = EvidenceLists.resync(passedHidden: ["a.md"], passedRevoked: ["doc1"], hidden: ["b.md", "a.md"], revoked: ["doc1"])
     expect(rs.hidden == ["a.md", "b.md"] && rs.revoked == nil, "S5 r2: a hide during the pass is sent again after it: \(rs)")
     let rs2 = EvidenceLists.resync(passedHidden: ["a.md"], passedRevoked: [], hidden: [], revoked: ["doc2"])
@@ -142,6 +142,28 @@ func evidenceS5PB88() {
     expect(q.next(busy: false, callActive: true) == nil && q.entries.count == 1, "S5 r2: a call started while the pass waited: it stays queued")
     expect(q.next(busy: true, callActive: false) == nil && q.entries.count == 1, "S5 r2: one pass at a time")
     expect(q.next(busy: false, callActive: false)?.uid == "uid-1" && q.entries.isEmpty, "S5 r2: after the call the pass starts")
+
+    // PB-88 r3: state-only requests run one at a time per project, in the order they came; a hide that comes while
+    // another hide runs waits, and queued excludes merge into one (its lists are read when it starts, so it carries
+    // the newest lists: "hide A" then "hide A and B" can never end as [A]).
+    var sq = EvidenceStateQueue()
+    sq.add("uid-1", .exclude(hidden: true, revoked: false))                       // hide A
+    expect(sq.next("uid-1") == .exclude(hidden: true, revoked: false), "S5 r3: the first hide starts at once")
+    sq.add("uid-1", .exclude(hidden: true, revoked: false))                       // hide B while A runs
+    expect(sq.next("uid-1") == nil, "S5 r3: a second request of the same project waits for the first to exit")
+    sq.add("uid-1", .args(ov))                                                     // a supersede
+    sq.add("uid-1", .exclude(hidden: false, revoked: true))                       // a revoke: joins the waiting exclude
+    sq.add("uid-1", .args(ov))                                                     // the same override again: one
+    expect(sq.waiting["uid-1"] == [.exclude(hidden: true, revoked: true), .args(ov)], "S5 r3: queued excludes merge, in place: \(sq.waiting)")
+    sq.add("uid-2", .exclude(hidden: true, revoked: false))
+    expect(sq.next("uid-2") == .exclude(hidden: true, revoked: false), "S5 r3: another project does not wait")
+    sq.finished("uid-1")
+    expect(sq.next("uid-1") == .exclude(hidden: true, revoked: true), "S5 r3: after the first exits, one exclude with both lists")
+    expect(sq.next("uid-1") == nil, "S5 r3: still one at a time")
+    sq.finished("uid-1")
+    expect(sq.next("uid-1") == .args(ov) && sq.waiting["uid-1"] == nil, "S5 r3: then the override, and the queue is empty")
+    sq.finished("uid-1")
+    expect(sq.next("uid-1") == nil && !sq.running.contains("uid-1"), "S5 r3: nothing left to start")
 
     // PB-88 r2: a pid reused after a reboot (its process started after the file) does not keep call-active.json
     expect(CallActive.writtenBy(info, processStart: t0.addingTimeInterval(-120)), "S5 r2: the app that wrote the file started before it")

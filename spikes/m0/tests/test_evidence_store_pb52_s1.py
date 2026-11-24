@@ -485,6 +485,32 @@ def test_state_requests(env, monkeypatch):
     assert st.read_log() == []
 
 
+def test_a_request_applied_during_a_pass_is_not_undone_by_its_lists(env):
+    """PB-88 round 3: a hide or revoke that lands while a pass runs (the app quit, its re-send never came) stays."""
+    root = env
+    hidden_world(root)
+    st = open_store("p-m", root)
+    osprey_tr = HIDDEN + ".md"
+    run(st, root, hidden_calls=[], revoked=[])
+    assert st.one("SELECT state FROM source WHERE uri=?", (osprey_tr,))[0] == "active"
+    sent = []
+
+    def between():
+        if not sent:
+            st.append_request("hidden_calls", {"hidden_calls": [osprey_tr]}, "r-mid")
+            st.append_request("revoked", {"revoked": [NID]}, "r-mid-revoked")
+            sent.append(1)
+    put(root, "docs/new.md", "# New\n\nA new file, so the pass has a source to write.\n")
+    run(st, root, hidden_calls=[], revoked=[], between=between)       # the pass started with empty lists
+    assert sent and st.applied_ids() >= {"r-mid", "r-mid-revoked"}
+    assert st.one("SELECT state FROM source WHERE uri=?", (osprey_tr,))[0] == "excluded"
+    assert json.loads(st.meta("hidden_calls")) and json.loads(st.meta("revoked"))
+    assert "osprey migration slips" not in texts(SE.search(st, "osprey migration"))
+    # a later pass with the app's current lists applies them as usual
+    run(st, root, hidden_calls=[], revoked=[])
+    assert st.one("SELECT state FROM source WHERE uri=?", (osprey_tr,))[0] == "active"
+
+
 def test_partial_log_line_is_skipped(env):
     st = open_store("p-l", env)
     st.append_request("hidden_calls", {"hidden_calls": ["a.md"]}, "r-a")

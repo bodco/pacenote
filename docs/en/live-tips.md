@@ -1346,13 +1346,16 @@ The skill and the app follow the same rules, in `rules/agenda.yaml`, `rules/comm
   default the AI of after the call; it falls back only to the model on this Mac, never to another cloud AI), the
   ceilings per pass, per project and day and for all projects a day (in USD, percent of the 5-hour limit or minutes
   on this Mac), topic summaries after each pass or only when asked, "Use AI to read sources", Pause, and per project
-  its status, "Index now" and "Delete this project's memory". A pass runs after a call's notes are written, 10
+  its status, "Index now" and "Delete this project's memory" (both unavailable while its pass runs). A pass runs after a call's notes are written, 10
   minutes after the project folder last changed, at most once an hour while the Mac is idle and on power, and on
   "Index now"; never during a call (the app keeps `call-active.json` next to `ai-routes.json` for the whole call).
   Hiding a call on Home, a Google or Notion document a Meeting Sheet can no longer read, and the supersede click on
   a call page (after Notion confirmed it) reach the store at once, also during a call, and are sent again until the
   store lists them as applied (a hidden or lost-access list goes again as the current list, never as an older one,
-  also when it changed while a pass ran). A pass that was waiting when a call began starts after the call. Deleting a
+  also when it changed while a pass ran). These requests go one at a time per project, so a newer list always
+  lands last; a pass does not undo a hide or lost access that reached the store while it ran, and at launch the app
+  sends each project's current lists once more, so a pass left running when the app quit cannot leave a hidden call
+  searchable. A pass that was waiting when a call began starts after the call. Deleting a
   project's memory keeps its list of documents that lost access. The Tracker items come from what the app already holds (the Notion mirror and the
   HubSpot tasks last loaded, a HubSpot task in the project of its linked commitment), with no new request. Memories
   of projects no longer in Pacenote are listed in the row and deleted only after you confirm. For now a pass is the
