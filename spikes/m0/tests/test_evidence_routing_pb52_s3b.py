@@ -30,7 +30,7 @@ from livetips_m0.evidence import worker as W  # noqa: E402
 
 from livetips_m0.evidence import segments as SG  # noqa: E402
 from test_evidence_extract_pb52_s3 import (  # noqa: E402,F401  (env is a fixture)
-    FakeTransport, big_file, env, honest, ingest, many_sections, open_store, part_lines, run_pass)
+    FakeTransport, big_file, env, honest, ingest, many_sections, open_store, part_lines, put, run_pass)
 
 AI_YAML = HERE.parent.parent.parent / "rules" / "ai.yaml"
 
@@ -58,7 +58,7 @@ def test_the_map_in_rules_names_every_route_and_usd_models_are_priced(monkeypatc
     for route in R.ROUTES:
         got = W.models(route)
         assert got == {"extract": m["extract"][route], "summary": m["summary"][route]}
-    for route in W.USD_ROUTES:     # an unpriced name would turn the USD ceiling off (estimate 0)
+    for route in W.USD_ROUTES:     # a pass on an unpriced name would end "off" before its first request
         assert COST.price_for(m["extract"][route]) and COST.price_for(m["summary"][route]), route
     # owner decision 24.11 (a): the cheapest model extracts, the after-call model summarises
     assert W.models("openai") == {"extract": "gpt-6-luna", "summary": OP.JOB_DEFAULTS["after"]}
@@ -384,6 +384,22 @@ def test_a_stale_plan_reading_still_counts_every_request(env):
     assert W.project_today(st, "codex", "pct") == pytest.approx(4 * assumed)
 
 
+def test_usage_without_a_five_hour_window_counts_the_assumed_percent(env):
+    """Review r1 (non-blocking): an answer whose usage has only a seven-day window replaces the route's reading, so
+    the five-hour percent reads as unknown and the request counts the assumed percent, never 0."""
+    root = env
+    many_sections(root, "docs/plan.md", 3)
+    st = open_store(root)
+    ingest(st, root)
+    seed_codex(20.0)
+    assumed = float(X.load_rules()["pct_per_request_assumed"])
+    tr = FakeTransport(lambda req: {"text": json.dumps(honest(req["user"])), "account_usage": {
+        "at": 0, "limited": False, "windows": [{"name": "seven_day", "used_percent": 40.0}]}})
+    res = run_pass(st, root, tr, route="codex")
+    assert res["status"] == "done" and tr.requests
+    assert [x["pct"] for x in ledger_rows()] == [assumed] * len(tr.requests)
+
+
 def test_plan_percent_stays_counted_after_a_switch_to_local(env):
     root = env
     many_sections(root, "docs/plan.md", 6)
@@ -434,3 +450,116 @@ def test_extract_calibration_reports_quality_size_and_cost(tmp_path, monkeypatch
     assert 0 < cal["precision"] <= 100 and 0 < cal["recall"] <= 100
     assert cal["hop_answer_rate"]["n"] == 5 and cal["hop_answer_rate"]["of"] == 6    # as the authored fixture
     assert json.loads((out / "manifest.json").read_text())["calibration"]["precision"] == cal["precision"]
+
+
+# ---------------------------------------------------------------- unpriced and swapped models (PB-103 review round 1)
+
+def ledger_rows():
+    return [json.loads(x) for x in W.ledger_path().read_text().splitlines()]
+
+
+@pytest.mark.parametrize("via", ["settings", "map"])
+def test_an_unpriced_model_on_a_usd_route_sends_nothing(env, tmp_path, via):
+    """An unpriced name would price every request at 0 and turn all three USD caps off: the pass ends `off` first."""
+    root = env
+    many_sections(root, "docs/plan.md", 6)
+    st = open_store(root)
+    ingest(st, root)
+    extra = {"model": "claude-unknown-9"}
+    if via == "map":
+        y = tmp_path / "ai.yaml"
+        d = yaml.safe_load(AI_YAML.read_text(encoding="utf-8"))
+        d["evidence"]["extract"]["api"] = "claude-unknown-9"
+        y.write_text(yaml.safe_dump(d), encoding="utf-8")
+        extra = {"ai_yaml": str(y)}
+    lim = {"usd": {"pass": 0.0001, "day": 100, "all_projects_day": 100}}
+    tr = FakeTransport(out_tokens=2000)
+    res = run_pass(st, root, tr, ceilings=lim, **extra)
+    assert res["status"] == "off" and "no price" in (res["error"] or "")
+    assert tr.requests == [] and res["model"] == "claude-unknown-9"
+    # local overflow does not turn an unpriced cloud model into a local pass: the PM must pick a priced model
+    tr2 = FakeTransport(out_tokens=2000)
+    res2 = run_pass(st, root, tr2, ceilings=lim, local_overflow=True, **extra)
+    assert res2["status"] == "off" and tr2.requests == []
+
+
+def test_the_estimate_of_an_unpriced_model_is_unknown_not_zero(env):
+    root = env
+    many_sections(root, "docs/plan.md", 3)
+    st = open_store(root)
+    ingest(st, root)
+    out = W.estimate(st, str(root), "api", settings={"model": "claude-unknown-9"})
+    assert out["segments"] > 0 and out["unpriced"] is True
+    assert out["usd_typical"] is None and out["usd_cap"] is None
+    ok = W.estimate(st, str(root), "api")                 # negative control: the map's priced model
+    assert ok["unpriced"] is False and isinstance(ok["usd_cap"], float) and isinstance(ok["usd_typical"], float)
+
+
+@pytest.mark.parametrize("route,module,answer,default", [
+    ("openai", OP, openai_answer, OP.MODEL), ("gemini", GP, gemini_answer, GP.MODEL)])
+def test_the_worker_prices_the_model_the_provider_sends(env, monkeypatch, route, module, answer, default):
+    """OpenAIProvider and GeminiProvider send their default model for a name without their prefix; the worker prices,
+    logs and records the model really sent, not the name it was given."""
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key-openai")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key-gemini")
+    urls = []
+    if route == "gemini":
+        real = GP.urllib.request.Request
+
+        def spy(url, *a, **k):
+            urls.append(url)
+            return real(url, *a, **k)
+        monkeypatch.setattr(GP.urllib.request, "Request", spy)
+    bodies = stub_urlopen(monkeypatch, module, answer(lambda body: json.dumps(honest(user_of(body)))))
+    root = env
+    many_sections(root, "docs/plan.md", 2)
+    st = open_store(root)
+    ingest(st, root)
+    asked = "claude-sonnet-5-5"                                     # priced, but not a name this provider sends
+    assert COST.price_for(asked) != COST.price_for(default)
+    tr = InProc()
+    res = run_pass(st, root, tr, route=route, model=asked)
+    assert res["status"] == "done" and bodies
+    if route == "openai":
+        assert {b["model"] for b in bodies} == {default}
+    else:
+        assert urls and all(default in u for u in urls)
+    assert {r["model"] for r in tr.requests} == {default} and res["model"] == default
+    rows = ledger_rows()
+    assert {x["model"] for x in rows} == {default}
+    want = sum(COST.cost_usd(default, x["input"], x["cache_write"], 0, x["cache_read"], x["output"]) for x in rows)
+    assert want > 0 and res["usd"] == pytest.approx(want)
+
+
+def test_spend_is_priced_on_the_model_the_answer_reports(env):
+    root = env
+    many_sections(root, "docs/plan.md", 2)
+    st = open_store(root)
+    ingest(st, root)
+    tr = FakeTransport(lambda req: {"text": json.dumps(honest(req["user"])), "model": "claude-sonnet-5-5",
+                                    "in_tokens": 1000, "out_tokens": 300})
+    res = run_pass(st, root, tr, model="claude-haiku-5-5")
+    n = len(tr.requests)
+    assert res["status"] == "done" and n
+    assert res["usd"] == pytest.approx(n * COST.cost_usd("claude-sonnet-5-5", 1000, 0, 0, 0, 300))
+    assert {x["model"] for x in ledger_rows()} == {"claude-sonnet-5-5"}
+
+
+def test_an_answer_from_an_unpriced_model_is_charged_its_estimate(env):
+    root = env
+    many_sections(root, "docs/plan.md", 2)
+    st = open_store(root)
+    ingest(st, root)
+    tr = FakeTransport(lambda req: {"text": json.dumps(honest(req["user"])), "model": "", "in_tokens": 1000,
+                                    "out_tokens": 300})
+    res = run_pass(st, root, tr, model="claude-haiku-5-5")
+    assert tr.requests and res["status"] == "done"
+    # the empty name falls back to the model it asked for
+    assert res["usd"] == pytest.approx(len(tr.requests) * COST.cost_usd("claude-haiku-5-5", 1000, 0, 0, 0, 300))
+    tr2 = FakeTransport(lambda req: {"text": json.dumps(honest(req["user"])), "model": "claude-renamed-1",
+                                     "in_tokens": 1000, "out_tokens": 300})
+    put(root, "docs/other.md", "## Budget\nThe budget review moves to Friday.\n## Venue\nThe venue is in Denver.\n")
+    ingest(st, root)
+    res2 = run_pass(st, root, tr2, model="claude-haiku-5-5")
+    assert tr2.requests and res2["status"] == "done"
+    assert res2["usd"] > 0 and res2["usd"] == pytest.approx(res2["est_usd"])   # never priced at 0

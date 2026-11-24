@@ -61,6 +61,24 @@ def models(route: str, ai_yaml: Optional[Path] = None) -> Dict[str, str]:
     return {"extract": ext, "summary": summ}
 
 
+def sent_model(route: str, model: str) -> str:
+    """The model the route's provider really sends for `model`: OpenAIProvider and GeminiProvider replace a name
+    without their own prefix with their default (the request child builds them without a job model). Asked of the
+    provider class itself (describe needs no key), so the worker and the provider cannot drift. PB-103 review r1."""
+    if route == "openai":
+        from ..openai_provider import OpenAIProvider
+        return OpenAIProvider("").describe(model)["model"]
+    if route == "gemini":
+        from ..gemini_provider import GeminiProvider
+        return GeminiProvider("").describe(model)["model"]
+    return model
+
+
+def pick_model(route: str, settings: dict) -> str:
+    """The extraction model of a route: settings.model, else the map; then the name the provider really sends."""
+    return sent_model(route, settings.get("model") or models(route, settings.get("ai_yaml"))["extract"])
+
+
 def ceiling_kind(route: str) -> str:
     return "usd" if route in USD_ROUTES else "pct" if route in PCT_ROUTES else "minutes"
 
@@ -310,7 +328,7 @@ class Pass:
         self.route = self.set.get("route") or os.environ.get("LT_AI_ROUTE") or ""   # neither set: no request (off)
         self.fallback_from: Optional[str] = None
         self.kind = ceiling_kind(self.route)
-        self.model = self.set.get("model") or models(self.route, self.set.get("ai_yaml"))["extract"]
+        self.model = pick_model(self.route, self.set)
         self.cap = int(self.rules.get("max_output_tokens", 2000))
         self.poll = float(self.set.get("poll_s", 1.0))
         self.labels = X.project_labels(root)
@@ -320,6 +338,7 @@ class Pass:
         self.t_local: Optional[float] = None      # minutes on local count from the switch to it
         self.totals = {"in": 0, "cached": 0, "out": 0, "usd": 0.0, "est_usd": 0.0, "requests": 0, "catalog_tokens": 0}
         self.run_id = 0
+        self.last_est = 0.0                       # the estimate of the request in flight (USD routes)
 
     # ---- settings
     def ceilings(self) -> dict:
@@ -330,8 +349,7 @@ class Pass:
 
     # ---- run rows
     def _run_start(self) -> None:
-        m = models(self.route, self.set.get("ai_yaml"))
-        self.model = self.set.get("model") or m["extract"]
+        self.model = pick_model(self.route, self.set)
         self.kind = ceiling_kind(self.route)
         self.pct_before = five_hour_pct(self.route) if self.kind == "pct" else None
         self._pct_seen = self.pct_before        # the last reading of the account's 5-hour window
@@ -443,9 +461,13 @@ class Pass:
             self.st.set_meta("cache_seen:" + self.route, "1")
             self.st.conn.commit()
         usd = None
+        model = ans.get("model") or self.model          # the model that answered (PB-103 review r1)
         if self.kind == "usd":
-            usd = COST.cost_usd(self.model, int(ans.get("in_tokens") or 0), int(ans.get("cache_write") or 0), 0,
-                                int(ans.get("cached") or 0), int(ans.get("out_tokens") or 0)) or 0.0
+            toks = (int(ans.get("in_tokens") or 0), int(ans.get("cache_write") or 0), 0, int(ans.get("cached") or 0),
+                    int(ans.get("out_tokens") or 0))
+            usd = COST.cost_usd(model, *toks)
+            if usd is None:                 # never 0: an unpriced answer is charged the estimate it was let through on
+                usd = self.last_est
             self.totals["usd"] += usd
         pct = None
         if ans.get("account_usage"):
@@ -462,7 +484,7 @@ class Pass:
             if now is not None:
                 self._pct_seen = now
             self.pct_spent += pct
-        ledger_row(self.route, self.model, ans, usd, pct, secs, self.project)
+        ledger_row(self.route, model, ans, usd, pct, secs, self.project)
 
     def estimate(self, user: str) -> float:
         """The cost of one request answering at the full cap, in the ceiling's unit (0 on plan routes and local,
@@ -477,8 +499,12 @@ class Pass:
 
     def gate(self, user: str) -> None:
         """The ceiling check before one request; the estimate is added only while the route is priced in USD (a
-        switch to local inside the check leaves it out)."""
+        switch to local inside the check leaves it out). A USD route whose model has no price ends the pass before
+        the request: every estimate and spend would be 0 and the three USD caps would be off (PB-103 review r1)."""
+        if self.kind == "usd" and not COST.price_for(self.model or ""):
+            raise Stop("off", "the model {} has no price (livetips_m0/cost.py PRICES)".format(self.model))
         est = self.estimate(user)
+        self.last_est = est
         self.check_ceiling(est)
         if self.kind == "usd":
             self.totals["est_usd"] += est
@@ -675,7 +701,7 @@ def estimate(store: S.Store, root: str, route: str, rules: Optional[dict] = None
     rules = rules or X.load_rules()
     settings = settings or {}
     ex, pre = X.extractor_id(rules), X.prefix(rules)
-    model = settings.get("model") or models(route, settings.get("ai_yaml"))["extract"]
+    model = pick_model(route, settings)
     cap = out_cap(route, model, int(rules.get("max_output_tokens", 2000)))
     typical = int(settings.get("typical_out") or store.meta("typical_out:" + route) or TYPICAL_OUT)
     catalog_t = int(settings.get("catalog_tokens") or store.meta("catalog_tokens:" + route) or CATALOG_TOKENS)
@@ -699,5 +725,7 @@ def estimate(store: S.Store, root: str, route: str, rules: Optional[dict] = None
     if route in USD_ROUTES:
         lo = price(model, fresh, segs * pre_t, segs * typical, cached_ok)
         hi = price(model, fresh, segs * pre_t, segs * cap, cached_ok)
-        out.update(usd_typical=round(lo or 0.0, 2), usd_cap=round(hi or 0.0, 2))
+        # an unpriced model has no estimate (None, never $0) and a pass on it ends before the first request
+        out.update(unpriced=lo is None, usd_typical=round(lo, 2) if lo is not None else None,
+                   usd_cap=round(hi, 2) if hi is not None else None)
     return out

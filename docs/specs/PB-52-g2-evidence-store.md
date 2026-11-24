@@ -1983,8 +1983,14 @@ Implementation notes (S3b, PB-103):
 - `rules/ai.yaml` `evidence: {extract: {<route>: model}, summary: {<route>: model}}` records owner decision 1 (section
   15): api `claude-haiku-5-5` / `claude-sonnet-5-5`, openai `gpt-6-luna` / `gpt-6.1-sol`, gemini
   `gemini-3.5-flash-lite` / `gemini-3.8-flash`, codex `codex/default` for both, code `haiku` / `sonnet`, local
-  `gemma4:26b` (`LT_LOCAL_MODEL` wins). Every USD name is priced in `cost.PRICES` (a test checks it: an unpriced name
-  would make the estimate 0 and switch the USD ceiling off).
+  `gemma4:26b` (`LT_LOCAL_MODEL` wins). Every USD name is priced in `cost.PRICES` (a test checks it). Review round 1:
+  a USD route whose model has no price (`--model`, `settings.model` or an edited map) ends the pass `off` ("the model
+  ... has no price") before its first request, local overflow or not, and `estimate` reports `unpriced: true` with
+  `usd_typical` and `usd_cap` null, never $0. The worker resolves the name the provider really sends
+  (`OpenAIProvider` and `GeminiProvider` send their default for a name without the `gpt-` or `gemini-` prefix, asked
+  through the class's own `describe`, whose default is the same `MODEL` the request child's `make_legs` uses) before it
+  prices, logs or records it. A request's spend is priced on the model its answer reports (the model asked for when
+  the answer names none); an answer naming an unpriced model is charged the request's estimate, never $0.
 - Providers: `OpenAIProvider` and `GeminiProvider` read `extra["single_request"]` and then skip the `LONGER` second
   request, so a cut answer stays `incomplete = max_output_tokens` and the worker splits it; `settle` still keeps a whole
   JSON object at the start for free. `OllamaProvider` takes `extra["num_predict"]` as the exact cap and, only then,

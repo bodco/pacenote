@@ -1,0 +1,3605 @@
+{
+ "schema": "pacenote.bench.g0/2",
+ "variant": "B",
+ "date": "2026-11-25",
+ "commit": "7a36277",
+ "fixture_sha": "26d3ec6b228f19a9",
+ "gold_sha": "180234bba3fef52c",
+ "route": "codex",
+ "top": 3,
+ "lookup_reps": 5,
+ "targets": [
+  {
+   "id": "acme-weekly-status-2026-11-17",
+   "client": "acme",
+   "prep": {
+    "coverage": 75.0,
+    "found": 6,
+    "total": 8,
+    "facts": [
+     {
+      "id": "w-item13-waiting",
+      "present": true,
+      "from": "weekly 2026-11-10 notes"
+     },
+     {
+      "id": "w-item13-blocks-sso",
+      "present": false,
+      "from": "technical 2026-11-12 notes (cross-series)"
+     },
+     {
+      "id": "w-freeze",
+      "present": false,
+      "from": "weekly 2026-10-20 notes (4th call back)"
+     },
+     {
+      "id": "w-golive",
+      "present": true,
+      "from": "weekly 2026-11-10, decisions"
+     },
+     {
+      "id": "w-pilot-60",
+      "present": true,
+      "from": "weekly 2026-10-27 notes"
+     },
+     {
+      "id": "w-checklist",
+      "present": true,
+      "from": "weekly notes, register"
+     },
+     {
+      "id": "w-user-list-maybe",
+      "present": true,
+      "from": "weekly 2026-11-03 notes"
+     },
+     {
+      "id": "w-rehearsal",
+      "present": true,
+      "from": "docs/acme release plan 2026-11-14"
+     }
+    ],
+    "leaks": [],
+    "passes": 1,
+    "size": {
+     "state": "fits",
+     "total_tokens": 736,
+     "per_pass": 250000
+    },
+    "context_chars": 3291,
+    "error": null
+   },
+   "live": {
+    "answer_rate": 75.0,
+    "answered": 3,
+    "total": 4,
+    "questions": [
+     {
+      "q": "When does the Acme change freeze start?",
+      "ok": true,
+      "answer_in_top": true,
+      "top": [
+       "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.notes.md",
+       "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.notes.md",
+       "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.md"
+      ],
+      "leaks": []
+     },
+     {
+      "q": "Where are we with item 13?",
+      "ok": true,
+      "answer_in_top": false,
+      "top": [
+       "docs/acme/item-13-sso-user-mapping.md",
+       "docs/acme/item-13-sso-user-mapping.md",
+       "live/commitments.jsonl"
+      ],
+      "leaks": []
+     },
+     {
+      "q": "How many users are in the pilot?",
+      "ok": true,
+      "answer_in_top": true,
+      "top": [
+       "_notion/Northpoint Current State.md",
+       "live/2026-10-27-acme-weekly-status/2026-10-27-1000-acme-weekly-status.notes.md",
+       "live/2026-10-27-acme-weekly-status/2026-10-27-1000-acme-weekly-status.notes.md"
+      ],
+      "leaks": []
+     },
+     {
+      "q": "Чого ми чекаємо від служби безпеки Acme?",
+      "ok": false,
+      "answer_in_top": false,
+      "top": [
+       "docs/acme/item-13-sso-user-mapping.md",
+       "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.notes.md",
+       "live/2026-10-27-acme-weekly-status/2026-10-27-1000-acme-weekly-status.notes.md"
+      ],
+      "leaks": []
+     }
+    ],
+    "answer_text_rate": 50.0,
+    "answer_text": 2,
+    "leaks": 0,
+    "p50_ms": 2.67,
+    "p95_ms": 2.84,
+    "index_build_ms": 43.6,
+    "cold_ms": 7.3
+   },
+   "after": {
+    "duplicates": 3,
+    "wrong_identity": 2,
+    "false_agreed": 0,
+    "false_proposal": 0,
+    "suggested": 3,
+    "duplicates_if_confirmed": 0,
+    "item13_cross_client": 1,
+    "item13_cross_events": 0,
+    "item13_in_tracker": 1,
+    "items": [
+     {
+      "id": "w-a-checklist",
+      "kind": "update",
+      "ok": false,
+      "open_items": 3,
+      "added": 1,
+      "tentative_open": false,
+      "firm_as_proposal": 0
+     },
+     {
+      "id": "w-a-mapping",
+      "kind": "update",
+      "ok": false,
+      "open_items": 2,
+      "added": 1,
+      "tentative_open": false,
+      "firm_as_proposal": 0
+     },
+     {
+      "id": "w-a-rehearsal",
+      "kind": "new",
+      "ok": true,
+      "open_items": 1,
+      "added": 1,
+      "tentative_open": false,
+      "firm_as_proposal": 0
+     },
+     {
+      "id": "w-a-user-list",
+      "kind": "existing",
+      "ok": true,
+      "open_items": 0,
+      "added": 0,
+      "tentative_open": false,
+      "firm_as_proposal": 0
+     }
+    ],
+    "events": 3
+   }
+  },
+  {
+   "id": "globex-weekly-2026-11-18",
+   "client": "globex",
+   "prep": {
+    "coverage": 80.0,
+    "found": 4,
+    "total": 5,
+    "facts": [
+     {
+      "id": "g-item13-export",
+      "present": true,
+      "from": "globex 2026-11-04 notes"
+     },
+     {
+      "id": "g-hours-left",
+      "present": true,
+      "from": "globex 2026-11-11"
+     },
+     {
+      "id": "g-csv-only",
+      "present": true,
+      "from": "globex 2026-11-11 notes, decisions"
+     },
+     {
+      "id": "g-sample-file",
+      "present": true,
+      "from": "globex 2026-11-04 notes, register"
+     },
+     {
+      "id": "g-net-30",
+      "present": false,
+      "from": "docs/globex SOW summary (old file)"
+     }
+    ],
+    "leaks": [],
+    "passes": 1,
+    "size": {
+     "state": "fits",
+     "total_tokens": 424,
+     "per_pass": 250000
+    },
+    "context_chars": 2089,
+    "error": null
+   },
+   "live": {
+    "answer_rate": 100.0,
+    "answered": 3,
+    "total": 3,
+    "questions": [
+     {
+      "q": "What is item 13?",
+      "ok": true,
+      "answer_in_top": true,
+      "top": [
+       "docs/globex/item-13-invoice-export-2026-11-13.md",
+       "docs/globex/item-13-invoice-export-2026-11-13.md",
+       "live/commitments.jsonl"
+      ],
+      "leaks": []
+     },
+     {
+      "q": "How many hours are left on the Globex budget?",
+      "ok": true,
+      "answer_in_top": true,
+      "top": [
+       "live/2026-11-11-globex-weekly/2026-11-11-1100-globex-weekly.md",
+       "live/2026-11-11-globex-weekly/2026-11-11-1100-globex-weekly.notes.md",
+       "_notion/Northpoint Current State.md"
+      ],
+      "leaks": []
+     },
+     {
+      "q": "What are the payment terms?",
+      "ok": true,
+      "answer_in_top": true,
+      "top": [
+       "docs/globex/globex-sow-summary.md"
+      ],
+      "leaks": []
+     }
+    ],
+    "answer_text_rate": 100.0,
+    "answer_text": 3,
+    "leaks": 0,
+    "p50_ms": 2.06,
+    "p95_ms": 2.36,
+    "index_build_ms": 37.8,
+    "cold_ms": 6.4
+   },
+   "after": {
+    "duplicates": 2,
+    "wrong_identity": 2,
+    "false_agreed": 0,
+    "false_proposal": 0,
+    "suggested": 3,
+    "duplicates_if_confirmed": 0,
+    "item13_cross_client": 2,
+    "item13_cross_events": 0,
+    "item13_in_tracker": 2,
+    "items": [
+     {
+      "id": "g-a-sample",
+      "kind": "update",
+      "ok": false,
+      "open_items": 2,
+      "added": 1,
+      "tentative_open": false,
+      "firm_as_proposal": 0
+     },
+     {
+      "id": "g-a-mockup",
+      "kind": "update",
+      "ok": false,
+      "open_items": 2,
+      "added": 1,
+      "tentative_open": false,
+      "firm_as_proposal": 0
+     }
+    ],
+    "events": 2
+   }
+  },
+  {
+   "id": "acme-technical-sync-2026-11-19",
+   "client": "acme",
+   "prep": {
+    "coverage": 85.7,
+    "found": 6,
+    "total": 7,
+    "facts": [
+     {
+      "id": "t-item13-blocks-sso",
+      "present": true,
+      "from": "technical 2026-11-12 notes"
+     },
+     {
+      "id": "t-item13-waiting",
+      "present": false,
+      "from": "weekly 2026-11-10 notes (cross-series)"
+     },
+     {
+      "id": "t-cert",
+      "present": true,
+      "from": "technical 2026-11-05 transcript (no notes)"
+     },
+     {
+      "id": "t-saml",
+      "present": true,
+      "from": "technical 2026-11-12, decisions"
+     },
+     {
+      "id": "t-okta",
+      "present": true,
+      "from": "technical 2026-11-05 transcript"
+     },
+     {
+      "id": "t-site-sso",
+      "present": true,
+      "from": "the Acme status page (local site)"
+     },
+     {
+      "id": "t-rehearsal",
+      "present": true,
+      "from": "docs/acme release plan 2026-11-14"
+     }
+    ],
+    "leaks": [],
+    "passes": 1,
+    "size": {
+     "state": "fits",
+     "total_tokens": 676,
+     "per_pass": 250000
+    },
+    "context_chars": 3078,
+    "error": null
+   },
+   "live": {
+    "answer_rate": 100.0,
+    "answered": 3,
+    "total": 3,
+    "questions": [
+     {
+      "q": "Що зараз блокує пункт 13?",
+      "ok": true,
+      "answer_in_top": true,
+      "top": [
+       "live/2026-11-12-acme-technical-sync/2026-11-12-1400-acme-technical-sync.md",
+       "docs/acme/item-13-sso-user-mapping.md",
+       "docs/acme/item-13-sso-user-mapping.md"
+      ],
+      "leaks": []
+     },
+     {
+      "q": "When does the staging certificate expire?",
+      "ok": true,
+      "answer_in_top": true,
+      "top": [
+       "live/2026-11-05-acme-technical-sync/2026-11-05-1400-acme-technical-sync.md"
+      ],
+      "leaks": []
+     },
+     {
+      "q": "Do we use SAML or OIDC for SSO?",
+      "ok": true,
+      "answer_in_top": true,
+      "top": [
+       "live/2026-11-12-acme-technical-sync/2026-11-12-1400-acme-technical-sync.notes.md",
+       "pacenote/decisions.md",
+       "live/2026-11-12-acme-technical-sync/2026-11-12-1400-acme-technical-sync.notes.md"
+      ],
+      "leaks": []
+     }
+    ],
+    "answer_text_rate": 100.0,
+    "answer_text": 3,
+    "leaks": 0,
+    "p50_ms": 2.34,
+    "p95_ms": 2.53,
+    "index_build_ms": 41.3,
+    "cold_ms": 7.3
+   },
+   "after": {
+    "duplicates": 0,
+    "wrong_identity": 0,
+    "false_agreed": 0,
+    "false_proposal": 0,
+    "suggested": 2,
+    "duplicates_if_confirmed": 0,
+    "item13_cross_client": 1,
+    "item13_cross_events": 0,
+    "item13_in_tracker": 1,
+    "items": [
+     {
+      "id": "t-a-idp",
+      "kind": "update",
+      "ok": true,
+      "open_items": 1,
+      "added": 0,
+      "tentative_open": false,
+      "firm_as_proposal": 0
+     },
+     {
+      "id": "t-a-cert",
+      "kind": "new",
+      "ok": true,
+      "open_items": 1,
+      "added": 1,
+      "tentative_open": false,
+      "firm_as_proposal": 0
+     }
+    ],
+    "events": 2
+   }
+  }
+ ],
+ "v2": {
+  "gold_version": 2,
+  "gold_sha256": "7167c20c603811f61ffe47d8fa400d0cdeea2c4f9ac8a519b5533c113b265792",
+  "fixture_v2_sha": "03f1b14dbea88b77",
+  "ready": [
+   "S2",
+   "S3"
+  ],
+  "sets": {
+   "small": {
+    "no_vectors": {
+     "rows_evaluated": 39,
+     "rows_not_evaluated": 0,
+     "rows_passed": 22,
+     "expected_mismatch": [],
+     "hop_answer_rate": {
+      "rate": 0.0,
+      "n": 0,
+      "of": 6
+     },
+     "paraphrase_answer_rate": {
+      "rate": 0.0,
+      "n": 0,
+      "of": 3
+     },
+     "paraphrase_uk": {
+      "rate": 0.0,
+      "n": 0,
+      "of": 1
+     },
+     "timeline_recall": 25.0,
+     "timeline_order": false,
+     "evidence_recall": {
+      "rate": 100.0,
+      "n": 4,
+      "of": 4
+     },
+     "quote_validity": 100.0,
+     "quotes_checked": 177,
+     "modality_accuracy": 0.0,
+     "derived_confirmed": 0,
+     "future_leaks": 0,
+     "stale_returned": 0,
+     "excluded_leaks": 0,
+     "client_leaks": 0,
+     "shared_facts_kept": {
+      "rate": 100.0,
+      "n": 3,
+      "of": 3
+     },
+     "live_client_leaks": 0,
+     "live_excluded_leaks": 0,
+     "rows": [
+      {
+       "id": "h1-pilot-blocker",
+       "kind": "hop",
+       "needs": "S3",
+       "status": "fail",
+       "expected": "fail",
+       "facts": [
+        {
+         "any": [
+          "depends on single sign-on"
+         ],
+         "found": true,
+         "said_at": "2026-11-06T10:00:00Z"
+        },
+        {
+         "any": [
+          "item 13 blocks the sso integration"
+         ],
+         "found": false,
+         "said_at": null
+        },
+        {
+         "any": [
+          "waiting for client confirmation"
+         ],
+         "found": false,
+         "said_at": null
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "docs/acme/pilot-launch-plan.md",
+        "docs/acme/onboarding-pilot.md",
+        "live/commitments.jsonl",
+        "live/commitments.jsonl",
+        "_notion/Northpoint Current State.md",
+        "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.notes.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "h2-archive-purge",
+       "kind": "hop",
+       "needs": "S3",
+       "status": "fail",
+       "expected": "fail",
+       "facts": [
+        {
+         "any": [
+          "waits for the retention policy"
+         ],
+         "found": true,
+         "said_at": "2026-11-06T10:00:00Z"
+        },
+        {
+         "any": [
+          "rachel signs the retention policy"
+         ],
+         "found": false,
+         "said_at": null
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "docs/acme/data-retention.md",
+        "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.md",
+        "live/2026-11-03-acme-weekly-status/2026-11-03-1000-acme-weekly-status.notes.md",
+        "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.notes.md",
+        "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.md",
+        "live/2026-11-12-acme-technical-sync/2026-11-12-1400-acme-technical-sync.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "h3-reporting-module",
+       "kind": "hop",
+       "needs": "S3",
+       "status": "fail",
+       "expected": "fail",
+       "facts": [
+        {
+         "any": [
+          "needs the warehouse connector"
+         ],
+         "found": true,
+         "said_at": "2026-11-06T10:00:00Z"
+        },
+        {
+         "any": [
+          "due on december 1"
+         ],
+         "found": false,
+         "said_at": null
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "docs/acme/reporting-module.md",
+        "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.notes.md",
+        "docs/acme/acme-release-plan-2026-11-14.md",
+        "docs/acme/phase-two-plan.md",
+        "live/2026-10-27-acme-weekly-status/2026-10-27-1000-acme-weekly-status.md",
+        "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "h4-mobile-rollout",
+       "kind": "hop",
+       "needs": "S3",
+       "status": "fail",
+       "expected": "fail",
+       "facts": [
+        {
+         "any": [
+          "belongs to the field team track"
+         ],
+         "found": true,
+         "said_at": "2026-11-06T10:00:00Z"
+        },
+        {
+         "any": [
+          "brandon leads the field team track"
+         ],
+         "found": false,
+         "said_at": null
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "docs/acme/mobile-rollout.md",
+        "live/commitments.jsonl",
+        "live/commitments.jsonl",
+        "live/2026-11-03-acme-weekly-status/2026-11-03-1000-acme-weekly-status.notes.md",
+        "live/2026-11-03-acme-weekly-status/2026-11-03-1000-acme-weekly-status.notes.md",
+        "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.notes.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "h5-finance-dashboard",
+       "kind": "hop",
+       "needs": "S3",
+       "status": "fail",
+       "expected": "fail",
+       "facts": [
+        {
+         "any": [
+          "reads from the ledger feed"
+         ],
+         "found": true,
+         "said_at": "2026-11-05T10:00:00Z"
+        },
+        {
+         "any": [
+          "paused until the data agreement is signed"
+         ],
+         "found": false,
+         "said_at": null
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "docs/globex/dashboard-plan.md",
+        "docs/globex/globex-sow-summary.md",
+        "_notion/Northpoint Current State.md",
+        "live/2026-11-06-globex-finance-review/2026-11-06-1500-globex-finance-review.notes.md",
+        "live/2026-11-06-globex-finance-review/2026-11-06-1500-globex-finance-review.notes.md",
+        "docs/globex/item-13-invoice-export-2026-11-13.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "h6-budget-change",
+       "kind": "hop",
+       "needs": "S3",
+       "status": "fail",
+       "expected": "fail",
+       "facts": [
+        {
+         "any": [
+          "goes to the steering group"
+         ],
+         "found": true,
+         "said_at": "2026-11-05T10:00:00Z"
+        },
+        {
+         "any": [
+          "brian chairs the steering group"
+         ],
+         "found": false,
+         "said_at": null
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "docs/globex/change-control.md",
+        "docs/globex/change-request-draft.md",
+        "_notion/Northpoint Current State.md",
+        "docs/globex/change-request-draft.md",
+        "live/2026-11-11-globex-weekly/2026-11-11-1100-globex-weekly.notes.md",
+        "docs/globex/globex-sow-summary.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "p1-login-problem",
+       "kind": "paraphrase",
+       "needs": "S3",
+       "status": "fail",
+       "expected": "fail",
+       "facts": [
+        {
+         "any": [
+          "blocks the sso integration",
+          "waiting for client confirmation",
+          "sso user mapping"
+         ],
+         "found": false,
+         "said_at": null
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 0,
+       "quotes": 0,
+       "top": [],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "p2-field-team-uk",
+       "kind": "paraphrase_uk",
+       "needs": "S3",
+       "status": "fail",
+       "expected": "fail",
+       "facts": [
+        {
+         "any": [
+          "brandon leads the field team track"
+         ],
+         "found": false,
+         "said_at": null
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 0,
+       "quotes": 0,
+       "top": [],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "p3-hours-burned",
+       "kind": "paraphrase",
+       "needs": "S3",
+       "status": "fail",
+       "expected": "fail",
+       "facts": [
+        {
+         "any": [
+          "81 of 120 hours used"
+         ],
+         "found": false,
+         "said_at": null
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 3,
+       "quotes": 3,
+       "top": [
+        "live/2026-11-11-globex-weekly/2026-11-11-1100-globex-weekly.md",
+        "docs/globex/change-request-draft.md",
+        "docs/globex/item-13-invoice-export-2026-11-13.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "g1-sso-timeline",
+       "kind": "global",
+       "needs": "S4",
+       "status": "fail",
+       "expected": "fail",
+       "facts": [
+        {
+         "any": [
+          "maps the acme directory groups"
+         ],
+         "found": false,
+         "said_at": null
+        },
+        {
+         "any": [
+          "okta"
+         ],
+         "found": false,
+         "said_at": null
+        },
+        {
+         "any": [
+          "waiting for client confirmation"
+         ],
+         "found": false,
+         "said_at": null
+        },
+        {
+         "any": [
+          "saml, not oidc",
+          "saml not oidc"
+         ],
+         "found": true,
+         "said_at": "2026-11-12T10:00:00Z"
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": false,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "docs/acme/item-13-sso-user-mapping.md",
+        "live/commitments.jsonl",
+        "docs/acme/item-13-sso-user-mapping.md",
+        "_notion/Northpoint Current State.md",
+        "live/2026-11-12-acme-technical-sync/2026-11-12-1400-acme-technical-sync.notes.md",
+        "pacenote/decisions.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "t1-golive-nov17",
+       "kind": "replay",
+       "needs": "S2",
+       "status": "pass",
+       "expected": "pass",
+       "facts": [
+        {
+         "any": [
+          "january 12"
+         ],
+         "found": true,
+         "said_at": "2026-11-12T12:00:00Z"
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "docs/acme/phase-two-plan.md",
+        "docs/acme/phase-two-budget.md",
+        "docs/acme/phase-two-plan.md",
+        "docs/acme/acme-release-plan-2026-11-14.md",
+        "_notion/Northpoint Current State.md",
+        "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.notes.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "t1-golive-now",
+       "kind": "replay",
+       "needs": "S2",
+       "status": "pass",
+       "expected": "pass",
+       "facts": [
+        {
+         "any": [
+          "february 2"
+         ],
+         "found": true,
+         "said_at": "2026-11-19T12:00:00Z"
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "docs/acme/phase-two-plan.md",
+        "docs/acme/phase-two-budget.md",
+        "docs/acme/phase-two-plan.md",
+        "docs/acme/acme-release-plan-2026-11-14.md",
+        "_notion/Northpoint Current State.md",
+        "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.notes.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "t1-golive-history",
+       "kind": "replay",
+       "needs": "S3",
+       "status": "fail",
+       "expected": "fail",
+       "facts": [
+        {
+         "any": [
+          "february 2"
+         ],
+         "found": true,
+         "said_at": "2026-11-19T12:00:00Z"
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "docs/acme/phase-two-plan.md",
+        "docs/acme/phase-two-budget.md",
+        "docs/acme/phase-two-plan.md",
+        "docs/acme/acme-release-plan-2026-11-14.md",
+        "_notion/Northpoint Current State.md",
+        "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.notes.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "t2-task-open-nov17",
+       "kind": "state",
+       "needs": "S2",
+       "status": "fail",
+       "expected": "fail",
+       "facts": [
+        {
+         "any": [
+          "updated rollout checklist"
+         ],
+         "found": true,
+         "said_at": "2026-11-03T08:01:20Z"
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": false,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "live/commitments.jsonl",
+        "live/2026-11-03-acme-weekly-status/2026-11-03-1000-acme-weekly-status.notes.md",
+        "live/commitments.jsonl",
+        "live/2026-11-03-acme-weekly-status/2026-11-03-1000-acme-weekly-status.md",
+        "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.notes.md",
+        "live/2026-11-03-acme-weekly-status/2026-11-03-1000-acme-weekly-status.notes.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "t2-task-done-now",
+       "kind": "state",
+       "needs": "S2",
+       "status": "fail",
+       "expected": "fail",
+       "facts": [
+        {
+         "any": [
+          "updated rollout checklist"
+         ],
+         "found": true,
+         "said_at": "2026-11-03T08:01:20Z"
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": false,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "live/commitments.jsonl",
+        "live/2026-11-03-acme-weekly-status/2026-11-03-1000-acme-weekly-status.notes.md",
+        "live/commitments.jsonl",
+        "live/2026-11-03-acme-weekly-status/2026-11-03-1000-acme-weekly-status.md",
+        "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.notes.md",
+        "live/2026-11-03-acme-weekly-status/2026-11-03-1000-acme-weekly-status.notes.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "t3-decision-nov17",
+       "kind": "state",
+       "needs": "S2",
+       "status": "fail",
+       "expected": "fail",
+       "facts": [
+        {
+         "any": [
+          "exported nightly"
+         ],
+         "found": true,
+         "said_at": "2026-11-14T10:00:00Z"
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": false,
+       "order_ok": null,
+       "quotes_valid": 1,
+       "quotes": 1,
+       "top": [
+        "live/2026-11-14-acme-architecture-review/2026-11-14-1000-acme-architecture-review.notes.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "t3-decision-now",
+       "kind": "state",
+       "needs": "S2",
+       "status": "fail",
+       "expected": "fail",
+       "facts": [
+        {
+         "any": [
+          "every hour"
+         ],
+         "found": true,
+         "said_at": "2026-11-19T10:00:00Z"
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": false,
+       "order_ok": null,
+       "quotes_valid": 2,
+       "quotes": 2,
+       "top": [
+        "live/2026-11-14-acme-architecture-review/2026-11-14-1000-acme-architecture-review.notes.md",
+        "live/2026-11-19-acme-architecture-review/2026-11-19-1000-acme-architecture-review.notes.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "t4-budget-nov17",
+       "kind": "replay",
+       "needs": "S2",
+       "status": "pass",
+       "expected": "pass",
+       "facts": [
+        {
+         "any": [
+          "340 hours"
+         ],
+         "found": true,
+         "said_at": "2026-11-12T12:00:00Z"
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 3,
+       "quotes": 3,
+       "top": [
+        "docs/acme/phase-two-budget.md",
+        "docs/acme/phase-two-plan.md",
+        "docs/acme/phase-two-plan.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "t4-budget-nov20",
+       "kind": "replay",
+       "needs": "S2",
+       "status": "pass",
+       "expected": "pass",
+       "facts": [
+        {
+         "any": [
+          "410 hours"
+         ],
+         "found": true,
+         "said_at": "2026-11-19T12:00:00Z"
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 3,
+       "quotes": 3,
+       "top": [
+        "docs/acme/phase-two-budget.md",
+        "docs/acme/phase-two-plan.md",
+        "docs/acme/phase-two-plan.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "t4-budget-now",
+       "kind": "replay",
+       "needs": "S2",
+       "status": "pass",
+       "expected": "pass",
+       "facts": [
+        {
+         "any": [
+          "340 hours"
+         ],
+         "found": true,
+         "said_at": "2026-11-12T12:00:00Z"
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 3,
+       "quotes": 3,
+       "top": [
+        "docs/acme/phase-two-budget.md",
+        "docs/acme/phase-two-plan.md",
+        "docs/acme/phase-two-plan.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "t5-notes-as-of-y",
+       "kind": "replay",
+       "needs": "S2",
+       "status": "pass",
+       "expected": "pass",
+       "facts": [
+        {
+         "any": [
+          "4 engineers"
+         ],
+         "found": true,
+         "said_at": "2026-11-12T16:10:00Z"
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "live/2026-11-12-acme-staffing-review/2026-11-12-1500-acme-staffing-review.notes.md",
+        "live/commitments.jsonl",
+        "docs/acme/item-13-sso-user-mapping.md",
+        "docs/acme/mobile-rollout.md",
+        "live/2026-11-07-acme-weekly-status/2026-11-07-1000-acme-weekly-status.notes.md",
+        "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.notes.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "t5-notes-as-of-x",
+       "kind": "replay",
+       "needs": "S2",
+       "status": "pass",
+       "expected": "pass",
+       "facts": [],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "live/commitments.jsonl",
+        "docs/acme/item-13-sso-user-mapping.md",
+        "docs/acme/mobile-rollout.md",
+        "live/2026-11-07-acme-weekly-status/2026-11-07-1000-acme-weekly-status.notes.md",
+        "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.notes.md",
+        "live/2026-10-27-acme-weekly-status/2026-10-27-1000-acme-weekly-status.notes.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "t5-notes-now",
+       "kind": "replay",
+       "needs": "S2",
+       "status": "pass",
+       "expected": "pass",
+       "facts": [
+        {
+         "any": [
+          "6 engineers"
+         ],
+         "found": true,
+         "said_at": "2026-11-15T09:00:00Z"
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "live/2026-11-12-acme-staffing-review/2026-11-12-1500-acme-staffing-review.notes.md",
+        "live/commitments.jsonl",
+        "docs/acme/item-13-sso-user-mapping.md",
+        "docs/acme/mobile-rollout.md",
+        "live/2026-11-07-acme-weekly-status/2026-11-07-1000-acme-weekly-status.notes.md",
+        "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.notes.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "t6-same-day-at-call",
+       "kind": "replay",
+       "needs": "S2",
+       "status": "pass",
+       "expected": "pass",
+       "facts": [
+        {
+         "any": [
+          "starts in january"
+         ],
+         "found": true,
+         "said_at": "2026-11-19T08:30:00Z"
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "docs/acme/onboarding-pilot.md",
+        "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.notes.md",
+        "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.md",
+        "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.md",
+        "docs/acme/pilot-launch-plan.md",
+        "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.notes.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "t6-same-day-now",
+       "kind": "replay",
+       "needs": "S2",
+       "status": "pass",
+       "expected": "pass",
+       "facts": [
+        {
+         "any": [
+          "starts in march"
+         ],
+         "found": true,
+         "said_at": "2026-11-19T16:45:00Z"
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "docs/acme/onboarding-pilot.md",
+        "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.notes.md",
+        "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.md",
+        "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.md",
+        "docs/acme/pilot-launch-plan.md",
+        "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.notes.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "t7-summary-before",
+       "kind": "replay",
+       "needs": "S4",
+       "status": "pass",
+       "expected": "pass",
+       "facts": [],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "docs/acme/item-13-sso-user-mapping.md",
+        "live/commitments.jsonl",
+        "docs/acme/item-13-sso-user-mapping.md",
+        "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.notes.md",
+        "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.notes.md",
+        "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "m1-proposed-hours",
+       "kind": "modality",
+       "needs": "S3",
+       "status": "fail",
+       "expected": "fail",
+       "facts": [
+        {
+         "any": [
+          "proposed 39 extra hours"
+         ],
+         "found": true,
+         "said_at": "2026-11-12T10:00:00Z"
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "docs/globex/change-request-draft.md",
+        "live/2026-11-11-globex-weekly/2026-11-11-1100-globex-weekly.md",
+        "live/2026-11-11-globex-weekly/2026-11-11-1100-globex-weekly.notes.md",
+        "_notion/Northpoint Current State.md",
+        "live/2026-11-09-globex-data-review/2026-11-09-1100-globex-data-review.notes.md",
+        "docs/globex/globex-sow-summary.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "m2-derived-only",
+       "kind": "modality",
+       "needs": "S3",
+       "status": "fail",
+       "expected": "fail",
+       "facts": [
+        {
+         "any": [
+          "march invoice run"
+         ],
+         "found": true,
+         "said_at": "2026-11-06T10:00:00Z"
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "live/2026-11-06-globex-finance-review/2026-11-06-1500-globex-finance-review.notes.md",
+        "docs/globex/item-13-invoice-export-2026-11-13.md",
+        "docs/globex/item-13-invoice-export-2026-11-13.md",
+        "_notion/Northpoint Current State.md",
+        "pacenote/decisions.md",
+        "docs/globex/dashboard-plan.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "x1-pm-excluded",
+       "kind": "exclusion",
+       "needs": "S2",
+       "status": "pass",
+       "expected": "pass",
+       "facts": [],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 0,
+       "quotes": 0,
+       "top": [],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "x2-deleted",
+       "kind": "exclusion",
+       "needs": "S2",
+       "status": "pass",
+       "expected": "pass",
+       "facts": [],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 0,
+       "quotes": 0,
+       "top": [],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "x3-revoked",
+       "kind": "exclusion",
+       "needs": "S2",
+       "status": "pass",
+       "expected": "pass",
+       "facts": [],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "docs/acme/acme-release-plan-2026-11-14.md",
+        "live/2026-11-03-acme-weekly-status/2026-11-03-1000-acme-weekly-status.notes.md",
+        "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.notes.md",
+        "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.notes.md",
+        "live/2026-10-27-acme-weekly-status/2026-10-27-1000-acme-weekly-status.notes.md",
+        "live/2026-11-06-acme-technical-sync/2026-11-06-1400-acme-technical-sync.notes.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "x4-hidden-call",
+       "kind": "exclusion",
+       "needs": "S2",
+       "status": "pass",
+       "expected": "pass",
+       "facts": [],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "docs/acme/item-13-sso-user-mapping.md",
+        "_notion/Northpoint Current State.md",
+        "live/commitments.jsonl",
+        "live/commitments.jsonl",
+        "docs/acme/item-13-sso-user-mapping.md",
+        "live/2026-11-12-acme-technical-sync/2026-11-12-1400-acme-technical-sync.notes.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "x5-hidden-topic",
+       "kind": "exclusion",
+       "needs": "S4",
+       "status": "pass",
+       "expected": "pass",
+       "facts": [],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "live/2026-11-14-acme-architecture-review/2026-11-14-1000-acme-architecture-review.notes.md",
+        "live/2026-11-19-acme-architecture-review/2026-11-19-1000-acme-architecture-review.notes.md",
+        "live/2026-11-12-acme-staffing-review/2026-11-12-1500-acme-staffing-review.notes.md",
+        "live/2026-11-14-acme-architecture-review/2026-11-14-1000-acme-architecture-review.notes.md",
+        "live/2026-11-19-acme-architecture-review/2026-11-19-1000-acme-architecture-review.notes.md",
+        "live/2026-11-12-acme-staffing-review/2026-11-12-1500-acme-staffing-review.notes.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "x6-deleted-shared-register",
+       "kind": "shared",
+       "needs": "S2",
+       "status": "pass",
+       "expected": "pass",
+       "facts": [
+        {
+         "any": [
+          "every monday"
+         ],
+         "found": true,
+         "said_at": "2026-10-27T10:00:00Z"
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "live/commitments.jsonl",
+        "live/2026-10-27-acme-weekly-status/2026-10-27-1000-acme-weekly-status.notes.md",
+        "live/commitments.jsonl",
+        "live/2026-10-27-acme-weekly-status/2026-10-27-1000-acme-weekly-status.notes.md",
+        "live/2026-11-12-acme-technical-sync/2026-11-12-1400-acme-technical-sync.notes.md",
+        "live/2026-11-03-acme-weekly-status/2026-11-03-1000-acme-weekly-status.notes.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "x7-deleted-shared-file",
+       "kind": "shared",
+       "needs": "S3",
+       "status": "pass",
+       "expected": "pass",
+       "facts": [
+        {
+         "any": [
+          "rachel moore"
+         ],
+         "found": true,
+         "said_at": "2026-11-02T10:00:00Z"
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 1,
+       "quotes": 1,
+       "top": [
+        "docs/acme/escalation-contacts.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "x8-moved-call",
+       "kind": "shared",
+       "needs": "S2",
+       "status": "pass",
+       "expected": "pass",
+       "facts": [
+        {
+         "any": [
+          "rotate the api signing key"
+         ],
+         "found": true,
+         "said_at": "2026-11-07T09:00:20Z"
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 4,
+       "quotes": 4,
+       "top": [
+        "live/commitments.jsonl",
+        "live/2026-11-07-acme-ops-sync/2026-11-07-1100-acme-ops-sync.notes.md",
+        "live/2026-11-07-acme-ops-sync/2026-11-07-1100-acme-ops-sync.md",
+        "notion:33333333333333333333333333333333"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "l1-late-client",
+       "kind": "late_client",
+       "needs": "S2",
+       "status": "pass",
+       "expected": "pass",
+       "facts": [
+        {
+         "any": [
+          "april 30"
+         ],
+         "found": true,
+         "said_at": "2026-11-16T10:00:00Z"
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 1,
+       "quotes": 1,
+       "top": [
+        "docs/initech/initech-kickoff.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "e1-register-fact",
+       "kind": "evidence",
+       "needs": "S2",
+       "status": "pass",
+       "expected": "pass",
+       "facts": [
+        {
+         "any": [
+          "send a sample invoice file"
+         ],
+         "found": true,
+         "said_at": "2026-11-04T11:00:00Z"
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "live/commitments.jsonl",
+        "docs/globex/item-13-invoice-export-2026-11-13.md",
+        "live/2026-11-04-globex-weekly/2026-11-04-1100-globex-weekly.md",
+        "live/2026-11-04-globex-weekly/2026-11-04-1100-globex-weekly.notes.md",
+        "docs/globex/item-13-invoice-export-2026-11-13.md",
+        "live/commitments.jsonl"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "e2-tracker-fact",
+       "kind": "evidence",
+       "needs": "S2",
+       "status": "pass",
+       "expected": "pass",
+       "facts": [
+        {
+         "any": [
+          "hardware security keys"
+         ],
+         "found": true,
+         "said_at": "2026-11-16T09:00:00Z"
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "notion:33333333333333333333333333333333",
+        "live/commitments.jsonl",
+        "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.notes.md",
+        "docs/acme/item-13-sso-user-mapping.md",
+        "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.notes.md",
+        "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      }
+     ],
+     "latency": {
+      "engine": "evidence store",
+      "live_p50_ms": 2.46,
+      "live_p95_ms": 3.66,
+      "prep_p50_ms": 2.46,
+      "prep_p95_ms": 3.57
+     },
+     "fixture": null,
+     "index_cost": {
+      "segments": 56,
+      "documents": 49,
+      "segments_per_document": 1.14,
+      "tokens": 0,
+      "changed_section_resegments": 1,
+      "changed_section_expected": 1,
+      "revert_resegments": 0,
+      "move_new_revisions": 0,
+      "move_resegments": 0,
+      "moved_files": 2
+     },
+     "passes": 13
+    },
+    "vectors": {
+     "skipped": "no bge-m3 model folder (models/bge-m3-int8 or G0_BGE_M3_DIR): the run with vectors is evaluated on a machine with the model"
+    }
+   },
+   "scale": {
+    "no_vectors": {
+     "rows_evaluated": 39,
+     "rows_not_evaluated": 0,
+     "rows_passed": 22,
+     "expected_mismatch": [],
+     "hop_answer_rate": {
+      "rate": 0.0,
+      "n": 0,
+      "of": 6
+     },
+     "paraphrase_answer_rate": {
+      "rate": 0.0,
+      "n": 0,
+      "of": 3
+     },
+     "paraphrase_uk": {
+      "rate": 0.0,
+      "n": 0,
+      "of": 1
+     },
+     "timeline_recall": 25.0,
+     "timeline_order": false,
+     "evidence_recall": {
+      "rate": 100.0,
+      "n": 4,
+      "of": 4
+     },
+     "quote_validity": 100.0,
+     "quotes_checked": 191,
+     "modality_accuracy": 0.0,
+     "derived_confirmed": 0,
+     "future_leaks": 0,
+     "stale_returned": 0,
+     "excluded_leaks": 0,
+     "client_leaks": 0,
+     "shared_facts_kept": {
+      "rate": 100.0,
+      "n": 3,
+      "of": 3
+     },
+     "live_client_leaks": 0,
+     "live_excluded_leaks": 0,
+     "generated_extraction": {
+      "docs": 40,
+      "gated": false
+     },
+     "rows": [
+      {
+       "id": "h1-pilot-blocker",
+       "kind": "hop",
+       "needs": "S3",
+       "status": "fail",
+       "expected": "fail",
+       "facts": [
+        {
+         "any": [
+          "depends on single sign-on"
+         ],
+         "found": true,
+         "said_at": "2026-11-06T10:00:00Z"
+        },
+        {
+         "any": [
+          "item 13 blocks the sso integration"
+         ],
+         "found": false,
+         "said_at": null
+        },
+        {
+         "any": [
+          "waiting for client confirmation"
+         ],
+         "found": false,
+         "said_at": null
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "docs/acme/pilot-launch-plan.md",
+        "docs/acme/onboarding-pilot.md",
+        "docs/acme/scale/acme-scale-01.md",
+        "docs/acme/scale/acme-scale-14.md",
+        "docs/scale/shared-scale-02.md",
+        "docs/scale/shared-scale-03.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "h2-archive-purge",
+       "kind": "hop",
+       "needs": "S3",
+       "status": "fail",
+       "expected": "fail",
+       "facts": [
+        {
+         "any": [
+          "waits for the retention policy"
+         ],
+         "found": true,
+         "said_at": "2026-11-06T10:00:00Z"
+        },
+        {
+         "any": [
+          "rachel signs the retention policy"
+         ],
+         "found": false,
+         "said_at": null
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "docs/acme/data-retention.md",
+        "live/2026-11-03-acme-weekly-status/2026-11-03-1000-acme-weekly-status.notes.md",
+        "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.md",
+        "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.md",
+        "live/2026-11-12-acme-technical-sync/2026-11-12-1400-acme-technical-sync.md",
+        "live/2026-11-05-acme-technical-sync/2026-11-05-1400-acme-technical-sync.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "h3-reporting-module",
+       "kind": "hop",
+       "needs": "S3",
+       "status": "fail",
+       "expected": "fail",
+       "facts": [
+        {
+         "any": [
+          "needs the warehouse connector"
+         ],
+         "found": true,
+         "said_at": "2026-11-06T10:00:00Z"
+        },
+        {
+         "any": [
+          "due on december 1"
+         ],
+         "found": false,
+         "said_at": null
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "docs/acme/reporting-module.md",
+        "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.md",
+        "live/2026-10-27-acme-weekly-status/2026-10-27-1000-acme-weekly-status.md",
+        "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.notes.md",
+        "docs/acme/acme-release-plan-2026-11-14.md",
+        "docs/acme/phase-two-plan.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "h4-mobile-rollout",
+       "kind": "hop",
+       "needs": "S3",
+       "status": "fail",
+       "expected": "fail",
+       "facts": [
+        {
+         "any": [
+          "belongs to the field team track"
+         ],
+         "found": true,
+         "said_at": "2026-11-06T10:00:00Z"
+        },
+        {
+         "any": [
+          "brandon leads the field team track"
+         ],
+         "found": false,
+         "said_at": null
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "docs/acme/mobile-rollout.md",
+        "live/commitments.jsonl",
+        "live/commitments.jsonl",
+        "live/2026-11-03-acme-weekly-status/2026-11-03-1000-acme-weekly-status.notes.md",
+        "live/2026-11-03-acme-weekly-status/2026-11-03-1000-acme-weekly-status.notes.md",
+        "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.notes.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "h5-finance-dashboard",
+       "kind": "hop",
+       "needs": "S3",
+       "status": "fail",
+       "expected": "fail",
+       "facts": [
+        {
+         "any": [
+          "reads from the ledger feed"
+         ],
+         "found": true,
+         "said_at": "2026-11-05T10:00:00Z"
+        },
+        {
+         "any": [
+          "paused until the data agreement is signed"
+         ],
+         "found": false,
+         "said_at": null
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "docs/globex/dashboard-plan.md",
+        "docs/globex/globex-sow-summary.md",
+        "live/2026-11-06-globex-finance-review/2026-11-06-1500-globex-finance-review.notes.md",
+        "live/2026-11-06-globex-finance-review/2026-11-06-1500-globex-finance-review.notes.md",
+        "docs/globex/item-13-invoice-export-2026-11-13.md",
+        "live/2026-11-04-globex-weekly/2026-11-04-1100-globex-weekly.notes.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "h6-budget-change",
+       "kind": "hop",
+       "needs": "S3",
+       "status": "fail",
+       "expected": "fail",
+       "facts": [
+        {
+         "any": [
+          "goes to the steering group"
+         ],
+         "found": true,
+         "said_at": "2026-11-05T10:00:00Z"
+        },
+        {
+         "any": [
+          "brian chairs the steering group"
+         ],
+         "found": false,
+         "said_at": null
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "docs/globex/change-control.md",
+        "docs/globex/change-request-draft.md",
+        "docs/globex/change-request-draft.md",
+        "docs/globex/scale/globex-scale-12.md",
+        "docs/globex/scale/globex-scale-01.md",
+        "docs/globex/scale/globex-scale-09.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "p1-login-problem",
+       "kind": "paraphrase",
+       "needs": "S3",
+       "status": "fail",
+       "expected": "fail",
+       "facts": [
+        {
+         "any": [
+          "blocks the sso integration",
+          "waiting for client confirmation",
+          "sso user mapping"
+         ],
+         "found": false,
+         "said_at": null
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 0,
+       "quotes": 0,
+       "top": [],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "p2-field-team-uk",
+       "kind": "paraphrase_uk",
+       "needs": "S3",
+       "status": "fail",
+       "expected": "fail",
+       "facts": [
+        {
+         "any": [
+          "brandon leads the field team track"
+         ],
+         "found": false,
+         "said_at": null
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 0,
+       "quotes": 0,
+       "top": [],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "p3-hours-burned",
+       "kind": "paraphrase",
+       "needs": "S3",
+       "status": "fail",
+       "expected": "fail",
+       "facts": [
+        {
+         "any": [
+          "81 of 120 hours used"
+         ],
+         "found": false,
+         "said_at": null
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 3,
+       "quotes": 3,
+       "top": [
+        "live/2026-11-11-globex-weekly/2026-11-11-1100-globex-weekly.md",
+        "docs/globex/change-request-draft.md",
+        "docs/globex/scale/globex-scale-01.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "g1-sso-timeline",
+       "kind": "global",
+       "needs": "S4",
+       "status": "fail",
+       "expected": "fail",
+       "facts": [
+        {
+         "any": [
+          "maps the acme directory groups"
+         ],
+         "found": false,
+         "said_at": null
+        },
+        {
+         "any": [
+          "okta"
+         ],
+         "found": false,
+         "said_at": null
+        },
+        {
+         "any": [
+          "waiting for client confirmation"
+         ],
+         "found": false,
+         "said_at": null
+        },
+        {
+         "any": [
+          "saml, not oidc",
+          "saml not oidc"
+         ],
+         "found": true,
+         "said_at": "2026-11-12T10:00:00Z"
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": false,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "docs/acme/item-13-sso-user-mapping.md",
+        "live/2026-11-12-acme-technical-sync/2026-11-12-1400-acme-technical-sync.md",
+        "live/commitments.jsonl",
+        "docs/acme/item-13-sso-user-mapping.md",
+        "_notion/Northpoint Current State.md",
+        "live/2026-11-12-acme-technical-sync/2026-11-12-1400-acme-technical-sync.notes.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "t1-golive-nov17",
+       "kind": "replay",
+       "needs": "S2",
+       "status": "pass",
+       "expected": "pass",
+       "facts": [
+        {
+         "any": [
+          "january 12"
+         ],
+         "found": true,
+         "said_at": "2026-11-12T12:00:00Z"
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "docs/acme/phase-two-plan.md",
+        "docs/acme/phase-two-budget.md",
+        "docs/acme/phase-two-plan.md",
+        "docs/acme/acme-release-plan-2026-11-14.md",
+        "_notion/Northpoint Current State.md",
+        "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.notes.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "t1-golive-now",
+       "kind": "replay",
+       "needs": "S2",
+       "status": "pass",
+       "expected": "pass",
+       "facts": [
+        {
+         "any": [
+          "february 2"
+         ],
+         "found": true,
+         "said_at": "2026-11-19T12:00:00Z"
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "docs/acme/phase-two-plan.md",
+        "docs/acme/phase-two-budget.md",
+        "docs/acme/phase-two-plan.md",
+        "docs/acme/acme-release-plan-2026-11-14.md",
+        "_notion/Northpoint Current State.md",
+        "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.notes.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "t1-golive-history",
+       "kind": "replay",
+       "needs": "S3",
+       "status": "fail",
+       "expected": "fail",
+       "facts": [
+        {
+         "any": [
+          "february 2"
+         ],
+         "found": true,
+         "said_at": "2026-11-19T12:00:00Z"
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "docs/acme/phase-two-plan.md",
+        "docs/acme/phase-two-budget.md",
+        "docs/acme/phase-two-plan.md",
+        "docs/acme/acme-release-plan-2026-11-14.md",
+        "_notion/Northpoint Current State.md",
+        "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.notes.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "t2-task-open-nov17",
+       "kind": "state",
+       "needs": "S2",
+       "status": "fail",
+       "expected": "fail",
+       "facts": [
+        {
+         "any": [
+          "updated rollout checklist"
+         ],
+         "found": true,
+         "said_at": "2026-11-03T08:01:20Z"
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": false,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "live/commitments.jsonl",
+        "live/2026-11-03-acme-weekly-status/2026-11-03-1000-acme-weekly-status.notes.md",
+        "live/2026-11-03-acme-weekly-status/2026-11-03-1000-acme-weekly-status.md",
+        "live/commitments.jsonl",
+        "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.notes.md",
+        "live/2026-11-03-acme-weekly-status/2026-11-03-1000-acme-weekly-status.notes.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "t2-task-done-now",
+       "kind": "state",
+       "needs": "S2",
+       "status": "fail",
+       "expected": "fail",
+       "facts": [
+        {
+         "any": [
+          "updated rollout checklist"
+         ],
+         "found": true,
+         "said_at": "2026-11-03T08:01:20Z"
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": false,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "live/commitments.jsonl",
+        "live/2026-11-03-acme-weekly-status/2026-11-03-1000-acme-weekly-status.notes.md",
+        "live/2026-11-03-acme-weekly-status/2026-11-03-1000-acme-weekly-status.md",
+        "live/commitments.jsonl",
+        "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.notes.md",
+        "live/2026-11-03-acme-weekly-status/2026-11-03-1000-acme-weekly-status.notes.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "t3-decision-nov17",
+       "kind": "state",
+       "needs": "S2",
+       "status": "fail",
+       "expected": "fail",
+       "facts": [
+        {
+         "any": [
+          "exported nightly"
+         ],
+         "found": true,
+         "said_at": "2026-11-14T10:00:00Z"
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": false,
+       "order_ok": null,
+       "quotes_valid": 1,
+       "quotes": 1,
+       "top": [
+        "live/2026-11-14-acme-architecture-review/2026-11-14-1000-acme-architecture-review.notes.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "t3-decision-now",
+       "kind": "state",
+       "needs": "S2",
+       "status": "fail",
+       "expected": "fail",
+       "facts": [
+        {
+         "any": [
+          "every hour"
+         ],
+         "found": true,
+         "said_at": "2026-11-19T10:00:00Z"
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": false,
+       "order_ok": null,
+       "quotes_valid": 2,
+       "quotes": 2,
+       "top": [
+        "live/2026-11-14-acme-architecture-review/2026-11-14-1000-acme-architecture-review.notes.md",
+        "live/2026-11-19-acme-architecture-review/2026-11-19-1000-acme-architecture-review.notes.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "t4-budget-nov17",
+       "kind": "replay",
+       "needs": "S2",
+       "status": "pass",
+       "expected": "pass",
+       "facts": [
+        {
+         "any": [
+          "340 hours"
+         ],
+         "found": true,
+         "said_at": "2026-11-12T12:00:00Z"
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "docs/acme/phase-two-budget.md",
+        "docs/acme/phase-two-plan.md",
+        "docs/acme/phase-two-plan.md",
+        "docs/acme/scale/acme-scale-10.md",
+        "docs/acme/scale/acme-scale-02.md",
+        "docs/acme/scale/acme-scale-02.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "t4-budget-nov20",
+       "kind": "replay",
+       "needs": "S2",
+       "status": "pass",
+       "expected": "pass",
+       "facts": [
+        {
+         "any": [
+          "410 hours"
+         ],
+         "found": true,
+         "said_at": "2026-11-19T12:00:00Z"
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "docs/acme/phase-two-budget.md",
+        "docs/acme/phase-two-plan.md",
+        "docs/acme/phase-two-plan.md",
+        "docs/acme/scale/acme-scale-10.md",
+        "docs/acme/scale/acme-scale-02.md",
+        "docs/acme/scale/acme-scale-02.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "t4-budget-now",
+       "kind": "replay",
+       "needs": "S2",
+       "status": "pass",
+       "expected": "pass",
+       "facts": [
+        {
+         "any": [
+          "340 hours"
+         ],
+         "found": true,
+         "said_at": "2026-11-12T12:00:00Z"
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "docs/acme/phase-two-budget.md",
+        "docs/acme/phase-two-plan.md",
+        "docs/acme/phase-two-plan.md",
+        "docs/acme/scale/acme-scale-10.md",
+        "docs/acme/scale/acme-scale-02.md",
+        "docs/acme/scale/acme-scale-02.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "t5-notes-as-of-y",
+       "kind": "replay",
+       "needs": "S2",
+       "status": "pass",
+       "expected": "pass",
+       "facts": [
+        {
+         "any": [
+          "4 engineers"
+         ],
+         "found": true,
+         "said_at": "2026-11-12T16:10:00Z"
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "live/2026-11-12-acme-staffing-review/2026-11-12-1500-acme-staffing-review.notes.md",
+        "docs/acme/item-13-sso-user-mapping.md",
+        "live/commitments.jsonl",
+        "docs/acme/mobile-rollout.md",
+        "live/2026-11-07-acme-weekly-status/2026-11-07-1000-acme-weekly-status.notes.md",
+        "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.notes.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "t5-notes-as-of-x",
+       "kind": "replay",
+       "needs": "S2",
+       "status": "pass",
+       "expected": "pass",
+       "facts": [],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "docs/acme/item-13-sso-user-mapping.md",
+        "live/commitments.jsonl",
+        "docs/acme/mobile-rollout.md",
+        "live/2026-11-07-acme-weekly-status/2026-11-07-1000-acme-weekly-status.notes.md",
+        "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.notes.md",
+        "live/2026-10-27-acme-weekly-status/2026-10-27-1000-acme-weekly-status.notes.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "t5-notes-now",
+       "kind": "replay",
+       "needs": "S2",
+       "status": "pass",
+       "expected": "pass",
+       "facts": [
+        {
+         "any": [
+          "6 engineers"
+         ],
+         "found": true,
+         "said_at": "2026-11-15T09:00:00Z"
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "live/2026-11-12-acme-staffing-review/2026-11-12-1500-acme-staffing-review.notes.md",
+        "docs/acme/item-13-sso-user-mapping.md",
+        "live/commitments.jsonl",
+        "docs/acme/mobile-rollout.md",
+        "live/2026-11-07-acme-weekly-status/2026-11-07-1000-acme-weekly-status.notes.md",
+        "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.notes.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "t6-same-day-at-call",
+       "kind": "replay",
+       "needs": "S2",
+       "status": "pass",
+       "expected": "pass",
+       "facts": [
+        {
+         "any": [
+          "starts in january"
+         ],
+         "found": true,
+         "said_at": "2026-11-19T08:30:00Z"
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "docs/acme/onboarding-pilot.md",
+        "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.notes.md",
+        "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.md",
+        "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.notes.md",
+        "live/2026-09-04-acme-weekly-status/2026-09-04-1000-acme-weekly-status.md",
+        "live/2026-09-08-acme-weekly-status/2026-09-08-1000-acme-weekly-status.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "t6-same-day-now",
+       "kind": "replay",
+       "needs": "S2",
+       "status": "pass",
+       "expected": "pass",
+       "facts": [
+        {
+         "any": [
+          "starts in march"
+         ],
+         "found": true,
+         "said_at": "2026-11-19T16:45:00Z"
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "docs/acme/onboarding-pilot.md",
+        "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.notes.md",
+        "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.md",
+        "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.notes.md",
+        "live/2026-09-04-acme-weekly-status/2026-09-04-1000-acme-weekly-status.md",
+        "live/2026-09-08-acme-weekly-status/2026-09-08-1000-acme-weekly-status.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "t7-summary-before",
+       "kind": "replay",
+       "needs": "S4",
+       "status": "pass",
+       "expected": "pass",
+       "facts": [],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "docs/acme/item-13-sso-user-mapping.md",
+        "live/commitments.jsonl",
+        "docs/acme/item-13-sso-user-mapping.md",
+        "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.notes.md",
+        "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.notes.md",
+        "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "m1-proposed-hours",
+       "kind": "modality",
+       "needs": "S3",
+       "status": "fail",
+       "expected": "fail",
+       "facts": [
+        {
+         "any": [
+          "proposed 39 extra hours"
+         ],
+         "found": true,
+         "said_at": "2026-11-12T10:00:00Z"
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "docs/globex/change-request-draft.md",
+        "live/2026-11-11-globex-weekly/2026-11-11-1100-globex-weekly.md",
+        "live/2026-11-11-globex-weekly/2026-11-11-1100-globex-weekly.notes.md",
+        "live/2026-11-09-globex-data-review/2026-11-09-1100-globex-data-review.notes.md",
+        "_notion/Northpoint Current State.md",
+        "docs/globex/globex-sow-summary.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "m2-derived-only",
+       "kind": "modality",
+       "needs": "S3",
+       "status": "fail",
+       "expected": "fail",
+       "facts": [
+        {
+         "any": [
+          "march invoice run"
+         ],
+         "found": true,
+         "said_at": "2026-11-06T10:00:00Z"
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "live/2026-11-06-globex-finance-review/2026-11-06-1500-globex-finance-review.notes.md",
+        "docs/globex/item-13-invoice-export-2026-11-13.md",
+        "docs/globex/item-13-invoice-export-2026-11-13.md",
+        "live/2026-11-04-globex-weekly/2026-11-04-1100-globex-weekly.md",
+        "_notion/Northpoint Current State.md",
+        "live/commitments.jsonl"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "x1-pm-excluded",
+       "kind": "exclusion",
+       "needs": "S2",
+       "status": "pass",
+       "expected": "pass",
+       "facts": [],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 0,
+       "quotes": 0,
+       "top": [],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "x2-deleted",
+       "kind": "exclusion",
+       "needs": "S2",
+       "status": "pass",
+       "expected": "pass",
+       "facts": [],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 0,
+       "quotes": 0,
+       "top": [],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "x3-revoked",
+       "kind": "exclusion",
+       "needs": "S2",
+       "status": "pass",
+       "expected": "pass",
+       "facts": [],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "live/2026-11-03-acme-weekly-status/2026-11-03-1000-acme-weekly-status.notes.md",
+        "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.notes.md",
+        "live/2026-10-20-acme-weekly-status/2026-10-20-1000-acme-weekly-status.notes.md",
+        "live/2026-10-27-acme-weekly-status/2026-10-27-1000-acme-weekly-status.notes.md",
+        "live/2026-11-06-acme-technical-sync/2026-11-06-1400-acme-technical-sync.notes.md",
+        "live/2026-11-07-acme-ops-sync/2026-11-07-1100-acme-ops-sync.notes.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "x4-hidden-call",
+       "kind": "exclusion",
+       "needs": "S2",
+       "status": "pass",
+       "expected": "pass",
+       "facts": [],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "docs/acme/item-13-sso-user-mapping.md",
+        "_notion/Northpoint Current State.md",
+        "live/commitments.jsonl",
+        "live/commitments.jsonl",
+        "docs/acme/item-13-sso-user-mapping.md",
+        "live/2026-11-12-acme-technical-sync/2026-11-12-1400-acme-technical-sync.notes.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "x5-hidden-topic",
+       "kind": "exclusion",
+       "needs": "S4",
+       "status": "pass",
+       "expected": "pass",
+       "facts": [],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "docs/acme/scale/acme-scale-02.md",
+        "docs/acme/scale/acme-scale-07.md",
+        "docs/acme/scale/acme-scale-07.md",
+        "docs/acme/scale/acme-scale-01.md",
+        "docs/acme/scale/acme-scale-01.md",
+        "docs/acme/scale/acme-scale-02.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "x6-deleted-shared-register",
+       "kind": "shared",
+       "needs": "S2",
+       "status": "pass",
+       "expected": "pass",
+       "facts": [
+        {
+         "any": [
+          "every monday"
+         ],
+         "found": true,
+         "said_at": "2026-10-27T10:00:00Z"
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "live/commitments.jsonl",
+        "live/2026-10-27-acme-weekly-status/2026-10-27-1000-acme-weekly-status.notes.md",
+        "live/2026-10-27-acme-weekly-status/2026-10-27-1000-acme-weekly-status.md",
+        "live/commitments.jsonl",
+        "live/2026-10-27-acme-weekly-status/2026-10-27-1000-acme-weekly-status.notes.md",
+        "live/2026-11-03-acme-weekly-status/2026-11-03-1000-acme-weekly-status.notes.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "x7-deleted-shared-file",
+       "kind": "shared",
+       "needs": "S3",
+       "status": "pass",
+       "expected": "pass",
+       "facts": [
+        {
+         "any": [
+          "rachel moore"
+         ],
+         "found": true,
+         "said_at": "2026-11-02T10:00:00Z"
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 1,
+       "quotes": 1,
+       "top": [
+        "docs/acme/escalation-contacts.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "x8-moved-call",
+       "kind": "shared",
+       "needs": "S2",
+       "status": "pass",
+       "expected": "pass",
+       "facts": [
+        {
+         "any": [
+          "rotate the api signing key"
+         ],
+         "found": true,
+         "said_at": "2026-11-07T09:00:20Z"
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 4,
+       "quotes": 4,
+       "top": [
+        "live/commitments.jsonl",
+        "live/2026-11-07-acme-ops-sync/2026-11-07-1100-acme-ops-sync.notes.md",
+        "live/2026-11-07-acme-ops-sync/2026-11-07-1100-acme-ops-sync.md",
+        "notion:33333333333333333333333333333333"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "l1-late-client",
+       "kind": "late_client",
+       "needs": "S2",
+       "status": "pass",
+       "expected": "pass",
+       "facts": [
+        {
+         "any": [
+          "april 30"
+         ],
+         "found": true,
+         "said_at": "2026-11-16T10:00:00Z"
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "docs/initech/initech-kickoff.md",
+        "docs/scale/shared-scale-03.md",
+        "docs/scale/shared-scale-05.md",
+        "docs/scale/shared-scale-06.md",
+        "docs/scale/shared-scale-04.md",
+        "docs/scale/shared-scale-02.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "e1-register-fact",
+       "kind": "evidence",
+       "needs": "S2",
+       "status": "pass",
+       "expected": "pass",
+       "facts": [
+        {
+         "any": [
+          "send a sample invoice file"
+         ],
+         "found": true,
+         "said_at": "2026-11-04T11:00:00Z"
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "live/commitments.jsonl",
+        "docs/globex/item-13-invoice-export-2026-11-13.md",
+        "live/2026-11-04-globex-weekly/2026-11-04-1100-globex-weekly.md",
+        "live/2026-11-04-globex-weekly/2026-11-04-1100-globex-weekly.notes.md",
+        "docs/globex/item-13-invoice-export-2026-11-13.md",
+        "live/commitments.jsonl"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      },
+      {
+       "id": "e2-tracker-fact",
+       "kind": "evidence",
+       "needs": "S2",
+       "status": "pass",
+       "expected": "pass",
+       "facts": [
+        {
+         "any": [
+          "hardware security keys"
+         ],
+         "found": true,
+         "said_at": "2026-11-16T09:00:00Z"
+        }
+       ],
+       "leaks": {
+        "future": [],
+        "stale": [],
+        "excluded": [],
+        "client": []
+       },
+       "state_ok": null,
+       "order_ok": null,
+       "quotes_valid": 6,
+       "quotes": 6,
+       "top": [
+        "notion:33333333333333333333333333333333",
+        "live/commitments.jsonl",
+        "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.notes.md",
+        "docs/acme/item-13-sso-user-mapping.md",
+        "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.notes.md",
+        "live/2026-11-10-acme-weekly-status/2026-11-10-1000-acme-weekly-status.md"
+       ],
+       "derived_confirmed": [],
+       "live_leaks": {
+        "client": [],
+        "excluded": []
+       }
+      }
+     ],
+     "latency": {
+      "engine": "evidence store",
+      "live_p50_ms": 14.72,
+      "live_p95_ms": 21.63,
+      "prep_p50_ms": 15.02,
+      "prep_p95_ms": 21.75
+     },
+     "fixture": null,
+     "index_cost": {
+      "segments": 626,
+      "documents": 99,
+      "segments_per_document": 6.32,
+      "tokens": 0,
+      "changed_section_resegments": 1,
+      "changed_section_expected": 1,
+      "revert_resegments": 0,
+      "move_new_revisions": 0,
+      "move_resegments": 0,
+      "moved_files": 2
+     },
+     "passes": 13
+    },
+    "vectors": {
+     "skipped": "no bge-m3 model folder (models/bge-m3-int8 or G0_BGE_M3_DIR): the run with vectors is evaluated on a machine with the model"
+    }
+   }
+  },
+  "gate": {
+   "pass": true,
+   "checks": {
+    "prep_leaks_0": true,
+    "live_leaks_0": true,
+    "small/no_vectors client_leaks_0": true,
+    "small/no_vectors future_leaks_0": true,
+    "small/no_vectors excluded_leaks_0": true,
+    "small/no_vectors quote_validity_100": true,
+    "small/no_vectors evidence_recall_100": true,
+    "small/no_vectors live_leaks_0": true,
+    "small/vectors skipped": null,
+    "scale/no_vectors client_leaks_0": true,
+    "scale/no_vectors future_leaks_0": true,
+    "scale/no_vectors excluded_leaks_0": true,
+    "scale/no_vectors quote_validity_100": true,
+    "scale/no_vectors evidence_recall_100": true,
+    "scale/no_vectors live_leaks_0": true,
+    "scale/no_vectors live_p95_le_150ms": true,
+    "scale/vectors skipped": null
+   }
+  }
+ },
+ "blocked_connections": 0,
+ "totals": {
+  "prep_coverage": 80.0,
+  "prep_found": 16,
+  "prep_total": 20,
+  "prep_leaks": 0,
+  "live_answer_rate": 90.0,
+  "live_answered": 9,
+  "live_total": 10,
+  "live_answer_text_rate": 80.0,
+  "live_leaks": 0,
+  "lookup_p50_ms": 2.24,
+  "lookup_p95_ms": 2.77,
+  "duplicates": 5,
+  "wrong_identity": 4,
+  "suggested": 8,
+  "duplicates_if_confirmed": 0,
+  "item13_cross_client": 4,
+  "false_agreed": 0,
+  "false_proposal": 0
+ },
+ "seconds": 11.42,
+ "label": "r1chk"
+}

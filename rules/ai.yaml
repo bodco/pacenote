@@ -196,7 +196,8 @@ chain: |
 # `summary` writes topic summaries (the route's after-call model). The evidence worker (livetips_m0.evidence.worker
 # models) reads this map; a route missing here falls back to routing.PING_MODEL for extract and the after entry of the
 # provider's JOB_DEFAULTS for summary. Every name must be priced in livetips_m0/cost.py PRICES (plan routes and local
-# are not priced in USD). Only used with the flag evidence_store on.
+# are not priced in USD): on api, openai and gemini a pass on an unpriced model ends "off" before its first request.
+# Only used with the flag evidence_store on.
 evidence:
   extract:
     api: claude-haiku-5-5

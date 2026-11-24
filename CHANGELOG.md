@@ -17,7 +17,9 @@ Pacenote. Earlier versions are described in the commit messages and in
   answer. Every pass stops before the request that could cross the per-pass, per-project-day or all-projects-day
   ceiling (dollars, percent of a plan's 5-hour limit, or minutes on this Mac), pauses when a call starts and stops a
   request in flight within 2 seconds. An opt-in setting goes on with the model on this Mac at a ceiling (off by
-  default); a missing local model stops the pass with "off". `run.py --extract <route>` now also records precision,
+  default); a missing local model stops the pass with "off". A pass on a paid API never runs on a model whose price
+  Pacenote does not know: it stops with "off" before the first request, and the cost estimate marks it unpriced with
+  no amount instead of $0. Spending is counted on the model that actually answered. `run.py --extract <route>` now also records precision,
   recall and the multi-step and paraphrase answer rates of a real AI's extraction next to its size and cost; it has
   not been run on a real AI yet, so the estimates still use the assumed 500 output tokens and 2,000-token catalog.
 - **Project memory, step 3a: how an AI will read the project's sources, tested offline (GraphRAG G2 S3a, PB-86).**
