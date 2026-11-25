@@ -1719,6 +1719,8 @@
     post('mute', { on: S.call.micOff });
     render();
   }
+  /** PB-104: Unmute from the "Your mic is muted in Pacenote" notice: turns the mic on, never off. */
+  function unmute() { if (S.call.micOff) toggleMute(); }
   function isWide() { return !$('app').classList.contains('pm-split') && $('app').clientWidth >= 760; }   // 0.9.7: no side pane in the split view
   // A window made wide with a sheet open: the sheet becomes the side pane (render() moves it).
   // 0.8.5: the presentation rail shows from 560 px, so a resize redraws it.
@@ -2148,7 +2150,7 @@
     setOpacity(v) { document.documentElement.style.setProperty('--fade', String(Math.max(0.35, Math.min(1, +v || 1)))); },
     setMode,
     setKeys(k) { S.keys = Object.assign({}, S.keys, k); render(); },
-    togglePause, toggleMute, toggleProactive, openTab, setView,
+    togglePause, toggleMute, unmute, toggleProactive, openTab, setView,
     /** 0.8.5 shortcuts: 'prev' | 'next' | 'add30' | 'mode'. */
     presentKey(k) {
       if (k === 'mode') { S.ui.presentForced = !presenting(); render(); return; }

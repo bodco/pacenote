@@ -4501,6 +4501,8 @@
  "ea.s3.daysDefault": "Як у Налаштуваннях ({n} дн.)",
  "ea.s3.daysN": "{n} дн.",
  "ea.li.optional": "Необов'язково",
+ "notice.micMuted": "Ваш мікрофон вимкнено в Pacenote. Співрозмовники говорять, а ваших слів немає ні в транскрипті, ні в підказках.",
+ "notice.unmute": "Увімкнути мікрофон",
  "notice.geminiAccountRemoved": "Pacenote прибрав вхід до Gemini через акаунт Google. Умови Google забороняють доступ через сторонні застосунки, і Google може призупинити ваш акаунт. Щоб і далі користуватися Gemini, додайте API-ключ із Google AI Studio.",
  "notice.geminiKey": "Відкрити налаштування ключа Gemini API",
  "notice.tryAgain": "Спробувати ще",

@@ -33,7 +33,7 @@ meeting_notes: |
   the PM would retell the call to a teammate, "1. **Title.** 2-4 sentences", no times, an optional closing line without
   a number), ### Decisions ("**Who decided**: the decision", the name only when it is clear), ### Action items ("**Owner**: what (due: when)"), ### Open questions,
   ### Risks (schema 3, 0.12.2: conditional threats as in rules/risks.yaml > model_rule, at most 5), ### Topics (4-8, "#### Title [HH:MM:SS]", "Outcome: one line", 2-4 points), ### Unclear (doubtful names or facts,
-  never "heard" in the text). Every item starts with its transcript time "[HH:MM:SS]"; on the call page a time opens
+  never "heard" in the text; PB-104: plus one line per span the PM's mic was muted in Pacenote, added without the model). Every item starts with its transcript time "[HH:MM:SS]"; on the call page a time opens
   the transcript there. Readers: the app (MeetingNotes.parse, the Summary tab, Copy, Export) and the Notion meeting
   page (wrapup_notion.meeting_blocks, which waits for the notes up to 10 minutes when the app started both).
   Make meeting notes on an older call: `callnotes --meeting` (only this section when the notes exist, about $0.05 to $0.10).

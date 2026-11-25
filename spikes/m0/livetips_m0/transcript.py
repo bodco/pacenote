@@ -10,6 +10,34 @@ LINE_RE = re.compile(r"^\[(\d\d:\d\d:\d\d)\]\s+(.+?)(?:\s+\[(S\d+)\])?\s+\((\w{2
 TR_MARK_RE = re.compile(r"\s\(\u2190 ([a-z]{2,3}|\?)\)$")   # PB-30: " (← fr)" ends a row whose speech was in another language
 
 
+# PB-104: the recorder's mute markers ("--- microphone muted 10:00:07 ---", "--- мікрофон увімкнено 10:39:07 ---",
+# "--- microphone muted until the end of the call 10:39:07 ---"); the last one closes the span like an unmute
+MUTE_RE = re.compile(r"^--- (microphone muted|мікрофон вимкнено|microphone on|мікрофон увімкнено)( until the end of the call| до кінця дзвінка)? (\d\d:\d\d:\d\d) ---$")
+
+
+def mute_marker(raw: str):
+    """(True, HH:MM:SS) for a mute, (False, HH:MM:SS) for an unmute or the end of a muted call, None for anything else."""
+    m = MUTE_RE.match((raw or "").strip())
+    if not m:
+        return None
+    return m.group(1) in ("microphone muted", "мікрофон вимкнено") and not m.group(2), m.group(3)
+
+
+def muted_spans(text: str) -> List[list]:
+    """[[start, end], ...] (HH:MM:SS) of the transcript's muted spans; end None while the span is still open."""
+    spans: List[list] = []
+    for raw in (text or "").splitlines():
+        mk = mute_marker(raw)
+        if mk is None:
+            continue
+        on, t = mk
+        if on and (not spans or spans[-1][1] is not None):
+            spans.append([t, None])
+        elif not on and spans and spans[-1][1] is None:
+            spans[-1][1] = t
+    return spans
+
+
 def hms_to_s(v: str) -> float:
     v = v.strip()
     h, m, s = v.split(":")

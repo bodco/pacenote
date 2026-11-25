@@ -14,6 +14,7 @@ struct Notice: Identifiable, Equatable {
         case settings(String)                // a Settings tab
         case retry                           // the closure kept by the center
         case finder(String)                  // a file or folder
+        case unmute                          // PB-104: turn the mic on in Pacenote again
     }
     let id = UUID()
     let level: NoticeLevel
@@ -30,6 +31,7 @@ struct Notice: Identifiable, Equatable {
         case .settings: return L("common.openSettings")
         case .retry: return L("notice.tryAgain")
         case .finder: return L("notice.showInFinder")
+        case .unmute: return L("notice.unmute")
         case nil: return nil
         }
     }
@@ -52,6 +54,8 @@ final class NoticeCenter: ObservableObject {
     // Set by AppDelegate: the tips window and the menu bar icon live there.
     static var tipsVisible: () -> Bool = { false }
     static var changed: () -> Void = {}
+    /// PB-104: set by AppDelegate; turns the mic on in Pacenote (a set, never a toggle).
+    static var unmuteMic: () -> Void = {}
 
     var active: [Notice] { items.filter { !$0.dismissed } }
     var recent: [Notice] { items.filter { $0.dismissed } }
@@ -119,8 +123,11 @@ final class NoticeCenter: ObservableObject {
         case .settings(let tab): SettingsWindow.show(tab: tab)
         case .retry: retry?()
         case .finder(let p): NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: p)])
+        case .unmute: Self.unmuteMic()
         }
     }
+
+    func isOpen(_ id: UUID) -> Bool { items.contains { $0.id == id && !$0.dismissed } }
 
     /// The menu bar panel opened: everything in it has been seen.
     func panelOpened() { for n in active where n.shownAt == nil { markShown(n.id) } }

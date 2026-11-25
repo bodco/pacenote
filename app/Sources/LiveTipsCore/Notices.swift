@@ -29,6 +29,35 @@ public enum NoticeRules {
     public static let repeatWindow: Double = 120
 }
 
+/// PB-104 (rules/recording.yaml > muted_mic): the "Your mic is muted in Pacenote" notice. The recorder decides when a
+/// warning is due (60 s of the other side's speech since the mute, at most every 5 min) and counts them in
+/// status.json `mic_muted_warn`; the app posts a notice for each new count and takes it away once the mic is on again.
+public enum MutedMicNotice {
+    public enum Step: Equatable, Sendable { case none, post, dismiss }
+
+    /// warn: the recorder's count for this call; seen: the last count the app acted on; open: the notice is still up.
+    /// A new count while the PM has not closed the last one posts nothing new (no second card on top of the first).
+    public static func step(recording: Bool, muted: Bool, warn: Int, seen: Int, open: Bool) -> Step {
+        guard recording, muted else { return open ? .dismiss : .none }
+        return warn > seen && !open ? .post : .none
+    }
+}
+
+/// PB-104: the open questions to the PM in a situation row (tips.jsonl `asks`). A turn ("update") is not a question, and
+/// an ask the engine marked `unheard` (asked while the PM's mic was muted in Pacenote) may have been answered aloud, so
+/// it is not open either. Readers: the call page, Home, the stats, Series and the after-call screen.
+public enum OpenAsks {
+    public static func questions(_ asks: [[String: Any]]) -> [String] {
+        asks.filter { ($0["type"] as? String) != "update" && ($0["unheard"] as? Bool) != true }
+            .compactMap { $0["what"] as? String }.filter { !$0.isEmpty }
+    }
+
+    /// The asks a call-page edit of the open list keeps as they were: turns and the unheard ones (not in that list).
+    public static func kept(_ asks: [[String: Any]]) -> [[String: Any]] {
+        asks.filter { ($0["type"] as? String) == "update" || ($0["unheard"] as? Bool) == true }
+    }
+}
+
 /// 0.26.0: a call this short gets no Notion page (wrapup_notion.py refuses below the same number of real lines).
 public enum NotionGate {
     public static let minLines = 5

@@ -107,7 +107,8 @@ Read once early in the call (in a quiet poll after the speech), and again when a
 - `🎙` is the mic mute: the PM is muted in the meeting
   (cafe, music, people around), so the recorder stops transcribing the mic. `@@STATUS` shows
   `mic=muted`, and the transcript gets `--- мікрофон вимкнено HH:MM:SS ---` and
-  `--- мікрофон увімкнено HH:MM:SS ---` lines. While muted: expect no `{me_label}` lines,
+  `--- мікрофон увімкнено HH:MM:SS ---` lines (a call that ends muted closes the span with
+  `--- мікрофон вимкнено до кінця дзвінка HH:MM:SS ---`). While muted: expect no `{me_label}` lines,
   skip the answer check for that time and the `mic=silent` warning; other tips go on. A 🔴
   "Your turn" while muted starts the gist with "Увімкни мікрофон." Treat a `{me_label}`
   line right after an unmute as a normal reply.

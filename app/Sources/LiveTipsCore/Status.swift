@@ -75,6 +75,8 @@ public struct EngineStatus {
     public var mic: String?
     public var systemAudio: String?
     public var transcriptPaused = false
+    /// PB-104: "Your mic is muted in Pacenote" warnings the recorder raised in this call (status `mic_muted_warn`).
+    public var micMutedWarn = 0
 
     public static func load(path: String) -> EngineStatus {
         var s = EngineStatus()
@@ -94,6 +96,7 @@ public struct EngineStatus {
         s.errors = (o["errors"] as? [String]) ?? []
         s.mic = o["mic"] as? String
         s.systemAudio = o["system_audio"] as? String
+        s.micMutedWarn = (o["mic_muted_warn"] as? Int) ?? 0
         // model-tips engine numbers (state/llm.json next to status.json)
         let llm = ((path as NSString).deletingLastPathComponent as NSString).appendingPathComponent("llm.json")
         if let d2 = FileManager.default.contents(atPath: llm), let o2 = try? JSONSerialization.jsonObject(with: d2) as? [String: Any] {

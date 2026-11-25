@@ -18,7 +18,7 @@ from . import call_layout
 
 from .commitments import norm_text
 from .replay import build_engine, finish_run_info, run_info
-from .transcript import hms_to_s, parse_line
+from .transcript import hms_to_s, mute_marker, parse_line
 
 
 def now_sod() -> float:
@@ -322,6 +322,9 @@ class LiveRun:
             self.read_timing()               # every event of the old file was written before the rewrite
         for raw in raws:
             ln = parse_line(raw, self.n, self.cfg["me_label"])
+            mk = None if ln else mute_marker(raw)
+            if mk is not None and hasattr(self.eng, "mic_mute"):
+                self.eng.mic_mute(*mk)            # PB-104: the PM's mic muted in Pacenote, from the recorder's marker
             if ln:
                 self.rows_seen += 1
                 if self.skip_rows:
