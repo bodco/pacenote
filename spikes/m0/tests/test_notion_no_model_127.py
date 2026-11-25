@@ -129,12 +129,46 @@ def test_regenerate_without_meeting_notes_fails_and_keeps_the_page(call, capsys)
     assert "no meeting notes" in out(capsys)["error"] and not [c for c in call.calls if c[0] in ("PATCH", "POST", "DELETE")]
 
 
+def test_regenerate_and_a_moved_page_say_what_the_after_call_page_says(call, capsys, monkeypatch, tmp_path):
+    """Acceptance 2 and 7 (review 3): the app gives every page run the call page's task lines (PyTool, CoreChecks
+    notionPageRunPB127); with them Regenerate (--page) and a new page after a move write the same Summary, decisions
+    and tasks as the after-call page, word for word, and Regenerate keeps the PM's register edits."""
+    lines = ["Emily Clark: send the deck (Nov 28)", "Me: book the room"]
+    acts = ["--actions", json.dumps(lines)]
+    pages, _ = _stateful_notion(call, monkeypatch)
+    assert W.main(call.base + acts) == 0
+    pid = out(capsys)["page_id"]
+    after = _texts(_section(pages, pid))
+    assert lines[0] in after and "We agreed." in after
+    assert W.main(call.base + acts + ["--page", pid]) == 0                       # Regenerate on the same page
+    assert out(capsys)["ok"]
+    assert _texts(_section(pages, pid)) == after
+    moved = W.main(call.base + acts + ["--meetings-db", "db-of-the-new-project"])  # a new page in another database
+    assert moved == 0
+    pid2 = out(capsys)["page_id"]
+    assert pid2 != pid and _texts(_section(pages, pid2)) == after
+
+
+def test_regenerate_without_notes_gives_a_code_the_app_translates(call, capsys):
+    """Review 3: the app shows its own EN or UK line for this case (call.outlang.notionNoNotes), not the English error."""
+    _notes_file(call).unlink()
+    assert W.main(call.base + ["--page", "0123456789abcdef0123456789abcdef"]) == 1
+    assert out(capsys)["code"] == "no_notes"
+
+
 def test_actions_from_the_call_page_register_win(call, capsys):
     """Acceptance 2: the app passes the call page's own task lines (its commitments register); the page writes those."""
     lines = ["Emily Clark: send the deck (Nov 28)", "Me: book the room"]
     assert W.main(call.base + ["--actions", json.dumps(lines)]) == 0
     page = next(c for c in call.calls if c[0] == "PATCH" and c[1].endswith("/children"))[2]["children"]
     assert _texts([b for b in page if b["type"] == "to_do"]) == lines
+
+
+def test_every_task_dropped_on_the_call_page_none_on_the_notion_page(call, capsys):
+    """Review 3: the call page shows no task once the PM dropped them all; the app passes [] and the notes' tasks stay out."""
+    assert W.main(call.base + ["--actions", "[]"]) == 0
+    page = next(c for c in call.calls if c[0] == "PATCH" and c[1].endswith("/children"))[2]["children"]
+    assert not [b for b in page if b["type"] == "to_do"] and "We agreed." in _texts(page)
 
 
 def test_the_notes_step_writes_the_register_fields_in_the_same_request(tmp_path):

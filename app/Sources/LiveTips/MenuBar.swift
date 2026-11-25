@@ -37,6 +37,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         MainActor.assumeIsolated { EvidenceService.shared.start() }  // PB-52 G2 (S5): project memory, only with the flag evidence_store
         // 0.9.5: recordings that were on their way to Google Drive when the app quit go on (after the accounts load)
         DispatchQueue.main.asyncAfter(deadline: .now() + 20) { MainActor.assumeIsolated { DriveRecordings.shared.resumeQueue(); CallSyncService.shared.start(); CRMCallLogger.start() } }
+        // PB-127 (review 3): Notion pages left at "The meeting notes are being written" get their notes (or the failed line)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 25) { MainActor.assumeIsolated { CallEngine.shared.retryNotionFills() } }
         // 0.26.2 (call folders, B6): flat calls move into their call folders, a few seconds after launch (move only)
         DispatchQueue.main.asyncAfter(deadline: .now() + 8) { CallMigration.runAtLaunch() }
         SetupModel.repairEnginePaths()      // 0.8.3: the engine follows the app after a rename or a move

@@ -11,7 +11,9 @@ Pacenote. Earlier versions are described in the commit messages and in
   decisions, action items and risks are the call page's own lists, word for word (your edits there included). The
   title is the meeting's name plus the topic from the notes ("Weekly sync: Release plan"). The page no longer waits up
   to 10 minutes for the notes: it is written at once with the transcript and "The meeting notes are being written",
-  and the notes take that line's place when they are ready. When the notes fail, the page says so; Make meeting notes
+  and the notes take that line's place when they are ready (if the app quits or updates first, or Notion refuses that
+  write, it tries again after the next launch). Regenerate and a new page after a move to another project write the
+  same action items as the call page too. When the notes fail, the page says so; Make meeting notes
   on the call page writes them and updates the page. The page needs only the Notion token now, no AI set for After
   the call. Decisions sent to the Notion Decisions database get Area, Door and
   Context from the same request that writes the notes, which also checks them against the project's active decisions

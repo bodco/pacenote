@@ -264,7 +264,7 @@ def meeting_blocks(m: dict, md: Path, stats: dict, prep_used: bool, lang: str = 
     L = page_lists(m, md)
     from .call_lists import task_line
     rows = {"decisions": [owned_line(d.get("t", ""), d.get("by", ""), d["text"]) for d in L["decision_items"]],
-            "actions": [rt(str(x)) for x in actions if str(x).strip()] if actions else
+            "actions": [rt(str(x)) for x in actions if str(x).strip()] if actions is not None else   # [] = all dropped
                        [owned_line(x.get("t", ""), x["owner"], task_line(dict(x, owner=""))) for x in L["tasks"]],
             "open": [timed(it) for it in m.get("open") or []],
             "risks": [timed(it) for it in L["risk_items"]]}
@@ -890,6 +890,7 @@ def run(a, res: dict) -> int:
     m = call_meeting(a.md)
     state = "ready" if m else (a.notes or "failed")
     if a.page and not m and not a.fill:     # Regenerate never replaces a written section with a line about missing notes
+        res["code"] = "no_notes"            # the app says it in the PM's language
         raise RuntimeError("the call has no meeting notes to write to its Notion page")
     actions = json.loads(a.actions) if a.actions else None
     w = {"name": page_topic(m), "summary": m.get("tldr", "")} if m else {}

@@ -112,7 +112,7 @@ extension CallReassignService {
 
 /// 0.10.1 (A3): the call's Notion pages follow the new project (spec section 4.5).
 /// One Meetings database (the F3 setting, or both configs name the same one): Project and Workspace rewritten on the same
-/// page. Another database: the PM is asked first (a new page means a new summary, a model call), then a new page there
+/// page. Another database: the PM is asked first, then a new page there from the call's notes (PB-127: no model call)
 /// and "Moved to <url>" in the old one. Decisions and risks of this call: Project and Workspace on the same pages.
 @MainActor
 enum NotionCallMove {
@@ -175,7 +175,7 @@ enum NotionCallMove {
         if !c.notionMeetingsDB.isEmpty { args += ["--meetings-db", c.notionMeetingsDB] }
         let title = CallPageView.title(file)
         if !title.isEmpty { args += ["--title", title] }
-        PyTool.run("wrapup_notion", args, notion: true) { r in
+        PyTool.run("wrapup_notion", args, notion: true, needsAI: false) { r in     // PB-127: no model request, no AI keys
             if let usd = r["cost_usd"] as? Double, usd > 0 { SpendDays.add(usd); CallHistory.shared.addCost(file: file, usd) }
             guard (r["ok"] as? Bool) == true, let url = r["url"] as? String else {
                 CallEngine.shared.notify(failure(r), level: .error); return

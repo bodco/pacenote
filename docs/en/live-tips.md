@@ -2863,7 +2863,7 @@ behaviour before co-driver, set `codriver: false` in the sidecar config.
   stays in the old project; the call keeps its own copy.
 - **Notion follows the call.** The meeting page, and the decisions and risks the call made, get the new Project and
   Workspace on the same pages; nothing is duplicated. When the new project keeps its meetings in another Notion
-  database, Pacenote asks first; only then it writes a new page there (a new summary, about the cost of a usual one)
+  database, Pacenote asks first; only then it writes a new page there (from the call's notes, no AI cost)
   and leaves a "Moved to" link on the old page.
 - **Prepare again = Get ready.** "Prepare again" and "Prepare now" in the tips window, on Home's live card and in the
   menu bar during a call open the Meeting Sheet in Quick, in its own window next to the tips. Change the goal, the
@@ -3323,7 +3323,9 @@ menu bar: **Send last call to Notion**.
    edits on the call page included). Since PB-127 this step asks no AI at all and costs nothing: the page is written
    through the Notion API only (it needs the Notion token, not an AI for After the call), and its title is the meeting's name plus the topic from the notes ("Weekly sync:
    Release plan"). When the notes are still being written, the page is written at once with the transcript and the
-   line "The meeting notes are being written"; the notes replace that line when they are ready. When the notes
+   line "The meeting notes are being written"; the notes replace that line when they are ready. If the app quit or
+   updated first, or Notion refused the write, the app tries again after its next launch. **Regenerate** and a new
+   page after a move to another project write the same tasks as the call page, and get no AI keys. When the notes
    failed, the page says so, and **Make meeting notes** on the call page writes them and updates the page.
    Each AI request after the call goes to the spend ledger with the call's tag (a short hash, never its name), and
    once the notes are on the page, `logs/app.log` gives the call's count by step, for example

@@ -574,14 +574,37 @@ final class CallEngine {
 
     /// PB-127: the action item lines the call page shows for this call (its commitments register, as CallPageSync writes
     /// them to Notion), so the meeting page says the same words; none when the register has no item of the call yet.
+    /// Review 3: a call whose register items were all dropped shows no task on the call page, so it passes an empty list
+    /// (the page then has none too) rather than nothing (the notes' tasks would come back).
     @MainActor static func actionsArg(_ file: String) -> [String] {
         let a = CallPageEdit.sections(file: file, ids: ["actions"])["actions"] ?? []
-        guard !a.isEmpty, let d = try? JSONSerialization.data(withJSONObject: a), let s = String(data: d, encoding: .utf8) else { return [] }
+        let hasItems = !a.isEmpty || Register.shared.items(in: CallLayout.liveFolder(of: file))
+            .contains { CommitmentRegister.callKey($0.call) == CommitmentRegister.callKey(file) }
+        guard hasItems, let d = try? JSONSerialization.data(withJSONObject: a), let s = String(data: d, encoding: .utf8) else { return [] }
         return ["--actions", s]
     }
 
     /// PB-127: notion fills running now, by call file (main thread only), so two never write the same page at once.
     @MainActor private static var notionFills = Set<String>()
+    /// PB-127 (review 3): a fill asked for while one runs for the same call runs again after it, never dropped.
+    @MainActor private static var notionFillsAgain = Set<String>()
+
+    /// PB-127 (review 3): the calls whose page still waits for the notes fill, kept across an app quit or update.
+    var notionFillQueue: NotionFillQueue { NotionFillQueue(path: (appRoot as NSString).appendingPathComponent("state/notion-fills.json")) }
+
+    /// PB-127 (review 3): at launch, the pages left at "being written" (the app quit, updated or Notion refused the fill)
+    /// get their notes now, or the line that they failed; a call or page that is gone is forgotten.
+    @MainActor func retryNotionFills() {
+        let q = notionFillQueue
+        let d = NotionFillQueue.due(q.all(), exists: { FileManager.default.fileExists(atPath: $0) },
+                                    hasPage: { f in !(CallHistory.shared.records.first(where: { $0.file == f })?.notionURL ?? "").isEmpty },
+                                    inWork: { Self.notesInWork.contains(CallNotes.path($0)) })
+        d.drop.forEach(q.remove)
+        for f in d.fill {
+            AppLog.app("notion: notes fill tried again at launch call=\(AppLog.stem(f))")
+            fillNotionNotes(file: f)
+        }
+    }
 
     /// PB-127 (owner 25.11): the call's Notion page was written before its notes were ready; now that they are (or failed),
     /// its generated section is replaced in place by the notes, plain Notion API, no model request (wrapup_notion --page
@@ -589,7 +612,8 @@ final class CallEngine {
     @MainActor func fillNotionNotes(file: String) {
         let c = config
         guard let url = CallHistory.shared.records.first(where: { $0.file == file })?.notionURL, !url.isEmpty,
-              !Self.notionFills.contains(file), !c.engine.python.isEmpty else { return }
+              !c.engine.python.isEmpty else { return }
+        if Self.notionFills.contains(file) { Self.notionFillsAgain.insert(file); return }
         let (proj, ws) = PyTool.project(of: file)
         var args = ["--md", file, "--page", url, "--fill", "--notes", "failed",
                     "--lt", c.engine.python, (appRoot as NSString).appendingPathComponent("bin/lt")]
@@ -599,10 +623,13 @@ final class CallEngine {
         if !title.isEmpty { args += ["--title", title] }
         args += Self.actionsArg(file)
         Self.notionFills.insert(file)
-        PyTool.run("wrapup_notion", args, notion: true, needsAI: false) { r in
+        PyTool.run("wrapup_notion", args, notion: true, needsAI: false) { [weak self] r in
             Self.notionFills.remove(file)
-            AppLog.app("notion: notes \((r["ok"] as? Bool) == true ? "filled in (" + ((r["notes"] as? String) ?? "") + ")" : "not filled in") call=\(AppLog.stem(file))"
+            let ok = (r["ok"] as? Bool) == true
+            if ok { self?.notionFillQueue.remove(file) }      // a failed fill stays queued: tried again at the next launch
+            AppLog.app("notion: notes \(ok ? "filled in (" + ((r["notes"] as? String) ?? "") + ")" : "not filled in") call=\(AppLog.stem(file))"
                        + Self.aiCallsNote(r))
+            if Self.notionFillsAgain.remove(file) != nil { self?.fillNotionNotes(file: file) }
         }
     }
 
@@ -824,8 +851,11 @@ final class CallEngine {
                     if !ai.isEmpty { AppLog.app("notion: page written call=\(AppLog.stem(file))" + ai) }
                     MainActor.assumeIsolated {
                         CallHistory.shared.setNotion(file: file, url: url)
-                        // PB-127: the notes ended while the page was being written: fill them in now
-                        if (d["notes"] as? String) == "pending", !Self.notesInWork.contains(CallNotes.path(file)) { self.fillNotionNotes(file: file) }
+                        if (d["notes"] as? String) == "pending" {
+                            self.notionFillQueue.add(file)      // PB-127 (review 3): kept until a fill lands, across a relaunch
+                            // PB-127: the notes ended while the page was being written: fill them in now
+                            if !Self.notesInWork.contains(CallNotes.path(file)) { self.fillNotionNotes(file: file) }
+                        }
                     }
                     // 2026-11-10 (owner): no modal on success; it stole focus after every call. The link is on the call page.
                 } else {

@@ -134,9 +134,10 @@ final class OutputLanguageModel: ObservableObject {
         let title = CallPageView.title(file)
         if !title.isEmpty { args += ["--title", title] }
         let r: [String: Any] = await withCheckedContinuation { k in
-            PyTool.run("wrapup_notion", args, notion: true) { k.resume(returning: $0) }
+            PyTool.run("wrapup_notion", args, notion: true, needsAI: false) { k.resume(returning: $0) }   // PB-127: no model request, no AI keys
         }
         if let usd = r["cost_usd"] as? Double, usd > 0 { SpendDays.add(usd); CallHistory.shared.addCost(file: file, usd) }
+        if (r["code"] as? String) == "no_notes" { return L("call.outlang.notionNoNotes") }     // PB-127: in the PM's language
         if (r["ok"] as? Bool) != true { return L("call.outlang.notionFailed", ["why": (r["error"] as? String) ?? ""]) }
         if let n = r["legacy_blocks"] as? Int, n > 0 { return L("call.outlang.notionLegacy", ["n": String(n)]) }     // the language stays "out of date"
         return nil
