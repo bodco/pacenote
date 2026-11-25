@@ -98,7 +98,7 @@ code read in this step changes three points:
    **fixed budget in characters and items** (section 5), the same on every route. It never changes the plan of
    today's sources: on a route where the block would change it (too big, an extra pass, a summarized source), the
    block is left out whole (section 4.2).
-2. **`search()` does not walk hops.** `Budget.hops` exists (`search.py:40-41`, default 1) but `search` never reads
+2. **`search()` does not walk hops.** `Budget.hops` exists (`search.py:39-40`, default 1) but `search` never reads
    it; the 2-hop walk exists only in the bench (`run.py` `hop_items`, line 1058). G3 S1 moves a hop walk into product
    code (`evidence/related.py`), parameterised so the bench can call it with its own roots and limits, and G3 S2
    switches the bench to it under the gate "S3 and S4 columns unchanged". The walk reads its depth from
@@ -179,7 +179,7 @@ The block must not push today's sources out, in two places:
   pack that fitted one pass into `too_much` (which fails a one-pass build with no `on_too_much`, `build.py:1227-1234`),
   into an extra pass, or over `compress_plan`'s 0.9 line (a source of A gets summarized). S1 therefore runs the size
   report twice, without and with the block. When the block would change A's plan (the state, the number of passes,
-  or the set of summarized sources), the build **leaves the whole block out** on this route and says so in the parent
+  the pass each of A's sources lands in, or the set of summarized sources), the build **leaves the whole block out** on this route and says so in the parent
   row ("Project memory left out: no room on this model"). The snapshot is still written with the full block.
 
 So the block, when present, is byte-equal on every route, and A's sources and plan are always exactly the flag-off
@@ -192,9 +192,13 @@ child its id, title, reason, `why`, item kind, `said_at`, and `item_id` (the has
 not the quote and not the plain key.
 The reason line does land there (it names entities, like a folder file's title does today); a later revoke cleans
 it with the facts (owner question 1).
-`.sheet.request.json` is written from `req`, and the block is never put into `req`, so it holds no quote either. A
-test asserts that no quote of the block appears in any file under the project root after a build. Model-written
-facts that use an item do land in the sheet, brief and cards, as facts from any other source do today (section 10).
+`.sheet.request.json` is written from `req`, and the block is never put into `req`, so it holds no quote either.
+Model-written facts that use an item do land in the sheet, brief and cards, as facts from any other source do today
+(section 10); `CONTRACT` (`prompt.py:25-27`) asks for a verbatim quote of up to 20 words in each fact's `locator`, so
+a fact citing an item carries that part of its quote. The test therefore uses a recording responder that **cites an
+`s-ev-*` id** in a fact, and asserts that after the build no file under the project root holds any block quote or
+part of one longer than 20 words, and that a block quote appears only inside the `locator.quote` of a fact whose
+`source_ids` include that item. A responder that cites nothing would pass without testing anything.
 
 ### 4.3 Order in the pack and `auto`
 
@@ -212,13 +216,16 @@ facts that use an item do land in the sheet, brief and cards, as facts from any 
 
 ### 4.4 Flag off and fallback: byte-equal prompts
 
-With the flag off, `related.select` is not imported and no `s-evidence` row exists. With the flag on and no items
-(store unavailable, empty, or nothing related, section 8), nothing is added to `raw`; only the parent row with
-`used: "not_used"` and the readiness line is added after the answer (4.2), and the prompt sentence of section 6.2 is
-added only when the block has items. So the prompt bytes on every route are equal to the flag-off build.
+With the flag off, `related.select` is not imported, no `s-evidence` row exists, no snapshot is written and
+`related.load_snapshot` returns None (7.3). With the flag on and no items (store unavailable, empty, or nothing
+related, section 8), nothing is added to `raw`; only the parent row with `used: "not_used"` and the readiness line is
+added after the answer (4.2), and the prompt sentence of section 6.2 is added only when items are packed on the
+route. So the prompt bytes on every route are equal to the flag-off build, and so are they on a route where the block
+was left out for room.
 
 The test does not compare the new code with itself (a change made in both paths would pass). S1 first captures
-**golden prompts from main** at S1's branch point, before any S1 change: one fixture project and meeting, a fixed
+**golden prompts from main** at S1's branch point, before any S1 change: two fixture projects and meetings (the main
+one, and the near-the-local-limit one of section 11, saved as `<route>.near.txt`), a fixed
 `today`, the six routes with recording responders (the bench's `prep_context` pattern, `run.py:245-263`; a stubbed
 `run_claude` for `code` and `api`), with the fixture root and cache paths replaced by a placeholder (`agent_prompt`
 prints absolute "Read <path>" lines), saved under `tests/golden/prep_prompts/<route>.txt`. The flag-off build and the empty-block
@@ -246,6 +253,23 @@ change that is meant to alter today's prompt, in its own commit that says so.
   The cost is stated openly: on a route whose budget cuts a folder file (mostly local), that file is in `taken` but not
   in the pack, so an item quoted only from it is dropped. That is a coverage loss, never a repeat; G0 and the measure
   log count it per route ("taken but not packed").
+  **The Tracker has no path.** Its candidate is a pathless text source (`sources.py:580-583`, `text=TR.text(tr)`,
+  `_tracker` kept on the candidate and popped by the build, `build.py:1089`), so a list of paths can never hold it.
+  Yet it is the same data as the store's register source: `TR.collect` folds `commitments.jsonl` of the call's live
+  folders (`tracker.py:95-130`), and `ingest_register` folds the same file into one snippet per event
+  (`ingest.py:792-869`). Without a second key the top-ranked items (a seed's own status, due and owner, +3 in 5.3)
+  would repeat lines the Tracker text already carries. So `taken` has two parts: `taken.paths` (above) and
+  `taken.tasks`, the register task ids of every item the Tracker text renders: the items left after the scope filter,
+  the open-status filter, the twin dedupe and the 25 and 25 caps (`ON_ME_MAX`, `WAITING_MAX`), each with its fold
+  `ids` (merged ids too) plus the ids of the twins deduped into it. `TR.collect` does not keep ids today
+  (`tracker.py:121-123`); S1 adds an `ids` field to each listed item. `TR.text` and `TR.for_sheet` pick their fields
+  by name (`tracker.py:143-166`) and `fill_from_tracker` reads named fields only (`text`, `state`, `owner`,
+  `due_date`; `standup.py:93-121`), so the new field changes no prompt, sheet or flag-off byte (the golden prompts of
+  4.4 prove it). An item cut by a cap, or on another client's side, is not in `taken.tasks`: the Tracker does not
+  show it. With no Tracker source in the build (auto sources off, or no open item) `taken.tasks` is empty. Every
+  register event of a listed task counts as taken, also history events the Tracker line does not show (who moved a
+  due date, an earlier text): a stated coverage loss, the price of never repeating the Tracker.
+  `taken.tasks` is route-free for the same reason as `taken.paths`: `TR.collect` reads only the request and the files.
 - `exclude`: this call's own files (its brief, sheet and notes stems), every file the PM unticked in the wizard
   (new request field `evidence.exclude_paths`, section 9.2) and every item the PM unticked (`evidence.exclude_items`,
   by `item_id`). Paths go to the store's `exclude` (the **ignored** class of G2 section 11.2 step 1: a fact also
@@ -273,7 +297,7 @@ change that is meant to alter today's prompt, in its own commit that says so.
      revisions valid at `as_of`), at most 4;
    - people on the invite resolved through visible aliases (`person:<casefold>`), at most 2;
    - entities whose visible alias occurs in the title, the agenda or the user note (the alias match of
-     `search.py:371-381`), filling the remaining places.
+     `search.py:372-381`), filling the remaining places.
    Each seed keeps its **seed reason** (section 6.1).
 3. **Graph walk**: from each seed, `entity_card(store, id, scope, as_of, exclude)` and up to 2 hops over accepted
    edges (no `same_as`, no suggestions, both ends visible), the bench's `hop_items` logic moved into
@@ -286,13 +310,18 @@ change that is meant to alter today's prompt, in its own commit that says so.
    same on every run. `ms` is only a safety stop, checked before
    every card and every hop (not between whole calls), and parity tests and G0 run with it off (`ms: 0`).
 4. **Text search**: `search(store, query, scope, as_of, exclude, kinds=("snippet", "claim", "edge"), mode="prep",
-   budget=Budget(k=12, chars=12000, ms=1000), query_vec=...)`, with `query` = title, agenda, user note and the seed
+   budget=Budget(k=12, chars=12000, ms=<time left of the selection, 5.4>), query_vec=...)`, with `query` = title, agenda, user note and the seed
    names. Items keep the matched words.
 5. **Topics**: `ask_global(store, <names of the first 3 seeds>, scope, as_of, exclude, max_topics=2)`, passing
    sentences only (G2 section 8.7 filters per sentence). Skipped when no seed has a topic.
-6. **Drop what preparation already has**: an item whose every passing quote sits in a source in `taken` (5.1, the
-   route-free list) is dropped (it would repeat text the pack already holds). An item with one quote outside `taken`
-   stays.
+6. **Drop what preparation already has**: a passing quote is **taken** when (a) its source's uri resolves to a path
+   in `taken.paths`, or (b) it is a register event (`kind = register`, `locator.event_id`) whose task, resolved through
+   the `ids` of `IG.register_fold_at(store, as_of, passing=True)`, is in `taken.tasks` (5.1). An item whose every
+   passing quote is taken is dropped (it would repeat text the pack already holds). An item with one quote that is
+   not taken stays. A seed whose own register task is in `taken.tasks` stays a seed: the walk still starts from it
+   and its name still appears in reason lines; only its own status, due and owner item is dropped. Items of the
+   store's `tracker` kind (the Notion Tracker snapshot, `ingest.py:908-965`) are not in A's Tracker text and are not
+   taken.
 
 A bench-only switch `parts=("text",)` runs steps 0, 1, 4 (with `kinds=("snippet",)`), 6 and 7 only: that is B-prep
 (section 12.2). It lives in `related.py` (S1) so B-prep and C-prep share every other line of code.
@@ -316,7 +345,8 @@ only from rows this request sees):
 | derived-only (notes, briefs, Current State) | -1 |
 | topic sentence | fixed 0.5, own section, never above a fact |
 
-Ties: `said_at` newest first, then the store id. At most 2 items per source (the `FolderIndex` rule), counted
+Ties: `said_at` newest first, then `item_key` (7.1), never a store row id (a `rebuild` renumbers snippet, revision
+and topic ids, so a row id could move the items at the cut). At most 2 items per source (the `FolderIndex` rule), counted
 across the whole block. A superseded decision is never an item (G2 section 7.1); a proposal and its later
 confirmation are shown as one item with both rows, confirmation first (G2 section 7.2).
 
@@ -405,8 +435,10 @@ The prompt sentence: "Sources of type evidence_item are quotes from the project 
 first line (the reason); cite them by their source id like any source; an AI summary is never a confirmation." The
 contract is the hardcoded `CONTRACT` in `sheet/prompt.py:25`, used by `system()` (the packed passes) and by
 `agent_prompt` (the Claude routes, `prompt.py:150-167`). S1 adds the sentence in `prompt.py` through one argument
-(`system(lang, call_langs, evidence=True)`, and `agent_prompt` passes it on) that is true **only when the block has
-items**, so a flag-off or empty build gets today's bytes (4.4). `rules/meeting-sheet.yaml` is not involved (`presets.py`
+(`system(lang, call_langs, evidence=True)`, and `agent_prompt` passes it on) that is true **only when items are
+packed on this route**: the block has items and was not left out for room (4.2). A build whose block was left out on
+its route gets today's bytes, like a flag-off or empty build (4.4); the near-the-local-limit fixture of section 11
+checks that its local prompt equals the golden one byte for byte. `rules/meeting-sheet.yaml` is not involved (`presets.py`
 reads it for blocks only). The skill gets the same sentence as the first line of `evidence related --stem` output
 (section 11), not through a generated section.
 
@@ -429,8 +461,10 @@ written to a temp file in the same folder and renamed, never in the project fold
   "budget": {"chars": 12000, "items": 20, "used_chars": 9310, "truncated": false},
   "seeds": [{"id": "c-1a2b3c4d5e", "name": "item 13 SSO user mapping", "type": "task", "why": "open item of this series",
              "rests_on": ["live/…weekly-status.notes.md"]}],
+  "store_created_at": "2026-11-02T08:15:00Z",
   "sources": [{"uri": "live/…notes.md", "call_key": "2026-11-12-1400-acme-technical-sync", "ext_id": null,
-               "title": "Acme technical sync", "kind": "notes", "origin": "derived", "source_id": 41, "revision_id": 97}],
+               "title": "Acme technical sync", "kind": "notes", "origin": "derived", "source_id": 41,
+               "first_seen": "2026-11-12T15:02:00Z", "revision_id": 97}],
   "items": [{"n": "E3", "sheet_source_id": "s-ev-5f0c2a91d3e84b07", "item_id": "5f0c2a91d3e84b07", "item_key": "edge:…",
              "kind": "edge", "section": "linked",
              "text": "…", "quotes": [{"quote": "…", "uri": "live/…notes.md", "source_id": 41, "revision_id": 97,
@@ -453,14 +487,35 @@ written to a temp file in the same folder and renamed, never in the project fold
   SHA-256 of the sentence text and its cited claim keys>`. Store row ids (snippet, revision, topic ids) are never
   part of a key: a `rebuild` or a regenerated topic summary renumbers them. `item_id` (16 hex of the SHA-256 of
   `item_key`) is what leaves the snapshot: in the sheet, the request, series memory and `removed`.
-- `sources` are matched by `uri`, `call_key` (the call stem a hide names) and `ext_id` (the Google file id or Notion
-  page id a revoke names), never by the store's row ids. `source_id` and `revision_id` are kept for diagnostics
-  only. The reconcile and the loader find a snapshot's items, cards and seeds for a source by these three fields,
-  without opening the store.
+- `sources` are matched in two ways:
+  - **The reconcile (it opens the store) matches by `source_id` first.** The `source` table is not among the tables a
+    `rebuild` deletes and refills (`DERIVED`, `__main__.py:242-243`; the rebuild keeps the source rows,
+    `__main__.py:246-249`), `vacuum` deletes revisions, snippets, claims and edges but never a source row
+    (`__main__.py:261-295`), and a move keeps the row and rewrites its `uri` and `call_key` in place
+    (`ingest.py:350-353`, `call_key` taken from the new file name; a local file has no `ext_id`). So `source_id` is
+    the only key that survives a move. As a guard against a reused id (`source.id` is `INTEGER PRIMARY KEY` without
+    `AUTOINCREMENT`, `store.py:31`, and a store file can be removed and created again under the same uid outside
+    `cmd_delete`), each snapshot source also keeps the row's `first_seen`, and the snapshot keeps the store's
+    `created_at` meta (`store.py:305`). A `source_id` counts as the same source only when both match. A snapshot whose
+    `store_created_at` differs from the store's is reconciled strictly: every source counts as denied. A snapshot
+    source with **no matching row** (no row with that id, or `first_seen` differs) also counts as denied (strict: its
+    state is unknown, so the rules of the denied row of 7.4 apply, not the lenient "deleted" ones).
+  - **The loader (no store) matches by `call_key` and `ext_id`**, the fields a hide and a revoke name in the
+    state-request log. To keep these current, the reconcile, when the matched row's `uri` or `call_key` differs from
+    the snapshot's, **rewrites the snapshot source's `uri` and `call_key`** (and every `rests_on` and quote `uri`
+    that names it) to the row's current values, so a later hide by the new name matches in the loader too.
+  `revision_id` is kept for diagnostics only. Residual window, stated openly: a file renamed and hidden by its new
+  name before any index pass has seen the move is matched neither by the store (its `source` row still has the old
+  `call_key`, so `apply_state` matches no row, `ingest.py:1012-1013`) nor by the loader. G2 has the same window; it
+  closes at the next index pass: `apply_state` keeps the applied lists in meta (`ingest.py:1003`, `1010`), the pass
+  reads them back (`deny_lists`, `ingest.py:379`), `born_state` applies the hide to the moved row
+  (`ingest.py:302-303`, called at `354-357`), and the end-of-pass reconcile then removes the source's items from the
+  snapshot by `source_id`. A snippet item's `item_key` holds its `uri` (above), so after a move the next build gives
+  that item a new `item_id`: a PM untick of the old id no longer applies to it (a stated, rare coverage change).
 - `rests_on`: every seed, every path element of an item, every card name and every alias lists the source uris it was
   read from (the passing rows of this request), newest first, at most 5. Invariant, checked by `write_snapshot`:
-  every uri in any `rests_on` or quote has an entry in `sources`, so the reconcile and the loader can match it to a
-  `call_key` or `ext_id`. A name, alias or path element is dropped when **all** its listed uris are removed (strict:
+  every uri in any `rests_on` or quote has an entry in `sources`, so the reconcile can match it to a `source_id` and
+  the loader to a `call_key` or `ext_id`. A name, alias or path element is dropped when **all** its listed uris are removed (strict:
   a name with more than 5 supports may be dropped while an unlisted support still holds it, a coverage loss, never a
   leak). This is what lets a hide remove a **name**, not only an item (section 7.4).
 - `override_keys` (per item and per card alias): the `(target, target_key)` pairs a PM rejection would use, so the
@@ -484,15 +539,18 @@ written to a temp file in the same folder and renamed, never in the project fold
 - Replaced whole by the next build of the same stem. A failed build leaves the previous snapshot.
 - **Reconcile, not event hooks.** One idempotent function, `related.reconcile_snapshots(store)`, compares every
   snapshot in `snapshots/<uid>/` with the store's **current** state: the `state` of each snapshot source (found by
-  `uri`, `call_key` or `ext_id`) and the `pm_override` rows on its item keys. It applies the rules of section 7.4
-  (remove items, names and seeds, never add anything). Because it reads state rather than reacting to one command, it
+  `source_id` with the `first_seen` guard, 7.1; no matching row counts as removed) and the `pm_override` rows on its
+  item keys. It applies the rules of section 7.4 (remove items, names and seeds, never add anything) and brings a
+  moved source's `uri` and `call_key` up to date (7.1), the only field it ever rewrites in place. Because it reads state rather than reacting to one command, it
   catches every way a source can leave `active`. It is called by the store's writers, each under the project lock
   they already hold:
   - after `apply_state` commits, outside its transaction (`ingest.py:1000-1033`); this covers `evidence exclude`, a
     request applied from the log by `apply_request` (called by `apply_pending`, `ingest.py:319`, `378`, `402`), and
     the state lists an index pass applies itself (`ingest.py:321`, `393`);
   - after `write_override` (a PM rejection, `ingest.py:1063`);
-  - after an index pass marks vanished files `deleted` (`ingest.py:386`), at the end of `ingest()`;
+  - at the end of `ingest()`, which covers an index pass that marks vanished files `deleted` (`ingest.py:386`) or
+    Tracker items `deleted` (`ingest.py:962-965`), and a move that rewrites a source's `uri` and `call_key` and can
+    change its state through `born_state` (`ingest.py:350-357`);
   - before every `compact_log` (`__main__.py:135`, `221`), so a log line is never dropped before the snapshots
     reflect it.
   Lock order: the project lock, then the snapshot folder's lock (`snapshots/<uid>/.lock`, flock). `write_snapshot`
@@ -507,17 +565,26 @@ written to a temp file in the same folder and renamed, never in the project fold
   text. The reconcile only removes; it never adds or refreshes an item. The parent row in Sources then says "Project
   memory changed after this preparation" (section 9.1) and the PM can refresh.
 - Read-only for G4 and the skill. G3 writes; G4 loads at call start (its decision, G2 section 11.4).
-- Removed with "Delete this project's memory" (already in `cmd_delete`, `evidence/__main__.py:329-332`) and by the
-  weekly vacuum 30 days after its call.
+- Removed with "Delete this project's memory" (already in `cmd_delete`, `evidence/__main__.py:329-332`) and by
+  `vacuum()` 30 days after its call's `as_of`. Today `vacuum()` (`__main__.py:261-295`) never touches snapshots; S1
+  adds that step (after the store's `VACUUM`, under the snapshot lock) and its test.
+- **Flag off and back on.** With the flag off nothing runs: no state pass, no reconcile, and a hide made then leaves
+  no log line, so a snapshot written before the flag went off can be out of date. Therefore: (1) `load_snapshot`
+  returns None while the flag is off (it reads `features.evidence_store` from the config, as the build does);
+  (2) turning the flag off in Settings removes `snapshots/` of every project (G3's own files, nothing else; the app's
+  flag handler, S3), so no snapshot outlives a period in which hides were not recorded, and after the flag comes back
+  on the first build writes a fresh one. A flag switched off by editing the config by hand, with the app closed,
+  leaves the folders; the build after it comes back on replaces the snapshot of its stem, and the others are covered
+  by the first reconcile after flag-on, which the first state-only pass runs (G2 runs that pass when the flag is on).
 
 ### 7.3 Loader
 
-`related.load_snapshot(uid, stem) -> dict | None`: reads the file, checks `schema` and `sha256`, then reads the
+`related.load_snapshot(uid, stem) -> dict | None`: returns None with the flag off (7.2); otherwise reads the file, checks `schema` and `sha256`, then reads the
 state-request log (G2 section 13.1) without opening the store. It cannot know which log lines were already applied
 (that is in the store's `state_request` table), so it treats **every line as pending** (a strict drop): the union of
 every call stem in any `hidden_calls` line and every id in any `revoked` line, matched against the snapshot sources'
-`call_key` and `ext_id`, and every item or alias whose `override_keys` match an `override` line with `field:
-reject`. It then applies the rules of 7.4
+`call_key` and `ext_id` (kept current across moves by the reconcile, 7.1), and every item or alias whose
+`override_keys` match an `override` line with `field: reject`. It then applies the rules of 7.4
 to that in-memory copy (items, card names, aliases, seeds). A hide that was later undone still over-drops until the
 next pass compacts the log; that is a coverage loss, never a leak. No store open, no network, no model: it is the call
 G4 makes on the normal tip path.
@@ -526,9 +593,10 @@ G4 makes on the normal tip path.
 
 | Change | Snapshot | Sheet and Sources |
 |---|---|---|
-| Hidden call, revoked document, PM exclusion (denied, G2 section 11.2) | the reconcile (7.2) rewrites every snapshot in `snapshots/<uid>/` with a quote, a name or a seed on the source: (1) every item with a quote on it is removed whole (its entry goes to `removed`, its text and quotes are deleted from the file); (2) every alias, card name, seed and path element whose `rests_on` is left with no source is dropped; (3) a card whose name is dropped is removed, and every item whose path or reason holds a dropped element is removed whole (strict: a reason line is never rewritten to hide a name); (4) the source's entry in `sources` is deleted (its title is a name). A snapshot left with no item is kept with `items: []` and `removed` | the parent row says "1 item was removed: its source is no longer available"; what happens to model facts that cite the item is owner question 1 (section 15) |
-| Source deleted (ignored, not denied; set only by an index pass, `ingest.py:386`) | the reconcile at the end of that pass: items whose every quote is on the deleted source are removed as above; an item with another passing quote keeps it and drops the deleted one; names resting only on it are dropped as above | as above, "its file was deleted" |
+| Hidden call or revoked document (denied, G2 section 11.2), also when the file was moved after the build (matched by `source_id`, 7.1); a snapshot source with no matching store row or a `store_created_at` mismatch (state unknown, treated as denied, 7.1) | the reconcile (7.2) rewrites every snapshot in `snapshots/<uid>/` with a quote, a name or a seed on the source: (1) every item with a quote on it is removed whole (its entry goes to `removed`, its text and quotes are deleted from the file); (2) every alias, card name, seed and path element whose `rests_on` is left with no source is dropped; (3) a card whose name is dropped is removed, and every item whose path or reason holds a dropped element is removed whole (strict: a reason line is never rewritten to hide a name); (4) the source's entry in `sources` is deleted (its title is a name). A snapshot left with no item is kept with `items: []` and `removed` | the parent row says "1 item was removed: its source is no longer available"; what happens to model facts that cite the item is owner question 1 (section 15) |
+| Source deleted, PM exclusion of a file (ignored, not denied: an ignore-listed file leaves the store only at the next index pass, marked `deleted` at `ingest.py:386`; a Tracker item gone from the Tracker snapshot is marked at `ingest.py:964`; no log line, nothing happens at the moment of the exclusion), or a moved file deleted | the reconcile at the end of that pass: items whose every quote is on the deleted source are removed as above; an item with another passing quote keeps it and drops the deleted one; names resting only on it are dropped as above | as above, "its file was deleted" |
 | PM rejection of a claim, edge or alias (`pm_override`) after the build | the reconcile after `write_override`: a rejected claim or edge item is removed; a rejected alias is dropped from its card, and items whose reason holds it are removed | as above, "1 item was removed: you rejected it" |
+| Source moved or renamed, still active (`ingest.py:350-353`) | the reconcile at the end of that pass rewrites the source's `uri` and `call_key` (and the `rests_on` and quote uris naming it) to the new values, so a later hide by the new name matches in the loader; nothing is removed | none |
 | Source edited (new revision) | unchanged: the quote is what the PM prepared with; the item's `revision_id` differs from the active one | the parent row says "2 items changed in their files since this preparation"; G4 decides whether to show a changed item |
 | Pending hide, revoke or rejection not yet applied (lock held by a pass) | the loader drops the items and names (7.3, every log line counts) | as denied |
 | A hidden or revoked source restored | nothing comes back: the reconcile never adds; the next build selects it again | "Refresh preparation to include restored sources" when `removed` is not empty |
@@ -538,8 +606,12 @@ The reconcile runs right after the state-only pass, which already runs at once a
 5.1), and after every other writer listed in 7.2. It is a local file write only. Tests: a call hidden through
 `evidence exclude` after a build; the same hide queued in the log and applied by an index pass, then compacted
 (`apply_pending` at `ingest.py:319`, `compact_log` at `__main__.py:135`); a file deleted between two passes; a PM
-rejection; in each case the snapshot holds none of the source's quotes and none of the names that rested only on it,
-and `load_snapshot` returns the same.
+rejection; a transcript moved to a new call stem after the build and then hidden under its new stem (both through
+`evidence exclude` after the pass that saw the move, and queued in the log before that pass); a moved file then
+deleted; a snapshot source whose store row is gone, and a store created again under the same uid (`first_seen` and
+`store_created_at` guards); in each case the snapshot holds none of the source's quotes and none of the names that
+rested only on it, and `load_snapshot` returns the same. A moved, still active source: the snapshot's `uri` and
+`call_key` follow the move and nothing is removed.
 
 ## 8. Empty, partial, stale and unavailable store
 
@@ -556,7 +628,7 @@ first that holds wins**, except that `partial` and `stale` can both show:
 | empty | store exists, no completed pass (`last_pass` null) or no active source | none | "Project memory is not indexed yet. The usual sources were used." |
 | links only | extraction is switched off ("Use AI to read sources" off) or never ran (`last_extract` null); `coverage` is not used in this class, since without extraction it would stay below `total` forever | register, Tracker, decision and sidecar items, and text-search snippets, same budget | "Project memory has links from the task register only." |
 | partial | `done < total` | items from what is indexed | "Project memory covers 412 of 678 parts; older files may be missing." |
-| stale | `last_pass` older than 3 days, or a source in `taken` has an mtime after `last_pass` | items as found | "Project memory was last updated Nov 20, 14:10. Newer changes are in the usual sources only." |
+| stale | `last_pass` older than 3 days, or a notes or transcript file in `taken.paths` has an mtime after `last_pass` (Current State, decisions and the config change all the time and would keep this line on for good) | items as found | "Project memory was last updated Nov 20, 14:10. Newer changes are in the usual sources only." |
 | ready | none of the above | items | "Project memory: 9 related items." |
 
 `partial` and `stale` can both hold; both lines show. `links only` wins over `partial`: with extraction off the PM
@@ -618,10 +690,11 @@ unticked item is not a rejection: it only leaves this sheet (and the series memo
   that preparation sends on other days, and the indexing route has already read them. Hidden calls, revoked
   documents, PM-excluded files and other clients' rows never pass (G2 section 11.2), and the PM's unticked files and
   items are excluded (section 9.2). The docs EN and UK say this in one sentence (S3).
-- Quotes are never written into the project folder by G3: not in `.sheet.json`, not in `.sheet.request.json`, not
-  in `.sheet.sources.json` (section 4.2). The snapshot with quotes lives in Application Support, mode 0600.
-  Model-written facts based on an item land in the sheet like facts from any source today (owner question 1 covers
-  a later revoke).
+- G3's own code never writes a block quote into the project folder: not into the sources of `.sheet.json`, not into
+  `.sheet.request.json`, not into `.sheet.sources.json` (section 4.2). The snapshot with quotes lives in Application
+  Support, mode 0600. The one exception is the model's own fact: `CONTRACT` asks for a verbatim quote of up to 20
+  words in a fact's `locator`, so a fact citing an item carries that much of its quote, in the sheet like facts from
+  any source today (owner question 1 covers a later revoke).
 - Telemetry (`usage.py`): one `evidence_prep` event with counts only (items per section, readiness class, chars,
   ms, vectors on or off). Never text, names, paths or reasons.
 - Tests and G0 use invented data only.
@@ -657,8 +730,10 @@ How it is tested (S1):
 - **Fallback test** (section 4.4): store missing, corrupt, empty, and flag off: on all six routes the captured
   prompt equals the golden prompt captured from main byte for byte.
 - **A unchanged**: with the flag on and a full block, A's sources (ids, `used`, `cut`, folder files taken) and the
-  size plan (state, passes, summarized set) equal the flag-off build's on all six routes, and no `evidence_item` is
-  in `compress_plan`'s output. A fixture whose pack is near the local pass checks that the block is left out there
+  size plan (state, passes, summarized set, and **which pass each of A's sources lands in**: `evidence_item` at pack
+  priority 1 could move A's sources between passes while the number of passes stays the same) equal the flag-off
+  build's on all six routes, and no `evidence_item` is in `compress_plan`'s output. A plan whose pass membership of
+  A's sources changes counts as "would change A's plan" and leaves the block out (4.2). A fixture whose pack is near the local pass checks that the block is left out there
   and present on the cloud routes.
 - **Skill**: `evidence related --stem <stem>` prints the snapshot's block as the same rendered text, so the skill's
   sweep (`skill/SKILL.md` step 6) can read the same items. A test compares its output with the build's child texts.
@@ -718,7 +793,8 @@ Rows, all invented, US names, the same clients:
      them by word match);
    - `reason`: for each hop fact, the seed name and one path element the reason line must contain;
    - `in_a`: facts A already carries (must not be repeated in the block: the "drop what preparation already has"
-     rule).
+     rule), authored from A's actual pack, not from `taken`; each target with an open register task in A's Tracker
+     text has at least one `in_a` fact that is that task's status, due or owner (the Tracker case of 5.1).
 2. **Leaks**: every row checks the other clients' `forbidden` facts and the `excluded_facts` of gold v2 (hidden call,
    revoked page, PM-excluded file, deleted-only file); a replay row checks `future` facts (said after `as_of`,
    for example the Nov 19 go-live change in a Nov 17 preparation).
@@ -743,7 +819,7 @@ Rows, all invented, US names, the same clients:
 | Hop prep rate | hop facts (`hop1`, `hop2`) found, B and C |
 | Reason validity | hop facts whose reason line names the seed and a path element (must be 100% for C) |
 | Quote validity | block quotes verbatim at their locator (must be 100%) |
-| Repeated from A | block items whose quotes all lie in the route-free `taken` list of 5.1 (must be 0) |
+| Repeated from A | measured independently of `taken` (a check against the same list it is meant to test would always pass): (a) gold `in_a` facts found in the block (must be 0, gated); (b) block items every quote of which occurs, whitespace-normalised, in A's own packed `## Sources` text on that route (the block's sources taken out), which catches the Tracker text and any path `taken` misses (reported per route, not gated: a quote can also occur by chance in an unrelated file of A) |
 | Taken but not packed | per route, items dropped because their only source is in `taken` but is not in A's pack on that route: cut by the folder budget, failed access, or skipped (reported, not gated; the honest cost of a route-free `taken`) |
 | A unchanged | A's sources (ids, `used`, `cut`, folder files) and size plan with the flag on equal the flag-off ones, per route (yes or no) |
 | Block left out for room | per route, targets where the block was left out because it would change A's plan (4.2) |
@@ -765,7 +841,7 @@ present:
 - prep coverage v1: C at least 19 of 20 and not below A on any target (a no-loss check: section 12.1 shows B can
   reach most of A's misses by words alone);
 - hop prep rate: C at least 6 of 8 hop facts and at least B + 4;
-- reason validity 100%, quote validity 100%, repeated from A 0;
+- reason validity 100%, quote validity 100%, repeated from A (gold `in_a` facts in the block) 0;
 - client, future and excluded leaks 0 in the block and the snapshot, and the prompt's leak count with the block
   equal to the count without it; lines dropped by `filter_text` 0; snapshot after revoke 0;
 - route parity yes; fallback equal yes; A unchanged yes on all six routes; block left out for room 0 on api, code,
@@ -887,13 +963,16 @@ and parameterised by roots and limits, `search` and `ask_global` calls through t
 (parent and children, after `auto_sources`, before `normalize`, never in `req`, incoming `s-ev-*` and `s-evidence`
 rows dropped, the request fields `evidence.exclude_paths`, `evidence.exclude_items` and `evidence.off` read);
 `SRC.folder_window` shared by `taken` and `expand_folders`, and `evidence_item` left out of the folder `room`;
+`TR.collect` keeping each listed item's `ids` for `taken.tasks`; the reconcile matching by `source_id` with the
+`first_seen` and `store_created_at` guards and following moves; snapshot removal in `vacuum()`; `load_snapshot`
+returning None with the flag off;
 `schema.SOURCE_TYPES` `evidence` and `evidence_item`; `size._prio` rank 1 and `compress_plan` without
 `evidence_item`; `rules/evidence.yaml` `prep:`; the conditional prompt sentence in `sheet/prompt.py`; golden prompts
 captured from main first.
 
 Acceptance:
-- [ ] Golden prompts captured from main at S1's branch point for all six routes, paths normalised, before any other
-      S1 change (its own commit).
+- [ ] Golden prompts captured from main at S1's branch point for all six routes and both fixtures (the main one and
+      the near-the-local-limit one), paths normalised, before any other S1 change (its own commit).
 - [ ] Flag off: no store opened, no row, prompt byte-equal to the golden files on all six routes.
 - [ ] Store unavailable, corrupt, empty: prompt byte-equal to the golden files on all six routes; the parent row's
       reason names the class.
@@ -902,9 +981,16 @@ Acceptance:
 - [ ] A unchanged: with a full block, A's sources (ids, `used`, `cut`, folder files) and size plan (state, passes,
       summarized set) equal the flag-off build's on all six routes; a block that would change the plan is left out
       whole and said in the parent row; no `evidence_item` is ever compressed.
-- [ ] The prompt sentence is present only when the block has items, on both the packed and the Claude prompts.
-- [ ] No quote of the block in any file under the project root after a build (`.sheet.json`, `.sheet.request.json`,
-      `.sheet.sources.json`, `.sheet.md` scanned).
+- [ ] The prompt sentence is present only when items are packed on the route, on both the packed and the Claude
+      prompts; on the near-the-local-limit fixture the local prompt (block left out) equals the golden one byte for
+      byte.
+- [ ] With a recording responder that cites an `s-ev-*` id: no block quote, and no part of one longer than 20 words,
+      in any file under the project root after a build (`.sheet.json`, `.sheet.request.json`, `.sheet.sources.json`,
+      `.sheet.md` scanned), except inside the `locator.quote` of a fact citing that item.
+- [ ] Tracker: a register task listed in A's Tracker text gives no block item quoted only from its register events
+      (`taken.tasks`); a task cut by the 25 cap or on another client's side is not taken; a twin deduped by the
+      Tracker is taken; the seed still drives the walk; adding `ids` to `TR.collect` changes no golden prompt and no
+      `.sheet.json` byte.
 - [ ] Ids: a refresh that reorders the items keeps each item's `s-ev-*` id; a kept fact still cites the same item; an
       incoming `s-ev-*` row in `req.sources` is dropped; two builds over a store `rebuild` and over a regenerated
       topic summary give the same item keys; no plain `item_key` in any file under the project root.
@@ -913,6 +999,14 @@ Acceptance:
       source's quotes and none of the names, aliases and seeds that rested only on it; a snapshot with no item left
       is kept with `items: []` and `removed`; `load_snapshot` gives the same result from the log alone; a failed
       reconcile leaves the log uncompacted and is retried.
+- [ ] Moves: a transcript moved to a new stem after the build, then hidden under the new stem (after the pass that
+      saw the move, and queued before it), and a moved file then deleted, each leave the snapshot without the
+      source's quotes and names; a moved active source gets its new `uri` and `call_key` in the snapshot; a snapshot
+      source with no store row, a reused id (`first_seen` differs) and a store created again (`store_created_at`
+      differs) count as removed.
+- [ ] Flag off: no snapshot written, `load_snapshot` returns None; `vacuum()` removes snapshots 30 days after their
+      call's `as_of`.
+- [ ] Ties at the cut are broken by `item_key`: the same items are cut before and after a store `rebuild`.
 - [ ] A build that selected before a hide and writes after the reconcile ran: the snapshot and the sheet's child rows
       hold none of the hidden call's items (the write-time re-check under the snapshot lock, 7.2).
 - [ ] `select` and `--preview` never write the store (file hash and mtime unchanged) and never take the project lock;
@@ -938,9 +1032,11 @@ to the block yet).
 
 Files: `evidence/related.py` (new), `evidence/search.py` (prepared context), `evidence/__main__.py`,
 `evidence/ingest.py` (reconcile calls), `sheet/build.py`, `sheet/sources.py` (`TEXT_TYPES`, `folder_window`,
-`expand_folders` room), `sheet/schema.py`, `sheet/size.py`, `sheet/prompt.py`, `rules/evidence.yaml`,
-`tests/golden/prep_prompts/` (new), the Swift sheet source type if the decode test needs it, tests. Estimate: 22
-team hours (was 16: the prepared context, the reconcile with names, the route-free `taken` and the golden prompts).
+`expand_folders` room), `sheet/tracker.py` (`ids` on listed items), `sheet/schema.py`, `sheet/size.py`,
+`sheet/prompt.py`, `rules/evidence.yaml`, `tests/golden/prep_prompts/` (new), the Swift sheet source type if the
+decode test needs it, tests. Estimate: 25 team hours (was 22: `taken.tasks`, the `source_id` match with moves,
+snapshot vacuum and the flag-on marks). S1 stays one sub-task: the golden prompts are already its first commit, and
+a split into S1a and S1b would take the G3 split past four sub-tasks plus the conditional S5.
 
 ### S2. G0 prep gold, B-prep and C-prep, gates (core)
 
@@ -970,7 +1066,9 @@ reads them, S1); i18n en and uk together; docs EN and UK (Meeting Sheet sources,
 privacy sentence of section 10); CHANGELOG (Unreleased).
 
 Acceptance:
-- [ ] Flag off: no row, no CLI call (pure-logic test on the row builder; `swift build`, CoreChecks).
+- [ ] Flag off: no row, no CLI call (pure-logic test on the row builder; `swift build`, CoreChecks). Turning the
+      flag off in Settings removes every project's `snapshots/` folder and nothing else (7.2; a test on the handler's
+      path list).
 - [ ] A source unticked in the wizard reaches `exclude_paths`; an unticked item reaches `exclude_items`; both are
       remembered per series (pure-logic tests).
 - [ ] The parent row shows each readiness line of section 8 and the "changed" and "removed" lines from the snapshot
@@ -980,7 +1078,8 @@ Acceptance:
       (pure-logic test on the matcher).
 
 G0 gate: no change to any G0 column; CoreChecks and `swift build` green. Files: `MeetingSheetPrep.swift`,
-`MeetingSheetView.swift`, `MeetingSheetDraft.swift`, `SheetRunner.swift`, `rules/i18n/en.json`,
+`MeetingSheetView.swift`, `MeetingSheetDraft.swift`, `SheetRunner.swift`, the `evidence_store` flag handler in
+Settings (snapshot folders removed on flag off), `rules/i18n/en.json`,
 `rules/i18n/uk.json`, `docs/en/`, `docs/uk/`, `CHANGELOG.md`. Estimate: 13 team hours (was 14: the build-side
 request parsing moved to S1).
 
@@ -1033,7 +1132,7 @@ check), `sheet/derive.py` (rewrite of brief and cards), `sheet/build.py` (the sh
 | S2 and S5 | `bench/g0/run.py` | S5 after S2 |
 | S2 and S3 | none (`docs/*/bench/` vs other docs pages) | may run in parallel |
 
-Total: 53 team hours for S1 to S4 (22 + 12 + 13 + 6), plus 8 for S5 if question 1 is answered (a), plus review rounds (S1 and S2 are
+Total: 56 team hours for S1 to S4 (25 + 12 + 13 + 6), plus 8 for S5 if question 1 is answered (a), plus review rounds (S1 and S2 are
 core: full review every round).
 
 ## Підсумок українською
@@ -1042,9 +1141,9 @@ core: full review every round).
 2. Блок будується один раз у Python до вибору маршруту, тож, коли він є в промпті, він однаковий байт у байт на всіх шести маршрутах AI; це перевіряє тест на api, code, codex, openai, gemini і local.
 3. Відбір без жодного виклику моделі: зерна (відкриті пункти серії, рішення останніх дзвінків, люди із запрошення), до двох кроків графом, текстовий пошук, підсумки тем з позначкою "не доказ".
 4. Бюджет фіксований і рахується за кількістю, не за часом: до 12 000 символів тексту і 20 елементів (10 фактів, 4 уривки, 6 речень підсумку), разом із заголовками джерел до 15 000 символів; це 1.9-4.7% проходу на хмарних маршрутах і 9-14% на локальній моделі; джерела і план A блок не змінює, а якщо не вміщується, на цьому маршруті його пропущено цілком.
-5. Кожен елемент має цитату, локатор, дату і рядок причини, побудований зі шляху в графі, без моделі; у Sources один батьківський рядок і рядок на кожен елемент, PM може зняти елемент або файл.
-6. Знімок для живого дзвінка лежить в Application Support (ніколи в папці проєкту), читається без мережі; ідентифікатори елементів стабільні (хеш ключа); прихований дзвінок, відкликаний документ, видалений файл чи відхилення PM одразу прибирають зі знімка і елементи, і імена, що трималися лише на цьому джерелі.
+5. Кожен елемент має цитату, локатор, дату і рядок причини, побудований зі шляху в графі, без моделі; у Sources один батьківський рядок і рядок на кожен елемент, PM може зняти елемент або файл; те, що вже є в A (файли і пункти Tracker за id задач), у блок не повторюється.
+6. Знімок для живого дзвінка лежить в Application Support (ніколи в папці проєкту), читається без мережі; ідентифікатори елементів стабільні (хеш ключа); прихований дзвінок, відкликаний документ, видалений файл чи відхилення PM прибирають зі знімка і елементи, і імена, що трималися лише на цьому джерелі; джерело знаходимо за `source_id`, тож це працює і після перейменування файлу.
 7. Порожнє, часткове, застаріле чи недоступне сховище: збірка йде як сьогодні (промпт байт у байт, якщо елементів немає), а Sources каже чому.
 8. G0: проба показала, що простий текстовий пошук уже знаходить 3 з 4 пропусків A на старому еталоні, тому потрібен новий `gold_prep.yaml` з фактами в кілька кроків без спільних слів із назвою дзвінка; гейт C щонайменше 6 з 8 і B + 4, витоків 0.
 9. Числа C спираються на авторську фікстуру екстракції; справжню користь міряємо на 10 дзвінках власних проєктів Bohdan (лише лічильники локально, оцінка корисно/ні/хибно).
-10. Розбиття: S1 відбір, блок і знімок (22 год), S2 еталон і гейти G0 (12 год), S3 Sources у застосунку і документація (13 год), S4 інструменти вимірювання (6 год), S5 факти аркуша після відкликання лише після відповіді на питання 1 (8 год); S2 і S3 можна паралельно, решта по черзі.
+10. Розбиття: S1 відбір, блок і знімок (25 год), S2 еталон і гейти G0 (12 год), S3 Sources у застосунку і документація (13 год), S4 інструменти вимірювання (6 год), S5 факти аркуша після відкликання лише після відповіді на питання 1 (8 год); S2 і S3 можна паралельно, решта по черзі.
