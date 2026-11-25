@@ -497,8 +497,8 @@ final class CallEngine {
         sidecar = p
     }
 
-    /// After the call: wrap-up by Claude and the Meetings DB page in Notion (existing page of this meeting
-    /// first, a new one otherwise), with the transcript attached as a .md file. Same result as the skill's
+    /// After the call: the Meetings DB page in Notion from the call's notes, no model request (PB-127) (existing page of
+    /// this meeting first, a new one otherwise), with the transcript as a sub-page. Same result as the skill's
     /// wrap-up Step 5. Needs the Notion token (Settings > Keys) and a project with a config.
     /// 0.8.5 (owner): Send last call to Notion works after an app restart too (an update, a failed page):
     /// the call's file, project config, title and time are kept in state/last-notion-call.json.
@@ -560,10 +560,48 @@ final class CallEngine {
                 AnalyticsTracker.shared.perf("notes_after", ms: ms, provider: actual ?? prov, ok: ok)
                 if !ok { AnalyticsTracker.shared.error("ai", code, provider: prov, fallbackTo: actual) }
             }
+            // PB-127: the call's Notion page (when it is already there) gets the notes, or the line that they failed
+            // and the decisions auto-add that waited for the notes' Area, Door and Context runs now
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { CallEngine.shared.fillNotionNotes(file: file); NotionAutoAdd.notesDone(file: file) }
+            }
         }
         Self.notesInWork.insert(notes)
         do { try p.run() } catch { Self.notesInWork.remove(notes); return false }
         return true
+    }
+
+    /// PB-127: the action item lines the call page shows for this call (its commitments register, as CallPageSync writes
+    /// them to Notion), so the meeting page says the same words; none when the register has no item of the call yet.
+    @MainActor static func actionsArg(_ file: String) -> [String] {
+        let a = CallPageEdit.sections(file: file, ids: ["actions"])["actions"] ?? []
+        guard !a.isEmpty, let d = try? JSONSerialization.data(withJSONObject: a), let s = String(data: d, encoding: .utf8) else { return [] }
+        return ["--actions", s]
+    }
+
+    /// PB-127: notion fills running now, by call file (main thread only), so two never write the same page at once.
+    @MainActor private static var notionFills = Set<String>()
+
+    /// PB-127 (owner 25.11): the call's Notion page was written before its notes were ready; now that they are (or failed),
+    /// its generated section is replaced in place by the notes, plain Notion API, no model request (wrapup_notion --page
+    /// --fill). Nothing when the call has no page yet: the page write itself then fills in what is there.
+    @MainActor func fillNotionNotes(file: String) {
+        let c = config
+        guard let url = CallHistory.shared.records.first(where: { $0.file == file })?.notionURL, !url.isEmpty,
+              !Self.notionFills.contains(file), !c.engine.python.isEmpty else { return }
+        let (proj, ws) = PyTool.project(of: file)
+        var args = ["--md", file, "--page", url, "--fill", "--notes", "failed",
+                    "--lt", c.engine.python, (appRoot as NSString).appendingPathComponent("bin/lt")]
+        args += proj != nil ? NotionTargets.projectArgs(c, proj) : NotionTargets.workspaceArgs(c, ws, kind: "meetings")
+        if !c.notionMeetingsDB.isEmpty { args += ["--meetings-db", c.notionMeetingsDB] }
+        let title = CallPageView.title(file)
+        if !title.isEmpty { args += ["--title", title] }
+        args += Self.actionsArg(file)
+        Self.notionFills.insert(file)
+        PyTool.run("wrapup_notion", args, notion: true, needsAI: false) { r in
+            Self.notionFills.remove(file)
+            AppLog.app("notion: notes \((r["ok"] as? Bool) == true ? "filled in (" + ((r["notes"] as? String) ?? "") + ")" : "not filled in") call=\(AppLog.stem(file))")
+        }
     }
 
     /// 0.26.0 (review 2): the .notes.md files being written now (the termination handler runs off the main thread).
@@ -602,7 +640,10 @@ final class CallEngine {
                     MainActor.assumeIsolated { CallHistory.shared.addCost(file: file, usd) }
                 }
                 let err: String? = (d["ok"] as? Bool) == true ? nil : ((d["error"] as? String) ?? L("page.mn.failed"))
-                MainActor.assumeIsolated { done(err) }
+                MainActor.assumeIsolated {
+                    if err == nil { CallEngine.shared.fillNotionNotes(file: file) }     // PB-127: the Notion page gets the new notes
+                    done(err)
+                }
             }
         }
         do { try p.run() } catch { done(error.localizedDescription) }
@@ -731,7 +772,10 @@ final class CallEngine {
         if !meetingsDB.isEmpty { args += ["--meetings-db", meetingsDB] }
         if let r = renamed { args += ["--title", r] }
         if let w = callRequest["scheduled_at"] as? String { args += ["--when", w] }   // the date and time set in Start call
-        if notesComing { args += ["--wait-notes", "600"] }   // 0.9.5.2: the page carries the Meeting notes being written
+        // PB-127: the page is written at once, with no model request; notes still being written show a line that the
+        // notes fill in when they are ready (fillNotionNotes)
+        if notesComing { args += ["--notes", "pending"] }
+        if Thread.isMainThread { args += MainActor.assumeIsolated { Self.actionsArg(file) } }   // the call page's own task lines
         p.arguments = args
         p.currentDirectoryURL = URL(fileURLWithPath: c.engine.sidecarDir)
         var env = AIRoute.env(job: "after", config: c)
@@ -758,7 +802,11 @@ final class CallEngine {
                 }
                 if (d["ok"] as? Bool) == true, let url = d["url"] as? String {
                     self.notionResult = url; UsageLog.log("notion_page_written")
-                    MainActor.assumeIsolated { CallHistory.shared.setNotion(file: file, url: url) }
+                    MainActor.assumeIsolated {
+                        CallHistory.shared.setNotion(file: file, url: url)
+                        // PB-127: the notes ended while the page was being written: fill them in now
+                        if (d["notes"] as? String) == "pending", !Self.notesInWork.contains(CallNotes.path(file)) { self.fillNotionNotes(file: file) }
+                    }
                     // 2026-11-10 (owner): no modal on success; it stole focus after every call. The link is on the call page.
                 } else {
                     self.notionFailed((d["error"] as? String) ?? "", file: file)

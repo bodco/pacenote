@@ -3,16 +3,17 @@
   python -m livetips_m0.decision_notion --db <data source id> --title "<decision>" [--call-file <transcript.md>]
        [--call "<title, date>"] [--source <meeting page url>] [--date YYYY-MM-DD] [--stated-by <name>]
        [--project-name N | --project-page ids] [--project-prop P] [--workspace-prop P --workspace-value V | --workspace-page ids]
-       [--no-ai] [--no-supersede-check] [--dry-run]
+       [--no-supersede-check] [--dry-run]
   ... --from-call --call-file <md>            every decision of the call (call_lists) not written yet
   ... --list-active                           the project's active decisions as JSON
   ... --snapshot <root>/pacenote/decisions.md the same list written for the preparation and the live engine
   ... --supersede <old page id> --new <new page id>   only after the PM's click: old Status = Superseded + links
 
-The model (the app's "After the call" way) picks Area from the database's own options, writes one Context sentence
-from the transcript and fills Trade-off, Alternatives rejected, Review trigger and Door only when they were said;
-it never invents them. Without a model the decision is written with what is known. Needs NOTION_TOKEN (the app
-passes it to the child only). Prints one JSON line {"ok", "url", "id", "error", ...}.
+PB-127 (owner 25.11): plain Notion API, no model request. Area, Door, the Context sentence and the active decision a
+new one replaces come from the call's notes step (### Decision register of the Meeting notes, written in the same
+request as the notes from the decisions snapshot); Area and Door only take the database's own options. Older notes
+without them: those fields stay empty. Needs NOTION_TOKEN (the app passes it to the child only). Prints one JSON line
+{"ok", "url", "id", "error", ...}.
 """
 import argparse
 import datetime as dt
@@ -22,7 +23,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from . import notion_links
-from .wrapup_notion import add_link_args, apply_link_args, config_ids, link_prop, link_value, link_values, notion, page_ids, parse_object, rt
+from .wrapup_notion import add_link_args, apply_link_args, config_ids, link_prop, link_value, link_values, notion, page_ids, rt
 
 TEXT_PROPS = {"context": "Context", "stated_by": "Stated by", "trade_off": "Trade-off",
               "alternatives": "Alternatives rejected", "review_trigger": "Review trigger"}
@@ -97,49 +98,41 @@ def decision_props(sc: dict, title: str, d: dict, ids: dict, project_name: str, 
     return props
 
 
-# ---------------------------------------------------------------- the model
-SYSTEM = """You fill the register entry of one decision made on a work call, from the call transcript.
-Return ONLY one JSON object: {"area": "", "context": "", "stated_by": "", "trade_off": "", "alternatives": "",
-"review_trigger": "", "door": ""}.
-- area: exactly one of AREA OPTIONS that fits, else "".
-- context: one short sentence, from the transcript, on why or in what situation it was decided.
-- stated_by: the name of the person who said or confirmed the decision, when the transcript shows it, else "".
-- trade_off, alternatives (the options rejected), review_trigger (when to look at it again), door (one of DOOR
-  OPTIONS: one-way or two-way): ONLY when said outright on the call; otherwise "". Never invent them.
-Write in the language of the decision. No long dashes. Inside text use « » for quotes."""
+# ---------------------------------------------------------------- PB-127: the fields come from the call notes
+def _key(s: str) -> str:
+    return re.sub(r"\s+", " ", (s or "").replace("**", "")).strip().lower()
 
 
-def model_details(decision: str, transcript: str, sc: dict, model: str, provider=None) -> dict:
-    from .routing import provider_from_env
-    prov = provider or provider_from_env("after", timeout=90.0)
-    user = ("DECISION: {}\nAREA OPTIONS: {}\nDOOR OPTIONS: {}\n\nTRANSCRIPT:\n{}".format(
-        decision, ", ".join(sc["area_options"]) or "(none)", ", ".join(sc["door_options"]) or "(none)", transcript[:60000]))
-    c = prov.complete(model=model, system=[{"text": SYSTEM}], user=user, max_tokens=500, cache_ttl=None)
-    if c.error:
-        raise RuntimeError(str(c.error)[:200])
-    o = parse_object(c.text)
-    return {k: str(o.get(k) or "").replace(chr(0x2014), "-").strip() for k in ("area", "door", *TEXT_PROPS)}
-
-
-CONFLICT = """Does the NEW decision replace (contradict or reverse) one of the ACTIVE decisions of the same project?
-Only a real contradiction, not a related topic or a refinement. Return ONLY {"replaces": <number of the active
-decision or -1>}."""
-
-
-def supersede_candidate(new: str, active: List[dict], model: str, provider=None) -> Optional[dict]:
-    if not active:
-        return None
-    from .routing import provider_from_env
-    prov = provider or provider_from_env("after", timeout=60.0)
-    user = "NEW: {}\n\nACTIVE:\n{}".format(new, "\n".join("{}. {} ({})".format(i, d["title"], d.get("date", "")) for i, d in enumerate(active)))
-    c = prov.complete(model=model, system=[{"text": CONFLICT}], user=user, max_tokens=60, cache_ttl=None)
-    if c.error:
-        return None
+def notes_details(md: Optional[Path], decision: str) -> dict:
+    """Area, Door, Context and the active decision it replaces, as the notes step wrote them for this decision
+    (### Decision register of the Meeting notes, callnotes.decision_register). {} for older notes, an edited decision
+    or no notes: then those fields stay empty. Never a model request."""
+    if not md:
+        return {}
+    from .call_lists import notes_path
+    from .callnotes import decision_register
     try:
-        n = int(parse_object(c.text).get("replaces", -1))
-    except (ValueError, TypeError):
-        return None
-    return active[n] if 0 <= n < len(active) else None
+        rows = decision_register(notes_path(md).read_text(encoding="utf-8", errors="replace"))
+    except OSError:
+        return {}
+    row = next((r for r in rows if _key(r.get("decision", "")) == _key(decision)), None)
+    if not row:
+        return {}
+    return {k: str(row.get(k) or "").replace(chr(0x2014), "-").strip() for k in ("area", "door", "context", "replaces")}
+
+
+def door_option(value: str, allowed: List[str]) -> str:
+    """"one-way" / "two-way" from the notes to the database's own option ("One-way door", "Two-way")."""
+    v = (value or "").strip().lower()
+    if not v:
+        return ""
+    return next((o for o in allowed if o.lower() == v), None) or next((o for o in allowed if v in o.lower()), value)
+
+
+def supersede_candidate(replaces: str, active: List[dict]) -> Optional[dict]:
+    """The active decision the notes said this one replaces, matched by its title; None when it is not active any more."""
+    k = _key(replaces)
+    return next((d for d in active if k and _key(d.get("title", "")) == k), None)
 
 
 # ---------------------------------------------------------------- reading the register
@@ -200,13 +193,25 @@ def list_active(ds: str, sc: dict, ids: dict, project_name: str, limit: int = 30
     return out
 
 
-def snapshot_text(active: List[dict], when: str) -> str:
-    """rules/decisions.yaml > snapshot: one line per active decision, newest first."""
+AREA_OPTIONS = "Area options: "
+
+
+def snapshot_text(active: List[dict], when: str, areas: Optional[List[str]] = None) -> str:
+    """rules/decisions.yaml > snapshot: one line per active decision, newest first. PB-127: the database's own Area options
+    on one line before them (the notes step picks Area from them); readers of the decisions read only the "- " lines."""
     head = ["# Active decisions", "", "Snapshot of the Notion Decisions register, taken {}. Read by Pacenote; do not edit.".format(when), ""]
+    if areas:
+        head += [AREA_OPTIONS + ", ".join(a.replace(",", " ") for a in areas), ""]
     rows = ["- {} | {} | {} | {}".format(d.get("date", ""), d.get("title", "").replace("|", "/").replace("\n", " "),
                                          d.get("stated_by", "").replace("|", "/"), d.get("area", "").replace("|", "/"))
             for d in active if d.get("title")]
     return "\n".join(head + rows) + "\n"
+
+
+def snapshot_areas(text: str) -> List[str]:
+    """The Area options line of a snapshot, [] when it has none (a snapshot older than PB-127)."""
+    ln = next((l for l in (text or "").splitlines() if l.startswith(AREA_OPTIONS)), "")
+    return [a.strip() for a in ln[len(AREA_OPTIONS):].split(",") if a.strip()]
 
 
 def parse_snapshot(text: str) -> List[dict]:
@@ -230,13 +235,6 @@ def call_decisions(md: Path) -> List[dict]:
     return [{"text": i["text"], "by": i.get("by", "")} for i in read(md)["decision_items"]]
 
 
-def transcript_of(md: Optional[Path]) -> str:
-    if not md or not md.exists():
-        return ""
-    from .callinfo import transcript_text
-    return transcript_text(md)
-
-
 def call_date(md: Optional[Path]) -> str:
     if md and md.exists():
         m = re.match(r"^(\d{4}-\d\d-\d\d)", md.name)
@@ -245,17 +243,16 @@ def call_date(md: Optional[Path]) -> str:
     return dt.date.today().isoformat()
 
 
-def write_one(a, db: str, sc: dict, ids: dict, title: str, transcript: str, check: bool, by: str = "") -> dict:
+def write_one(a, db: str, sc: dict, ids: dict, title: str, check: bool, by: str = "") -> dict:
     title = title.replace(chr(0x2014), "-").strip()[:200]
     had = notion_links.get(a.call_file, "decisions", title)
     if had:
         return {"ok": True, "url": had.get("url"), "id": had.get("id"), "existing": True}
     d = {"date": a.date or call_date(Path(a.call_file) if a.call_file else None), "source": a.source}
-    if not a.no_ai and transcript:
-        try:
-            d.update({k: v for k, v in model_details(title, transcript, sc, a.model).items() if v})
-        except Exception as e:  # noqa: BLE001  (a decision without its details is still written)
-            d["_ai_error"] = str(e)[:120]
+    det = notes_details(Path(a.call_file) if a.call_file else None, title)      # PB-127: from the notes step, no model request
+    d.update({k: v for k, v in det.items() if v and k != "replaces"})
+    if d.get("door"):
+        d["door"] = door_option(d["door"], sc["door_options"])
     if a.stated_by or by:
         d["stated_by"] = a.stated_by or by
     body = [{"type": "paragraph", "paragraph": {"rich_text": rt("Decided on the call: " + a.call)}}] if a.call else []
@@ -264,10 +261,10 @@ def write_one(a, db: str, sc: dict, ids: dict, title: str, transcript: str, chec
                                      "children": body})
     notion_links.put(a.call_file, "decisions", title, page.get("id", ""), page.get("url", ""))
     out = {"ok": True, "url": page.get("url"), "id": page.get("id")}
-    if check and not a.no_ai:
+    if check and det.get("replaces"):
         try:
             active = [x for x in list_active(db, sc, ids, a.project_name) if x["id"] != page.get("id")]
-            cand = supersede_candidate(title, active, a.model)
+            cand = supersede_candidate(det["replaces"], active)
             if cand:
                 out["supersede"] = {"id": cand["id"], "title": cand["title"], "date": cand.get("date", ""), "url": cand.get("url", "")}
         except Exception:  # noqa: BLE001
@@ -296,8 +293,8 @@ def parse_args(argv=None):
     ap.add_argument("--source", default="")
     ap.add_argument("--date", default="")
     ap.add_argument("--stated-by", default="")
-    ap.add_argument("--model", default="claude-haiku-5-5")
-    ap.add_argument("--no-ai", action="store_true")
+    ap.add_argument("--model", default="", help="not used since PB-127 (no model request here); kept for older callers")
+    ap.add_argument("--no-ai", action="store_true", help="not used since PB-127; kept for older callers")
     ap.add_argument("--no-supersede-check", action="store_true")
     ap.add_argument("--from-call", action="store_true")
     ap.add_argument("--list-active", action="store_true")
@@ -330,19 +327,18 @@ def run(a) -> dict:
         if a.snapshot:
             p = Path(a.snapshot)
             p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_text(snapshot_text(active, dt.datetime.now().strftime("%Y-%m-%d %H:%M")), encoding="utf-8")
+            p.write_text(snapshot_text(active, dt.datetime.now().strftime("%Y-%m-%d %H:%M"), sc["area_options"]), encoding="utf-8")
         return {"ok": True, "n": len(active), "decisions": active if a.list_active else None}
     md = Path(a.call_file) if a.call_file else None
-    transcript = transcript_of(md)
     if a.from_call:
         if not md:
             raise RuntimeError("--from-call needs --call-file")
-        done = [write_one(a, db, sc, ids, x["text"], transcript, False, x["by"]) for x in call_decisions(md)]
+        done = [write_one(a, db, sc, ids, x["text"], False, x["by"]) for x in call_decisions(md)]
         new = [d for d in done if not d.get("existing")]
         return {"ok": True, "added": len(new), "skipped": len(done) - len(new), "url": new[0]["url"] if new else None}
     if not a.title.strip():
         raise RuntimeError("no decision text")
-    return write_one(a, db, sc, ids, a.title, transcript, not a.no_supersede_check)
+    return write_one(a, db, sc, ids, a.title, not a.no_supersede_check)
 
 
 def main(argv=None) -> int:

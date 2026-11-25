@@ -11,7 +11,6 @@ from conftest import FIX
 from livetips_m0 import decision_notion as D
 from livetips_m0 import notion_links, risk_notion
 from livetips_m0 import wrapup_notion as W
-from livetips_m0.providers import FakeProvider
 
 ROOT = Path(__file__).resolve().parents[3]
 LD = chr(0x2014)
@@ -61,15 +60,33 @@ def text(props, name):
     return props[name]["rich_text"][0]["text"]["content"]
 
 
-def test_decision_properties_area_from_options_and_nothing_invented(tmp_path, monkeypatch, capsys):
+def notes_with_register(md, rows, decisions=("Orbit pilot goes to Northwind first",)):
+    """PB-127: the call's Meeting notes with a ### Decision register written by the notes step."""
+    from livetips_m0.call_lists import notes_path
+    body = ["## Meeting notes", "### TL;DR", "We picked the pilot client.", "### Decisions"]
+    body += ["- [10:00:0%d] **Emily Clark**: %s" % (i, d) for i, d in enumerate(decisions)]
+    body += ["### Decision register"] + ["- " + json.dumps(r) for r in rows]
+    notes_path(md).write_text("\n".join(body) + "\n\n## Summary\nx\n", encoding="utf-8")
+
+
+@pytest.fixture
+def no_model(monkeypatch):
+    """PB-127: any model request fails the test."""
+    from livetips_m0 import routing
+
+    def boom(*a, **k):
+        raise AssertionError("a model request was made")
+    monkeypatch.setattr(routing, "provider_from_env", boom)
+
+
+def test_decision_properties_area_from_options_and_nothing_invented(tmp_path, monkeypatch, capsys, no_model):
     calls = fake(monkeypatch)
     md = call_file(tmp_path)
-    details = {"area": "scope", "context": "Northwind has the test accounts ready.", "stated_by": "Emily Clark",
-               "trade_off": "", "alternatives": "", "review_trigger": "", "door": ""}
-    monkeypatch.setattr(D, "model_details", lambda *a, **k: details)
+    notes_with_register(md, [{"decision": "Orbit pilot goes to Northwind first", "area": "scope", "door": "",
+                              "context": "Northwind has the test accounts ready."}])
     assert D.main(["--db", "collection://dec1", "--title", "Orbit pilot goes to Northwind first", "--call-file", str(md),
                    "--source", "https://notion.so/meeting", "--project-page", "p-orbit, p-orbit2", "--workspace-page", "w-nw",
-                   "--no-supersede-check"]) == 0
+                   "--stated-by", "Emily Clark", "--no-supersede-check"]) == 0
     out = json.loads(capsys.readouterr().out)
     assert out["ok"] and out["url"] == "https://notion.so/d1"
     p = posts(calls)[0]["properties"]
@@ -84,13 +101,31 @@ def test_decision_properties_area_from_options_and_nothing_invented(tmp_path, mo
         assert never not in p
 
 
-def test_an_area_that_is_not_an_option_is_not_written(tmp_path, monkeypatch, capsys):
+def test_an_area_that_is_not_an_option_is_not_written(tmp_path, monkeypatch, capsys, no_model):
     calls = fake(monkeypatch)
-    monkeypatch.setattr(D, "model_details", lambda *a, **k: {"area": "Budget", "door": "Two-way", "trade_off": "slower start"})
     md = call_file(tmp_path)
+    notes_with_register(md, [{"decision": "x decision", "area": "Budget", "door": "two-way", "context": "c"}], decisions=("x decision",))
     assert D.main(["--db", "dec1", "--title", "x decision", "--call-file", str(md), "--no-supersede-check"]) == 0
     p = posts(calls)[0]["properties"]
-    assert "Area" not in p and p["Door"] == {"select": {"name": "Two-way"}} and text(p, "Trade-off") == "slower start"
+    assert "Area" not in p and p["Door"] == {"select": {"name": "Two-way"}} and text(p, "Context") == "c"
+
+
+def test_old_notes_without_the_register_leave_area_and_door_empty(tmp_path, monkeypatch, capsys, no_model):
+    """PB-127: notes written before the register fields: Area, Door and Context empty, and no model request."""
+    calls = fake(monkeypatch)
+    md = call_file(tmp_path)
+    notes_with_register(md, [])
+    assert D.main(["--db", "dec1", "--call-file", str(md), "--from-call"]) == 0
+    p = posts(calls)[0]["properties"]
+    assert p["Decision"]["title"][0]["text"]["content"] == "Orbit pilot goes to Northwind first"
+    for empty in ("Area", "Door", "Context"):
+        assert empty not in p
+
+
+def test_door_option_matches_the_database_wording():
+    assert D.door_option("one-way", ["One-way door", "Two-way door"]) == "One-way door"
+    assert D.door_option("Two-way", ["One-way", "Two-way"]) == "Two-way"
+    assert D.door_option("", ["One-way"]) == ""
 
 
 @pytest.mark.parametrize("ptype,expect", [
@@ -170,9 +205,10 @@ def test_supersede_only_on_click_and_the_candidate(tmp_path, monkeypatch, capsys
         "Decision": {"type": "title", "title": [{"plain_text": "Orbit pilot goes to Acme first"}]},
         "Date": {"type": "date", "date": {"start": "2026-10-01"}}, "Stated by": {"type": "rich_text", "rich_text": [{"plain_text": "Ann Lee"}]}}}]
     calls = fake(monkeypatch, active=active)
-    monkeypatch.setattr(D, "model_details", lambda *a, **k: {})
-    monkeypatch.setattr(D, "supersede_candidate", lambda new, act, model, provider=None: act[0])
-    assert D.main(["--db", "dec1", "--title", "Orbit pilot goes to Northwind first", "--project-page", "p1"]) == 0
+    md = call_file(tmp_path)
+    notes_with_register(md, [{"decision": "Orbit pilot goes to Northwind first", "area": "", "door": "", "context": "",
+                              "replaces": "orbit pilot goes to ACME first"}])
+    assert D.main(["--db", "dec1", "--title", "Orbit pilot goes to Northwind first", "--project-page", "p1", "--call-file", str(md)]) == 0
     out = json.loads(capsys.readouterr().out)
     assert out["supersede"] == {"id": "old1", "title": "Orbit pilot goes to Acme first", "date": "2026-10-01", "url": "https://notion.so/old1"}
     q = [c for c in calls if c[1].endswith("/query")][0][2]
@@ -185,12 +221,21 @@ def test_supersede_only_on_click_and_the_candidate(tmp_path, monkeypatch, capsys
     assert ("/pages/d1", {"Supersedes": {"relation": [{"id": "old1"}]}}) in patches
 
 
-def test_supersede_candidate_from_the_model():
+def test_supersede_candidate_from_the_notes_without_a_model():
+    """PB-127: the notes step named the replaced decision; here it is only matched to the register's active ones."""
     act = [{"id": "a", "title": "Acme first"}, {"id": "b", "title": "Weekly on Tuesdays"}]
-    prov = FakeProvider(lambda m, u: '{"replaces": 1}', 0.0, 0.0)
-    assert D.supersede_candidate("Weekly on Thursdays", act, "fake", prov)["id"] == "b"
-    assert D.supersede_candidate("x", act, "fake", FakeProvider(lambda m, u: '{"replaces": -1}', 0.0, 0.0)) is None
-    assert D.supersede_candidate("x", [], "fake", prov) is None
+    assert D.supersede_candidate("weekly on  tuesdays", act)["id"] == "b"
+    assert D.supersede_candidate("Weekly on Thursdays", act) is None      # no longer active: nothing to offer
+    assert D.supersede_candidate("", act) is None and D.supersede_candidate("Acme first", []) is None
+
+
+def test_no_replaces_in_the_notes_means_no_register_query(tmp_path, monkeypatch, capsys, no_model):
+    calls = fake(monkeypatch)
+    md = call_file(tmp_path)
+    notes_with_register(md, [{"decision": "Orbit pilot goes to Northwind first", "area": "Scope", "door": "", "context": ""}])
+    assert D.main(["--db", "dec1", "--title", "Orbit pilot goes to Northwind first", "--call-file", str(md)]) == 0
+    assert "supersede" not in json.loads(capsys.readouterr().out)
+    assert not [c for c in calls if c[1].endswith("/query")]
 
 
 def test_snapshot_round_trip_and_no_other_projects(tmp_path, monkeypatch, capsys):

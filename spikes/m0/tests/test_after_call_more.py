@@ -98,13 +98,8 @@ def test_oneshot_ask_json(monkeypatch, tmp_path):
     assert p.seen["extra"] == {"thinking": {"type": "disabled"}} and (tmp_path / "spend.json").exists()
 
 
-def test_claude_wrapup_and_find_page(monkeypatch):
-    p = Prov('Here: {"name": "N", "summary": "S"} done')
-    out = W.claude_wrapup("T", "B", "claude-sonnet-5-5", "en", provider=p)
-    assert out["name"] == "N" and out["_cost"] and out["_route"] == "api" and "PREP BRIEF" in p.seen["user"]
-    assert "PREP BRIEF" not in (W.claude_wrapup("T", "", "m", "uk", provider=p) and p.seen["user"])
-    with pytest.raises(RuntimeError):
-        W.claude_wrapup("T", "", "m", "uk", provider=Prov(error="x"))
+def test_find_page(monkeypatch):
+    assert not hasattr(W, "claude_wrapup")      # PB-127: the Notion step has no model request left
     import datetime as dt
     start = dt.datetime(2026, 10, 1, 10, 0, tzinfo=dt.timezone.utc)
     monkeypatch.setattr(W, "notion", lambda m, path, body=None: {"results": []})

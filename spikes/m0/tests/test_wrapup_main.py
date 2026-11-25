@@ -8,6 +8,25 @@ from livetips_m0 import wrapup_notion as W
 
 PROPS = {"Name": {"type": "title"}, "Date": {"type": "date"}, "Summary": {"type": "rich_text"},
          "Project": {"type": "select"}, "Workspace": {"type": "relation"}}
+NOTES = """# Call notes: weekly
+
+## Meeting notes
+### TL;DR
+We agreed.
+### Recap
+1. **Release plan.** We went through the release and picked a day.
+### Decisions
+- [10:00:02] **Mike Johnson**: Ship Friday
+### Action items
+- [10:00:03] **Emily Clark**: send the deck (due: Thursday)
+### Topics
+#### Release [10:00:01]
+Outcome: Friday.
+- [10:00:02] Mike wants Friday.
+
+## Summary
+The release.
+"""
 
 
 @pytest.fixture
@@ -24,11 +43,13 @@ def call(tmp_path, monkeypatch):
     stats = {"transcript": {"clean_file": str(clean), "lines_real": 6, "langs": {"en": 6}}, "tips": {"shown": 2}}
     monkeypatch.setattr(W.subprocess, "run", lambda *a, **k: types.SimpleNamespace(stdout="log\n" + json.dumps(stats)))
     seen = {}
+    # PB-127: the page is the call's ready notes; any model request fails the test
+    (tmp_path / "2026-10-01-1000-weekly.notes.md").write_text(NOTES, encoding="utf-8")
+    from livetips_m0 import routing
 
-    def wrap(plain, brief, model, lang):
-        seen.update(plain=plain, brief=brief, lang=lang)
-        return {"name": "Release plan", "summary": "We agreed.", "decisions": ["Ship Friday"], "_cost": 0.02}
-    monkeypatch.setattr(W, "claude_wrapup", wrap)
+    def boom(*a, **k):
+        raise AssertionError("a model request was made")
+    monkeypatch.setattr(routing, "provider_from_env", boom)
     monkeypatch.setenv("LT_LEDGER", str(tmp_path / "spend.json"))
     calls, state = [], {"pages": []}
 
@@ -55,8 +76,7 @@ def out(capsys):
 def test_new_page(call, capsys):
     assert W.main(call.base + ["--when", "2026-10-01T09:30:00+00:00"]) == 0
     res = out(capsys)
-    assert res["ok"] and res["created"] and res["url"] == "https://notion.so/new" and res["cost_usd"] == 0.02
-    assert "line *1" in call.seen["plain"] and call.seen["brief"].startswith("CORRECTIONS BY THE PM") and call.seen["lang"] == "en"
+    assert res["ok"] and res["created"] and res["url"] == "https://notion.so/new" and res["cost_usd"] == 0 and res["notes"] == "ready"
     page = [c for c in call.calls if c[0] == "POST" and c[1] == "/pages"][0][2]
     props = page["properties"]
     assert props["Name"]["title"][0]["text"]["content"] == "Weekly sync: Release plan "
@@ -67,7 +87,7 @@ def test_new_page(call, capsys):
     assert "children" not in page                                        # the blocks go in by append: only append reports their ids
     kinds = [b["type"] for b in next(c for c in call.calls if c[0] == "PATCH" and c[1].endswith("/children"))[2]["children"]]
     assert kinds[0] == "heading_2" and "bulleted_list_item" in kinds and kinds[-1] == "heading_2"
-    assert json.loads((call.tmp / "spend.json").read_text())
+    assert not (call.tmp / "spend.json").exists()                     # PB-127: nothing to charge
     tp = [c for c in call.calls if c[0] == "POST" and c[1] == "/pages"][1][2]
     assert tp["parent"]["type"] == "page_id" and tp["properties"]["title"]["title"][0]["text"]["content"].startswith("Transcript · Weekly sync: Release plan")
     last_write = [c for c in call.calls if c[0] != "GET"][-1]
@@ -129,9 +149,7 @@ def test_retry_later(monkeypatch):
     assert waits == [2, 8]
 
 
-def test_action_line_and_pacenote_blocks(tmp_path):
-    assert W.action_line({"who": " Ann ", "what": "send", "when": "Fri"}) == "Ann: send (Fri)"
-    assert W.action_line({}) == ": "
+def test_pacenote_blocks(tmp_path):
     b = W.pacenote_blocks({}, tmp_path / "x.md", False, W.TXT["en"])
     assert b[0]["type"] == "heading_3" and "Preparation: none" in b[2]["bulleted_list_item"]["rich_text"][0]["text"]["content"]
 

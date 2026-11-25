@@ -1,14 +1,15 @@
-"""After the call: wrap-up and the Meetings DB page in Notion (same result as the skill's Step 4-5).
+"""After the call: the Meetings DB page in Notion (same result as the skill's Step 4-5).
 
   python -m livetips_m0.wrapup_notion --md <transcript.md> --project-config <projects/<slug>.md>
-      --lt <python> <lt> [--model claude-sonnet-5-5] [--tips <tips.jsonl>] [--dry-run]
+      --lt <python> <lt> [--notes pending|failed] [--page <id> [--fill]] [--dry-run]
 
-Env: CLAUDE_API (Claude key), NOTION_TOKEN (internal integration token with access to the Meetings DB).
-Steps: `lt wrapup-data` (numbers, clean transcript) -> one Claude call for the wrap-up (JSON) ->
-find this meeting's page in the Meetings DB (Date within 20 min of the start; a Notion AI page made by the
-calendar counts) -> append a "Pacenote" section there, or create a new page -> attach the transcript
-as <stem>-transcript.md. Prints one JSON line: {"ok", "url", "created", "error"}.
-Nothing is sent anywhere else. Audio never leaves the Mac; only the transcript text goes to Claude and Notion.
+Env: NOTION_TOKEN (internal integration token with access to the Meetings DB).
+Steps: `lt wrapup-data` (numbers, clean transcript) -> the call's ready Meeting notes (<stem>.notes.md) and its lists
+(call_lists, the call page's rule) -> find this meeting's page in the Meetings DB (Date within 20 min of the start; a
+Notion AI page made by the calendar counts) -> append a "Pacenote" section there, or create a new page -> the
+transcript as a sub-page. PB-127 (owner 25.11): no model request here; notes not ready yet give a "being written"
+line that `--page <id> --fill` replaces once they are. Prints one JSON line: {"ok", "url", "created", "error"}.
+Nothing is sent anywhere else. Audio never leaves the Mac; only the transcript text and the notes go to Notion.
 """
 from __future__ import annotations
 
@@ -30,7 +31,6 @@ from . import call_language, call_layout
 
 NOTION = "https://api.notion.com/v1"
 NOTION_VERSION = "2025-09-03"
-ANTHROPIC = "https://api.anthropic.com/v1/messages"
 
 
 # ---------------------------------------------------------------- helpers
@@ -101,7 +101,10 @@ TXT = {
            "next": "Наступний крок", "objection": "Заперечення", "topics": "Теми", "unclear": "Під питанням", "recap": "Що було",
            "stage": "Стадія", "stakeholder": "Стейкхолдер", "map": "План дій", "competitor": "Конкурент",
            "price": "Ціна", "over_limit": "Понад межу", "us": "ми", "them": "вони",
-           "footer": "Нотатки Pacenote · транскрибовано на пристрої"},
+           "footer": "Нотатки Pacenote · транскрибовано на пристрої",
+           "pending": "Нотатки зустрічі пишуться. Коли будуть готові, вони з'являться тут.",
+           "failed": "Нотатки зустрічі не записано. Відкрий дзвінок у Pacenote і натисни «Зробити нотатки зустрічі»: "
+                     "ця сторінка оновиться."},
     "en": {"actions": "Action items", "decisions": "Decisions", "agenda": "Agenda", "commit": "Our commitments",
            "new": "New requests (possible scope changes)", "open": "Open questions", "risks": "Risks",
            "tips": "Tips: shown {shown}, cards {cards}, facts {facts}, late {late}; delay median {med} s, max {mx} s",
@@ -111,25 +114,14 @@ TXT = {
            "next": "Next step", "objection": "Objection", "topics": "Topics", "unclear": "Unclear", "recap": "What happened",
            "stage": "Stage", "stakeholder": "Stakeholder", "map": "Mutual plan", "competitor": "Competitor",
            "price": "Price", "over_limit": "Over the limit", "us": "us", "them": "them",
-           "footer": "Notes by Pacenote · transcribed on device"},
+           "footer": "Notes by Pacenote · transcribed on device",
+           "pending": "The meeting notes are being written. They appear here when they are ready.",
+           "failed": "The meeting notes were not written. Open the call in Pacenote and choose Make meeting notes: "
+                     "this page is updated then."},
 }
 
 
-# ---------------------------------------------------------------- wrap-up by Claude
-SYSTEM = """You write the wrap-up of a work call for a project manager (PM), from the call transcript.
-Lines are "[time] Speaker (lang): text"; "Я" is the PM. The transcript is machine speech recognition: names and
-technical words can be garbled, and speaker labels can be wrong; never invent facts that are not said.
-Write in {LANG}, plain and short, no long dashes. Return ONLY one JSON object:
-{"name": "2-6 words in {LANG}: what was actually discussed (the meeting's own name is added in front of it)",
- "summary": "1-2 sentences",
- "action_items": [{"who": "...", "what": "...", "when": "... or empty"}],
- "decisions": ["..."], "commitments": ["what we (the PM's side) promised, with dates"],
- "new_requests": ["new asks from the other side that may change scope"],
- "open_questions": ["..."], "risks": ["..."]}
-Empty lists are fine. Do not repeat the same item in two lists. Valid JSON: inside a text value use « » for
-quotes, never a straight double quote."""
-
-
+# ---------------------------------------------------------------- the PM's corrections
 def _correction(d: dict) -> str:
     act, before, after = d.get("action", ""), d.get("before") or {}, d.get("after") or {}
     if act == "onme_add":
@@ -195,34 +187,6 @@ def parse_object(text: str) -> dict:
     return json.loads("".join(out))
 
 
-def claude_wrapup(transcript: str, brief: str, model: str, lang: str = "uk", provider=None) -> dict:
-    """0.8.2: through the app's "After the call" route: the key, or Claude Code on the PM's Claude account."""
-    from .routing import provider_from_env
-    prov = provider or provider_from_env("after", timeout=180.0)
-    user = (f"PREP BRIEF (may be empty):\n{brief[:14000]}\n\n" if brief else "") + f"TRANSCRIPT:\n{transcript[:120000]}"
-    c = prov.complete(model=model, system=[{"text": SYSTEM.replace("{LANG}", call_language.language_name(lang))}], user=user,
-                      max_tokens=2500, cache_ttl=None)
-    if c.error:
-        raise RuntimeError("summary request failed: " + str(c.error)[:200])
-    try:
-        out = parse_object(c.text)
-    except ValueError as e:
-        # 0.8.5 (owner): a quote inside a value broke the JSON and the meeting page was not written. One repair turn.
-        fix = prov.complete(model=model, system=[{"text": "Return the same content as ONE valid JSON object, nothing else. "
-                                                          "Inside text values use « » for quotes, never a straight double quote."}],
-                            user=f"JSON error: {e}\n\n{c.text[:20000]}", max_tokens=3000, cache_ttl=None)
-        if fix.error:
-            raise RuntimeError("summary JSON was invalid and the repair failed: " + str(fix.error)[:200])
-        out = parse_object(fix.text)
-    try:   # 2026-10-26 (owner): the menu shows what the last call cost, the wrap-up included (Claude Code: 0, the plan)
-        from .cost import cost_usd
-        out["_cost"] = cost_usd(c.model, c.input_tokens, c.cache_write_5m, c.cache_write_1h, c.cache_read, c.output_tokens)
-    except Exception:  # noqa: BLE001
-        out["_cost"] = None
-    out["_route"] = getattr(c, "route", "api")
-    return out
-
-
 # ---------------------------------------------------------------- blocks
 def rt(s: str) -> list:
     s = s.replace(chr(0x2014), "-")   # never the long dash in Notion
@@ -271,9 +235,25 @@ def timed(it: dict) -> list:
     return lead + rt_md(it.get("text", ""))
 
 
-def meeting_blocks(m: dict, md: Path, stats: dict, prep_used: bool, lang: str = "uk") -> list:
+def owned_line(t: str, owner: str, text: str) -> list:
+    """PB-127: the gray time, the owner in bold, then the line exactly as the call page has it."""
+    lead = [{"type": "text", "text": {"content": t[:5] + "  "}, "annotations": {"color": "gray"}}] if t else []
+    who = [{"type": "text", "text": {"content": owner}, "annotations": {"bold": True}}, {"type": "text", "text": {"content": ": "}}] if owner else []
+    return lead + who + rt(text)
+
+
+def page_lists(m: dict, md: Path) -> dict:
+    """PB-127 (one source): Decisions, Action items and Risks by the call page's own rule (call_lists: the PM's edit, else
+    these Meeting notes, else the live picture), so the page and the call page say the same words."""
+    from . import call_lists
+    return call_lists.resolve(call_lists.situations(md), None, mn=m)
+
+
+def meeting_blocks(m: dict, md: Path, stats: dict, prep_used: bool, lang: str = "uk", actions=None) -> list:
     """0.9.5.2 (owner): the meeting page carries the call's Meeting notes (rules/notes.yaml, schema 3): TL;DR, decisions,
-    action items as to-dos, open questions, risks (0.12.2), the topics with their outcome and points; then the agenda, Sales, Pacenote."""
+    action items as to-dos, open questions, risks (0.12.2), the topics with their outcome and points; then the agenda, Sales, Pacenote.
+    PB-127: decisions, action items and risks are the call page's lists (page_lists), word for word; `actions` the call
+    page's own task lines from its register (the app passes them, as CallPageSync writes them), when it has any."""
     T = TXT[lang]
     b = [para(m["tldr"])] if m.get("tldr") else []
     if m.get("recap"):   # 0.26.1: "what happened on the call?" right under the TL;DR
@@ -281,12 +261,19 @@ def meeting_blocks(m: dict, md: Path, stats: dict, prep_used: bool, lang: str = 
         b += [{"type": "numbered_list_item", "numbered_list_item": {"rich_text": rt_md(x)}} for x in m["recap"]]
         if m.get("recap_note"):
             b.append({"type": "paragraph", "paragraph": {"rich_text": rt_md(m["recap_note"])}})
+    L = page_lists(m, md)
+    from .call_lists import task_line
+    rows = {"decisions": [owned_line(d.get("t", ""), d.get("by", ""), d["text"]) for d in L["decision_items"]],
+            "actions": [rt(str(x)) for x in actions if str(x).strip()] if actions else
+                       [owned_line(x.get("t", ""), x["owner"], task_line(dict(x, owner=""))) for x in L["tasks"]],
+            "open": [timed(it) for it in m.get("open") or []],
+            "risks": [timed(it) for it in L["risk_items"]]}
     for title, key, kind in ((T["decisions"], "decisions", "bulleted_list_item"), (T["actions"], "actions", "to_do"),
                              (T["open"], "open", "bulleted_list_item"), (T["risks"], "risks", "bulleted_list_item")):
-        if m.get(key):
+        if rows[key]:
             b.append(h(3, title))
-            for it in m[key]:
-                body = {"rich_text": timed(it)}
+            for r in rows[key]:
+                body = {"rich_text": r}
                 if kind == "to_do":
                     body["checked"] = False
                 b.append({"type": kind, kind: body})
@@ -313,16 +300,6 @@ def extra_blocks(md: Path, stats: dict, prep_used: bool, T: dict, lang: str) -> 
     return b + pacenote_blocks(stats, md, prep_used, T)
 
 
-def wait_meeting(md: Path, seconds: int, step: float = 5.0) -> dict:
-    """The Meeting notes once the call notes have them, or {} after `seconds` (then the page gets the short wrap-up)."""
-    end = time.time() + max(0, seconds)
-    while True:
-        m = call_meeting(md)
-        if m or time.time() >= end:
-            return m
-        time.sleep(step)
-
-
 def call_meeting(md: Path) -> dict:
     """The parsed ## Meeting notes of <stem>.notes.md, {} when the notes or the section are not there."""
     from .callnotes import meeting_text, parse_meeting
@@ -332,27 +309,6 @@ def call_meeting(md: Path) -> dict:
     except OSError:
         return {}
     return parse_meeting(t) if meeting_text(t) else {}
-
-
-def wrapup_blocks(w: dict, stats: dict, md: Path, prep_used: bool, lang: str = "uk") -> list:
-    T = TXT[lang]
-    sections = [(T["actions"], [action_line(a) for a in w.get("action_items", [])], todo),
-                (T["decisions"], w.get("decisions", []), bullet), (T["commit"], w.get("commitments", []), bullet),
-                (T["new"], w.get("new_requests", []), bullet),
-                (T["open"], w.get("open_questions", []), bullet), (T["risks"], w.get("risks", []), bullet)]
-    agenda = agenda_lines(md, lang)
-    if agenda:
-        sections.insert(1, (T["agenda"], agenda, bullet))
-    sales = sales_lines(md, T)
-    if sales:
-        sections.append((T["sales"], sales, bullet))
-    b = []
-    for title, items, kind in sections:
-        items = [i for i in items if str(i).strip(" :")]
-        if items:
-            b.append(h(3, title))
-            b += [kind(str(i)) for i in items]
-    return b + pacenote_blocks(stats, md, prep_used, T)
 
 
 def sales_lines(md: Path, T: dict) -> list:
@@ -392,10 +348,6 @@ def block_lines(d: dict, T: dict) -> list:
     if d.get("stage_crm"):
         out.append("{}: {}".format(g("stage", "Stage"), d["stage_crm"]))
     return out
-
-
-def action_line(a: dict) -> str:
-    return f"{a.get('who', '').strip()}: {a.get('what', '').strip()}" + (f" ({a['when']})" if a.get("when") else "")
 
 
 def agenda_lines(md: Path, lang: str) -> list:
@@ -582,11 +534,14 @@ def parse_args(argv=None):
     add_link_args(ap)          # project and (0.8.8) workspace properties and values
     ap.add_argument("--title", default="", help="the call's name when it was renamed during the call")
     ap.add_argument("--lt", nargs=2, required=True)
-    ap.add_argument("--model", default="claude-sonnet-5-5")
+    ap.add_argument("--model", default="", help="not used since PB-127 (no model request here); kept for older callers")
     ap.add_argument("--when", default="", help="ISO date and time of the meeting set in Start call (title date)")
-    ap.add_argument("--wait-notes", type=int, default=0,
-                    help="0.9.5.2: seconds to wait for the call notes' Meeting notes being written (the app starts both)")
+    ap.add_argument("--notes", default="", choices=("", "pending", "failed"),
+                    help="PB-127: the call notes are being written (pending) or failed; the page then says so until --fill")
     ap.add_argument("--page", default="", help="PB-32 S6: the call's existing Notion page (id or url): rewrite its generated Summary in place, never look up by date, never create, never upload the transcript")
+    ap.add_argument("--fill", action="store_true", help="PB-127: with --page, the notes just got ready: the title gets its topic too")
+    ap.add_argument("--actions", default="", help="PB-127: JSON list of the call page's action item lines (its register); "
+                                                  "else the action items of the call's lists")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--find-only", action="store_true", help="only look up this meeting's page in Notion")
     return ap.parse_args(argv)
@@ -626,17 +581,6 @@ def call_info(a) -> dict:
         except ValueError:
             pass
     return info
-
-
-def charge(cost) -> None:
-    """The wrap-up goes into the same monthly ledger as the tips."""
-    if not cost:
-        return
-    try:
-        from .cost import BudgetGuard
-        BudgetGuard(os.environ.get("LT_LEDGER", "~/.livetips/spend.json"), 1e9, 1e9, 1e9).add(float(cost))
-    except Exception:  # noqa: BLE001
-        pass
 
 
 def link_props(sc: dict, ids: dict, existing: dict, project_name: str, workspace_value: str = "") -> dict:
@@ -703,7 +647,7 @@ def write_to_page(page: dict, sc, ids, a, w, blocks, plain, info, lang) -> dict:
     if upd:
         notion("PATCH", f"/pages/{page['id']}", {"properties": upd})
     hhmm = dt.datetime.now().strftime("%H:%M")
-    head = [] if blocks and blocks[0].get("type") == "paragraph" else [para(w.get("summary", ""))]   # Meeting notes start with TL;DR
+    head = [] if (blocks and blocks[0].get("type") == "paragraph") or not w.get("summary") else [para(w["summary"])]   # Meeting notes start with TL;DR
     got = append(page["id"], [h(2, TXT[lang]["append"].format(hhmm=hhmm))] + head + blocks
                  + [h(3, TXT[lang]["tr_app"])])
     _record_first_write(a.md, page["id"], got or [])      # only the ids Notion returned for these writes; none returned: nothing is archived later
@@ -821,13 +765,13 @@ def regenerate_page(page: dict, sc, ids, a, w, blocks, lang) -> dict:
     uploaded again. New blocks go in first, the old ones are archived after, so a failure in between leaves text, not a hole."""
     pid = page["id"]
     upd = link_props(sc, ids, page.get("properties", {}), a.project_name, getattr(a, "workspace_value", ""))
-    if sc["summary"]:
-        upd[sc["summary"]] = {"rich_text": rt(w.get("summary", ""))}
+    if sc["summary"] and w.get("summary"):      # PB-127: a line about notes not ready never blanks the Summary property
+        upd[sc["summary"]] = {"rich_text": rt(w["summary"])}
     if upd:
         notion("PATCH", f"/pages/{pid}", {"properties": upd})
     children = _children(pid)
     sec = _generated_section(children)
-    head = [] if blocks and blocks[0].get("type") == "paragraph" else [para(w.get("summary", ""))]
+    head = [] if (blocks and blocks[0].get("type") == "paragraph") or not w.get("summary") else [para(w["summary"])]
     new = head + blocks
     present = {b.get("id") for b in children}
     owned = read_owned(a.md, pid)
@@ -893,6 +837,40 @@ def create_page(sc, ids, a, w, blocks, plain, info, lang) -> dict:
     return {"ok": True, "url": p.get("url"), "created": True, "page_id": p.get("id")}
 
 
+def page_topic(m: dict) -> str:
+    """PB-127: what the call was about, for the page title, from the notes (no model): the bold title of the first
+    "what happened" point, else its first words, else the first topic's title."""
+    first = (m.get("recap") or [""])[0].strip()
+    b = re.match(r"^\*\*(.+?)\*\*", first)
+    if b:
+        return b.group(1).strip().rstrip(".:").strip()
+    if first:
+        return " ".join(first.replace("**", "").split()[:6]).rstrip(".,:;")
+    return ((m.get("topics") or [{}])[0].get("title") or "").strip()
+
+
+def notes_state_blocks(state: str, md: Path, stats: dict, prep_used: bool, lang: str) -> list:
+    """PB-127: notes not ready ("pending") or not written ("failed"): one line that says so, never a model-made
+    substitute; the agenda, Sales and Pacenote numbers need no model and stay."""
+    T = TXT[lang]
+    return [para(T[state])] + extra_blocks(md, stats, prep_used, T, lang)
+
+
+def add_topic(page: dict, sc: dict, titles, topic: str) -> None:
+    """PB-127 (--fill): a page written before its notes were ready gets "<meeting name>: <topic>" once they are. Only a
+    title that is still exactly one of the meeting's names (`titles`: the name the app knows, the transcript's own)
+    changes; a calendar page or a page renamed in Notion keeps its own."""
+    if not topic or not sc["title"]:
+        return
+    parts = ((page.get("properties") or {}).get(sc["title"]) or {}).get("title") or []
+    text = "".join((p.get("text") or {}).get("content", "") or p.get("plain_text", "") for p in parts if p.get("type") == "text")
+    title = next((t for t in ([titles] if isinstance(titles, str) else titles) if t and t.strip() == text.strip()), None)
+    if not title or page_name(title, topic) == title:
+        return
+    keep = [{"type": "mention", "mention": p["mention"]} for p in parts if p.get("type") == "mention" and p.get("mention")]
+    notion("PATCH", f"/pages/{page['id']}", {"properties": {sc["title"]: {"title": rt(page_name(title, topic) + " ") + keep}}})
+
+
 def run(a, res: dict) -> int:
     ids = meeting_ids(a)
     sc = schema(ids["meetings_db"])
@@ -907,23 +885,22 @@ def run(a, res: dict) -> int:
     out_lang = call_language.output_language(a.md.parent / a.md.name.replace(".named.md", ".md"),
                                              a.md.read_text(encoding="utf-8", errors="replace"))
     lang = out_lang if out_lang in TXT else "en"
-    m = wait_meeting(a.md, a.wait_notes)       # 0.9.5.2: the Meeting notes of the call notes
-    if a.page and m and m.get("tldr"):          # Regenerate keeps the page title: the fresh notes already supply body and Summary, no model request
-        w = {}
-    else:
-        w = claude_wrapup(plain, brief, a.model, out_lang)
-    if m:
-        blocks = meeting_blocks(m, a.md, stats, bool(brief), lang)
-        w["summary"] = m.get("tldr") or w.get("summary", "")
-    else:
-        blocks = wrapup_blocks(w, stats, a.md, bool(brief), lang)
+    # PB-127 (owner 25.11): no model request. The page is the call's ready Meeting notes and lists; notes still being
+    # written or failed give one line that says so (--fill writes the notes in once they are there).
+    m = call_meeting(a.md)
+    state = "ready" if m else (a.notes or "failed")
+    if a.page and not m and not a.fill:     # Regenerate never replaces a written section with a line about missing notes
+        raise RuntimeError("the call has no meeting notes to write to its Notion page")
+    actions = json.loads(a.actions) if a.actions else None
+    w = {"name": page_topic(m), "summary": m.get("tldr", "")} if m else {}
+    blocks = meeting_blocks(m, a.md, stats, bool(brief), lang, actions) if m else notes_state_blocks(state, a.md, stats, bool(brief), lang)
     if a.dry_run:
-        print(json.dumps({"ok": True, "dry_run": True, "name": w.get("name"), "summary": w.get("summary"),
+        print(json.dumps({"ok": True, "dry_run": True, "name": w.get("name"), "summary": w.get("summary"), "notes": state,
                           "blocks": len(blocks), "ids": ids}, ensure_ascii=False))
         return 0
-    res["cost_usd"] = w.get("_cost")
-    charge(w.get("_cost"))
-    if a.page:      # Regenerate: the page of this call, found by id; a missing page is an error, not a second page
+    res["cost_usd"] = 0.0           # PB-127: nothing here costs a model request
+    res["notes"] = state
+    if a.page:      # Regenerate or --fill: the page of this call, found by id; a missing page is an error, not a second page
         pid = page_id_of(a.page)
         if not pid:
             raise RuntimeError("--page is not a Notion page id or url")
@@ -931,12 +908,16 @@ def run(a, res: dict) -> int:
         if not page.get("id"):
             raise RuntimeError("the call's Notion page was not found")
         res.update(regenerate_page(page, sc, ids, a, w, blocks, lang))
+        if a.fill and m:
+            add_topic(page, sc, [info["title"], header_info(a.md)["title"]], w.get("name", ""))
         res["created"] = False
     elif (page := find_page(ids["meetings_db"], info["start"], sc["date"])):
         res.update(write_to_page(page, sc, ids, a, w, blocks, plain, info, lang))
     else:
         res.update(create_page(sc, ids, a, w, blocks, plain, info, lang))
     if res.get("legacy_blocks"):    # part of the page is still in the old language: it stays "out of date"
+        return None
+    if state != "ready":            # only a line about the notes is there: the Notion text is not written in a language yet
         return None
     try:
         call_language.write_sidecar(a.md.parent / a.md.name.replace(".named.md", ".md"), artifact="notion", written_in=out_lang)

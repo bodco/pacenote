@@ -141,6 +141,14 @@ Outcome: one line.
 - [HH:MM:SS] 2-4 points: who said what, numbers, dates
 ### Unclear
 - one line per doubtful name or fact (leave the heading out when nothing is doubtful)
+### Decision register
+- {"n": 1, "area": "", "door": "", "context": "", "replaces": 0}
+  One line per item of ### Decisions, in the same order (n = its number, from 1), each one JSON object on one line.
+  area: one of AREAS below when one fits (copied exactly), else a short area of 1-3 words; door: "one-way" or
+  "two-way" ONLY when said outright on the call, else ""; context: one short sentence, from the transcript, on why or
+  in what situation it was decided; replaces: the number of the ACTIVE DECISION below that this decision really
+  replaces (contradicts or reverses it; not a related topic or a refinement), else 0. Leave the heading out when
+  there are no decisions. Inside text values use « » for quotes, never a straight double quote.
 Example of one topic:
 #### Pilot readiness [10:06:12]
 Outcome: the pilot starts November 10 if the test accounts come by Friday.
@@ -229,10 +237,97 @@ def parse_meeting(notes: str) -> dict:
 def make_meeting(md: Path, notes: str, transcript: str, lang: str, ask, names: str = "") -> str:
     """One request: the readable ## Meeting notes from the full notes and the transcript with times."""
     L = call_language.language_name(lang)
+    active = active_decisions(md)
     sec = ask(MEETING_SYS.replace("{LANG}", L).replace("{NAMES}", names),
-              f"Call file: {md.name}.\n\n# FULL NOTES\n{notes[:60000]}\n\n# TRANSCRIPT\n{transcript[:150000]}", 5000)
+              f"Call file: {md.name}.\n\n{register_input(active, area_options(md))}\n\n# FULL NOTES\n{notes[:60000]}\n\n# TRANSCRIPT\n{transcript[:150000]}", 5000)
     i = sec.find(MEETING_HEAD)
-    return with_muted(sec[i:] if i >= 0 else MEETING_HEAD + "\n" + sec, muted_items(transcript, lang))
+    return with_muted(with_register(sec[i:] if i >= 0 else MEETING_HEAD + "\n" + sec, active), muted_items(transcript, lang))
+
+
+# ---------------------------------------------------------------- PB-127: the Decisions register's fields
+REGISTER_HEAD = "### Decision register"
+
+
+def _snapshot(md: Path) -> str:
+    """<project>/pacenote/decisions.md, the snapshot the app keeps (decision_notion --snapshot); "" when there is none."""
+    try:
+        snap = call_layout.live_folder(md).parent / "pacenote" / "decisions.md"
+        return snap.read_text(encoding="utf-8", errors="replace") if snap.exists() else ""
+    except OSError:
+        return ""
+
+
+def active_decisions(md: Path) -> List[dict]:
+    """The project's active decisions from the snapshot; [] when there is none. No Notion request here."""
+    from .decision_notion import parse_snapshot
+    return parse_snapshot(_snapshot(md))[:30]
+
+
+def area_options(md: Path) -> List[str]:
+    """The Decisions database's own Area options, from the snapshot; [] for a snapshot older than PB-127."""
+    from .decision_notion import snapshot_areas
+    return snapshot_areas(_snapshot(md))
+
+
+def register_input(active: List[dict], areas: List[str] = None) -> str:
+    """AREAS (the database's own options, else the areas the register already uses) and the numbered ACTIVE DECISIONS
+    for ### Decision register."""
+    areas = areas or sorted({a.strip() for d in active for a in (d.get("area") or "").split(",") if a.strip()})
+    rows = ["{}. {} ({})".format(i + 1, d["title"], d.get("date", "")) for i, d in enumerate(active)]
+    return "# AREAS\n{}\n\n# ACTIVE DECISIONS\n{}".format(", ".join(areas) or "(none)", "\n".join(rows) or "(none)")
+
+
+def _register_rows(section: str) -> List[tuple]:
+    """(line index, parsed object or None) of each line under ### Decision register."""
+    lines, out, on = section.split("\n"), [], False
+    for k, l in enumerate(lines):
+        s = l.strip()
+        if s.startswith("#"):
+            on = s.lower().rstrip(":") == REGISTER_HEAD.lower()
+            continue
+        if on and s:
+            body = re.sub(r"^[-*•]\s+", "", s)
+            try:
+                o = json.loads(body[body.find("{"):body.rfind("}") + 1])
+            except ValueError:
+                o = None
+            out.append((k, o if isinstance(o, dict) else None))
+    return out
+
+
+def with_register(section: str, active: List[dict]) -> str:
+    """The model's numbers turned into words the register can be matched by later: "decision" the decision's text (as the
+    call page shows it) and "replaces" the active decision's title, never a bare number. Lines that do not parse are dropped."""
+    from .call_lists import decision_items
+    decs = [d["text"] for d in decision_items(parse_meeting(section)["decisions"])]
+    rows = _register_rows(section)
+    lines = section.split("\n")
+    drop = {k for k, _ in rows}
+    keep = []
+    for k, o in rows:
+        if o is None:
+            continue
+        try:
+            n, r = int(o.get("n") or 0), int(o.get("replaces") or 0)
+        except (TypeError, ValueError):
+            continue
+        if not 1 <= n <= len(decs):
+            continue
+        row = {"decision": decs[n - 1], "area": str(o.get("area") or "").strip(), "door": str(o.get("door") or "").strip(),
+               "context": str(o.get("context") or "").replace(chr(0x2014), "-").strip()}
+        if 1 <= r <= len(active):
+            row["replaces"] = active[r - 1]["title"]
+        keep.append((k, "- " + json.dumps(row, ensure_ascii=False)))
+    out = [l for k, l in enumerate(lines) if k not in drop]
+    if not keep:
+        return "\n".join(l for l in out if l.strip().lower().rstrip(":") != REGISTER_HEAD.lower())
+    at = next(i for i, l in enumerate(out) if l.strip().lower().rstrip(":") == REGISTER_HEAD.lower())
+    return "\n".join(out[:at + 1] + [l for _, l in keep] + out[at + 1:])
+
+
+def decision_register(notes: str) -> List[dict]:
+    """PB-127: the Decision register lines of the Meeting notes, [] for older notes (they have none)."""
+    return [o for _, o in _register_rows(meeting_text(notes)) if o and o.get("decision")]
 
 
 def muted_items(transcript: str, lang: str) -> List[str]:

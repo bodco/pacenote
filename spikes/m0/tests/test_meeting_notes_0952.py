@@ -112,13 +112,14 @@ def test_notion_without_meeting_notes(tmp_path):
     assert w.call_meeting(md) == {}
 
 
-def test_page_waits_for_the_meeting_notes(tmp_path):
+def test_page_reads_the_meeting_notes_without_waiting(tmp_path):
+    """PB-127: the page is written at once; notes that are not there yet are filled in later (--fill)."""
     from livetips_m0 import wrapup_notion as w
     md = tmp_path / "x.md"
     md.write_text("", encoding="utf-8")
-    assert w.wait_meeting(md, 0) == {}
+    assert w.call_meeting(md) == {} and not hasattr(w, "wait_meeting")
     (tmp_path / "x.notes.md").write_text(put_meeting(FULL, SECTION), encoding="utf-8")
-    assert w.wait_meeting(md, 30, step=0.01)["topics"]
+    assert w.call_meeting(md)["topics"]
 
 
 def test_prompt_keeps_it_short():

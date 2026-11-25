@@ -1944,6 +1944,13 @@ gets that name; a decision from older notes has none.
 decisions. When it contradicts one, the page asks "Replaces <old decision, date>?". Only your click marks the old page
 Superseded and links Supersedes and Superseded By; without the click nothing changes.
 
+**Since PB-127 the Decisions write asks no AI.** Area, Door, the Context sentence and which active decision a new one
+replaces are written by the same request that writes the call notes (it sees the snapshot of the project's active
+decisions and the database's Area options); Pacenote only carries them to Notion through the API, and the automatic
+add waits for the notes when they are still being written. Area and Door take only the database's own options.
+A decision from older notes gets empty Area, Door and Context; Trade-off, Alternatives rejected and Review trigger are
+no longer filled in automatically.
+
 **Add automatically after each call.** Under Tasks, Risks and Decisions there is a switch, each off by default. When
 it is on, 40 seconds after a call ends the open commitments on you, the risks or the decisions of that call are
 written to that database once (the call file and the text are the key, kept next to the call in `<stem>.notion.json`),
@@ -3309,10 +3316,13 @@ Integrations > Notion > Meeting pages > Write a meeting page after each call** o
 wrap-up into Notion by itself when you end the call. You can also send the last call later from the
 menu bar: **Send last call to Notion**.
 
-1. One Claude call turns the transcript and the tips into a wrap-up: action items with owners
-   and dates, decisions, your commitments, new requests (scope change candidates), open
-   questions and risks. Since 0.9.5.2 the page carries the call's Meeting notes (14.1t) in their place when
-   the notes are ready: the app waits for them up to 10 minutes, else the page gets this wrap-up.
+1. The page carries the call's Meeting notes (14.1t): Summary, What happened, decisions, action items, open
+   questions, risks and topics. Decisions, action items and risks are the call page's own lists, word for word (your
+   edits on the call page included). Since PB-127 this step asks no AI at all and costs nothing: the page is written
+   through the Notion API only, and its title is the meeting's name plus the topic from the notes ("Weekly sync:
+   Release plan"). When the notes are still being written, the page is written at once with the transcript and the
+   line "The meeting notes are being written"; the notes replace that line when they are ready. When the notes
+   failed, the page says so, and **Make meeting notes** on the call page writes them and updates the page.
 2. The app looks for this meeting's page in the Meetings database (one for all projects, chosen in
    Settings > Integrations > Notion > Databases): a page whose `Date` is
    within 20 minutes of the call start (a Notion AI Meeting Notes page created from the calendar
@@ -3330,7 +3340,7 @@ What it needs:
 - the Meetings database chosen in **Settings > Integrations > Notion > Databases** (or, when none is
   chosen there, `meetings_db` from the project config, section 4, step 7).
 
-Only the transcript text goes to Claude and Notion; audio never leaves the Mac. A finished
+Only the transcript text goes to the AI (for the notes) and Notion; audio never leaves the Mac. A finished
 write shows a notice with **Open in Notion** (section 14.1z13). If the skill already wrote a page for the same
 meeting, the app adds its section to that page instead of creating a second one.
 

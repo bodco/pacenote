@@ -84,12 +84,12 @@ def test_last_agenda_from_tips_and_labels(tmp_path):
 
 
 def test_notion_wrapup_has_the_agenda_section(tmp_path):
-    from livetips_m0.wrapup_notion import wrapup_blocks
+    from livetips_m0.wrapup_notion import notes_state_blocks
     md = tmp_path / "call.md"
     md.write_text("# Live transcript: X\n")
     (tmp_path / "call.md.tips.jsonl").write_text(json.dumps({"kind": "agenda", "items": [
         {"text": "Release date", "done": True}, {"text": "Export", "cur": True}, {"text": "Budget"}]}) + "\n")
-    b = wrapup_blocks({"decisions": ["ship"]}, {}, md, False, "en")
+    b = notes_state_blocks("pending", md, {}, False, "en")     # PB-127: the agenda is there even before the notes
     text = json.dumps(b)
     assert "Agenda" in text and "Release date: discussed" in text and "Export: raised" in text and "Budget: not raised" in text
 
