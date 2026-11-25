@@ -246,7 +246,9 @@ func crmDealsRound1(sales: [String: Any], mapping: [String: String], today: Date
         if latest.isLatest(token) && screen.linkDeal == deal { screen.shown = m }
     }
     async let first: Void = pick("D1")
-    try? await Task.sleep(nanoseconds: 10_000_000)
+    // D2 is picked only after D1's pick has begun (a fixed short sleep let D1 start last on a loaded machine)
+    var waited = 0
+    while screen.linkDeal != "D1" && waited < 2000 { try? await Task.sleep(nanoseconds: 1_000_000); waited += 1 }
     async let second: Void = pick("D2")
     _ = await (first, second)
     expect(screen.shown.dealId == "D2" && screen.shown.deal?.id == "D2" && screen.shown.ready(for: "D2"), "deals: a late answer for the earlier pick does not replace the current deal")
