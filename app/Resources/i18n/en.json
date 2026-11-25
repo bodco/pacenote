@@ -3839,7 +3839,7 @@
  "console.reload": "Reload",
  "console.back": "Back",
  "console.browser": "Open in browser",
- "console.browser.help": "The console in your browser. The browser asks for Google sign-in.",
+ "console.browser.help": "The console in your browser. Sign in there with Google or with your email and password.",
  "console.err.signIn": "Sign in to Pacenote in Settings > Account first.",
  "console.err.old": "The server does not offer this yet. Try again after it updates, or open the console in your browser.",
  "console.err.server": "The server answered {code}. Try again in a minute.",
