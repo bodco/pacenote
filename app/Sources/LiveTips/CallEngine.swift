@@ -541,6 +541,7 @@ final class CallEngine {
         p.currentDirectoryURL = URL(fileURLWithPath: c.engine.sidecarDir)
         var env = AIRoute.env(job: "after", config: c)
         env["LT_AI_STAGE"] = "after_notes"
+        env["LT_CALL"] = CallTag.of(file)        // PB-127: the call's tag in the spend ledger (a hash, never the name)
         env["PYTHONDONTWRITEBYTECODE"] = "1"
         p.environment = env
         AppLog.header("notes.log", "notes", extra: [("call", AppLog.stem(lastFile))] + AppLog.runtimeExtra)     // 0.24.1 (F7): date, versions, call id
@@ -600,8 +601,17 @@ final class CallEngine {
         Self.notionFills.insert(file)
         PyTool.run("wrapup_notion", args, notion: true, needsAI: false) { r in
             Self.notionFills.remove(file)
-            AppLog.app("notion: notes \((r["ok"] as? Bool) == true ? "filled in (" + ((r["notes"] as? String) ?? "") + ")" : "not filled in") call=\(AppLog.stem(file))")
+            AppLog.app("notion: notes \((r["ok"] as? Bool) == true ? "filled in (" + ((r["notes"] as? String) ?? "") + ")" : "not filled in") call=\(AppLog.stem(file))"
+                       + Self.aiCallsNote(r))
         }
+    }
+
+    /// PB-127: " ai_calls=N (stage n, ...)" for the app log: the call's after-call model requests the page step read from
+    /// the spend ledger once the notes were ready; empty when it did not report them.
+    nonisolated static func aiCallsNote(_ r: [String: Any]) -> String {
+        guard let a = r["ai_calls"] as? [String: Any], let n = a["calls"] as? Int else { return "" }
+        let by = (a["by_stage"] as? [String: Int] ?? [:]).sorted { $0.key < $1.key }.map { "\($0.key) \($0.value)" }
+        return " ai_calls=\(n)" + (by.isEmpty ? "" : " (" + by.joined(separator: ", ") + ")")
     }
 
     /// 0.26.0 (review 2): the .notes.md files being written now (the termination handler runs off the main thread).
@@ -625,6 +635,7 @@ final class CallEngine {
         p.currentDirectoryURL = URL(fileURLWithPath: c.engine.sidecarDir)
         var env = AIRoute.env(job: "after", config: c)
         env["LT_AI_STAGE"] = "after_notes"
+        env["LT_CALL"] = CallTag.of(file)        // PB-127: the call's tag in the spend ledger
         env["PYTHONDONTWRITEBYTECODE"] = "1"
         p.environment = env
         let out = Pipe()
@@ -669,6 +680,7 @@ final class CallEngine {
         p.currentDirectoryURL = URL(fileURLWithPath: c.engine.sidecarDir)
         var env = AIRoute.env(job: "after", config: c)
         env["LT_AI_STAGE"] = "after_notes"
+        env["LT_CALL"] = CallTag.of(file)        // PB-127: the call's tag in the spend ledger
         env["PYTHONDONTWRITEBYTECODE"] = "1"
         p.environment = env
         AppLog.header("notes.log", "notes rewrite", extra: [("call", AppLog.stem(file))] + AppLog.runtimeExtra)
@@ -784,6 +796,8 @@ final class CallEngine {
         var env = ProcessInfo.processInfo.environment
         for k in ["CLAUDE_API", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "CLAUDE_WORKSPACE"] { env.removeValue(forKey: k) }
         env["LT_AI_STAGE"] = "after_notion"
+        env["LT_CALL"] = CallTag.of(file)        // PB-127: the page reports the call's after-call model requests (ai_calls)
+        env["LT_AI_STATE"] = AIRoute.statePath   // the ledger it reads sits next to this file
         env["NOTION_TOKEN"] = notionToken          // passed to the child only, never written or logged
         env["PYTHONDONTWRITEBYTECODE"] = "1"
         p.environment = env
@@ -806,6 +820,8 @@ final class CallEngine {
                 }
                 if (d["ok"] as? Bool) == true, let url = d["url"] as? String {
                     self.notionResult = url; UsageLog.log("notion_page_written")
+                    let ai = Self.aiCallsNote(d)
+                    if !ai.isEmpty { AppLog.app("notion: page written call=\(AppLog.stem(file))" + ai) }
                     MainActor.assumeIsolated {
                         CallHistory.shared.setNotion(file: file, url: url)
                         // PB-127: the notes ended while the page was being written: fill them in now
@@ -873,6 +889,7 @@ final class CallEngine {
         p.qualityOfService = .background
         var env = AIRoute.env(job: "after", config: c)   // the key to the child only, never written or logged
         env["LT_AI_STAGE"] = "judge"
+        env["LT_CALL"] = CallTag.of(file)        // PB-127: the call's tag in the spend ledger
         env["PYTHONDONTWRITEBYTECODE"] = "1"
         p.environment = env
         let log = FileHandle.forAppending(path: (appRoot as NSString).appendingPathComponent("logs/judge.log"))

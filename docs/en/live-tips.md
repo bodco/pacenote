@@ -3325,6 +3325,10 @@ menu bar: **Send last call to Notion**.
    Release plan"). When the notes are still being written, the page is written at once with the transcript and the
    line "The meeting notes are being written"; the notes replace that line when they are ready. When the notes
    failed, the page says so, and **Make meeting notes** on the call page writes them and updates the page.
+   Each AI request after the call goes to the spend ledger with the call's tag (a short hash, never its name), and
+   once the notes are on the page, `logs/app.log` gives the call's count by step, for example
+   `ai_calls=3 (after_notes 3)` for a short call (its notes, their merge and the Meeting notes). The count stays on
+   the Mac.
 2. The app looks for this meeting's page in the Meetings database (one for all projects, chosen in
    Settings > Integrations > Notion > Databases): a page whose `Date` is
    within 20 minutes of the call start (a Notion AI Meeting Notes page created from the calendar

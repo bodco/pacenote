@@ -31,6 +31,7 @@ enum PyTool {
         if let t = notionToken { env["NOTION_TOKEN"] = t }
         env["LT_LEDGER"] = SpendLedger.defaultPath
         env["LT_AI_STAGE"] = "after_" + module
+        if let t = CallTag.of(args: args) { env["LT_CALL"] = t }     // PB-127: the call's tag in the spend ledger
         env["PYTHONDONTWRITEBYTECODE"] = "1"
         p.environment = env
         let out = Pipe()

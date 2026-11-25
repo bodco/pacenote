@@ -217,3 +217,63 @@ def test_old_notes_have_no_register_and_no_snapshot_is_fine(tmp_path):
     assert "# AREAS\n- Scope" in callnotes.register_input([{"title": "a", "area": "Scope"}])     # no options file: the areas in use
     sec = callnotes.with_register("## Meeting notes\n### TL;DR\nx\n### Decision register\n- {\"n\": 1}\n", [])
     assert "Decision register" not in sec                  # no decisions: no empty heading left behind
+
+
+def test_model_calls_per_call_from_the_ledger(call, capsys, monkeypatch, tmp_path):
+    """Acceptance 6: every after-call model request lands in the spend ledger with the call's tag (LT_CALL, set by the app);
+    the page step reports the call's count once the notes are ready. A call with notes, a Notion page and a decision
+    auto-add has its notes request only: no after_notion and no after_decision_notion row (before PB-127 each wrote one)."""
+    from test_decisions_088 import call_file, fake, notes_with_register
+    from livetips_m0 import decision_notion as D
+    from livetips_m0 import routing
+    from livetips_m0.providers import Completion
+
+    state = tmp_path / "state" / "ai-routes.json"
+    state.parent.mkdir()
+    monkeypatch.setenv("LT_AI_STATE", str(state))
+
+    class Leg:
+        n = 0
+
+        def complete(self, **kw):
+            Leg.n += 1
+            return Completion(text="## Summary\nok\n## Topics\n- t", model=kw["model"], input_tokens=5, output_tokens=2)
+
+    def router(stage, tag):         # the app's routed provider: every request goes through spend_ledger
+        monkeypatch.setenv("LT_AI_STAGE", stage)
+        monkeypatch.setenv("LT_CALL", tag)
+        return routing.RoutedProvider("after", "code", {"code": Leg()}, state=routing.RouteState(str(state)))
+
+    # this call's notes, the real notes step (callnotes.make_notes) on a copy of the call: all its requests are counted
+    notes_md = tmp_path / "notes" / call.md.name
+    notes_md.parent.mkdir()
+    notes_md.write_text(call.md.read_text(encoding="utf-8"), encoding="utf-8")
+    assert callnotes.make_notes(notes_md, "sonnet", "en", provider=router("after_notes", "c0ffee000001"))["ok"]
+    made = Leg.n
+    assert made >= 2                                # the notes and their Meeting notes at least
+    router("after_notes", "c0ffee000002").complete(model="sonnet", system="s", user="u", max_tokens=10, cache_ttl=None)
+    router("live", "").complete(model="sonnet", system="s", user="u", max_tokens=10, cache_ttl=None)   # live: no tag
+    monkeypatch.setenv("LT_CALL", "c0ffee000001")
+    monkeypatch.setenv("LT_AI_STAGE", "after_notion")
+    assert W.main(call.base) == 0
+    res = out(capsys)
+    assert res["ok"] and res["notes"] == "ready" and res["cost_usd"] == 0
+    assert res["ai_calls"] == {"calls": made, "by_stage": {"after_notes": made}}
+
+    fake(monkeypatch)
+    md = call_file(tmp_path / "dec")
+    notes_with_register(md, [{"decision": "Orbit pilot goes to Northwind first", "area": "", "door": "", "context": ""}])
+    monkeypatch.setenv("LT_AI_STAGE", "after_decision_notion")
+    assert D.main(["--db", "dec1", "--title", "Orbit pilot goes to Northwind first", "--call-file", str(md)]) == 0
+    capsys.readouterr()
+    rows = [json.loads(x) for x in (state.parent / "spend-ledger.jsonl").read_text().splitlines()]
+    assert [r["job"] for r in rows] == ["after_notes"] * (made + 1) + ["live"]
+    assert "call" not in rows[-1] and routing.call_model_calls(state, "c0ffee000001")["calls"] == made
+    assert routing.call_model_calls(state, "") == {"calls": 0, "by_stage": {}}
+
+
+def test_no_tag_no_count(call, capsys, monkeypatch):
+    """The app always tags; a run without LT_CALL (the skill, an older app) reports no count rather than a wrong one."""
+    monkeypatch.delenv("LT_CALL", raising=False)
+    assert W.main(call.base) == 0
+    assert "ai_calls" not in out(capsys)

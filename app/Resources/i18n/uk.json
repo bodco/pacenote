@@ -4517,7 +4517,6 @@
  "notion.tooShort": "Надто короткий дзвінок для сторінки в Notion: нічого не записано.",
  "notion.writing": "Notion: пишу сторінку зустрічі…",
  "notion.err.noToken": "Сторінку в Notion не записано: додайте токен Notion у Налаштування > Notion.",
- "notion.err.noAI": "Сторінку в Notion не записано: не вибрано AI для роботи «Після дзвінка». Оберіть його в Налаштування > AI.",
  "notion.err.token": "Сторінку в Notion не записано: Notion не прийняв токен. Перевірте його в Налаштування > Notion.",
  "notion.err.access": "Сторінку в Notion не записано: Pacenote не бачить базу Meetings. У Notion відкрийте базу, далі Connections, і додайте інтеграцію Pacenote.",
  "notion.err.layout": "Сторінку в Notion не записано: база Meetings налаштована не так, як очікує Pacenote. Перевірте її в Налаштування > Notion.",

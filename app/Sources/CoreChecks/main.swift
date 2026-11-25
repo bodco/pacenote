@@ -5521,11 +5521,27 @@ func briefSignalPB89() {
     }
 }
 
+/// PB-127 (owner 25.11): the call's tag in the local spend ledger (LT_CALL): a short hash, never the file name, the same
+/// for the .md and .named.md copy and after a move to another project folder; a tool run gets it from --md or --call-file.
+func callTagPB127() {
+    let a = CallTag.of("/calls/Acme/live/2026-10-01-1000-acme-renewal.md")
+    expect(a.count == 12 && a.allSatisfy { $0.isHexDigit } && !a.contains("acme"), "pb127: the tag is a 12-char hash")
+    expect(CallTag.of("/calls/Acme/live/2026-10-01-1000-acme-renewal.named.md") == a, "pb127: .named.md has the call's tag")
+    expect(CallTag.of("/calls/Other/live/2026-10-01-1000-acme-renewal.md") == a, "pb127: a moved call keeps its tag")
+    expect(CallTag.of("/calls/Acme/live/2026-10-01-1100-acme-renewal.md") != a, "pb127: another call, another tag")
+    expect(CallTag.of(args: ["--db", "x", "--md", "/c/2026-10-01-1000-acme-renewal.md"]) == a, "pb127: a tool run's --md")
+    expect(CallTag.of(args: ["--db", "x", "--call-file", "/c/2026-10-01-1000-acme-renewal.md", "--call", "Acme renewal"]) == a,
+           "pb127: decisions and risks give the call by --call-file")
+    expect(CallTag.of(args: ["--db", "x", "--call", "/c/2026-10-01-1000-acme-renewal.md"]) == nil, "pb127: --call is a title, not a file")
+    expect(CallTag.of(args: ["--db", "x"]) == nil && CallTag.of(args: ["--md"]) == nil, "pb127: no --md, no tag")
+}
+
 teamCallsB9()
 entitlementsB3()
 entitlementsB3UI()
 analyticsS4()
 briefSignalPB89()
+callTagPB127()
 selfServe0190()
 consolePlatform0190()
 componentsD3()

@@ -915,6 +915,9 @@ def run(a, res: dict) -> int:
         res.update(write_to_page(page, sc, ids, a, w, blocks, plain, info, lang))
     else:
         res.update(create_page(sc, ids, a, w, blocks, plain, info, lang))
+    if state == "ready" and os.environ.get("LT_CALL"):     # PB-127: the call's after-call model requests so far (notes done)
+        from .routing import call_model_calls, default_state_path
+        res["ai_calls"] = call_model_calls(default_state_path(), os.environ["LT_CALL"])
     if res.get("legacy_blocks"):    # part of the page is still in the old language: it stays "out of date"
         return None
     if state != "ready":            # only a line about the notes is there: the Notion text is not written in a language yet

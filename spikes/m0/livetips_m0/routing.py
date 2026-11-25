@@ -65,11 +65,32 @@ def spend_ledger(job: str, route: str, c, state_path) -> None:
                "model": c.model, "input": g("input_tokens"), "output": g("output_tokens"), "cache_read": g("cache_read"),
                "cache_write": g("cache_write_5m") + g("cache_write_1h"), "usd": round(usd, 6) if usd is not None else None,
                "error": bool(getattr(c, "error", None))}
+        if os.environ.get("LT_CALL"):       # PB-127: the call's tag (a short hash, never its name), set by the app
+            row["call"] = os.environ["LT_CALL"]
         p = Path(state_path).with_name("spend-ledger.jsonl")
         with open(p, "a", encoding="utf-8") as f:
             f.write(json.dumps(row) + "\n")
     except Exception:  # noqa: BLE001  the ledger never breaks a request
         pass
+
+
+def call_model_calls(state_path, call: str) -> dict:
+    """PB-127 (owner 25.11): the after-call model requests of one call, from the spend ledger rows the app tagged with
+    LT_CALL: {"calls": total, "by_stage": {stage: n}}. Every request counts, a failed one or a fallback retry too (each is
+    a request). Live tips are not tagged, so this is the after-call count only."""
+    by: dict = {}
+    try:
+        with open(Path(state_path).with_name("spend-ledger.jsonl"), encoding="utf-8") as f:
+            for line in f:
+                try:
+                    row = json.loads(line)
+                except ValueError:
+                    continue
+                if call and isinstance(row, dict) and row.get("call") == call:
+                    by[row.get("job") or "?"] = by.get(row.get("job") or "?", 0) + 1
+    except OSError:
+        pass
+    return {"calls": sum(by.values()), "by_stage": by}
 
 
 def default_state_path() -> str:

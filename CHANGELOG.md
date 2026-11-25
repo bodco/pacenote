@@ -22,7 +22,11 @@ Pacenote. Earlier versions are described in the commit messages and in
   Context, and Trade-off, Alternatives rejected and Review trigger are no longer filled in. Model requests per call:
   one fewer for the meeting page (two when its reply needed a JSON repair) and one or two fewer for each decision added
   to the register (the spend ledger shows no
-  `after_notion` or `after_decision_notion` rows any more).
+  `after_notion` or `after_decision_notion` rows any more). To see the count for one call: each after-call AI
+  request in the spend ledger now carries the call's tag (a short hash, never its name), and once the notes are on the
+  page, `logs/app.log` says how many AI requests the call made after it ended, by step (for example
+  `ai_calls=3 (after_notes 3)` for a short call: its notes in one part, their merge and the Meeting notes). This count
+  stays on the Mac; it is not sent with the usage statistics.
 - **Meeting Sheet: a Verbatim block for text that must stay word for word (PB-102).** + Add a block now offers
   Verbatim, as often as you need it in one call. In its Settings you give it a title, a source (a file of the call,
   any file, or pasted text) and, if you want only part of a Markdown file, sections such as 1-4 by heading. The

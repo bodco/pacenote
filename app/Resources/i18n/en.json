@@ -4517,7 +4517,6 @@
  "notion.tooShort": "Too short for a Notion page: nothing was written.",
  "notion.writing": "Notion: writing the meeting page…",
  "notion.err.noToken": "Notion page not written: add the Notion token in Settings > Notion.",
- "notion.err.noAI": "Notion page not written: no AI is set for After the call. Choose one in Settings > AI.",
  "notion.err.token": "Notion page not written: Notion did not accept the token. Check it in Settings > Notion.",
  "notion.err.access": "Notion page not written: Pacenote cannot see the Meetings database. In Notion, open the database, then Connections, and add the Pacenote integration.",
  "notion.err.layout": "Notion page not written: the Meetings database is set up differently from what Pacenote expects. Check it in Settings > Notion.",
