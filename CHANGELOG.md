@@ -9,7 +9,10 @@ Pacenote. Earlier versions are described in the commit messages and in
   (14.1z8) said the browser asks for Google. Since server 0.16.0 the console in the browser also signs in with email
   and password and has Forgot password?; the hint and the guide now say so. A password session opens the
   organization and your own pages; Platform still asks for Google. The guide also no longer says Platform never
-  opens in the app (it does in the Console tab since 0.19.0). No change to how the Console tab signs in.
+  opens in the app (it does in the Console tab since 0.19.0). No change to how the Console tab signs in. The website
+  privacy and terms pages (EN and UK, updated 25 November 2026, not published yet) now say that
+  the account is required since 0.22.0, password sign-in keeps only an Argon2id hash, service emails go through
+  Postmark, and the team view of 0.20.0 is described.
 - **Meeting Sheet: a Verbatim block for text that must stay word for word (PB-102).** + Add a block now offers
   Verbatim, as often as you need it in one call. In its Settings you give it a title, a source (a file of the call,
   any file, or pasted text) and, if you want only part of a Markdown file, sections such as 1-4 by heading. The
