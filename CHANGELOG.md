@@ -35,6 +35,14 @@ Pacenote. Earlier versions are described in the commit messages and in
   the menu bar panel and a red dot on the menu bar icon say so, each with Fix, which opens the key. The mark clears as
   soon as the key passes its check (or a job on it answers again); a timeout or a lost connection neither sets nor
   clears it. The engine writes the status into `state/ai-routes.json` (`rejected`), the app reads it from there.
+- **Settings > AI: Sign in and Sign out for the Claude and ChatGPT accounts, and a Check that tells the truth
+  (PB-98).** Each account row now says Signed in with a Sign out button, or Signed out in red with Sign in. Sign out
+  asks first and runs the tool's own sign-out, so Claude Code or Codex in Terminal on this Mac signs out too. A
+  session that was revoked (the sign-in file on this Mac still looks fine, but the last real request was refused) now
+  shows Signed out, never signed in, and the provider card no longer says Account. A sign-in made in Terminal shows
+  when the app gets focus or within 2 minutes, without a restart, and clears the "signed out" mark. Check no longer
+  reads only the local sign-in file: it sends one tiny live request ("Reply with OK" on the smallest model) and shows
+  the result with the time, or says it could not, because the tips engine is not set up.
 - **Meeting Sheet: a Verbatim block for text that must stay word for word (PB-102).** + Add a block now offers
   Verbatim, as often as you need it in one call. In its Settings you give it a title, a source (a file of the call,
   any file, or pasted text) and, if you want only part of a Markdown file, sections such as 1-4 by heading. The

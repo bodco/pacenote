@@ -342,3 +342,19 @@ def test_the_cli_path_from_the_config_and_the_tips_timeout(tmp_path, monkeypatch
     tips = provider_from_cfg(cfg, lambda n: (_ for _ in ()).throw(KeyError(n)))
     assert tips.legs["code"].cli == cli and tips.legs["code"].timeout == 60.0 and tips.preferred == "code"
     assert provider_from_cfg(cfg, lambda n: "", job="after").legs["code"].timeout == 300.0
+
+
+def test_pb98_check_is_a_live_request_that_marks_a_revoked_session_and_clears_it(tmp_path):
+    """PB-98: Settings > AI > Check runs `ping` on the account's route: a revoked session (the local auth file still
+    says signed in) comes back as auth, so the row says Signed out; after a new sign-in the next check clears it."""
+    st = RouteState(str(tmp_path / "s.json"))
+    revoked_code = Failing("ClaudeCode: OAuth token has been revoked. Please run /login")
+    revoked_codex = Failing("Codex: not logged in with ChatGPT")
+    RoutedProvider("ping", "code", {"code": revoked_code}, auto=False, state=st).probe("code")
+    RoutedProvider("ping", "codex", {"codex": revoked_codex}, auto=False, state=st).probe("codex")
+    assert revoked_code.calls == 1 and revoked_codex.calls == 1          # a real request, not the local file
+    assert st.read()["code"]["down"] and st.read()["code"]["reason"] == "auth"
+    assert st.read()["codex"]["down"] and st.read()["codex"]["reason"] == "auth"
+    assert RoutedProvider("ping", "code", {"code": ok("OK")}, auto=False, state=st).probe("code") is True
+    assert RoutedProvider("ping", "codex", {"codex": ok("OK")}, auto=False, state=st).probe("codex") is True
+    assert not st.read()["code"]["down"] and not st.read()["codex"]["down"]

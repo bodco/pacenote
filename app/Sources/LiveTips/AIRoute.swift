@@ -347,18 +347,36 @@ enum AIRoute {
         let down = [code, api, openai, codex, gemini].filter { isDown($0) }
         guard !down.isEmpty, !c.engine.sidecarPython.isEmpty, !c.engine.sidecarDir.isEmpty else { done(); return }
         DispatchQueue.global().async {
-            for r in down {
-                let p = Process()
-                p.executableURL = URL(fileURLWithPath: c.engine.sidecarPython)
-                p.arguments = ["-m", "livetips_m0.routing", "ping", "--route", r]
-                p.currentDirectoryURL = URL(fileURLWithPath: c.engine.sidecarDir)
-                var env = env(job: "after", config: c)
-                env["PYTHONDONTWRITEBYTECODE"] = "1"
-                p.environment = env
-                p.standardOutput = Pipe(); p.standardError = Pipe()
-                if (try? p.run()) != nil { p.waitUntilExit() }
-            }
+            for r in down { runPing(r, config: c) }
             DispatchQueue.main.async { done() }
         }
+    }
+
+    /// PB-98: one tiny live request on `r` whether or not it is out (Settings > AI > Check on an account); the engine
+    /// marks it up or out with the reason. Calls back with true when it answers, false when it is out, nil when the
+    /// engine is not set up (no live check possible).
+    @MainActor static func ping(_ r: String, done: @escaping (Bool?) -> Void) {
+        let c = AppConfig.load(from: AppPaths.config)
+        guard !c.engine.sidecarPython.isEmpty, !c.engine.sidecarDir.isEmpty else { done(nil); return }
+        DispatchQueue.global().async {
+            let ran = runPing(r, config: c)
+            let ok: Bool? = ran ? !isDown(r) : nil
+            DispatchQueue.main.async { done(ok) }
+        }
+    }
+
+    @discardableResult
+    private static func runPing(_ r: String, config c: AppConfig) -> Bool {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: c.engine.sidecarPython)
+        p.arguments = ["-m", "livetips_m0.routing", "ping", "--route", r]
+        p.currentDirectoryURL = URL(fileURLWithPath: c.engine.sidecarDir)
+        var env = env(job: "after", config: c)
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
+        p.environment = env
+        p.standardOutput = Pipe(); p.standardError = Pipe()
+        guard (try? p.run()) != nil else { return false }
+        p.waitUntilExit()
+        return p.terminationStatus == 0
     }
 }

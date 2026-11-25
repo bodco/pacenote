@@ -43,27 +43,4 @@ final class CodexAccount: ObservableObject {
     /// 0.24.1 (F1): the sign-in runs from the app (AccountLogin), never Terminal.
     func login() { AccountLogin.shared.connect("codex") }
 }
-
-struct CodexAccountRow: View {
-    @ObservedObject private var account = CodexAccount.shared
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-        LabeledContent(L("ai.codex.account")) {
-            HStack(spacing: 8) {
-                if CodexAccount.cliPath == nil {
-                    Text(L("ai.codex.missing")).foregroundStyle(PN.C.text3)
-                    Button(L("acct.connect")) { account.login() }          // 0.24.1 (F1): installs Codex, then signs in
-                } else {
-                    Text(account.checking ? L("set.cc.checking") : account.signedIn == true ? L("ai.codex.connected") : L("ai.codex.notSignedIn"))
-                        .foregroundStyle(PN.C.text3)
-                    if account.signedIn != true { Button(L("set.logIn")) { account.login() } }
-                    Button(L("set.check")) { account.refresh() }.disabled(account.checking)
-                }
-            }
-        }
-        AccountLoginStatus(kind: "codex")
-        }
-        .onAppear { account.refresh() }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in account.refresh() }
-    }
-}
+// PB-98: the Settings > AI row is AIAccountRow (AccountWatch.swift), shared with the Claude account.

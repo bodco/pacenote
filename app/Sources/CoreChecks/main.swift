@@ -6876,5 +6876,6 @@ func keyRejectedPB97() {
     expect(K.usable(saved, rejected: [:]) == saved, "PB-97: a key that passed is usable again")
 }
 keyRejectedPB97()
+accountAuthPB98()
 print("core checks: \(passed) passed, \(failures) failed")
 exit(failures == 0 ? 0 : 1)

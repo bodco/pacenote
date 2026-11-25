@@ -108,6 +108,8 @@ final class AccountLogin: ObservableObject {
         default: PrepRunner.shared.refreshAuth()
         }
         phase[kind] = rc == 0 ? .done : .failed(L("acct.failed"))
+        // PB-98: a new sign-in over a session the last request found signed out: one live request clears the mark
+        if rc == 0 && AccountAuth.isAuthOut(AIRoute.outStates()[AccountAuth.route(kind)]) { AccountWatch.shared.check(kind) }
         // F3: the account just connected becomes the default AI once its check says so
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
             MainActor.assumeIsolated {
@@ -158,11 +160,14 @@ struct AccountConnectRow: View {
     @ObservedObject var login = AccountLogin.shared
     @ObservedObject var prep = PrepRunner.shared
     @ObservedObject var codex = CodexAccount.shared
+    @ObservedObject var watch = AccountWatch.shared
 
+    /// PB-98: the same state as Settings > AI: a session the last request found signed out is not "Connected".
     var signedIn: Bool? {
-        switch kind {
-        case "codex": return CodexAccount.cliPath == nil ? false : codex.signedIn
-        default: return PrepRunner.claudePath == nil ? false : prep.loggedIn
+        switch watch.state(kind) {
+        case .signedIn: return true
+        case .checking: return nil
+        default: return false
         }
     }
 
