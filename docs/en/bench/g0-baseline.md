@@ -290,6 +290,27 @@ Results at this commit (`results/{A,B,C}-2026-11-25-s4.json`, against the `-r1ch
   the `-r1chk` results on main no column moves and no lookup time rises (C scale live p50/p95 20.14/25.45 to
   18.68/24.6 ms). S2+S3+S4 gate: PASS.
 
+## PB-73: client scope after the call (variant A, 2026-11-25)
+
+The register written from the after-call notes now takes the call's client from the client scope its Meeting Sheet
+keeps (PB-70), as the register written during the call already did; with no sheet, or a sheet that hid nothing, the
+items get no client as before. The bench reads the call's Tracker the way the preparation reads it, within that same
+scope; until now it read the whole project register, while the preparation has read the call's Tracker within the
+scope since PB-70. Raw numbers:
+`spikes/m0/bench/g0/results/A-2026-11-25-pb73.json`, against `A-2026-11-25-s4r2.json`.
+
+| Target | Item 13 cross-client, before | After |
+|---|---:|---:|
+| acme-weekly-status-2026-11-17 | 1 | 0 |
+| globex-weekly-2026-11-18 | 2 | 0 |
+| acme-technical-sync-2026-11-19 | 1 | 0 |
+| **All (A)** | **4** | **0** |
+
+Every other column is unchanged: prep coverage 80.0%, prep and live leaks 0, live answer rate 100.0%, answer text in
+top 80.0%, duplicates 5, suggested 8, wrong identity 4, false agreed 0, gold v2 rows 10/39 on both sets with the same
+leaks; only latency moves between runs. No coverage is lost: the call's own client's items and the project-wide items
+all stay in its Tracker, and only the other client's are left out (`tests/test_client_scope_notes_pb73.py`).
+
 ## What is measured
 
 Each target call is replayed on a clean copy of the fixture project, with every file dated by the date in its name
@@ -305,7 +326,7 @@ Each target call is replayed on a clean copy of the fixture project, with every 
 | Lookup p50/p95 ms | the warm lookup, every question 5 times |
 | Duplicates | open register items that match one expected item, minus one, after `commitments.record_notes` with the call's notes |
 | Wrong identity | expected items where the register did not do the expected thing (update the existing item, or add one new item) |
-| Item 13 cross-client | events of the call on the other client's items, plus the other client's item 13 in the call's Tracker |
+| Item 13 cross-client | events of the call on the other client's items, plus the other client's item 13 in the call's Tracker (since PB-73 read within the call's client scope, as the preparation reads it) |
 | False agreed | a "we will try" item that stands in the register as an open commitment |
 | False proposal | a firm expected item that stands in the register as a "we will try" proposal (added in PB-51 fix round 3; 0 on every target, and the fixture has no firm task with a trailing "maybe" yet, so unit tests cover that wording) |
 

@@ -89,6 +89,14 @@ def test_pb70_no_fact_of_the_other_client_and_no_loss(result):
     assert t["prep_coverage"] >= 80.0 and t["live_answer_rate"] >= 100.0
 
 
+def test_pb73_no_item13_of_the_other_client_after_the_call(result):
+    """PB-73 (owner 25.11): the register after the call and the call's Tracker (read within the call's client scope,
+    as the preparation reads it) hold no item 13 of the other client: 4 -> 0, the PB-70 numbers kept."""
+    t = result["totals"]
+    assert t["item13_cross_client"] == 0
+    assert t["prep_leaks"] == 0 and t["prep_coverage"] >= 80.0 and t["live_answer_rate"] >= 100.0
+
+
 def test_unknown_variants_are_not_faked(bench):
     """B and C exist since PB-52 S2 (tests/test_g0_gold_v2_pb52_s2.py); any other name is refused."""
     assert bench.variant("B").name == "B" and bench.variant("C").name == "C"
