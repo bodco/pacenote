@@ -63,7 +63,8 @@ def prepare(store: S.Store, scope: Optional[dict], as_of: Optional[str], exclude
     """TEMP tables of this request: _snip(sid, src, cls, tok) with cls in denied/ignored/pass and tok = valid at as_of,
     _src(id, cls) for sources, _ent(id) for visible entities."""
     c = store.conn
-    for t in ("_others", "_ownf", "_othf", "_deny", "_excl", "_eside", "_snip", "_src", "_rev", "_ent", "_claim", "_edge"):
+    for t in ("_others", "_ownf", "_othf", "_deny", "_excl", "_eside", "_snip", "_src", "_rev", "_ent", "_claim", "_edge",
+              "_tsent"):
         c.execute("DROP TABLE IF EXISTS temp.{}".format(t))
     c.execute("CREATE TEMP TABLE _others(name TEXT PRIMARY KEY)")
     c.execute("CREATE TEMP TABLE _ownf(rel TEXT)")
@@ -554,3 +555,154 @@ def entity_card(store: S.Store, entity_id: str, *, scope: Optional[dict] = None,
                               "modality": "confirmation", "status": "accepted", "said_at": s["at"],
                               "first_said_at": s["at"], "last_said_at": s["at"]})
     return dict(st, aliases=visible_aliases(store, entity_id, fold), claims=claims, history=history, edges=edges)
+
+
+# ---------------------------------------------------------------- global questions (S4, section 8.7)
+
+def prepare_topics(store: S.Store, as_of: Optional[str]) -> None:
+    """TEMP _tsent(id, topic_id): the topic sentences this request may see, after prepare(). A sentence passes when
+    its summary was written at or before as_of; it has at least one cite and every cited claim or edge passes (in
+    _claim/_edge: a passing row valid at as_of and no denied row); and no cited target has an ignored row (a deleted
+    source, or one in this request's exclude) on a source the summary was written from (topic_source). Ignored rows are
+    strict for sentences (a sentence cannot be split by row), and a re-summarise written without that source returns."""
+    c = store.conn
+    c.execute("DROP TABLE IF EXISTS temp._tsent")
+    if not c.execute("SELECT 1 FROM sqlite_master WHERE name='topic_source'").fetchone():
+        c.execute("CREATE TEMP TABLE _tsent(id INTEGER, topic_id INTEGER)")     # a store written before S4
+        return
+    c.execute("CREATE TEMP TABLE _tsent AS SELECT ts.id AS id, ts.topic_id AS topic_id FROM topic_sentence ts"
+              " JOIN topic t ON t.id=ts.topic_id WHERE t.summary_at IS NOT NULL AND (?1='' OR t.summary_at<=?1)"
+              " AND EXISTS (SELECT 1 FROM topic_cite tc WHERE tc.sentence_id=ts.id)"
+              " AND NOT EXISTS (SELECT 1 FROM topic_cite tc WHERE tc.sentence_id=ts.id AND NOT ("
+              "(tc.target='claim' AND tc.target_id IN (SELECT id FROM _claim))"
+              " OR (tc.target='edge' AND tc.target_id IN (SELECT id FROM _edge))))"
+              " AND NOT EXISTS (SELECT 1 FROM topic_cite tc JOIN evidence ev ON ev.target=tc.target"
+              " AND ev.target_id=tc.target_id JOIN _snip x ON x.sid=ev.snippet_id AND x.cls='ignored'"
+              " JOIN topic_source tsrc ON tsrc.topic_id=ts.topic_id AND tsrc.source_id=x.src WHERE tc.sentence_id=ts.id)",
+              (as_of or "",))
+    c.execute("CREATE INDEX temp._tsent_i ON _tsent(id)")
+    if c.in_transaction:
+        c.commit()
+
+
+def _history(store: S.Store, eid: str, as_of: Optional[str], window) -> List[dict]:
+    """Claims of an entity that are not current but have passing rows at or before as_of: "changed later" (11.2)."""
+    out = []
+    for r in store.q("SELECT cl.* FROM claim cl WHERE cl.subject_id=? AND cl.status='accepted'"
+                     " AND cl.id NOT IN (SELECT id FROM _claim) AND NOT EXISTS (SELECT 1 FROM pm_override o"
+                     " WHERE o.target='claim' AND o.target_key=cl.nkey AND o.field='reject')", (eid,)):
+        rows = [dict(x) for x in store.q(
+            "SELECT ev.quote, sn.said_at, sn.locator, s.uri FROM evidence ev JOIN _snip x ON x.sid=ev.snippet_id"
+            " AND x.cls='pass' JOIN snippet sn ON sn.id=ev.snippet_id JOIN revision rv ON rv.id=sn.revision_id"
+            " JOIN source s ON s.id=rv.source_id WHERE ev.target='claim' AND ev.target_id=? AND (?='' OR sn.said_at<=?)"
+            " AND coalesce(sn.said_at, rv.valid_from)>=? AND coalesce(sn.said_at, rv.valid_from)<=?"
+            " AND NOT EXISTS (SELECT 1 FROM evidence e2 JOIN _snip y ON y.sid=e2.snippet_id WHERE e2.target='claim'"
+            " AND e2.target_id=ev.target_id AND y.cls='denied') ORDER BY sn.said_at, sn.id",
+            (r["id"], as_of or "", as_of or "", (window or ("", ""))[0] or "", (window or ("", "9999"))[1] or "9999"))]
+        if rows:
+            out.append({"kind": "claim", "id": r["id"], "subject": eid, "predicate": r["predicate"], "value": r["value"],
+                        "modality": r["modality"], "status": r["status"], "origin": r["origin"],
+                        "quotes": [{"quote": x["quote"], "uri": x["uri"], "locator": json.loads(x["locator"]),
+                                    "said_at": x["said_at"]} for x in rows],
+                        "said_at": rows[0]["said_at"], "text": rows[0]["quote"], "source": rows[0]["uri"],
+                        "note": "changed later"})
+    return out
+
+
+def ask_global(store: S.Store, query: str, *, scope: Optional[dict] = None, as_of=None, window=None, exclude=(),
+               budget=None, mode: str = "prep", include_suggestions: bool = False, max_topics: int = 3,
+               timeline_max: int = 40) -> dict:
+    """A global question ("what about SSO over all time", section 8.7): the topics found by topic_fts over the
+    sentences this request may see and by alias match of the query to visible member entities, their passing summary
+    sentences, and the dated claims and edges of their members as one timeline (oldest first; claims only on a
+    replaced revision marked "changed later"). Read-only, no model request; answering in prose is the caller's (G3 or
+    G5), never the live path: mode="live" is refused. A topic is returned with its summary only when at least one of
+    its sentences passes; its members' facts still reach the timeline (a replay older than the summary gets claims
+    and timelines but no summary, section 11.2)."""
+    t0 = time.monotonic()
+    if mode == "live":
+        raise ValueError("ask_global is not for the live path (section 11.4)")
+    budget = budget or Budget()
+    as_of = S.utc(as_of) if as_of else None
+    stale, relabel_rep = _relabel_if_stale(store, scope, mode)
+    prepare(store, scope, as_of, exclude, stale=stale, window=window)
+    prepare_topics(store, as_of)
+    fold = IG.register_fold_at(store, as_of, passing=True)
+    score: Dict[int, float] = {}
+    q = fts_query(query)
+    if q and store.fts:
+        for r in store.q("SELECT f.rowid, x.topic_id, bm25(topic_fts) AS b FROM topic_fts f JOIN _tsent x ON x.id=f.rowid"
+                         " WHERE topic_fts MATCH ? ORDER BY bm25(topic_fts) LIMIT 200", (q,)):
+            score[r["topic_id"]] = score.get(r["topic_id"], 0.0) - float(r["b"]) + 1.0
+    elif q:
+        words = [w.strip('"*') for w in q.split(" OR ")]
+        for r in store.q("SELECT ts.text, x.topic_id FROM topic_sentence ts JOIN _tsent x ON x.id=ts.id"):
+            n = sum(r["text"].lower().count(w) for w in words)
+            if n:
+                score[r["topic_id"]] = score.get(r["topic_id"], 0.0) + n
+    qn = " " + S.norm_alias(" ".join(WORD.findall(query or ""))) + " "
+    matched = set()
+    for r in store.q("SELECT DISTINCT a.entity_id, a.alias_norm, a.origin FROM alias a JOIN _ent v ON v.id=a.entity_id"
+                     " ORDER BY a.entity_id, a.alias_norm"):
+        an = " " + " ".join(WORD.findall(r["alias_norm"])) + " "
+        if len(an.strip()) < 3 or an not in qn or r["entity_id"] in matched:
+            continue
+        if _alias_ok(store, r["alias_norm"], r["origin"], r["entity_id"], fold) and entity_state(store, r["entity_id"],
+                                                                                                    as_of, fold):
+            matched.add(r["entity_id"])
+    for eid in sorted(matched):
+        for r in store.q("SELECT topic_id, weight FROM topic_member WHERE entity_id=?", (eid,)):
+            score[r["topic_id"]] = score.get(r["topic_id"], 0.0) + 2.0
+    picked = sorted(score, key=lambda t: (-round(score[t], 9), t))[:max_topics]
+    visible = {r[0] for r in store.q("SELECT id FROM _ent")}
+    sup = {s["old"] for s in supersedes(store, as_of)}
+    topics, members, pending = [], [], 0
+    for tid in picked:
+        t = store.one("SELECT * FROM topic WHERE id=?", (tid,))
+        mem = [r[0] for r in store.q("SELECT entity_id FROM topic_member WHERE topic_id=? ORDER BY weight DESC, entity_id",
+                                     (tid,)) if r[0] in visible]
+        members += [m for m in mem if m not in members]
+        if t["state"] in ("pending", "stale"):
+            pending += 1
+        sents = []
+        for s in store.q("SELECT ts.id, ts.text FROM topic_sentence ts JOIN _tsent x ON x.id=ts.id WHERE ts.topic_id=?"
+                         " ORDER BY ts.ord", (tid,)):
+            cites = [(c["target"], c["target_id"]) for c in store.q("SELECT target, target_id FROM topic_cite"
+                                                                     " WHERE sentence_id=? ORDER BY target, target_id",
+                                                                     (s["id"],))]
+            dates = [r[0] for tgt, tid2 in cites for r in store.q(
+                "SELECT min(sn.said_at) FROM evidence ev JOIN _snip x ON x.sid=ev.snippet_id AND x.cls='pass' AND x.tok=1"
+                " JOIN snippet sn ON sn.id=ev.snippet_id WHERE ev.target=? AND ev.target_id=?", (tgt, tid2)) if r[0]]
+            sents.append({"kind": "topic", "id": s["id"], "topic": tid, "text": s["text"],
+                          "said_at": min(dates) if dates else None,
+                          "cites": [{"kind": a, "id": b} for a, b in cites]})
+        if not sents:
+            continue
+        label = next((entity_state(store, m, as_of, fold).get("name") for m in mem
+                      if entity_state(store, m, as_of, fold)), None)
+        topics.append({"id": tid, "label": label, "summary_at": t["summary_at"], "state": t["state"],
+                       "sentences": sents})
+    ents = {m: entity_state(store, m, as_of, fold) for m in members}
+    ents = {k: v for k, v in ents.items() if v}
+    timeline, seen = [], set()
+    for r in store.q("SELECT cl.* FROM claim cl JOIN _claim x ON x.id=cl.id WHERE cl.subject_id IN (SELECT value FROM"
+                     " json_each(?))", (json.dumps(sorted(ents)),)):
+        if r["subject_id"] in sup or (r["status"] == "suggestion" and not include_suggestions):
+            continue
+        timeline.append(_fact(store, "claim", r, ents))
+        seen.add(("claim", r["id"]))
+    for r in store.q("SELECT e.* FROM edge e JOIN _edge x ON x.id=e.id WHERE e.src_id IN (SELECT value FROM json_each(?1))"
+                     " OR e.dst_id IN (SELECT value FROM json_each(?1))", (json.dumps(sorted(ents)),)):
+        if r["src_id"] not in visible or r["dst_id"] not in visible or (r["status"] == "suggestion"
+                                                                         and not include_suggestions):
+            continue
+        f = _fact(store, "edge", r, ents)
+        f["why"] = "{} -> {} -> {}".format(_name(store, r["src_id"], ents, as_of, fold), r["rel"],
+                                           _name(store, r["dst_id"], ents, as_of, fold))
+        timeline.append(f)
+    for eid in sorted(ents):
+        timeline += _history(store, eid, as_of, window)
+    timeline.sort(key=lambda i: (i.get("said_at") or "", i["kind"], i["id"]))
+    truncated = len(timeline) > timeline_max
+    return {"topics": topics, "timeline": timeline[:timeline_max], "pending_topics": pending, "truncated": truncated,
+            "scope_stale": stale, "relabel": relabel_rep, "ms": round((time.monotonic() - t0) * 1000, 2)}

@@ -5,6 +5,20 @@ Pacenote. Earlier versions are described in the commit messages and in
 
 ## Unreleased
 
+- **Project memory, step 4: topic summaries and questions over all time (GraphRAG G2 S4, PB-87).** Still behind the
+  flag `evidence_store` (off by default); with the flag off nothing changes and nothing new is sent. With it on and
+  AI reading on, a pass ends by grouping what it read into topics (one client per topic, the same topics every time
+  for the same sources) and writing a short dated summary of each new or changed topic with the after-call model,
+  inside the same per-pass and daily ceilings, paused by a call like the rest of the pass. "Topic summaries: only
+  when asked" leaves them to a preparation or a question about a topic. Every summary sentence names the facts it
+  comes from; a sentence without one is dropped, and a summary is never counted as a source or as a confirmation.
+  A sentence is shown only while every fact it names is allowed for the call that asks: hiding a call, a document
+  that lost access, a deleted file or a file skipped for one preparation hides the sentences written from it (the
+  other sentences of the topic stay) until the topic is summarised again, and a replay of an earlier call never
+  sees a summary written after it. New commands for the app and the skill: `evidence topics` (summarise now) and
+  `evidence global` (a topic's summary and its dated timeline; never during a call). The benchmark now evaluates
+  every gold row: the timeline of "What happened with SSO since October?" finds 3 of its 4 facts in order (the
+  fourth is said on a call with no link to SSO), and no hidden, revoked, deleted or future fact leaks.
 - **Project memory, step 3b: which AI reads the sources and how much it may spend (GraphRAG G2 S3b, PB-103).**
   Nothing changes for the PM: the evidence store stays behind the flag `evidence_store` (off by default), no setting
   is shown and no AI is asked while the flag is off. With the flag on, indexing is its own AI job (`evidence`): the

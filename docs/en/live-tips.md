@@ -1365,7 +1365,13 @@ The skill and the app follow the same rules, in `rules/agenda.yaml`, `rules/comm
   project's memory keeps its list of documents that lost access. The Tracker items come from what the app already holds (the Notion mirror and the
   HubSpot tasks last loaded, a HubSpot task in the project of its linked commitment), with no new request. Memories
   of projects no longer in Pacenote are listed in the row and deleted only after you confirm. For now a pass is the
-  free part only (no AI request): AI reading comes with the next step.
+  free part only (no AI request): AI reading comes with the next step. With AI reading, a pass also groups what it
+  read into topics (one client per topic) and writes a short dated summary of each new or changed topic with the
+  after-call model, inside the same ceilings and never during a call; with "only when asked" the summaries wait for a
+  preparation or a question about a topic over all time. Each summary sentence names the facts it comes from and is
+  shown only when every one of them is still allowed for that call: hiding a call, losing access to a document or
+  deleting a file hides the sentences written from it until the topic is summarised again. Summaries are never
+  counted as a source or a confirmation.
 - **Brief freshness.** Home, Later and the call form compare when the brief was made with the files of the project
   folder (and the folders added in the form): "Brief is 2 days old · 3 changes since". Refresh updates only the
   sections the changed files touch and keeps your edits and the checklist. Nothing is refreshed by itself.

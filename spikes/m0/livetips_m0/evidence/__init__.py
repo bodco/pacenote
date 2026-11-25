@@ -12,8 +12,9 @@ sources to the AI the PM chose for the evidence job, or to the model on this Mac
     extract.py  S3: prompt, catalog, validator, cut detection (pure)
     worker.py   S3: the extraction pass, segment cache, ceilings, the call-active abort, estimate
     request.py  S3: one model request in its own process group
+    topics.py   S4: topic detection per client, summary requests and their validation (ask_global is in search.py)
     __main__    the CLI: python -m livetips_m0.evidence status|ingest|pass|estimate|exclude|override|search|card|
-                rebuild|vacuum|delete
+                topics|global|rebuild|vacuum|delete
 """
 import json
 import os

@@ -161,6 +161,12 @@ def render_evidence(rules_dir: Path = RULES) -> str:
                "under {} is a suggestion.".format(caps["entities"], caps["claims"], caps["relations"],
                                                  ev["thresholds"]["quote_chars"], ev["thresholds"]["confidence"]))
     out.append("- Output: JSON with `entities`, `claims` and `relations` (`rules/evidence_schema.json`).")
+    sm = ev.get("summary") or {}
+    if sm:          # PB-52 G2 S4: topic summaries are the app's, the skill only reads them
+        out.append("- Topic summaries (`{}`) are written by the app, never by the skill: at most {} sentences, each "
+                   "citing the facts it states (f1, f2, ...); a sentence without a valid cite is dropped "
+                   "(`rules/evidence_summary_schema.json`). A summary is derived: never evidence, never a "
+                   "confirmation.".format(sm.get("version"), sm.get("max_sentences")))
     return "\n".join(out) + "\n"
 
 

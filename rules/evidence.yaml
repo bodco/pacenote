@@ -72,3 +72,25 @@ output_cap:
     request, at most one request over
   code: no output limit (claude -p); bounded by the percent read back after every request, at most one request over
   local: num_predict set to exactly the cap for the evidence job (other jobs keep twice the cap)
+# Topic summaries (S4, spec section 8.7): one request per topic whose facts changed or whose cited source changed
+# state, on the evidence route's summary model (rules/ai.yaml > evidence > summary), output capped by
+# summary_output_tokens, inside the same pass ceiling. Its own version and prefix: a change here re-summarises topics
+# only and never changes the extractor id above (the extraction prefix does not read this section).
+summary:
+  version: g2-s4-1
+  input_tokens: 6000        # the facts of one topic sent with one request (oldest first, cut at this size)
+  max_sentences: 12
+  prompt: |
+    You write a short dated summary of one project topic from the numbered facts below. Rules:
+    1. Use only the facts given. Never add what you know from elsewhere.
+    2. Every sentence cites the refs of the facts it states (f1, f2, ...). A sentence without a valid ref is dropped.
+    3. Keep the dates, and say who proposed, expected or confirmed something as the modality says; a proposal is not an agreement.
+    4. Oldest first, at most 12 sentences, each under 300 characters. Return JSON only, no prose and no code fence.
+  examples:
+    - facts: |
+        Topic: Report export
+        Client: shared
+        f1 | 2026-03-02 | Report export: status = blocked | statement | "The report export is blocked by the font license."
+        f2 | 2026-03-09 | Report export -> depends_on -> Font license | statement | "export depends on the font license"
+        f3 | 2026-03-12 | Report export: due = March 20 | proposal | "we will try to ship the export by March 20"
+      output: '{"sentences": [{"text": "On March 2 the report export was blocked by the font license it depends on.", "cites": ["f1", "f2"]}, {"text": "On March 12 the team offered to try to ship it by March 20 (a proposal, not agreed).", "cites": ["f3"]}]}'

@@ -1,0 +1,5 @@
+{
+ "request_sha256": "4937fcc7340beaed2571f350b204c917f6b9d943cfb912b594f1b92f93a3a9fa",
+ "route": "authored",
+ "answer": "{\"sentences\": [{\"text\": \"2026-11-10: \\\"I will share the revised rollout checklist with you.\\\"\", \"cites\": [\"f1\"]}, {\"text\": \"2026-11-10: \\\"I will confirm the SSO user mapping with the security team.\\\"\", \"cites\": [\"f2\"]}, {\"text\": \"2026-11-10: \\\"And the go-live date of December 8 stays.\\\"\", \"cites\": [\"f3\"]}, {\"text\": \"2026-11-10: \\\"**David**: share the revised rollout checklist with Mike\\\"\", \"cites\": [\"f4\"]}, {\"text\": \"2026-11-10: \\\"**Mike**: confirm the SSO user mapping for item 13 with the security team\\\"\", \"cites\": [\"f5\"]}, {\"text\": \"2026-11-10: \\\"The Acme go-live date of December 8 stays.\\\"\", \"cites\": [\"f6\"]}, {\"text\": \"2026-11-10: \\\"The Acme go-live date of December 8 stays.\\\"\", \"cites\": [\"f7\"]}, {\"text\": \"2026-11-12: \\\"2026-11-12 Acme: SSO uses SAML, not OIDC.\\\"\", \"cites\": [\"f8\"]}, {\"text\": \"2026-11-12: \\\"Acme SSO uses SAML, not OIDC.\\\"\", \"cites\": [\"f9\"]}]}"
+}

@@ -112,6 +112,10 @@ CREATE TABLE IF NOT EXISTS topic_cite (
   sentence_id INTEGER NOT NULL REFERENCES topic_sentence(id) ON DELETE CASCADE, target TEXT NOT NULL,
   target_id INTEGER NOT NULL, PRIMARY KEY (sentence_id, target, target_id));
 CREATE INDEX IF NOT EXISTS topic_cite_target ON topic_cite(target, target_id);
+CREATE TABLE IF NOT EXISTS topic_source (
+  topic_id INTEGER NOT NULL REFERENCES topic(id) ON DELETE CASCADE, source_id INTEGER NOT NULL,
+  PRIMARY KEY (topic_id, source_id));
+CREATE INDEX IF NOT EXISTS topic_source_src ON topic_source(source_id);
 CREATE TABLE IF NOT EXISTS run (
   id INTEGER PRIMARY KEY, kind TEXT NOT NULL, route TEXT, model TEXT, fallback_from TEXT, extractor TEXT,
   started_at TEXT NOT NULL, ended_at TEXT, status TEXT NOT NULL, segments_plan INTEGER, segments_done INTEGER,
@@ -125,10 +129,23 @@ CREATE TABLE IF NOT EXISTS run_item (
 CREATE TABLE IF NOT EXISTS segment_cache (
   seg_hash TEXT NOT NULL, extractor TEXT NOT NULL, output TEXT NOT NULL, run_id INTEGER REFERENCES run(id),
   in_tokens INTEGER, out_tokens INTEGER, last_used TEXT NOT NULL, PRIMARY KEY (seg_hash, extractor));
+CREATE TRIGGER IF NOT EXISTS source_state_topics AFTER UPDATE OF state ON source WHEN NEW.state IS NOT OLD.state
+BEGIN
+  UPDATE topic SET state='stale' WHERE state='ready' AND (
+    id IN (SELECT topic_id FROM topic_source WHERE source_id=NEW.id)
+    OR id IN (SELECT ts.topic_id FROM topic_sentence ts JOIN topic_cite tc ON tc.sentence_id=ts.id
+              JOIN evidence ev ON ev.target=tc.target AND ev.target_id=tc.target_id
+              JOIN snippet sn ON sn.id=ev.snippet_id JOIN revision rv ON rv.id=sn.revision_id
+              WHERE rv.source_id=NEW.id));
+END;
 """
 # Two additions to the schema of spec section 6, both deterministic caches: source.ext_id (the Google <id16> or the
 # Notion page id a --revoked list names) and entity_source (the sources that back a deterministic entity, so its
 # visibility follows its sources' access class, spec section 11.2 step 1).
+# S4 adds topic_source (the sources whose evidence rows a topic's summary was written from: a sentence is hidden
+# when one of them is ignored for the request, deleted or in `exclude`, spec section 8.7) and the trigger
+# source_state_topics: every change of a source's state, on any path (state-only pass, deletion, Tracker, rebuild),
+# marks the summarised topics that cite it or read it `stale` in the same transaction (section 8.7 "staleness").
 
 FTS = """
 CREATE VIRTUAL TABLE IF NOT EXISTS snippet_fts USING fts5(text, heading, content='snippet', content_rowid='id',

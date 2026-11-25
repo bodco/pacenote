@@ -127,29 +127,37 @@ class FakeHandle:
         return {"cancelled": True} if self.cancelled else self.ans
 
 
-class FakeTransport:
-    """Counts requests; `responder(req) -> answer dict` (text, tokens, stop reason, error)."""
+SUMMARY_MARK = "write a short dated summary"     # the S4 topic summary prefix (rules/evidence.yaml > summary)
 
-    def __init__(self, responder=None, delay=0.0, out_tokens=None):
+
+class FakeTransport:
+    """Counts requests; `responder(req) -> answer dict` (text, tokens, stop reason, error). S4: a topic summary request
+    is kept apart in `summaries` and answered by `summarizer` (default: no sentence), so the extraction counts here
+    stay the extraction's."""
+
+    def __init__(self, responder=None, delay=0.0, out_tokens=None, summarizer=None):
         self.responder = responder or (lambda req: {"text": json.dumps(honest(req["user"]))})
+        self.summarizer = summarizer or (lambda req: {"text": json.dumps({"sentences": []})})
         self.delay = delay
         self.out_tokens = out_tokens
         self.requests = []
+        self.summaries = []
         self.cancelled = 0
 
     def answer(self, req):
-        a = dict(self.responder(req))
+        a = dict((self.summarizer if SUMMARY_MARK in req["system"] else self.responder)(req))
         a.setdefault("in_tokens", 1000)
         a.setdefault("out_tokens", self.out_tokens if self.out_tokens is not None else 300)
         a.setdefault("model", req["model"])
         return a
 
     def start(self, req):
-        self.requests.append(req)
+        (self.summaries if SUMMARY_MARK in req["system"] else self.requests).append(req)
         return FakeHandle(self, req)
 
 
 def run_pass(st, root, tr, route="api", **settings):
+    settings.setdefault("topics", "lazy")       # S3 tests measure extraction; S4 tests ask for eager summaries
     settings.setdefault("poll_s", 0.05)
     settings.setdefault("backoff0_s", 0)
     return W.extract_pass(st, str(root), dict(settings, route=route), tr, sleep=lambda s: None)

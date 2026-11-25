@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Topic summary output (PB-52 G2 S4, rules/evidence.yaml > summary)",
+  "type": "object",
+  "required": ["sentences"],
+  "properties": {
+    "sentences": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["text", "cites"],
+        "properties": {
+          "text": {"type": "string"},
+          "cites": {"type": "array", "items": {"type": "string"}, "minItems": 1}
+        }
+      }
+    }
+  }
+}

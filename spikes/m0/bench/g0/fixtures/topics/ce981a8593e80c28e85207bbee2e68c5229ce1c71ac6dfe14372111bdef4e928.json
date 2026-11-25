@@ -1,0 +1,5 @@
+{
+ "request_sha256": "ce981a8593e80c28e85207bbee2e68c5229ce1c71ac6dfe14372111bdef4e928",
+ "route": "authored",
+ "answer": "{\"sentences\": [{\"text\": \"2026-11-06: \\\"Devices: tablets for the depot crews.\\\"\", \"cites\": [\"f1\"]}, {\"text\": \"2026-11-06: \\\"The mobile rollout belongs to the field team track.\\\"\", \"cites\": [\"f2\"]}, {\"text\": \"2026-11-07: \\\"Brandon leads the field team track.\\\"\", \"cites\": [\"f3\"]}, {\"text\": \"2026-11-07: \\\"Brandon leads the field team track.\\\"\", \"cites\": [\"f4\"]}]}"
+}

@@ -1,0 +1,5 @@
+{
+ "request_sha256": "fbec82532343774d1791ad45055b6bcdf17fd19d6f31da61b3439d29d6a37970",
+ "route": "authored",
+ "answer": "{\"sentences\": [{\"text\": \"2026-11-12: \\\"Northpoint proposed 39 extra hours for the PDF export; Globex has not agreed yet.\\\"\", \"cites\": [\"f1\"]}, {\"text\": \"2026-11-12: \\\"Globex has not agreed yet.\\\"\", \"cites\": [\"f2\"]}]}"
+}

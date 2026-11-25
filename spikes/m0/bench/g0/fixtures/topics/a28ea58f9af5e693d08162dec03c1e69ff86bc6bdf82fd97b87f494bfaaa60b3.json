@@ -1,0 +1,5 @@
+{
+ "request_sha256": "a28ea58f9af5e693d08162dec03c1e69ff86bc6bdf82fd97b87f494bfaaa60b3",
+ "route": "authored",
+ "answer": "{\"sentences\": [{\"text\": \"2026-11-06: \\\"Brian chairs the steering group for Globex.\\\"\", \"cites\": [\"f1\"]}, {\"text\": \"2026-11-06: \\\"Globex confirmed the March invoice run.\\\"\", \"cites\": [\"f2\"]}, {\"text\": \"2026-11-06: \\\"Brian chairs the steering group for Globex.\\\"\", \"cites\": [\"f3\"]}]}"
+}

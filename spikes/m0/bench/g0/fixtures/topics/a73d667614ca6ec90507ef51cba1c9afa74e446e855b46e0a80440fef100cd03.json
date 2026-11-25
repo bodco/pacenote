@@ -1,0 +1,5 @@
+{
+ "request_sha256": "a73d667614ca6ec90507ef51cba1c9afa74e446e855b46e0a80440fef100cd03",
+ "route": "authored",
+ "answer": "{\"sentences\": [{\"text\": \"2026-11-06: \\\"Records older than seven years are in scope.\\\"\", \"cites\": [\"f1\"]}, {\"text\": \"2026-11-06: \\\"The archive purge waits for the retention policy.\\\"\", \"cites\": [\"f2\"]}, {\"text\": \"2026-11-06: \\\"The archive purge waits for the retention policy.\\\"\", \"cites\": [\"f3\"]}, {\"text\": \"2026-11-07: \\\"Rachel signs the retention policy for Acme legal.\\\"\", \"cites\": [\"f4\"]}, {\"text\": \"2026-11-07: \\\"Rachel signs the retention policy for Acme legal.\\\"\", \"cites\": [\"f5\"]}]}"
+}

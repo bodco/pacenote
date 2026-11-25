@@ -1,0 +1,5 @@
+{
+ "request_sha256": "c84672ffc4bcad4115c6722ea24cfa4099e423215bfaef91e2594eb3b353b4e5",
+ "route": "authored",
+ "answer": "{\"sentences\": [{\"text\": \"2026-11-05: \\\"The staging TLS certificate expires on November 30, someone has to renew it.\\\"\", \"cites\": [\"f1\"]}, {\"text\": \"2026-11-05: \\\"Also our identity provider for staging is Okta, production too.\\\"\", \"cites\": [\"f2\"]}, {\"text\": \"2026-11-05: \\\"We own staging\\\"\", \"cites\": [\"f3\"]}, {\"text\": \"2026-11-05: \\\"We own staging, we will renew it.\\\"\", \"cites\": [\"f4\"]}]}"
+}
