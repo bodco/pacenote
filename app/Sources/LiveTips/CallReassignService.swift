@@ -116,6 +116,7 @@ final class CallReassignService {
         CommitmentRegister.moveCall(old, from: (fromRoot as NSString).appendingPathComponent("live"),
                                     to: (t.root as NSString).appendingPathComponent("live"), project: t.slug, title: title)
         if !title.isEmpty { SeriesMemory.shared.retarget(title: title, to: t.target) }
+        CallSeriesStore.shared.update { $0.forget(old) }         // PB-109: a moved call leaves its series
         CallEngine.shared.callMoved(from: old, to: new, root: t.root, config: t.config)
         let meta = RecordingFiles.metaPath(transcript: new)
         if var m = RecordingMeta.load(meta) { m.project = t.name; m.save(meta) }

@@ -69,7 +69,18 @@ final class SeriesMemory {
 
     func lookup(seriesKey: String?, title: String) -> Entry? {
         if let s = seriesKey, let e = map[s] { return e }
-        return map[Self.titleKey(title)]
+        if let e = map[Self.titleKey(title)] { return e }
+        // PB-109: a series the PM put together carries the last settings of its newest call with a remembered setup
+        // (only when one project has a series with this title: never another project's settings)
+        let store = CallSeriesStore.shared
+        let mans = store.book.series.filter { $0.titles.contains(CallSeriesBook.titleKey(title)) }
+        guard mans.count == 1 else { return nil }
+        let reg = ProjectRegistry.load(from: AppPaths.projects), p = mans[0].project
+        let targets = Set(reg.projects.filter { $0.name == p }.map { "project:" + $0.slug } + reg.workspaces.filter { $0.name == p }.map { "workspace:" + $0.name })
+        for r in store.earlier(title: title, projects: [p]) {
+            if let e = map[Self.titleKey(r.title)], targets.contains(e.target) { return e }       // only this project's settings
+        }
+        return nil
     }
 }
 
@@ -90,9 +101,11 @@ extension StartCallModel {
     /// Pacenote 0.8 (rules/agenda.yaml > wrapup): agenda items not raised on the last call of this series go into
     /// "What matters" as one line, so the next preparation and the tips pick them up. Same project only.
     func carryNotRaised(title: String) {
-        let key = EditLog.seriesKey(title)
         let names = Set([project?.name, project?.slug, workspace?.name, root.map { ($0 as NSString).lastPathComponent }].compactMap { $0 })
-        guard !names.isEmpty, let last = CallHistory.shared.visible.first(where: { $0.start < Date() && EditLog.seriesKey($0.title) == key && names.contains($0.project) }) else { return }
+        // PB-109: the last call of the series (a series the PM put together too; a call taken out is not its last call)
+        let store = CallSeriesStore.shared
+        let manual = names.contains { store.book.manual(title: effectiveTitle, project: $0) != nil }
+        guard !names.isEmpty, let last = store.earlier(title: manual ? effectiveTitle : title, projects: names, before: Date()).first else { return }
         let left = Self.notRaised(transcript: last.file)
         guard !left.isEmpty else { return }
         let line = L("call.notRaisedLast", ["items": left.joined(separator: "; ")])
@@ -225,16 +238,27 @@ extension StartCallModel {
     /// next to the participants typed or taken from the calendar, so the voice library's names are offered again.
     var participantsWithPrevious: [String] {
         var out = participants
+        // PB-109: the people of the last 3 calls of a series the PM put together (any title)
+        let names = Set([project?.name, workspace?.name].compactMap { $0 })
+        if names.contains(where: { CallSeriesStore.shared.book.manual(title: effectiveTitle, project: $0) != nil }) {
+            for r in CallSeriesStore.shared.earlier(title: effectiveTitle, projects: names, before: Date()).prefix(3) {
+                for f in CallSeriesStore.people(r.file, me: []) where !out.contains(where: { $0.caseInsensitiveCompare(f) == .orderedSame }) { out.append(f) }
+            }
+        }
         guard let root = root else { return out }
         let live = (root as NSString).appendingPathComponent("live")
         let fm = FileManager.default
         let want = Self.slugify(effectiveTitle).replacingOccurrences(of: "-", with: "")
+        // PB-109: a call taken out of the series (or picked into another one) does not bring its people
+        let projects = Set([project?.name, project?.slug, workspace?.name, (root as NSString).lastPathComponent].compactMap { $0 })
+        let skip = CallSeriesStore.shared.book.excluded(projects: projects)
         var seen = 0
         for sp in CallLayout.files(live: live, includeWork: true).sorted(by: { ($0 as NSString).lastPathComponent > ($1 as NSString).lastPathComponent }) {
             let n = (sp as NSString).lastPathComponent
             guard n.hasSuffix(".speakers.json"), n.range(of: "^\\d{4}-\\d\\d-\\d\\d-\\d{4}-", options: .regularExpression) != nil else { continue }
             let core = String(n.dropFirst(16)).replacingOccurrences(of: ".app.speakers.json", with: "").replacingOccurrences(of: ".speakers.json", with: "").replacingOccurrences(of: "-", with: "")
             guard !want.isEmpty, core == want else { continue }
+            if !skip.isEmpty, skip.contains(CommitmentRegister.callKey(String(n.dropLast(".speakers.json".count)))) { continue }
             guard let d = fm.contents(atPath: sp),
                   let o = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any] else { continue }
             var found: [String] = ((o["roster"] as? [[String: Any]]) ?? []).compactMap { $0["name"] as? String }

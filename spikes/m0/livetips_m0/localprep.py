@@ -50,9 +50,12 @@ def slug(s: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", (s or "").lower())
 
 
-def previous_calls(live: str, title: str, n: int = 3) -> List[str]:
-    """The same pick as the app's previousCallsBlock: transcripts of this meeting by title, newest first."""
+def previous_calls(live: str, title: str, n: int = 3, exclude=()) -> List[str]:
+    """The same pick as the app's previousCallsBlock: transcripts of this meeting by title, newest first.
+    PB-109: `exclude` holds call keys (file name without .app and .md) the PM took out of the series or picked into
+    another one; they are skipped and do not take a slot."""
     want = slug(title)
+    exclude = set(exclude or ())
     out, stems = [], set()
     try:
         names = sorted((str(p) for p in call_layout.files(live)), key=os.path.basename, reverse=True)
@@ -66,7 +69,7 @@ def previous_calls(live: str, title: str, n: int = 3) -> List[str]:
         core = slug(m.group(1)[16:])
         if not want or not (core == want or (min(len(core), len(want)) >= 4 and (want in core or core in want))):
             continue
-        if m.group(1) in stems:
+        if m.group(1) in stems or m.group(1) in exclude:
             continue
         stems.add(m.group(1))
         named = str(call_layout.sidecar(full[:-3], ".named.md"))
@@ -101,6 +104,25 @@ def skill_rules(skill: str) -> str:
     return "\n\n".join(parts)
 
 
+def series_previous(r: dict, n: int = 3) -> List[str]:
+    """PB-109: the previous calls of this call for the brief. The app sends `series_calls` for a series the PM put
+    together by hand (its calls can have other titles; an empty list means none, no title fallback) and
+    `series_exclude` for calls taken out of the series; without them it is the old pick by title."""
+    if isinstance(r.get("series_calls"), list):
+        return [p for p in r["series_calls"] if isinstance(p, str) and p][:n]
+    return previous_calls(r["live"], r["title"], n, exclude=r.get("series_exclude") or ())
+
+
+def series_open_text(r: dict) -> str:
+    """PB-109: the open commitments of a series the PM put together, as the app lists them (listed first)."""
+    lines = [str(x) for x in (r.get("series_open") or []) if str(x).strip()]
+    if not lines:
+        return ""
+    name = r.get("series_name") or r.get("title", "")
+    return (f'Open commitments of the series "{name}" (list them first in the brief\'s "Previous meetings" section, '
+            "before anything else; check each against newer sources):\n" + "\n".join(lines))
+
+
 def build_pack(r: dict) -> tuple:
     """The context pack and the labels used (0.8.5 shape). 0.9.7: picked by priority in prepcontext, see build_pack_ex."""
     pack, used, _, _ = build_pack_ex(r)
@@ -114,8 +136,10 @@ def build_pack_ex(r: dict, route: str = "local") -> tuple:
     the manifest (prep.json)."""
     from . import prepcontext
     previous = []
+    if r.get("use_project_folder", True) and series_open_text(r):
+        previous.append(("Open commitments of this series", series_open_text(r)))
     if r.get("use_project_folder", True) and r.get("include_prev", True):
-        for p in previous_calls(r["live"], r["title"]):
+        for p in series_previous(r):
             previous.append(("Previous call of this meeting: " + os.path.basename(p), read_text(p, 25_000)))
     return prepcontext.build(r, previous=previous, route=route)
 
@@ -375,7 +399,7 @@ def main(argv=None) -> int:
         # Pass 1: notes of each earlier call of this meeting (rules/ai.yaml > local)
         say(stage="pack")
         notes = []
-        prev = previous_calls(r["live"], r["title"]) if r.get("use_project_folder", True) else []
+        prev = series_previous(r) if r.get("use_project_folder", True) else []
         for i, p in enumerate(prev):
             # rules/notes.yaml > preparation: an older call with full notes is read from them (no notes pass)
             stem = re.sub(r"(\.named)?\.md$", "", p)

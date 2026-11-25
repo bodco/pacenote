@@ -32,6 +32,7 @@ struct CallPageView: View {
     @State private var makeNote = ""
     @State private var copied = false
     @State private var reassigning = false       // 0.10.1 (A3): the project picker in the header
+    @State private var seriesPicking = false     // PB-109: the series picker in the header
     @State private var confirmServerDelete = false  // 0.12.1 (B8): "Delete from server"
     @State private var serverDeleteError = ""
     @ObservedObject private var nav = HomeNav.shared       // 0.25 (R2): Follow-up is a tab of the page
@@ -73,10 +74,10 @@ struct CallPageView: View {
         CommitmentRegister.legacy(o.tasks, items: callItems, call: file, them: L("callEdit.them"))
     }
 
-    /// Earlier and later calls of the same meeting (same project, same title key).
+    /// Earlier and later calls of the same meeting (same project, same title key), or of the series the PM put
+    /// together (PB-109, CallSeriesStore).
     static func series(of r: CallHistory.Record) -> [CallHistory.Record] {
-        let key = EditLog.seriesKey(r.title)
-        return CallHistory.shared.visible.filter { EditLog.seriesKey($0.title) == key && $0.project == r.project }
+        CallSeriesStore.shared.records(of: r)
     }
 
     @State private var width: CGFloat = 1000      // 2026-11-05 (redesign): two columns on a wide window
@@ -142,6 +143,7 @@ struct CallPageView: View {
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: CallReassignService.changed)) { _ in tick += 1 }   // 0.10.1 (A3)
+        .onChange(of: seriesPicking) { if !seriesPicking { tick += 1 } }      // PB-109: the series' count after the picker
         .onReceive(NotificationCenter.default.publisher(for: NotesRewrite.finished)) { n in if (n.object as? String) == file { tick += 1 } }
         .onAppear {
             DriveRecordings.shared.syncTranscript(file, create: false)   // 0.11.0 (B7b): a changed transcript in Drive
@@ -272,6 +274,13 @@ struct CallPageView: View {
                 HomeTagView(kind: kind, text: tag)
                 if !peopleText.isEmpty { Text(peopleText).font(t.homeText(14)).foregroundStyle(PN.C.text2).lineLimit(1) }
                 if series > 1, let r = record { HomeLink(L("page.seriesLink", ["n": "\(series)"])) { SeriesWindow.show(record: r) } }
+                // PB-109: pick earlier calls of this project into the series, rename it, take a call out
+                if let r = record {
+                    HomeLink(L("page.seriesPick")) { if ModuleGate.allow("series") { seriesPicking = true } }.help(L("page.seriesPick.help"))
+                        .popover(isPresented: $seriesPicking, arrowEdge: .bottom) {
+                            SeriesPickerView(anchor: SeriesAnchor(file: r.file, title: r.title, project: r.project), done: { seriesPicking = false })
+                        }
+                }
             }
             if !meetNote.isEmpty { Text(meetNote).font(t.homeText(13)).foregroundStyle(PN.C.text3).fixedSize(horizontal: false, vertical: true) }
             if !note.isEmpty { Text(note).font(t.homeText(13)).foregroundStyle(PN.C.notreadyText).fixedSize(horizontal: false, vertical: true) }

@@ -7049,5 +7049,6 @@ func keyRejectedPB97() {
 }
 keyRejectedPB97()
 accountAuthPB98()
+callSeriesPB109()
 print("core checks: \(passed) passed, \(failures) failed")
 exit(failures == 0 ? 0 : 1)

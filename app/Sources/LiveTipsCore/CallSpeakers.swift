@@ -52,6 +52,20 @@ public struct CallSpeakers: Equatable {
     static let rx = try! NSRegularExpression(pattern: "^\\[(\\d\\d:\\d\\d:\\d\\d)\\]\\s+(.+?)(?:\\s+\\[(S\\d+)\\])?\\s+\\((\\w{2,})\\):\\s?(.*)$")
 
     /// md: the raw transcript; snapshot: speakers.json; voicesFile: voices.json (only remember/auto are read).
+    /// PB-109: the speaker names of a call's speakers.json (its roster and its clusters, as engine.py writes them),
+    /// in file order, without empties and repeats.
+    public static func names(json o: [String: Any]) -> [String] {
+        var found: [String] = ((o["roster"] as? [[String: Any]]) ?? []).compactMap { $0["name"] as? String }
+        let cl = (o["clusters"] as? [String: [String: Any]]) ?? [:]
+        found += cl.keys.sorted { (Int($0.dropFirst()) ?? 0) < (Int($1.dropFirst()) ?? 0) }.compactMap { cl[$0]?["name"] as? String }
+        var out: [String] = []
+        for n in found {
+            let t = n.trimmingCharacters(in: .whitespaces)
+            if !t.isEmpty, !out.contains(where: { $0.caseInsensitiveCompare(t) == .orderedSame }) { out.append(t) }
+        }
+        return out
+    }
+
     public static func parse(md: String, snapshot: [String: Any]?, voicesFile: [String: Any]?, me: String) -> CallSpeakers {
         var s = CallSpeakers()
         for raw in md.split(separator: "\n", omittingEmptySubsequences: true) {

@@ -166,7 +166,8 @@ enum AfterCall {
                 let next = UpNext.shared.items.first { m in
                     CommitmentRegister.seriesKey(project: m.project?.slug ?? "", title: m.effectiveTitle) == key || EditLog.seriesKey(m.effectiveTitle) == EditLog.seriesKey(r.title)
                 }
-                d["series"] = ["name": r.title, "n": s.count, "next": next.map { CallPageView.fmt("EEEHHmm").string(from: $0.callDate) } ?? ""]
+                let named = CallSeriesStore.shared.name(file: r.file, title: r.title, project: r.project)     // PB-109
+                d["series"] = ["name": named.isEmpty ? r.title : named, "n": s.count, "next": next.map { CallPageView.fmt("EEEHHmm").string(from: $0.callDate) } ?? ""]
             }
         }
         return d

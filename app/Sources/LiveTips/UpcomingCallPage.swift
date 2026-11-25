@@ -43,6 +43,7 @@ struct UpcomingCallPage: View {
     @ObservedObject var runner = PrepRunner.shared
     @ObservedObject var register = Register.shared
     @ObservedObject var history = CallHistory.shared
+    @ObservedObject private var seriesStore = CallSeriesStore.shared      // PB-109: Add and Take out show at once
     @AppStorage("moduleTracker") private var trackerOn = true
     @ObservedObject var jobs = SheetJobs.shared
     @State private var tab = UpcomingCallPage.shotTab ?? "setup"
@@ -428,12 +429,25 @@ struct UpcomingCallPage: View {
     private var series: [Commitment] {
         let key = EditLog.seriesKey(model.effectiveTitle)
         guard let slug = model.project?.slug ?? model.workspace?.name.lowercased(), !slug.isEmpty else { return [] }
-        return register.open(mine: nil).filter { $0.project == slug && $0.series.split(separator: "|", maxSplits: 1).last.map(String.init) == key }
+        let open = register.open(mine: nil).filter { $0.project == slug }
+        // PB-109: a series the PM put together: the items of its calls; calls taken out or picked elsewhere leave
+        guard !projectNames.isEmpty else { return open.filter { $0.series.split(separator: "|", maxSplits: 1).last.map(String.init) == key } }
+        return CallSeriesStore.shared.items(open, title: model.effectiveTitle, projects: projectNames)
+    }
+
+    /// The names a call of this project has in the history (PB-109).
+    private var projectNames: Set<String> {
+        Set([model.project?.name, model.workspace?.name].compactMap { $0 }.filter { !$0.isEmpty })
     }
 
     private var earlier: [CallHistory.Record] {
         let key = EditLog.seriesKey(model.effectiveTitle)
-        return history.visible.filter { $0.start < model.callDate && EditLog.seriesKey($0.title) == key }
+        if let p = projectNames.first(where: { CallSeriesStore.shared.book.manual(title: model.effectiveTitle, project: $0) != nil }) {
+            return CallSeriesStore.shared.earlier(title: model.effectiveTitle, projects: [p], before: model.callDate)     // PB-109
+        }
+        let book = CallSeriesStore.shared.book
+        return history.visible.filter { $0.start < model.callDate && EditLog.seriesKey($0.title) == key
+            && !book.isAlone($0.file, project: $0.project) && book.manual(file: $0.file, title: $0.title, project: $0.project) == nil }
     }
 
     /// 0.25 (R2, board UT row 2): On you on the left (with Add); Waiting on others and Decided last time on the right.

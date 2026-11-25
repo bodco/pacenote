@@ -71,6 +71,17 @@ Pacenote. Earlier versions are described in the commit messages and in
   window, next to the Verbatim blocks; Show text opens it in the scrollable reading box. Call sync never sends a custom block's settings
   (instruction, file paths, links, pasted text) or the path, link and title of its own sources, and the other blocks
   of the sheet never cite those sources.
+- **Series: pick earlier calls into a series (PB-109).** The call page and call setup have **Series**: name the
+  series, add earlier calls of the same project (newest first, with title, date, length and a search box) and take a
+  call out. Calls with the same project and title still join by themselves, and Take out undoes that for one call. A
+  call is in one series at most, calls of another project are never offered, and moving a call to another project
+  takes it out of its series. Pacenote suggests calls with a similar title or the same people but never adds one
+  without your click. A series you put together carries its own context like a regular one: its open commitments
+  (added calls bring theirs at once, a call taken out takes its items along), the agenda points not raised, the
+  standing goal and last settings, and the people of its calls; the preparation reads its calls and lists its open
+  commitments first, on every preparation route (Claude, Codex, OpenAI, Gemini, local, API). A call you took out is
+  no longer read by the preparation as a previous call of the meeting and its people are no longer offered. Old series
+  and the series of existing commitments keep working unchanged.
 - **Meeting Sheet: a Verbatim block for text that must stay word for word (PB-102).** + Add a block now offers
   Verbatim, as often as you need it in one call. In its Settings you give it a title, a source (a file of the call,
   any file, or pasted text) and, if you want only part of a Markdown file, sections such as 1-4 by heading. The

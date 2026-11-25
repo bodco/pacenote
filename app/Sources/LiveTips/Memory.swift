@@ -150,6 +150,7 @@ enum SeriesWindow {
 struct SeriesView: View {
     let record: CallHistory.Record
     @ObservedObject var register = Register.shared
+    @ObservedObject private var seriesStore = CallSeriesStore.shared      // PB-109
     @Environment(\.pnTheme) private var t
     @State private var allCalls = false
 
@@ -160,8 +161,10 @@ struct SeriesView: View {
         let calls = CallPageView.series(of: record)          // newest first
         let df = CallPageView.fmt("EEEdMMM")
         let folder = CallLayout.liveFolder(of: record.file)
-        let key = EditLog.seriesKey(record.title)
-        let items = register.items(in: folder).filter { $0.series.split(separator: "|", maxSplits: 1).last.map(String.init) == key && $0.status != "dropped" }
+        // PB-109: the items of the series' calls (a picked call's items join, a call taken out takes its items along)
+        let titleKeys = seriesStore.book.titles(file: record.file, title: record.title, project: record.project)
+        let manualName = seriesStore.name(file: record.file, title: record.title, project: record.project)
+        let items = seriesStore.items(register.items(in: folder), of: record).filter { $0.status != "dropped" }
         let latest = calls.first, prev = calls.dropFirst().first
         let newKey = latest.map { CommitmentRegister.callKey($0.file) } ?? ""
         let open = items.filter { $0.status == "open" }
@@ -178,7 +181,7 @@ struct SeriesView: View {
         }()
         let lingering = SeriesWindow.lingering(calls)
         let reg = NotionAutoAdd.active(PyTool.project(of: record.file).project)
-        let next = CalendarService.shared.events.first { $0.start > Date() && EditLog.seriesKey($0.title) == key }
+        let next = CalendarService.shared.events.first { $0.start > Date() && titleKeys.contains(EditLog.seriesKey($0.title)) }
         VStack(spacing: 0) {
             PageBackBar(crumb: L("series.crumb", ["project": record.project])) {
                 if let n = next { Text(t.caps ? L("series.next", ["date": df.string(from: n.start)]).uppercased() : L("series.next", ["date": df.string(from: n.start)]))
@@ -187,7 +190,7 @@ struct SeriesView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     PageTitleBlock(meta: L("series.meta", ["n": "\(calls.count)", "project": record.project, "date": calls.last.map { df.string(from: $0.start) } ?? ""]),
-                                   title: record.title) {
+                                   title: manualName.isEmpty ? record.title : manualName) {
                         Text(L("series.explain")).font(t.homeText(14)).foregroundStyle(PN.C.text2).fixedSize(horizontal: false, vertical: true)
                     }
                     PageColumns {
