@@ -5,7 +5,8 @@ protect_edits(old, new) returns a copy of `new` where:
   - a fact the user wrote (origin user) or changed (status edited) is the old fact as it was, in the same block:
     it replaces the new fact with the same id, or is added at its old place when the new build has no such fact;
   - a protected fact whose block is gone from the new sheet brings its block back with only the protected facts;
-  - PB-100: a fact the user deleted (its id in deleted_facts) stays out, and deleted_facts goes on to the new sheet.
+  - PB-100: a fact the user deleted (its id in deleted_facts) stays out together with its older
+    "was X" value (superseded_by), and deleted_facts goes on to the new sheet.
 Facts of the readiness engine are not protected: it adds them again by itself.
 """
 import copy
@@ -64,18 +65,19 @@ def protect_edits(old_sheet: dict, new_sheet: dict) -> dict:
     # A protected fact moved into another block by the user must not also stay where the new build put it.
     prot_ids = {f.get("id") for b in blocks for f in b.get("facts") or [] if is_protected(f)}
     deleted = deleted_ids(old_sheet)
+    # PB-100: the older "was X" value of a deleted fact goes with it (it is shown only under the newer one). Its own
+    # id is not kept in deleted_facts: the rule follows superseded_by, so a later value for the label is not hidden.
+    gone = deleted | {f.get("id") for b in blocks for f in b.get("facts") or [] if f.get("superseded_by") in deleted}
     for b in blocks:
         b["facts"] = [f for f in b.get("facts") or [] if (is_protected(f) or f.get("id") not in prot_ids)
-                      and f.get("id") not in deleted]
+                      and f.get("id") not in gone]
     if deleted:
         out["deleted_facts"] = sorted(deleted | deleted_ids(out))
         for b in blocks:                  # a conflict partner left alone is no longer a conflict (as in the app)
             for f in b["facts"]:
-                if f.get("superseded_by") in deleted:
-                    f.pop("superseded_by", None)
                 cw = f.get("conflict_with")
-                if isinstance(cw, list) and any(x in deleted for x in cw):
-                    left = [x for x in cw if x not in deleted]
+                if isinstance(cw, list) and any(x in gone for x in cw):
+                    left = [x for x in cw if x not in gone]
                     if left:
                         f["conflict_with"] = left
                     else:

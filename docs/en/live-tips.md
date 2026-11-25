@@ -2658,6 +2658,9 @@ fewer repeats and empty blocks, the same share of the call's topics covered.
 **Editing and Refresh.** Click a fact to edit it; it becomes Edited. The trash button next to the pencil deletes a
 fact, an agenda point or a question; a line with **Undo** stays in its block for 10 seconds instead of a confirm
 dialog, and Refresh never brings a deleted fact back (an automatic question you deleted is not asked again either).
+Deleting a value that replaced an older one also deletes its "was" value; Undo brings both back. A deleted fact with
+a label (such as Budget) keeps new values for that label out on Refresh, while a reworded agenda point or question
+is a new item and can show up again.
 The block menu adds a fact, regenerates the
 block, hides it, moves it up or down, or removes it. The qualification block has its method in the header (BANT by
 default, or any method of Sales, shown by name). **Refresh** rebuilds the sheet from the sources again and **never touches what you

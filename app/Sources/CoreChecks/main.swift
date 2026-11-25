@@ -2901,6 +2901,22 @@ func meetingSheetUI0100() {
     expect(dc.fact(id: "f-size-li")?.status == .needsCheck && dc.fact(id: "f-size-li")?.conflictWith == nil && dcf?.partners.map(\.id) == ["f-size-li"],
            "delete: a conflict partner left alone becomes needs_check")
     if let dcf { expect(SheetEdit.restoreFact(&dc, dcf) && dc == base, "undo: the conflict pair is back") }
+    // the newer value deleted: its older "was X" value (superseded_by, shown only under it) goes too, Undo brings both
+    var dw = base
+    for bi in dw.blocks.indices {
+        for fi in dw.blocks[bi].facts.indices where dw.blocks[bi].facts[fi].id == "f-size-site" {
+            dw.blocks[bi].facts[fi].status = .stale; dw.blocks[bi].facts[fi].supersededBy = "f-size-li"
+        }
+        for fi in dw.blocks[bi].facts.indices where dw.blocks[bi].facts[fi].id == "f-size-li" {
+            dw.blocks[bi].facts[fi].status = .found; dw.blocks[bi].facts[fi].conflictWith = nil
+        }
+    }
+    let dwBefore = dw
+    let dwf = SheetEdit.deleteFact(&dw, factID: "f-size-li")
+    expect(dw.fact(id: "f-size-li") == nil && dw.fact(id: "f-size-site") == nil && dwf?.replaced.map(\.fact.id) == ["f-size-site"]
+           && dwf?.partners.isEmpty == true && dw.deletedFacts == ["f-size-li"], "delete: the was value goes with the newer fact, only its id kept")
+    if let dwf { expect(SheetEdit.restoreFact(&dw, dwf) && dw == dwBefore && dw.fact(id: "f-size-site")?.supersededBy == "f-size-li",
+                        "undo: the newer fact and its was value are back in their order") }
     // saved and read again: deleted_facts goes to the file for Refresh
     let delPath = NSTemporaryDirectory() + "pb100-\(UUID().uuidString).sheet.json"
     var dsv = base

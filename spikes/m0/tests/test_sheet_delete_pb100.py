@@ -89,6 +89,39 @@ def test_merge_keeps_a_deleted_conflict_side_out_and_the_sheet_valid(rules):
     assert S.validate(out, P.method_names(rules)) == []
 
 
+def newer_wins(sheet):
+    """Team size: 80 (f-size-li) replaced the older 120 (f-size-site), shown as "was 120" under it."""
+    for f in block(sheet, "company")["facts"]:
+        if f["id"] == "f-size-site":
+            f.update(status="stale", conflict_with=["f-size-li"], superseded_by="f-size-li")
+        if f["id"] == "f-size-li":
+            f["status"] = "found"
+            f.pop("conflict_with", None)
+    return sheet
+
+
+def test_merge_keeps_the_was_value_of_a_deleted_fact_out(rules):
+    # the app deletes the newer fact together with its "was" value (SheetEdit.deleteFact)
+    old = newer_wins(load("sales-intro-lumenfield"))
+    old["deleted_facts"] = ["f-size-li"]
+    block(old, "company")["facts"] = [f for f in block(old, "company")["facts"] if f["id"] not in ("f-size-li", "f-size-site")]
+    new = newer_wins(load("sales-intro-lumenfield"))     # the rebuild finds 80 replacing 120 again, block not edited
+    out = merge.protect_edits(old, new)
+    assert "f-size-li" not in ids(out) and "f-size-site" not in ids(out)
+    assert not [f for b in out["blocks"] for f in b["facts"] if f.get("label") == "Team size"]
+    assert out["deleted_facts"] == ["f-size-li"] and S.validate(out, P.method_names(rules)) == []
+
+
+def test_merge_keeps_the_was_value_out_when_the_old_file_still_has_it(rules):
+    # a file written before this fix: the "was" value stayed, pointing at the deleted fact
+    old = newer_wins(load("sales-intro-lumenfield"))
+    old["deleted_facts"] = ["f-size-li"]
+    block(old, "company")["facts"] = [f for f in block(old, "company")["facts"] if f["id"] != "f-size-li"]
+    block(old, "company")["edited_by_user"] = True
+    out = merge.protect_edits(old, newer_wins(load("sales-intro-lumenfield")))
+    assert "f-size-site" not in ids(out) and S.validate(out, P.method_names(rules)) == []
+
+
 def test_merge_without_deletes_adds_no_key():
     out = merge.protect_edits(load("sales-intro-lumenfield"), load("sales-intro-lumenfield"))
     assert "deleted_facts" not in out

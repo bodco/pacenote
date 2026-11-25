@@ -56,7 +56,9 @@ final class SheetDoc: ObservableObject {
         guard var s = sheet, f(&s) else { return }
         sheet = s
         guard SheetCache.shared.save(s, to: path) else { note = L("sheet.ui.err.save"); return }
-        if let raw { try? MeetingSheetIO.layBack(raw, to: path) }      // PB-100: e.g. a question's keywords
+        if let raw {                                                    // PB-100: e.g. a question's keywords
+            do { try MeetingSheetIO.layBack(raw, to: path) } catch { note = L("sheet.ui.err.save") }
+        }
         recheck()
     }
 
