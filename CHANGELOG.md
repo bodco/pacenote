@@ -10,8 +10,8 @@ Pacenote. Earlier versions are described in the commit messages and in
   is no confirm dialog: a line with Undo stays in its block for 10 seconds. A delete is kept like an edit:
   Refresh never brings the item back, and an automatic question you deleted (such as the budget question) is not
   added again. A value that replaced an older one goes together with its "was" value, and Undo brings both back.
-  A deleted fact with a label (such as Budget) keeps new values for that label out on Refresh; a reworded agenda
-  point or question is a new item and can show up again.
+  A delete marks its block as edited, like an edit: Refresh keeps that block as you left it, with no new or
+  reworded items from the sources. If saving a delete fails, the save error shows and no Undo is offered.
 - **Meeting Sheet: a Verbatim block for text that must stay word for word (PB-102).** + Add a block now offers
   Verbatim, as often as you need it in one call. In its Settings you give it a title, a source (a file of the call,
   any file, or pasted text) and, if you want only part of a Markdown file, sections such as 1-4 by heading. The

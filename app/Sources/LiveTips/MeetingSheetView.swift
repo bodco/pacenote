@@ -35,8 +35,8 @@ final class SheetDoc: ObservableObject {
         var gone: SheetEdit.DeletedFact?
         undo = nil
         let before = try? Data(contentsOf: URL(fileURLWithPath: (path as NSString).expandingTildeInPath))
-        apply { s in gone = SheetEdit.deleteFact(&s, factID: factID); return gone != nil }
-        guard let gone else { return }
+        let saved = apply { s in gone = SheetEdit.deleteFact(&s, factID: factID); return gone != nil }
+        guard saved, let gone else { return }             // a failed save shows its note, not an Undo
         undo = gone
         undoFile = before
         undoToken += 1
@@ -52,14 +52,16 @@ final class SheetDoc: ObservableObject {
         apply(layBack: undoFile) { SheetEdit.restoreFact(&$0, d) }
     }
 
-    private func apply(layBack raw: Data? = nil, _ f: (inout MeetingSheet) -> Bool) {
-        guard var s = sheet, f(&s) else { return }
+    @discardableResult
+    private func apply(layBack raw: Data? = nil, _ f: (inout MeetingSheet) -> Bool) -> Bool {
+        guard var s = sheet, f(&s) else { return false }
         sheet = s
-        guard SheetCache.shared.save(s, to: path) else { note = L("sheet.ui.err.save"); return }
+        guard SheetCache.shared.save(s, to: path) else { note = L("sheet.ui.err.save"); return false }
         if let raw {                                                    // PB-100: e.g. a question's keywords
             do { try MeetingSheetIO.layBack(raw, to: path) } catch { note = L("sheet.ui.err.save") }
         }
         recheck()
+        return true
     }
 
     func recheck() {
