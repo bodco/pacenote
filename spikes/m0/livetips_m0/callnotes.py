@@ -388,15 +388,27 @@ def _write(out: Path, text: str) -> None:
 def _register_tasks(md: Path, notes: str, aliases: List[str], rewrite: bool = False) -> None:
     """0.12.2 (L4): the notes' Action items complete the call's commitments register (<live folder>/commitments.jsonl,
     commitments.record_notes); the notes are kept whatever happens. 0.26.2: on Rewrite notes the owners of this call's
-    untouched items follow the new names first (commitments.migrate_owners)."""
+    untouched items follow the new names first (commitments.migrate_owners). PB-73: the new items take the call's client
+    from the client scope its Meeting Sheet keeps (PB-70), "" when there is no sheet or it hid nothing."""
     try:
         from . import commitments
         call = md.name.replace(".named.md", ".md")
         if rewrite:
             commitments.migrate_owners(md.parent, call=call, notes=notes, aliases=aliases or [])
-        commitments.record_notes(md.parent, call=call, notes=notes, aliases=aliases or [])
+        commitments.record_notes(md.parent, call=call, notes=notes, aliases=aliases or [], client=_sheet_client(md))
     except Exception as e:  # noqa: BLE001
         print("register from notes: " + str(e)[:200], file=sys.stderr)
+
+
+def _sheet_client(md: Path) -> str:
+    """PB-73: the client of the scope kept in the call's Meeting Sheet (<stem>.sheet.json next to the transcript), as
+    engine.write_register takes it during the call; "" when there is no sheet, it is unreadable or it hid nothing."""
+    try:
+        from . import client_scope as CS
+        from .sheet import aftercheck
+        return str((CS.from_sheet(aftercheck.load(aftercheck.sheet_for(md))) or {}).get("client") or "")
+    except Exception:  # noqa: BLE001
+        return ""
 
 
 def _write_then_check(out: Path, md: Path, notes: str, text: str, lang: str, ask) -> str:

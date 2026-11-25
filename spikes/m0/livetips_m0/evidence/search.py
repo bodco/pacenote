@@ -101,16 +101,19 @@ def prepare(store: S.Store, scope: Optional[dict], as_of: Optional[str], exclude
                          .format(tbl))
     item_other = ("EXISTS (SELECT 1 FROM snippet_mark m JOIN _eside e ON e.id=m.name WHERE m.snippet_id=sn.id"
                   " AND m.kind='item' AND e.side='other')")
-    # a register event: item_side of an add with its own id (series by prefix, then call, then text), as filter_register
+    # a register event: item_side of an add with its own id (its written client, PB-73, then series by prefix, then
+    # call, then text), as filter_register; an add event carries at most one client
     has = lambda kind, cond: ("EXISTS (SELECT 1 FROM snippet_mark r WHERE r.snippet_id=sn.id AND r.pos=a.pos"
                               " AND r.kind='{}' AND {})".format(kind, cond))
     pre_own, pre_oth = "substr(r.name, 1, length(:client))=:client", ("EXISTS (SELECT 1 FROM _others o"
                                                                     " WHERE substr(r.name, 1, length(o.name))=o.name)")
     own, oth = "r.name=:client", "r.name IN (SELECT name FROM _others)"
-    reg_other = ("EXISTS (SELECT 1 FROM snippet_mark a WHERE a.snippet_id=sn.id AND a.kind IN ('rseries','rcall','rtext')"
-                 " AND NOT {so} AND ({sx} OR (NOT {co} AND ({cx} OR (NOT {to} AND {tx})))))").format(
-        so=has("rseries", pre_own), sx=has("rseries", pre_oth), co=has("rcall", own), cx=has("rcall", oth),
-        to=has("rtext", own), tx=has("rtext", oth))
+    reg_other = ("EXISTS (SELECT 1 FROM snippet_mark a WHERE a.snippet_id=sn.id"
+                 " AND a.kind IN ('rclient','rseries','rcall','rtext')"
+                 " AND NOT {lo} AND ({lx} OR (NOT {so} AND ({sx} OR (NOT {co} AND ({cx} OR (NOT {to} AND {tx})))))))"
+                 ).format(lo=has("rclient", own), lx=has("rclient", oth),
+                          so=has("rseries", pre_own), sx=has("rseries", pre_oth), co=has("rcall", own),
+                          cx=has("rcall", oth), to=has("rtext", own), tx=has("rtext", oth))
     if not sp:
         side = "'shared'"
     elif stale:
@@ -127,9 +130,14 @@ def prepare(store: S.Store, scope: Optional[dict], as_of: Optional[str], exclude
                 " WHERE m2.snippet_id=sn.id AND m2.kind=m.kind AND m2.pos=m.pos AND m2.name=:client)) THEN 'other'"
                 " WHEN {item} OR {reg} THEN 'other' ELSE 'shared' END").format(own=under("_ownf"), oth=under("_othf"),
                                                                                 item=item_other, reg=reg_other)
-    # the side of a deterministic entity: series_side, then side_of_name, then text_side on its entity_mark rows
+    # the side of a deterministic entity: its one written client (client_side, PB-73), then series_side, then
+    # side_of_name, then text_side on its entity_mark rows
     if sp:
-        eside = ("CASE WHEN EXISTS (SELECT 1 FROM entity_mark m WHERE m.entity_id=en.id AND m.kind='series'"
+        eside = ("CASE WHEN EXISTS (SELECT 1 FROM entity_mark m WHERE m.entity_id=en.id AND m.kind='client'"
+                 " AND m.name=:client) THEN 'own'"
+                 " WHEN EXISTS (SELECT 1 FROM entity_mark m WHERE m.entity_id=en.id AND m.kind='client'"
+                 " AND m.name IN (SELECT name FROM _others)) THEN 'other'"
+                 " WHEN EXISTS (SELECT 1 FROM entity_mark m WHERE m.entity_id=en.id AND m.kind='series'"
                  " AND substr(m.name, 1, length(:client))=:client) THEN 'own'"
                  " WHEN EXISTS (SELECT 1 FROM entity_mark m JOIN _others o WHERE m.entity_id=en.id AND m.kind='series'"
                  " AND substr(m.name, 1, length(o.name))=o.name) THEN 'other'"

@@ -11,7 +11,8 @@ app runs today and measures what the engine assembles BEFORE the model:
   live     lookup.snippets over the background FolderIndex, as engine._project_snippets runs it without lt and without
            the model's extra queries; the expected source in the top N = answer rate; p50/p95 of the warm lookup
   after    commitments.record_notes with the call's notes into the register; duplicates of an existing item, items of
-           the other client's "item 13" in the call's Tracker, "we will try" items that stand as open commitments.
+           the other client's "item 13" in the call's Tracker (since PB-73 read within the call's client scope, as the
+           preparation reads it), "we will try" items that stand as open commitments.
            Since G1 (PB-51) record_notes first migrates the fixture register once (as the app does on its first write),
            and the identity suggestions it leaves to the PM are counted, with the duplicates left if the PM confirms all
 
@@ -279,6 +280,11 @@ class VariantA:
         return CM.record_notes(str(live), call=call, notes=notes, aliases=aliases, people={},   # not this Mac's voices
                                client=client)
 
+    def tracker(self, root: Path, today: str, sheet: Optional[dict] = None) -> dict:
+        """The call's Tracker as the preparation reads it (sources.auto_sources > tracker.collect): the project's open
+        items within the client scope the sheet keeps (PB-70, PB-73), the whole register when none."""
+        return TR.collect({"project": {"root": str(root)}, "today": today, "_client_scope": CS.from_sheet(sheet)})
+
 
 def store_hit(item: dict, root: Path) -> dict:
     """A search item as run_live reads a passage: the file path under the project (a Tracker or register row keeps its
@@ -441,7 +447,7 @@ def run_after(v, t: dict, gold: dict, root: Path, sheet: Optional[dict] = None) 
                      "tentative_open": tentative_open, "firm_as_proposal": firm})
     other = [c for c in gold["clients"] if c != t["client"]]
     cross_events = sum(1 for i in touched if client_of_series((by_id.get(i) or {}).get("series", ""), gold) in other)
-    tr = TR.collect({"project": {"root": str(root)}, "today": t["start"][:10]})
+    tr = v.tracker(root, t["start"][:10], sheet)
     cross_tracker = sum(1 for x in tr["on_me"] + tr["waiting"]
                         if has_phrase(x["text"], ["item 13"]) and client_of_series(x.get("series", ""), gold) in other)
     return {"duplicates": dups, "wrong_identity": wrong, "false_agreed": false_agreed, "false_proposal": false_proposal,

@@ -116,7 +116,10 @@ def test_offline_blocks_every_host_but_loopback(bench):
 def test_a_existing_columns_equal_the_last_committed_a_result(bench, results):
     last = json.loads((G0 / "results" / "A-2026-11-24-3.json").read_text())     # the newest A result on main before S2
     mine = results["A"]["totals"]
-    assert {k: v for k, v in mine.items() if k not in TIMING} == {k: v for k, v in last["totals"].items() if k not in TIMING}
+    moved = {"item13_cross_client"}     # PB-73: the call's Tracker within the client scope, 4 -> 0 (test_g0_bench)
+    assert {k: v for k, v in mine.items() if k not in TIMING | moved} == \
+        {k: v for k, v in last["totals"].items() if k not in TIMING | moved}
+    assert mine["item13_cross_client"] == 0 and last["totals"]["item13_cross_client"] == 4
     assert results["A"]["fixture_sha"] == last["fixture_sha"]          # gold v2 files are outside the v1 hash
     assert results["A"]["gold_sha"] == last["gold_sha"]
 

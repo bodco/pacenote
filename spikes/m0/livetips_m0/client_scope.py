@@ -12,12 +12,14 @@ the Current State page, its notes in the folder search.
   none named, or no sibling client folder: no scope, nothing is hidden (today's behaviour).
 - The preparation keeps its decision in the sheet (client_scope), "none" included, and the search during the call
   follows it; it decides by itself only for a call without a sheet.
-- Left out: a file or a call of another client (by its path), a register item of another client's series, a passage
-  or a line of a shared file (decisions, Current State) that names only another client, with its section. Items
-  without a client stay. A source the PM added by hand for this call is never left out (sheet/build.py, lookup.py).
+- Left out: a file or a call of another client (by its path), a register item of another client (by the client it
+  was written with, PB-73, else its series, call name or text), a passage or a line of a shared file (decisions,
+  Current State) that names only another client, with its section. Items without a client stay. A source the PM
+  added by hand for this call is never left out (sheet/build.py, lookup.py).
 
     decide(root, title, companies, call="") -> scope or None
     side(scope, path) / series_side(scope, series) / text_side(scope, text) -> "own" | "other" | None
+    item_side(scope, item) -> "own" | "other" | None (its written client first, PB-73)
     filter_text(scope, text) -> (text, lines left out)
 """
 import glob
@@ -263,10 +265,28 @@ def text_side(scope: Optional[dict], text: str) -> Optional[str]:
     return _pick(scope, _names(text))
 
 
+def item_clients(item: dict) -> set:
+    """PB-73: the clients a register item (or an add event) was written with: its own and every mention joined
+    into it."""
+    return {c for c in (str(x.get("client") or "").strip().lower()
+                        for x in [item] + list(item.get("history") or []) if isinstance(x, dict)) if c}
+
+
+def client_side(scope: Optional[dict], item: dict) -> Optional[str]:
+    """own | other | None by the one client the item was written with (the call's scope when it was written, during
+    the call or from the after-call notes); None without one, with two, or with one this scope does not know."""
+    cs = item_clients(item) if scope else set()
+    if len(cs) != 1:
+        return None
+    c = next(iter(cs))
+    return "own" if c == scope["client"] else ("other" if c in scope["others"] else None)
+
+
 def item_side(scope: Optional[dict], item: dict) -> Optional[str]:
-    """A register item: by its series, else by its call's file name, else by its text."""
-    return (series_side(scope, item.get("series") or "") or side_of_name(scope, item.get("call") or "")
-            or text_side(scope, item.get("text") or ""))
+    """A register item: by the client it was written with (PB-73), else by its series, else by its call's file name,
+    else by its text."""
+    return (client_side(scope, item) or series_side(scope, item.get("series") or "")
+            or side_of_name(scope, item.get("call") or "") or text_side(scope, item.get("text") or ""))
 
 
 def side_of_name(scope: Optional[dict], name: str) -> Optional[str]:
