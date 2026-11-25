@@ -14,12 +14,13 @@ Source: owner request 25.11. Board: PB-108.
 7. Пропозиція: після End call кластери до 10 с зливати з найближчим голосом лише коли він явно ближчий (косинус від 0.55 і на 0.1 ближче за другий), інакше в один кошик "Інші голоси"; під час дзвінку лише показувати їх як "Інші голоси", без злиття.
 8. На 20 дзвінках: медіана кластерів 7 -> 4, найгірший 18 -> 7, перевищення над реальними голосами в медіані 1; хибне злиття з чужою людиною 1 з 36 перевірених рядків.
 9. Старі дзвінки і бібліотека голосів не змінюються: злиття пишеться в той самий `merged`, який уже читають усі читачі; "Інші голоси" ніколи не вчать бібліотеку.
-10. Не виміряно: дзвінки з 8+ людьми і дзвінки з 50 кластерами (немає відбитків); для 09.11 і 12.11 є лише межа: не більше 10 і 8.
+10. Не виміряно replay: дзвінки з 8 у списку Meet (три записи 13.11) і з 50 кластерами (немає відбитків); оцінка зі `speakers.json` за 10 с: 09.11 і 13.11 по 10, 12.11 8, тобто "найгірший менше 10" за 10 с не виконано, за 20 с виконано.
 
 ## How it was checked
 
 - Data: the 20 calls (20.11-25.11) that have per-line voice prints in `.work/<stem>.voices.json` (written since 0.26.2, 20.11), plus `<stem>.speakers.json` of 118 calls (22.10-25.11) for the history. Everything was read locally on the owner's Mac; nothing was written into a call folder or the voice library.
-- Replay harness (scratch, not in the repo): every call's lines, in time order, go into `SpeakerTracker.observe` of a given `transcriber.py` version with `library=None` (nothing learned), and the result is written only to a temp folder. Versions: current `HEAD`, `3bf2f34`, `3bf2f34^`, `e4da9da^` (before 0.8.5), and current code with variants.
+- Call count: 175 `speakers.json` files under the work root, 136 unique by content (the rest are the same files reached by a second path), 118 of them with at least 60 s of other-side speech: 27 before `3bf2f34`, 91 after (re-counted in fix round 1).
+- Replay harness (scratch, not in the repo; implementation step 1 rebuilds it under `private/` so it can be re-run): every call's lines, in time order, go into `SpeakerTracker.observe` of a given `transcriber.py` version with `library=None` (nothing learned), and the result is written only to a temp folder. Versions: current `HEAD`, `3bf2f34`, `3bf2f34^`, `e4da9da^` (before 0.8.5), and current code with variants.
 - Data snapshot: 25.11, 15:14 Kyiv. One call of that day got its Google Meet list after the first runs (now 2 participants instead of 3); it has 2 named voices, so its voice count below is the same either way.
 - Fidelity: the current-code replay reproduces the recorded cluster count on 18 of 20 calls, and the count of clusters under 10 s too on 17. The 2 calls that differ have merges in their recorded `speakers.json` that the replay does not make (a merge in the tips window during the call or a library effect; the files do not say which). On the other 18 calls running without the library gave exactly the recorded count.
 - Real voices per call: the Google Meet participant list minus the PM (`speakers.json > meet.participants`), or the number of distinct names on the call when that is larger (5 calls have more names than Meet participants, for example two people at one device). Names come from the PM, Meet or auto naming (19 of 204 names on these calls are auto). The system channel carries only the other side, so the PM is not a voice here. With Meet participants alone (17 calls have a Meet list) the proposed fix leaves the median clusters minus voices at 2 and 9 calls over voices + 1, against 1 and 8 with the definition above.
@@ -90,7 +91,7 @@ Six calls by shape. "Voices" as defined above. Cells are clusters / of them unde
 | F | long, 36 min, 175 lines | 1345 s | 3 | 8 / 5 | 8 / 5 | 6 / 2 | 6 / 2 | 4 / 0 | 1.0 / 1.0 / 1.0 |
 | Six calls | | | | | median 9, worst 18 | median 6, worst 8 | median 6.5, worst 11 | median 4, worst 7 | |
 
-No call with 8 or more people has voice prints: of the 17 calls with a Meet list the largest has 7 participants (call D), and the 3 calls without one have at most 4 named voices. The 8+ case is not measured.
+No call with 8 or more people has voice prints: of the 17 calls with a Meet list the largest has 7 participants (call D), and the 3 calls without one have at most 4 named voices. The 8+ case is not measured by replay. In the 118-call history three recordings (all on 13.11, starting about an hour apart) have 8 on the Meet list, the PM included; none has more. The list does not show who actually spoke. Their recorded counts and bounds are in "Calls without voice prints" below.
 
 All 20 replayable calls:
 
@@ -111,6 +112,24 @@ The 2 calls with purity under 1 on the current code (lowest 0.855) have recorded
 
 The cost of the proposed rule: more speech in Other. Over the 20 calls Other holds a median 1.6% of the other side's speech, at most 4.9%; on the six calls A 3.7%, B 1.5%, C 2.7%, D 3.0%, E 3.8%, F 1.6%. On call C (one remote voice) the result is 3 clusters: the voice, one speaker of 10 s or more that the live clustering split off, and Other.
 
+### Calls without voice prints: the bound
+
+The 50-cluster calls and the 8-person calls have no voice prints, so they cannot be replayed. Their `speakers.json` still gives an upper bound for the End call settle, because the settle does not change the live clustering: it only moves an unnamed speaker under the threshold T into a speaker of T or more, or into Other, and never moves a named speaker.
+
+Bound(T) = (unnamed speakers with `seconds` at or over T) + (all named speakers, any size) + 1 Other (if any unnamed speaker is under T).
+
+Speakers are the `clusters` of `speakers.json` (merged ones are already folded into their target, which carries their `seconds`). The real count after the settle can be lower by one at most: an unnamed speaker of T or more stays as it is, but small speakers may all go to voices and leave no Other. On the six replayed calls the bound at 10 s (recorded clusters minus those under 10 s, plus 1: 4, 4, 3, 7, 4, 4) equals the Fix column exactly, so for the calls below the bound is the expected count, not a loose limit. None of the calls below has a named speaker under 10 s, so the named term changes nothing here.
+
+| Call | Speech | Meet participants | Named speakers | Recorded clusters | Of T or more: 10 / 20 / 30 s | Bound: 10 / 20 / 30 s |
+|---|---|---|---|---|---|---|
+| 09.11, long | 55 min | 3 | 0 | 50 | 9 / 7 / 4 | 10 / 8 / 5 |
+| 12.11, long | 88 min | 4 | 3 | 50 | 7 / 5 / 5 | 8 / 6 / 6 |
+| 13.11, 8 on Meet, first | 38 min | 8 | 3 | 37 | 9 / 7 / 4 | 10 / 8 / 5 |
+| 13.11, 8 on Meet, second | 9 min | 8 | 0 | 10 | 3 / 3 / 3 | 4 / 4 / 4 |
+| 13.11, 8 on Meet, third | 11 min | 8 | 0 | 8 | 6 / 6 / 5 | 7 / 7 / 6 |
+
+The 13.11 call with 37 clusters is a third call, not a slip for 12.11. Over all 91 calls since 29.10 the bound is at most 10 at 10 s (reached only by 09.11 and the 37-cluster 13.11 call), at most 8 at 20 s (the same two) and at most 7 at 30 s (11.11, 03.11, 20.11); the median bound is 4 at every T. So at 10 s the expected count on those two calls is 10 (9 if no Other is left), and "worst long call under 10" is not met on them; at 20 s it is met on every past call.
+
 ### Is the nearest voice the right one?
 
 Small clusters were never named, so the replay cannot say where they belong. Proxy: on calls with 2 or more named voices of 10 s or more, the named lines that sit far from their own voice (cosine to the rest of it under 0.60, 1.5 s or longer: the lines that become small clusters) are sent by each rule. 36 such lines:
@@ -122,11 +141,13 @@ Small clusters were never named, so the replay cannot say where they belong. Pro
 | nearest from 0.45, 0.1 ahead | 19 | 6 | 11 |
 | nearest from 0.55, 0.1 ahead (proposed) | 10 | 1 | 25 |
 
-A wrong merge puts one person's words under another person's name in the notes and the follow-up, which is worse than "Other voices". The proposed rule keeps the same cluster counts as the plain nearest rule on the 20 calls (median 4, worst 7) and gives a wrong person 1 time in 36 instead of 9.
+A wrong merge puts one person's words under another person's name in the notes and the follow-up, which is worse than "Other voices". On the 20 calls the proposed rule keeps the median and the worst of the plain nearest rule (median 4, worst 7) but leaves 8 calls over voices + 1 instead of 6, and gives a wrong person 1 time in 36 instead of 9.
 
 ### 1:1 calls
 
 Share of the other side's speech outside the main voice on the three 1:1 calls (one Meet participant besides the PM and one named voice): current code 0.053, 0.049, 0.121; proposed End call settle 0.053, 0.049, 0.121 (the small pieces move from "Speaker N" to Other, they are not given to the voice because they are not clearly close to it); End call settle with the nearest rule from 0.45: 0.049, 0.016, 0.121; live settle from 0.45: 0.0, 0.033, 0.013.
+
+This is a limit of the proposed fix: it only handles speakers under 10 s. A piece of one voice that the live clustering split off and that grew past 10 s (the 0.121 call above; call C keeps one such speaker too) stays a separate speaker. On the long calls without voice prints this is most of what remains: 09.11 has 3 on the Meet list (2 remote voices) but 9 speakers of 10 s or more and still 4 of 30 s or more. Fixing those needs a looser live join, which mixes similar voices (see below), so it is left out.
 
 ### Similar voices (the reason for `3bf2f34`)
 
@@ -142,7 +163,7 @@ So a loose live merge undoes what `3bf2f34` gained; the strict live merge is clo
 ## Proposed fix
 
 1. Keep the live join and automerge thresholds of `3bf2f34` (they keep similar voices apart; going back mixes people).
-2. During the call, never merge small speakers. Show an unnamed speaker with under `speaker_tiny_s` 10 s of speech as "Other voices" / "Інші голоси" in the speakers list, the chip and the transcript (a label only; centroids do not move). A speaker that grows past 10 s shows as itself again. This means every new voice is shown as "Other voices" for its first 10 s of speech (today it is "Speaker N" until 15 s, when "Who is speaking?" asks).
+2. During the call, never merge small speakers. Show an unnamed speaker with under `speaker_tiny_s` 10 s of speech as "Other voices" / "Інші голоси" in the speakers list, the chip and the transcript (a label only; centroids do not move). A speaker that grows past 10 s shows as itself again. This means every new voice is shown as "Other voices" for its first 10 s of speech (today it is "Speaker N" until 15 s, when "Who is speaking?" asks). Auto naming (Meet, roster) can name a voice from `speaker_auto_s` 4 s, so a voice that gets a name early shows its name, not "Other voices", from then on.
 3. At End call, settle: an unnamed speaker under 10 s joins the speaker of 10 s or more whose centroid is at cosine `speaker_settle_min` 0.55 or more and `speaker_settle_margin` 0.1 ahead of the second nearest, with the `_automerge` guards (no conflicting names, `_lib_other` does not place it with another known person). Otherwise it goes to one Other bucket per call. Written to the existing `merged` map of `speakers.json`, so `lt`, `read_delta.py`, the engine's `SpeakerNames`, `CallSpeakers.swift` and `named.md` already resolve it, and recorded as `auto_merged` so the call page can tell it from the PM's merges.
 4. The Other bucket: `other: true` in its cluster, never asked "Who is speaking?", never auto-named, never learned by the voice library.
 5. Tips never carry `S<n>`: an unnamed voice is "the client" when the other side has one voice so far, else "someone on their side" (side from the cluster, the roster or the calendar); a tip that still contains `S\d+` or `Speaker \d+` is rewritten the same way before it is shown.
@@ -151,7 +172,7 @@ So a loose live merge undoes what `3bf2f34` gained; the strict live merge is clo
 
 Expected effect, from the replay: median clusters 7 -> 4, worst replayable call 18 -> 7, median clusters minus voices 1, 8 of 20 calls still over voices + 1, no new mixing of named people, a wrong person for about 1 in 36 far-off lines, Other holding a median 1.6% of the other side's speech.
 
-OWNER DECISION: how hard to hide small speakers. Options: (a) as asked, 10 s, strict rule (0.55, 0.1 ahead): median meets voices + 1, 8 of 20 calls stay over, a wrong person rarely (1 of 36); worst historical bound 10 (09.11 and 13.11), so "worst under 10" is not guaranteed on those; (b) 20 s, same rule: bound at most 8 over all 91 calls since 29.10, more quiet people folded into Other; (c) 30 s: bound at most 7, more quiet people hidden. Recommendation: (a) with `speaker_tiny_s` as a setting, and revisit with two weeks of calls; take (b) if the worst-under-10 line must hold on every past call.
+OWNER DECISION: how hard to hide small speakers (bounds from "Calls without voice prints: the bound"). Options: (a) as asked, 10 s, strict rule (0.55, 0.1 ahead): median meets voices + 1, 8 of 20 calls stay over, a wrong person rarely (1 of 36); the expected count on the worst past calls is 10 (09.11 and the 37-cluster 13.11 call), so "worst under 10" is not met on those two; a new voice shows as "Other voices" for up to 10 s; (b) 20 s, same rule: bound at most 8 over all 91 calls since 29.10, so "worst under 10" holds on every past call, but more quiet people folded into Other and a new voice shows as "Other voices" for up to 20 s; (c) 30 s: bound at most 7, more quiet people hidden, up to 30 s as "Other voices". Recommendation: (a) with `speaker_tiny_s` as a setting, and revisit with two weeks of calls; take (b) if the worst-under-10 line must hold on every past call.
 
 ## Risk for saved voice matches and named speakers on old calls
 
@@ -160,14 +181,15 @@ OWNER DECISION: how hard to hide small speakers. Options: (a) as asked, 10 s, st
 - Voice library: it learns only from named speakers through `voice_core` (lines at mean cosine 0.5 or more to the speaker's other lines; nothing when under half are core). A small speaker merged into a named one adds at most a few lines, and lines outside the core are not learned; the Other bucket is never learned. `lib_added` keeps what was added, so a later edit does not add a print twice.
 - Wrong merges: about 1 in 36 far-off lines goes to another named person with the proposed rule (9 in 36 with the plain nearest rule). Such a line is attributed to the wrong person in notes and follow-ups. It must be fixable on the call page (Said by on a line, as today), and `auto_merged` lets a later fix undo it.
 - The replay ran without the voice library. On a real call the library can also open a speaker (`_lib_other` in `observe`) or name one; on 18 of 20 calls the no-library replay matched the recorded count, so it did not matter there, but it is not proven for every call.
-- Not measured: calls with 8 or more people; the 50-cluster calls (only a bound); the 2 synthetic seeds where the live clustering already mixed two similar voices end as one speaker after the settle (the settle cannot repair a live mix).
+- Not measured by replay: the three 8-person calls of 13.11 and the 50-cluster calls (only an upper bound from `speakers.json`); the 2 synthetic seeds where the live clustering already mixed two similar voices end as one speaker after the settle (the settle cannot repair a live mix).
 
 ## Implementation steps
 
 Each step is its own task, core work (Opus, full review rounds). Tests are pytest under `spikes/m0/tests/` unless said otherwise.
 
 1. End call settle (recorder). `SpeakerTracker` gets the settle step at End call and the Other bucket; settings `speaker_tiny_s` 10, `speaker_settle_min` 0.55, `speaker_settle_margin` 0.1 in `DEFAULTS` and `rules/voices.yaml`.
-   Acceptance: a test with one synthetic voice whose lines include 15% far-off lines ends with 1 speaker plus at most Other (fails on today's code with several); a small speaker is never merged into a named one the library places with someone else; two named speakers never merge; the similar-voices test still passes (0.85) and a new test checks that nothing merges before End call; `merged` and `auto_merged` written; a replay of the 20 saved calls (local, not in CI) gives median clusters minus voices 1 or less and the worst under 10.
+   Acceptance: a test with one synthetic voice whose lines include 15% far-off lines ends with 1 speaker plus at most Other (fails on today's code with several); a small speaker is never merged into a named one the library places with someone else; two named speakers never merge; the similar-voices test still passes (0.85) and a new test checks that nothing merges before End call; `merged` and `auto_merged` written; a test that in `finalize` the settle runs before `_lib_sync` and before `named.md`, the notes and the follow-up are written (a merged small speaker appears in `named.md` under the voice's name, and the library gets no print from the Other bucket); the replay harness is kept under `private/` (not in the app repo) and a replay of the 20 saved calls with it (local, not in CI) gives median clusters minus voices 1 or less and the worst under 10; the same harness computes the bound of "Calls without voice prints" from `speakers.json` for 09.11, 12.11 and the three 13.11 calls and reports it against "under 10": under option (a) the report shows the bounds (10, 8, 10, 4, 7 at 10 s) and "worst long call under 10" is closed by the live check below; under option (b) the bound is under 10 on all five calls.
+   Live check after release: the first call with 8 or more people and the first call with 50 minutes or more of other-side speech recorded with the fix are counted (clusters, voices, share in Other) and added to this report; the owner's "worst long call under 10" is closed on them.
 2. Readers show Other, and small live speakers show as Other. `lt`, `read_delta.py`, engine `SpeakerNames`, `named.md`, `CallSpeakers.swift`, the tips window (`feed.js`/`tips.js`) and the call page show "Other voices" / "Інші голоси" (i18n en and uk together); Other is not offered for naming in "Who is speaking?".
    Acceptance: CoreChecks for `CallSpeakers` with an old `speakers.json` (no Other: the same display as today) and a new one (Other shown once); pytest for `read_delta.name_lines` both ways; a feed test for the chip; docs EN/UK (`live-tips.md`), CHANGELOG.
 3. No `S<n>` in tips. `SpeakerNames.who` gives "the client" or "someone on their side" for an unnamed voice by side; the tips prompt rule says so; a guard rewrites any `S\d+` / `Speaker \d+` left in a tip.
@@ -180,8 +202,9 @@ Each step is its own task, core work (Opus, full review rounds). Tests are pytes
 
 ## Not checked in this investigation
 
-- Calls with 8 or more people (none with voice prints).
+- Calls with 8 or more people by replay (the three 8-person calls of 13.11 have no voice prints; only a bound).
 - The 50-cluster calls themselves (no voice prints; only a bound).
+- The `55b64a4` model pin (19.11): all 20 replayable calls are after it, so the replay cannot rule out an effect of that change on clustering.
 - How often a line holds two voices (one print per line in the saved data).
 - The voice library's effect on the replay (run with `library=None`).
 - The wrong-merge rate is a proxy on 36 named lines from 20 calls, not on real small clusters.
