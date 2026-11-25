@@ -58,6 +58,10 @@ def block_lines(blocks: List[dict], lib: dict, criteria: Optional[Dict[str, List
     out = []
     for b in blocks:
         t = b["type"]
+        if t == "custom":
+            from .custom import block_line
+            out.append(block_line(b))   # PB-101: the PM's own block, answered under its id
+            continue
         if t in SKIP_BLOCKS or (t == "my_focus" and not focus):
             continue                   # my_focus without the user's fields (Settings > Meeting Sheet) stays empty
         fields = (lib.get(t) or {}).get("fields", "")
@@ -113,6 +117,8 @@ def source_block(s: dict, text: str) -> str:
         head += f" | {s['uri']}"
     if s.get("used") == "summarized":
         head += " | SUMMARY made by Pacenote of a bigger source"
+    if s.get("block"):
+        head += " | ONLY for the user's own blocks that list it"     # PB-101: a custom block's own source
     return head + " ===\n" + text.strip() + "\n"
 
 
@@ -125,7 +131,7 @@ def previous_labels(old: Optional[dict]) -> str:
     for b in old.get("blocks") or []:
         labs = [f.get("label") for f in b.get("facts") or [] if f.get("label") and f.get("origin") == "model"]
         if labs and b.get("type") not in SKIP_BLOCKS:
-            lines.append(f"- {b['type']}: " + "; ".join(dict.fromkeys(labs)))
+            lines.append(f"- {b['id'] if b.get('type') == 'custom' else b['type']}: " + "; ".join(dict.fromkeys(labs)))
     if not lines:
         return ""
     return ("## Labels of the previous version of this sheet\nThis is a refresh. For a fact that is still true use the "
@@ -157,6 +163,7 @@ def agent_prompt(req: dict, blocks_text: str, sources: List[dict], files: Dict[s
         if s["id"] in files:
             lines.append(f"- {s['id']} ({s.get('type')}, {s.get('title', '')}" + (f", dated {s['modified_at']}" if s.get("modified_at") else "")
                          + (f", page {s['uri']}" if s.get("type") == "web_page" and s.get("uri") else "")      # PB-37: stored copy, cite this URL
+                         + (", ONLY for the user's own blocks that list it" if s.get("block") else "")      # PB-101
                          + f"): Read {files[s['id']]}")
         elif s.get("fetch") and s.get("uri"):
             lines.append(f"- {s['id']} (web page, {s.get('title', '')}): WebFetch {s['uri']} (this page only)")

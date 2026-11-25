@@ -844,6 +844,10 @@ struct SheetBlocksStep: View {
     @State private var adding = false
     /// PB-102: the Verbatim block whose settings are open
     @State private var editingVerbatim: String?
+    /// PB-101: the custom block whose settings are open, and the personal library
+    @State private var editingCustom: String?
+    @State private var deletingCustom: CustomBlockDef?
+    @ObservedObject var customs = CustomBlockStore.shared
     /// 0.26.0 (owner 19.11): a row with the block's title and what the preparation puts in it (rules/meeting-sheet.yaml fields)
     private static let rowH: CGFloat = 60
 
@@ -935,6 +939,11 @@ struct SheetBlocksStep: View {
                     let line = Self.verbatimLine(b.wrappedValue)
                     Text(line).font(th.homeText(12)).foregroundStyle(b.wrappedValue.verbatim?.source == nil ? PN.C.pending : PN.C.text3)
                         .lineLimit(1).truncationMode(.middle).help(line)
+                } else if b.wrappedValue.type == BlockType.custom.rawValue {
+                    let c = b.wrappedValue.custom ?? SheetCustom()
+                    let line = Self.customLine(c)
+                    Text(line).font(th.homeText(12)).foregroundStyle(Self.customNeedsSource(c) ? PN.C.pending : PN.C.text3)
+                        .lineLimit(1).truncationMode(.middle).help(line)
                 } else if let f = lib.blockFields[b.wrappedValue.type], !f.isEmpty {
                     Text(f).font(th.homeText(12)).foregroundStyle(PN.C.text3).lineLimit(2).help(f)
                 }
@@ -953,13 +962,25 @@ struct SheetBlocksStep: View {
                         })
                     }
             }
+            if b.wrappedValue.type == BlockType.custom.rawValue {
+                // PB-101: title, instruction, sources, format and length of this custom block
+                let id = b.wrappedValue.id
+                Button(L("sheet.ui.verbatim.settings")) { editingCustom = id }
+                    .buttonStyle(.pnSecondary)
+                    .popover(isPresented: Binding(get: { editingCustom == id }, set: { if !$0 { editingCustom = nil } }), arrowEdge: .bottom) {
+                        SheetCustomBlockSettings(draft: draft, block: b, remove: {
+                            editingCustom = nil
+                            draft.blocks.removeAll { $0.id == id }
+                        })
+                    }
+            }
             if b.wrappedValue.type == "qualification" {
                 PrepMenuField(value: SalesMethods.shared.label(b.wrappedValue.method ?? "bant")) {
                     ForEach(lib.methods, id: \.self) { k in Button(SalesMethods.shared.label(k)) { b.wrappedValue.method = k } }   // S1: names, not keys
                 }
                 .onAppear { SalesMethods.shared.load() }
             }
-            if b.wrappedValue.type != BlockType.verbatim.rawValue {     // PB-102: a copy is never "only if there is data"
+            if !b.wrappedValue.isOwn {     // PB-102: a copy is never "only if there is data"; PB-101: a custom block neither
                 Toggle(L("sheet.ui.s2.onlyIfData"), isOn: b.onlyIfData).toggleStyle(.pnCheckbox).font(th.homeText(13)).foregroundStyle(PN.C.text2)
                     .fixedSize().help(L("sheet.ui.s2.onlyIfDataHelp"))
             }
@@ -978,6 +999,74 @@ struct SheetBlocksStep: View {
         let src = s.kind == "text" ? L("sheet.ui.verbatim.pasted") : ((s.path ?? "") as NSString).lastPathComponent
         let sec = (b.verbatim?.sections ?? "").trimmingCharacters(in: .whitespaces)
         return L("sheet.ui.verbatim.from", ["src": src]) + (sec.isEmpty ? "" : " · " + L("sheet.ui.verbatim.sectionsShort", ["s": sec]))
+    }
+
+    /// PB-101: the row's line under a custom block's title: its format, length and sources.
+    static func customLine(_ c: SheetCustom) -> String {
+        if customNeedsSource(c) { return L("sheet.ui.custom.needsSource") }
+        var out = L("sheet.ui.custom.fmt." + c.format)
+        if !c.isVerbatim { out += " · " + L("sheet.ui.custom.len." + c.length) }
+        let names = c.sources.map(\.label).filter { !$0.isEmpty }
+        return out + " · " + (names.isEmpty ? L("sheet.ui.custom.allSources") : L("sheet.ui.custom.from", ["src": names.joined(separator: ", ")]))
+    }
+
+    /// PB-101: a Verbatim custom block copies a file or text; without one it would only say Not copied.
+    static func customNeedsSource(_ c: SheetCustom) -> Bool {
+        c.isVerbatim && !c.sources.contains { ($0.kind == "text" && !($0.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) || ($0.isFile && !StartCallModel.isDir($0.path ?? "")) }
+    }
+
+    /// PB-101: a library block or a new one joins the call as its own copy and opens its settings at once.
+    private func addCustom(_ def: CustomBlockDef?) {
+        let b = DraftBlock.newCustom(def, title: L("sheet.ui.custom.defaultTitle"))
+        draft.blocks.append(b)
+        adding = false
+        DispatchQueue.main.async { editingCustom = b.id }
+    }
+
+    private func addRow(title: String, note: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title).font(th.homeText(14, .semibold)).foregroundStyle(PN.C.text)
+                Text(note).font(th.homeText(12)).foregroundStyle(PN.C.text2).fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 14).padding(.vertical, 9)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .overlay(alignment: .top) { Rectangle().fill(PN.C.rule).frame(height: 1) }
+        .accessibilityLabel(title + ". " + note)
+    }
+
+    /// PB-101: New custom block and the personal library (each block: add to this call, Duplicate, Delete).
+    @ViewBuilder private var customRows: some View {
+        addRow(title: L("sheet.ui.custom.new"), note: L("sheet.ui.custom.newHint")) { addCustom(nil) }
+        if !customs.library.blocks.isEmpty {
+            Text(L("sheet.ui.custom.library")).font(th.homeText(12, .semibold)).foregroundStyle(PN.C.text3)
+                .padding(.horizontal, 14).padding(.top, 10).padding(.bottom, 4).accessibilityAddTraits(.isHeader)
+            ForEach(customs.library.blocks) { d in
+                HStack(spacing: 0) {
+                    addRow(title: d.title, note: Self.customLine(d.settings)) { addCustom(d) }
+                    Menu {
+                        Button(L("sheet.ui.custom.duplicate")) { customs.duplicate(d.id) }
+                        Button(L("sheet.ui.custom.delete"), role: .destructive) { deletingCustom = d }
+                    } label: { Image(systemName: "ellipsis").foregroundStyle(PN.C.text2).frame(width: 28, height: 28) }
+                    .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().padding(.trailing, 8)
+                    .accessibilityLabel(L("sheet.ui.custom.more", ["title": d.title]))
+                }
+            }
+            .confirmationDialog(L("sheet.ui.custom.deleteAsk", ["title": deletingCustom?.title ?? ""]),
+                                isPresented: Binding(get: { deletingCustom != nil }, set: { if !$0 { deletingCustom = nil } })) {
+                Button(L("sheet.ui.custom.delete"), role: .destructive) {
+                    if let d = deletingCustom { customs.delete(d.id) }
+                    deletingCustom = nil
+                }
+            } message: { Text(L("sheet.ui.custom.deleteNote")) }
+            if customs.saveFailed {
+                Text(L("sheet.ui.custom.saveFailed")).font(th.homeText(12)).foregroundStyle(PN.C.notreadyText)
+                    .fixedSize(horizontal: false, vertical: true).padding(.horizontal, 14).padding(.vertical, 6)
+            }
+        }
     }
 
     private var hiddenList: some View {
@@ -1014,13 +1103,17 @@ struct SheetBlocksStep: View {
             Text("+ " + L("sheet.ui.s2.add")).font(th.homeText(13, .semibold)).underline().foregroundStyle(PN.C.text)
         }
         .buttonStyle(.plain).fixedSize()
-        .disabled(free.isEmpty)
         .popover(isPresented: $adding, arrowEdge: .bottom) {
             VStack(alignment: .leading, spacing: 0) {
                 Text(L("sheet.ui.s2.addHint")).font(th.homeText(12)).foregroundStyle(PN.C.text3)
                     .fixedSize(horizontal: false, vertical: true).padding(.horizontal, 14).padding(.vertical, 10)
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
+                        customRows      // PB-101: always offered, several per call
+                        if !free.isEmpty {
+                            Text(L("sheet.ui.custom.builtIn")).font(th.homeText(12, .semibold)).foregroundStyle(PN.C.text3)
+                                .padding(.horizontal, 14).padding(.top, 10).padding(.bottom, 4).accessibilityAddTraits(.isHeader)
+                        }
                         ForEach(free, id: \.self) { t in
                             Button {
                                 if t == BlockType.verbatim.rawValue {
@@ -1097,8 +1190,9 @@ struct SheetBlocksStep: View {
 
     private func savePreset() {
         let name = presetName.trimmingCharacters(in: .whitespaces)
-        // PB-102: a Verbatim block belongs to this call (its source and text), never to a preset
-        let kept = draft.blocks.filter { $0.type != BlockType.verbatim.rawValue }
+        // PB-102: a Verbatim block belongs to this call (its source and text), never to a preset; PB-101: a custom
+        // block neither (it lives in the personal library)
+        let kept = draft.blocks.filter { !$0.isOwn }
         let req: [String: Any] = ["action": "save", "name": name, "blocks": kept.map(\.type),
                                   "hidden": kept.filter { !$0.visible }.map(\.type),
                                   "only_if_data": draft.blocks.filter(\.onlyIfData).map(\.type),
@@ -1201,6 +1295,153 @@ struct SheetVerbatimSettings: View {
         if let r = draft.model.root { p.directoryURL = URL(fileURLWithPath: r) }
         guard p.runModal() == .OK, let u = p.url else { return }
         setSource(.init(kind: "file", path: u.path))
+    }
+}
+
+// MARK: PB-101 custom block settings
+
+/// PB-101 (owner 24.11): the settings of one custom block in this call: title, instruction, its sources (a file or
+/// folder, a source of this call, the transcript of a past call, a link, free text; a file can take only some
+/// sections), the output format and the length. Changes stay in this call; Save to library writes them to the library.
+struct SheetCustomBlockSettings: View {
+    @ObservedObject var draft: SheetDraft
+    @ObservedObject var store = CustomBlockStore.shared
+    @Binding var block: DraftBlock
+    var remove: () -> Void
+    @Environment(\.pnTheme) private var th
+    @Environment(\.dismiss) private var dismiss
+    @State private var saved = false
+
+    init(draft: SheetDraft, block: Binding<DraftBlock>, remove: @escaping () -> Void) {
+        self.draft = draft; self._block = block; self.remove = remove
+    }
+
+    private var cs: SheetCustom { block.custom ?? SheetCustom() }
+    private func change(_ f: (inout SheetCustom) -> Void) { var c = cs; f(&c); block.custom = c; saved = false }
+
+    private func text(_ i: Int, _ kp: WritableKeyPath<SheetCustom.Source, String?>) -> Binding<String> {
+        Binding(get: { i < cs.sources.count ? (cs.sources[i][keyPath: kp] ?? "") : "" },
+                set: { v in change { if i < $0.sources.count { $0.sources[i][keyPath: kp] = v } } })
+    }
+
+    private var instruction: Binding<String> { Binding(get: { cs.instruction }, set: { v in change { $0.instruction = v } }) }
+
+    private func add(_ s: SheetCustom.Source) { change { $0.sources.append(s) } }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                Text(L("sheet.ui.custom.head")).font(th.homeText(15, .semibold)).foregroundStyle(PN.C.text).accessibilityAddTraits(.isHeader)
+                Text(L("sheet.ui.custom.how")).font(th.homeText(12)).foregroundStyle(PN.C.text3).fixedSize(horizontal: false, vertical: true)
+                PrepFieldLabel(text: L("sheet.ui.custom.title"))
+                TextField(L("sheet.ui.custom.title"), text: $block.title).textFieldStyle(.plain).font(th.homeText(14)).prepField(height: 30)
+                    .accessibilityLabel(L("sheet.ui.custom.title"))
+                PrepFieldLabel(text: L("sheet.ui.custom.instruction"))
+                TextEditor(text: instruction).font(th.homeText(13)).frame(height: 70).prepField()
+                    .accessibilityLabel(L("sheet.ui.custom.instruction"))
+                PrepFieldLabel(text: L("sheet.ui.custom.sources"))
+                if cs.sources.isEmpty {
+                    Text(L("sheet.ui.custom.noSources")).font(th.homeText(12)).foregroundStyle(PN.C.text3).fixedSize(horizontal: false, vertical: true)
+                }
+                ForEach(Array(cs.sources.enumerated()), id: \.offset) { i, s in sourceRow(i, s) }
+                PrepMenuField(value: L("sheet.ui.custom.addSource")) { addMenu }
+                    .accessibilityLabel(L("sheet.ui.custom.addSource"))
+                PrepFieldLabel(text: L("sheet.ui.custom.format"))
+                PrepMenuField(value: L("sheet.ui.custom.fmt." + cs.format)) {
+                    ForEach(SheetCustom.formats, id: \.self) { f in Button(L("sheet.ui.custom.fmt." + f)) { change { $0.format = f } } }
+                }
+                .accessibilityLabel(L("sheet.ui.custom.format") + ": " + L("sheet.ui.custom.fmt." + cs.format))
+                Text(L(cs.isVerbatim ? "sheet.ui.custom.fmtHint.verbatim" : "sheet.ui.custom.fmtHint.other")).font(th.homeText(12))
+                    .foregroundStyle(PN.C.text3).fixedSize(horizontal: false, vertical: true)
+                if !cs.isVerbatim {
+                    PrepFieldLabel(text: L("sheet.ui.custom.length"))
+                    PrepMenuField(value: L("sheet.ui.custom.len." + cs.length)) {
+                        ForEach(SheetCustom.lengths, id: \.self) { l in Button(L("sheet.ui.custom.len." + l)) { change { $0.length = l } } }
+                    }
+                    .accessibilityLabel(L("sheet.ui.custom.length") + ": " + L("sheet.ui.custom.len." + cs.length))
+                }
+                if saved {
+                    Text(L(store.saveFailed ? "sheet.ui.custom.saveFailed" : "sheet.ui.custom.saved")).font(th.homeText(12, .semibold))
+                        .foregroundStyle(store.saveFailed ? PN.C.notreadyText : PN.C.turn).fixedSize(horizontal: false, vertical: true)
+                }
+                HStack {
+                    Button(L("sheet.ui.verbatim.remove"), role: .destructive, action: remove).buttonStyle(.pnTertiary)
+                    Spacer()
+                    Button(L(store.library.block(cs.libID) == nil ? "sheet.ui.custom.saveLib" : "sheet.ui.custom.updateLib")) {
+                        let id = store.save(title: block.title, settings: cs, id: cs.libID)
+                        change { $0.libID = id }
+                        saved = true
+                    }
+                    .buttonStyle(.pnSecondary)
+                    Button(L("sheet.ui.verbatim.done")) { dismiss() }.buttonStyle(.pnSecondary).keyboardShortcut(.defaultAction)
+                }
+            }
+            .padding(16)
+        }
+        .frame(width: 460, height: 600)
+        .background(PN.C.bg)
+    }
+
+    @ViewBuilder private func sourceRow(_ i: Int, _ s: SheetCustom.Source) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                Text(L("sheet.ui.custom.kind." + s.kind)).font(th.homeMono(11)).foregroundStyle(PN.C.text3).fixedSize()
+                if s.kind == "url" {
+                    TextField(L("sheet.ui.custom.linkPh"), text: text(i, \.uri)).textFieldStyle(.plain).font(th.homeText(13)).prepField(height: 26)
+                        .accessibilityLabel(L("sheet.ui.custom.kind.url"))
+                } else if s.kind != "text" {
+                    Text(s.label).font(th.homeText(13)).foregroundStyle(PN.C.text).lineLimit(1).truncationMode(.middle)
+                        .help(s.path ?? s.uri ?? "").frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    Spacer()
+                }
+                if s.isFile {
+                    TextField(L("sheet.ui.custom.sectionsPh"), text: text(i, \.sections)).textFieldStyle(.plain).font(th.homeText(12))
+                        .prepField(height: 26).frame(width: 120).accessibilityLabel(L("sheet.ui.verbatim.sections"))
+                }
+                Button { change { if i < $0.sources.count { $0.sources.remove(at: i) } } } label: {
+                    Image(systemName: "xmark").foregroundStyle(PN.C.text2).frame(width: 20, height: 20)
+                }
+                .buttonStyle(.plain).help(L("sheet.ui.custom.removeSource")).accessibilityLabel(L("sheet.ui.custom.removeSource") + ": " + s.label)
+            }
+            if s.kind == "text" {
+                TextEditor(text: text(i, \.text)).font(th.homeText(13)).frame(height: 70).prepField()
+                    .accessibilityLabel(L("sheet.ui.custom.kind.text"))
+            }
+        }
+    }
+
+    @ViewBuilder private var addMenu: some View {
+        let call = draft.sources.filter { $0.checked && ($0.path != nil || $0.uri != nil) }
+        if !call.isEmpty {
+            Section(L("sheet.ui.custom.callSources")) {
+                ForEach(call) { s in
+                    Button(s.title) { add(.init(kind: "call_source", path: s.path, uri: s.uri, title: s.title, sourceID: s.id)) }
+                }
+            }
+        }
+        Button(L("sheet.ui.custom.fileOrFolder")) { chooseFile() }
+        let past = Array(CallHistory.shared.visible.prefix(12))
+        if !past.isEmpty {
+            Section(L("sheet.ui.custom.pastCalls")) {
+                ForEach(past) { r in
+                    Button(r.title + " · " + r.start.formatted(date: .abbreviated, time: .omitted)) {
+                        add(.init(kind: "transcript", path: r.file, title: r.title))
+                    }
+                }
+            }
+        }
+        Button(L("sheet.ui.custom.link")) { add(.init(kind: "url", uri: "")) }
+        Button(L("sheet.ui.custom.text")) { add(.init(kind: "text", text: "")) }
+    }
+
+    private func chooseFile() {
+        let p = NSOpenPanel()
+        p.canChooseDirectories = true; p.canChooseFiles = true; p.allowsMultipleSelection = false
+        p.message = L("sheet.ui.custom.pick")
+        if let r = draft.model.root { p.directoryURL = URL(fileURLWithPath: r) }
+        guard p.runModal() == .OK, let u = p.url else { return }
+        add(.init(kind: StartCallModel.isDir(u.path) ? "folder" : "file", path: u.path))
     }
 }
 

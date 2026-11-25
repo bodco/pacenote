@@ -2738,6 +2738,104 @@ func verbatimPB102() {
     } else { expect(false, "verbatim: a sheet with an empty Verbatim source decodes") }
 }
 
+// PB-101 (Meeting Sheet, owner 24.11): custom blocks in the app's models: a sheet with custom blocks (and a Verbatim
+// block made from one) reads and writes back, an odd format or source never breaks the sheet, the request form the build
+// reads, call sync keeps the settings on this Mac, and the personal library adds, updates, duplicates and deletes.
+func customBlocksPB101() {
+    let json = """
+    {"schema":"pacenote.sheet/1","id":"x","title":"Meeting Sheet: Orbit","meeting_ref":{"start":"2026-11-26T10:00:00Z"},
+     "mode":"quick","preset":"blank","language":"en","sources":[],
+     "blocks":[{"id":"b-my_focus","type":"my_focus","title":"My focus","visible":true,"only_if_data":false,"order":0,"edited_by_user":false,"facts":[]},
+       {"id":"b-custom-aa11","type":"custom","title":"Objection answers","visible":true,"only_if_data":false,"order":1,"edited_by_user":false,
+        "facts":[{"id":"f-1","label":"Too expensive","text":"Point to the free pilot","source_ids":[],"locator":{},"checked_at":"2026-11-25T10:00:00Z","status":"found","origin":"model"}],
+        "custom":{"lib_id":"cb-1","instruction":"Answers to what Emily may raise","format":"qa","length":"short","source_ids":["s-b-custom-aa11-1"],
+                  "sources":[{"kind":"file","path":"/p/orbit/playbook.md","sections":"2"},{"kind":"text","text":"PASTED-NOTE-4410"},{"kind":"smtp"},
+                             {"kind":"url","uri":"https://orbit.example/pricing"},{"kind":"transcript","path":"/p/orbit/live/sync.md","title":"Orbit sync"}]}},
+       {"id":"b-custom-bb22","type":"verbatim","title":"Pricing script","visible":true,"only_if_data":false,"order":2,"edited_by_user":false,"facts":[],
+        "verbatim":{"source":{"kind":"file","path":"/p/orbit/playbook.md"},"sections":"1","text":"## 1. Pricing\\n","status":"ok"},
+        "custom":{"format":"verbatim","sources":[{"kind":"file","path":"/p/orbit/playbook.md","sections":"1"}]}},
+       {"id":"b-custom-cc33","type":"custom","title":"Odd","visible":true,"only_if_data":false,"order":3,"edited_by_user":false,"facts":[],
+        "custom":{"format":"poem","length":"huge","sources":"not a list"}}]}
+    """
+    expect(BlockType.custom.rawValue == "custom" && !BlockType.known.contains(.custom), "custom: its own type, not in the built-in list")
+    guard let s = try? MeetingSheetIO.decode(Data(json.utf8)) else { expect(false, "custom: decodes"); return }
+    let a = s.blocks[1], v = s.blocks[2], odd = s.blocks[3]
+    expect(a.custom?.format == "qa" && a.custom?.length == "short" && a.custom?.libID == "cb-1" && a.custom?.instruction == "Answers to what Emily may raise"
+           && a.custom?.sources.map(\.kind) == ["file", "text", "url", "transcript"] && a.custom?.sources[0].sections == "2"
+           && a.custom?.sourceIDs == ["s-b-custom-aa11-1"] && a.facts.count == 1, "custom: settings and facts decode (an unknown source kind is left out)")
+    expect(v.type == .verbatim && v.custom?.isVerbatim == true && v.verbatim?.ok == true, "custom: format verbatim is a Verbatim block with its settings")
+    expect(odd.custom?.format == "bullets" && odd.custom?.length == "medium" && odd.custom?.sources.isEmpty == true, "custom: odd values read as defaults")
+    if let data = try? MeetingSheetIO.encode(s), let back = try? MeetingSheetIO.decode(data) {
+        expect(back == s && back.blocks[1].custom == a.custom, "custom: round trip keeps the settings")
+    } else { expect(false, "custom: encode") }
+    // the request the build reads (sheet/custom.py settings_of): sections only on a file, the library id along
+    let req = a.custom!.request
+    let srcs = req["sources"] as? [[String: Any]] ?? []
+    expect(req["format"] as? String == "qa" && req["length"] as? String == "short" && req["lib_id"] as? String == "cb-1"
+           && srcs.count == 4 && srcs[0]["sections"] as? String == "2" && srcs[1]["text"] as? String == "PASTED-NOTE-4410"
+           && srcs[2]["uri"] as? String == "https://orbit.example/pricing" && srcs[2]["sections"] == nil && req["source_ids"] == nil,
+           "custom: request form")
+    var dir = SheetCustom.Source(kind: "folder", path: "/p/orbit/docs", sections: "2")
+    expect(!dir.isFile && dir.request["sections"] == nil, "custom: a folder takes no sections")
+    dir.kind = "file"
+    expect(dir.isFile && dir.request["sections"] as? String == "2", "custom: a file takes sections")
+    // call sync: the facts go like any block's, the settings (instruction, paths, links, pasted text) stay here
+    let synced = String(data: CallSync.json(CallSync.sheetBody(Data(json.utf8)) ?? [:]), encoding: .utf8) ?? ""
+    expect(synced.contains("b-custom-aa11") && synced.contains("Point to the free pilot") && !synced.contains("PASTED-NOTE-4410")
+           && !synced.contains("playbook.md") && !synced.contains("Answers to what Emily") && !synced.contains("orbit.example/pricing")
+           && !synced.contains("\"custom\":") && !synced.contains("Pricing script"), "custom: settings stay on this Mac, a verbatim one entirely")
+    // review round 1: the sources the build adds for a custom block (marked `block`, a folder's files by `parent`) keep
+    // only their id, type and state; a call's own source keeps its path; the block's facts still go
+    let built = """
+    {"schema":"pacenote.sheet/1","id":"x","title":"Meeting Sheet: Orbit","sources":[
+      {"id":"s1","n":1,"type":"file","path":"/p/orbit/brief.md","title":"brief.md","access":"ok","used":"full"},
+      {"id":"s-b-custom-aa11-1","n":2,"type":"file","path":"/p/orbit/playbook.md","title":"playbook.md","access":"ok","used":"full","block":"b-custom-aa11"},
+      {"id":"s-b-custom-aa11-2","n":3,"type":"web","uri":"https://orbit.example/pricing?token=abc","title":"Web page: https://orbit.example/pricing?token=abc","access":"ok","used":"full","block":"b-custom-aa11"},
+      {"id":"s-b-custom-aa11-3","n":4,"type":"folder","path":"/p/orbit/secret-deals","title":"secret-deals","access":"ok","used":"full","block":"b-custom-aa11"},
+      {"id":"s9","n":5,"type":"folder_file","path":"/p/orbit/secret-deals/acme-terms.md","title":"acme-terms.md","access":"ok","used":"full","parent":"s-b-custom-aa11-3"},
+      {"id":"s-b-custom-aa11-4","n":6,"type":"transcript","path":"/p/orbit/live/sync.md","title":"Orbit sync with David","access":"ok","used":"full","block":"b-custom-aa11"}],
+     "blocks":[{"id":"b-custom-aa11","type":"custom","title":"Objection answers","visible":true,"order":1,"facts":[
+       {"id":"f-1","label":"Too expensive","text":"Point to the free pilot","source_ids":["s-b-custom-aa11-1"],"status":"found","origin":"model"}]}]}
+    """
+    let up = CallSync.sheetBody(Data(built.utf8))?["sheet"] as? [String: Any] ?? [:]
+    let upSrc = Dictionary(uniqueKeysWithValues: ((up["sources"] as? [[String: Any]]) ?? []).compactMap { s in (s["id"] as? String).map { ($0, s) } })
+    let upText = String(data: CallSync.json(["sheet": up]), encoding: .utf8) ?? ""
+    expect(upSrc["s1"]?["path"] as? String == "/p/orbit/brief.md", "custom sync: a call's own source keeps its path")
+    expect(["s-b-custom-aa11-1", "s-b-custom-aa11-2", "s-b-custom-aa11-3", "s9", "s-b-custom-aa11-4"].allSatisfy { upSrc[$0] != nil }
+           && !upText.contains("playbook") && !upText.contains("orbit.example") && !upText.contains("token") && !upText.contains("secret-deals")
+           && !upText.contains("acme-terms") && !upText.contains("Orbit sync with David") && !upText.contains("\"block\""),
+           "custom sync: a custom block's sources go without path, link or title")
+    expect(upText.contains("Point to the free pilot"), "custom sync: the block's facts still go")
+    // the app saves the sheet through its model, so the mark must survive a decode and encode
+    let one = #"{"id":"s-b-custom-aa11-1","n":2,"type":"file","path":"/p/orbit/playbook.md","title":"playbook.md","access":"ok","used":"full","block":"b-custom-aa11"}"#
+    let src1 = try? JSONDecoder().decode(SheetSource.self, from: Data(one.utf8))
+    let again = src1.flatMap { try? JSONEncoder().encode($0) }.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+    expect(src1?.block == "b-custom-aa11" && again?["block"] as? String == "b-custom-aa11", "custom sync: the source mark survives the app's save")
+    // the personal library
+    var lib = CustomBlockLibrary()
+    let id1 = lib.save(title: "Objection answers", settings: a.custom!, id: nil)
+    expect(lib.blocks.count == 1 && lib.blocks[0].settings.libID == id1 && lib.blocks[0].settings.sourceIDs == nil, "custom library: add")
+    var edited = a.custom!; edited.length = "long"
+    expect(lib.save(title: "Objections", settings: edited, id: id1) == id1 && lib.blocks.count == 1
+           && lib.blocks[0].title == "Objections" && lib.blocks[0].settings.length == "long", "custom library: update by id")
+    let id2 = lib.duplicate(id1)
+    expect(id2 != nil && id2 != id1 && lib.blocks.map(\.title) == ["Objections", "Objections (copy)"] && lib.blocks[1].settings.libID == id2,
+           "custom library: duplicate right after")
+    lib.delete(id1)
+    expect(lib.blocks.map(\.id) == [id2!] && lib.block(id1) == nil, "custom library: delete")
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent("pb101-\(UUID().uuidString)/custom-blocks.json")
+    try? lib.save(to: url)
+    expect(CustomBlockLibrary.load(url) == lib, "custom library: saved and loaded")
+    // review round 1: a library file that cannot be read is kept aside, never overwritten by the next save
+    try? Data("{not json".utf8).write(to: url)
+    expect(CustomBlockLibrary.load(url).blocks.isEmpty && !FileManager.default.fileExists(atPath: url.path)
+           && ((try? FileManager.default.contentsOfDirectory(atPath: url.deletingLastPathComponent().path)) ?? [])
+               .contains { $0.hasPrefix("custom-blocks.unreadable-") && $0.hasSuffix(".json") },
+           "custom library: an unreadable file is moved aside")
+    try? FileManager.default.removeItem(at: url.deletingLastPathComponent())
+    expect(CustomBlockLibrary.load(url).blocks.isEmpty, "custom library: none yet is an empty library")
+}
+
 // 0.10.0 (Meeting Sheet, phase 6): the Pacenote browser's pure logic: page kinds, the capture plan, the pause, the
 // file names under <project>/live/sources, and the contact scrubber (emails and phones are never collected).
 func browserCapture0100() {
@@ -4300,6 +4398,7 @@ func prepSecuritySEC01() {
 deckCapacity097()
 meetingSheet0100()
 verbatimPB102()
+customBlocksPB101()
 meetingSheetUI0100()
 browserCapture0100()
 sheetPipeline0100()

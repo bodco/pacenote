@@ -12,7 +12,8 @@ BLOCK_TYPES = ("header", "my_focus", "company", "signals", "tech_stack", "fit", 
                "project_context", "agenda", "action_items", "questions", "best_outcome", "red_lines", "structure_roles",
                "overview", "gaps", "standup_since", "standup_today", "standup_blockers", "standup_waiting",
                "interview_candidate", "interview_role", "objections", "competitors", "stakeholders", "mutual_plan",
-               "verbatim")      # PB-102: a text copied unchanged from one source (sheet/verbatim.py)
+               "verbatim",      # PB-102: a text copied unchanged from one source (sheet/verbatim.py)
+               "custom")        # PB-101: the PM's own block from the personal library (sheet/custom.py)
 VERBATIM_STATUS = ("ok", "failed")
 FACT_STATUS = ("found", "not_found", "needs_check", "conflict", "stale", "edited")
 ORIGINS = ("model", "user", "readiness")
@@ -159,6 +160,13 @@ def validate(sheet: Any, methods: Optional[Iterable[str]] = None) -> List[str]:
         if vb is not None and v.obj(vb, f"{bp}.verbatim"):
             v.typ(vb, "text", str, f"{bp}.verbatim")
             v.enum(vb, "status", VERBATIM_STATUS, f"{bp}.verbatim")
+        cb = b.get("custom")
+        if cb is not None and v.obj(cb, f"{bp}.custom"):
+            from .custom import FORMATS, LENGTHS
+            v.typ(cb, "instruction", str, f"{bp}.custom")
+            v.enum(cb, "format", FORMATS, f"{bp}.custom")
+            v.enum(cb, "length", tuple(LENGTHS), f"{bp}.custom")
+            v.typ(cb, "sources", list, f"{bp}.custom")
         facts = b.get("facts")
         if facts is None:
             continue
