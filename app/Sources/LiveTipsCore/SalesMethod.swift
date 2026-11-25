@@ -23,4 +23,23 @@ public enum SalesMethod {
     public static func forPrep(call: String?, wizard: String?) -> String? {
         call ?? wizard
     }
+
+    /// A pick in the Qualification header (sheet or Get ready wizard) changes the call's method only with Sales on and
+    /// before the call starts: the live tips read the method once, at start, so a mid-call change would split the call.
+    public static func pickChangesCall(salesOn: Bool, live: Bool) -> Bool {
+        salesOn && !live
+    }
+
+    /// The header offers a pick unless the call is live with Sales on (then the method is shown, read only). With
+    /// Sales off the pick changes only the sheet, as before PB-111.
+    public static func headerPickable(salesOn: Bool, live: Bool) -> Bool {
+        !(salesOn && live)
+    }
+
+    /// The call's method when the prepared Qualification block was built with another one (the block needs a
+    /// refresh), else nil. Sales off (call nil): never.
+    public static func staleBlock(call: String?, block: String?) -> String? {
+        guard let call else { return nil }
+        return (block ?? defaultKey) == call ? nil : call
+    }
 }

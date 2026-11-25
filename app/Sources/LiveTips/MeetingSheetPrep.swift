@@ -944,10 +944,17 @@ struct SheetBlocksStep: View {
             if b.wrappedValue.type == "qualification" {
                 // PB-111: the call's method while Sales is on (also after a later change in the Sales picker); a pick
                 // here changes it for the whole call
-                PrepMenuField(value: SalesMethods.shared.label(draft.qualificationMethod(preset: b.wrappedValue.method))) {
-                    ForEach(lib.methods, id: \.self) { k in Button(SalesMethods.shared.label(k)) { draft.setQualificationMethod(k, block: b.wrappedValue.id) } }   // S1: names, not keys
+                if draft.methodLocked {     // PB-111: during the call the method stays the one the tips started with
+                    Text(SalesMethods.shared.label(draft.qualificationMethod(preset: b.wrappedValue.method)))
+                        .font(th.homeText(13)).foregroundStyle(PN.C.text2).fixedSize()
+                        .help(L("sheet.ui.method.live"))
+                        .onAppear { SalesMethods.shared.load() }
+                } else {
+                    PrepMenuField(value: SalesMethods.shared.label(draft.qualificationMethod(preset: b.wrappedValue.method))) {
+                        ForEach(lib.methods, id: \.self) { k in Button(SalesMethods.shared.label(k)) { draft.setQualificationMethod(k, block: b.wrappedValue.id) } }   // S1: names, not keys
+                    }
+                    .onAppear { SalesMethods.shared.load() }
                 }
-                .onAppear { SalesMethods.shared.load() }
             }
             if b.wrappedValue.type != BlockType.verbatim.rawValue {     // PB-102: a copy is never "only if there is data"
                 Toggle(L("sheet.ui.s2.onlyIfData"), isOn: b.onlyIfData).toggleStyle(.pnCheckbox).font(th.homeText(13)).foregroundStyle(PN.C.text2)

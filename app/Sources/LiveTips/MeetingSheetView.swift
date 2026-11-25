@@ -47,6 +47,7 @@ struct MeetingSheetTab: View {
     var onEditBlocks: () -> Void
     var onCompare: (Int) -> Void = { _ in }
     var onMethod: ((String) -> Void)? = nil      // PB-111: set where the call is known
+    var call: StartCallModel? = nil              // PB-111: the call of this sheet (its method, live or not)
     @State private var width: CGFloat = 0       // 0.10.0 (Meeting Sheet, polish): the right column only on a wide page
 
     var body: some View {
@@ -62,7 +63,7 @@ struct MeetingSheetTab: View {
                         if !doc.note.isEmpty { Text(doc.note).font(PN.Font.caption).foregroundStyle(PN.C.pending) }
                         myFocus(s).id("sheet-block-" + (s.block(.myFocus)?.id ?? "my_focus"))
                         ForEach(s.shownBlocks.filter { $0.type != .myFocus }) { b in
-                            SheetBlockCard(doc: doc, block: b, onRefresh: onRefresh, onMethod: onMethod).id("sheet-block-" + b.id)
+                            SheetBlockCard(doc: doc, block: b, onRefresh: onRefresh, onMethod: onMethod, call: call).id("sheet-block-" + b.id)
                         }
                         hiddenLine(s)
                     }
@@ -251,6 +252,7 @@ struct SheetBlockCard: View {
     let block: SheetBlock
     var onRefresh: () -> Void
     var onMethod: ((String) -> Void)? = nil      // PB-111: the call's method follows a pick in the header
+    var call: StartCallModel? = nil              // PB-111: to show (and refresh) a block built with another method
     @ObservedObject var lib = SheetLibrary.shared
     @State private var confirmDelete = false
     @State private var adding = false
@@ -263,7 +265,7 @@ struct SheetBlockCard: View {
                     if block.type == .qualification {
                         // PB-111 (SX4): with the call known, a pick changes the sheet and the call's method (Sales
                         // on), so prep, tips and summary agree; without it (an old version) the method is only shown
-                        if let onMethod {
+                        if let onMethod, pickable {
                             Menu(L("sheet.ui.method", ["m": SalesMethods.shared.label(block.method ?? SalesMethod.defaultKey)])) {   // S1: names, not keys
                                 ForEach(lib.methods, id: \.self) { m in
                                     Button(SalesMethods.shared.label(m)) { doc.change { SheetEdit.setMethod(&$0, blockID: block.id, method: m) }; onMethod(m) }
@@ -276,6 +278,7 @@ struct SheetBlockCard: View {
                             Text(L("sheet.ui.method", ["m": SalesMethods.shared.label(block.method ?? SalesMethod.defaultKey)]))
                                 .onAppear { SalesMethods.shared.load() }
                                 .fixedSize().font(PN.Font.caption).foregroundStyle(PN.C.text2)
+                                .help(onMethod != nil ? L("sheet.ui.method.live") : "")
                         }
                     }
                     if block.editedByUser { Label(L("sheet.ui.status.edited"), systemImage: "pencil").font(PN.Font.caption).foregroundStyle(PN.C.docs) }
@@ -283,6 +286,19 @@ struct SheetBlockCard: View {
                 }
             }
             .padding(.bottom, 4)
+            if block.type == .qualification, let c = SalesMethod.staleBlock(call: callMethod, block: block.method) {
+                // PB-111: the sheet was prepared with another method than the call's (changed in Get ready later)
+                HStack(spacing: 8) {
+                    Label(L("sheet.ui.method.stale", ["a": SalesMethods.shared.label(block.method ?? SalesMethod.defaultKey),
+                                                      "b": SalesMethods.shared.label(c)]), systemImage: "exclamationmark.triangle")
+                        .font(PN.Font.caption).foregroundStyle(PN.C.pending).fixedSize(horizontal: false, vertical: true)
+                    if call?.isLiveCall == false {     // during the call: Prepare again in the call window
+                        Button(L("sheet.ui.refresh")) { SheetActions.refresh(doc: doc, blocks: [block.id], call: call); onRefresh() }
+                            .buttonStyle(.pnSecondary)
+                    }
+                }
+                .padding(.bottom, 4)
+            }
             if block.type == .verbatim {
                 SheetVerbatimBody(block: block)       // PB-102: the copy as it is, or why it failed
             } else if block.facts.isEmpty {
@@ -304,6 +320,11 @@ struct SheetBlockCard: View {
             Button(L("common.cancel"), role: .cancel) {}
         }
     }
+
+    /// PB-111: the call's method (nil with Sales off or no call known).
+    private var callMethod: String? { call.flatMap { SalesMethod.forCall(enabled: $0.salesActive, chosen: $0.salesMethod) } }
+    /// PB-111: no pick in the header while the call runs with Sales on (the live tips keep their method).
+    private var pickable: Bool { call.map { SalesMethod.headerPickable(salesOn: $0.salesActive, live: $0.isLiveCall) } ?? true }
 
     /// 0.10.0 (Meeting Sheet, smoke): one row per conflict (the mockup S6: both values and Use A / Use B in one box);
     /// the other side of the pair is not shown a second time with the same box. Replaced facts show as "was X".
@@ -888,7 +909,7 @@ private struct SheetWindowBody: View {
         Group {
         ScrollView {
             MeetingSheetTab(doc: doc, onRefresh: {}, onEditBlocks: { SheetPrepWindow.show(model, mode: .expert, step: 2) },
-                            onMethod: { model.adoptSheetMethod($0) })
+                            onMethod: { model.adoptSheetMethod($0) }, call: model)     // PB-111: read only while live with Sales on
                 .padding(20)
         }
         .background(PN.C.bg)

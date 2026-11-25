@@ -13,7 +13,9 @@ Pacenote. Earlier versions are described in the commit messages and in
   four methods: Essentials (the new name of General sales, still the default), SPICED (marked Recommended, for
   discovery calls), BANT and MEDDPICC; MEDDIC, GPCTBA/C&I, SPIN, Sandler and Challenger are under More methods. Each
   method has a one-line "when to use" in the menu and under the picker. Picking a method in the Qualification block
-  header (while you get ready or on the prepared sheet) changes the call's method too. One default
+  header (while you get ready or on the prepared sheet) changes the call's method too, before the call starts; during
+  the call it is read only (the live tips keep their method). If the method changes after the sheet is prepared, the
+  Qualification block says "Prepared with BANT; the call uses SPICED" with Refresh. One default
   for the call and the sheet (Essentials, was BANT for the sheet). With the switch off nothing changes for the call.
   Settings > Projects uses the same picker.
 - **Meeting Sheet: a Verbatim block for text that must stay word for word (PB-102).** + Add a block now offers

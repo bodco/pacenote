@@ -113,10 +113,17 @@ struct SalesMethodPicker: View {
 }
 
 extension StartCallModel {
+    /// PB-111: the call being recorded (its own setup, the calendar event or the same title, as Up next tells it).
+    var isLiveCall: Bool {
+        let ce = CallEngine.shared
+        return (ce.isRunning && ce.currentCallID == id) || UpNext.shared.isLive(self)
+    }
+
     /// PB-111 (SX4): a method picked in the Qualification header of a prepared sheet is the call's method while Sales
-    /// is on (one value for prep, tips and summary); a call in Up next keeps it. Sales off: the call does not change.
+    /// is on (one value for prep, tips and summary); a call in Up next keeps it. Sales off or the call already
+    /// running (the live tips keep the method they started with): the call does not change.
     func adoptSheetMethod(_ m: String) {
-        guard salesActive else { return }
+        guard SalesMethod.pickChangesCall(salesOn: salesActive, live: isLiveCall) else { return }
         salesMethod = m
         salesTouched = true
         if UpNext.shared.items.contains(where: { $0 === self }) { UpNext.shared.save(self) }

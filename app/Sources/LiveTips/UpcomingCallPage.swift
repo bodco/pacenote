@@ -294,7 +294,7 @@ struct UpcomingCallPage: View {
                 }
             }
             MeetingSheetTab(doc: d, onRefresh: {}, onEditBlocks: { getReady(.expert, step: 2) }, onCompare: { compareN = $0; tab = "versions" },
-                            onMethod: { model.adoptSheetMethod($0) })     // PB-111
+                            onMethod: { pickMethod($0) }, call: model)     // PB-111
                 .environment(\.pageFlat, false)       // 0.25 (R2): the built sheet keeps its look (board MS, a later block)
         } else if briefPath != nil {
             VStack(alignment: .leading, spacing: 8) {
@@ -360,6 +360,22 @@ struct UpcomingCallPage: View {
             }
             .pageRow(14)
         }
+    }
+
+    /// PB-111: a method picked in the sheet's Qualification header is saved state, not a pending Setup change: the
+    /// stored call gets the saved setup plus the new method (other unsaved Setup edits stay unsaved), and the
+    /// snapshot takes the new method, so Cancel or Discard never put the old method back next to the new sheet.
+    private func pickMethod(_ m: String) {
+        guard let s = snap, dirty else {             // nothing unsaved: save the pick, the snapshot takes it
+            model.adoptSheetMethod(m); snap?.salesMethod = model.salesMethod; return
+        }
+        var pending = SetupSnap(model)
+        let active = model.salesActive && !model.isLiveCall     // as on screen, with the unsaved edits
+        s.restore(model)
+        model.adoptSheetMethod(m)                                  // no-op when the saved setup has Sales off
+        snap = SetupSnap(model)
+        if active { pending.salesMethod = m }                      // Sales just switched on, unsaved: goes with it
+        pending.restore(model)
     }
 
     private func save() {

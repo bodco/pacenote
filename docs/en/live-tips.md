@@ -1722,8 +1722,10 @@ others are under More methods. Each method has a one-line "when to use" (shown i
 the chosen one); the (i) button shows its criteria. The method you pick is the one value of the call: the
 preparation (the Meeting Sheet Qualification block), the live tips and the after-call summary all use it, unchanged
 (before, a General sales call was prepared with BANT). Picking a method in the Qualification block header (while you
-get ready or on the prepared sheet) changes the call's method too. One default for the call and the sheet:
-Essentials. With the switch off nothing of this applies and the call runs as before.
+get ready or on the prepared sheet) changes the call's method too, before the call starts; during the call the method
+is shown read only, because the live tips keep the method they started with. If you change the method in Get ready
+after the sheet is prepared, the Qualification block says "Prepared with BANT; the call uses SPICED" with Refresh.
+One default for the call and the sheet: Essentials. With the switch off nothing of this applies and the call runs as before.
 
 A questioning method suggests
 the next question of its sequence. Challenger tracks your own moves: a step counts as done when you made it and the
@@ -2668,7 +2670,7 @@ fewer repeats and empty blocks, the same share of the call's topics covered.
 **Editing and Refresh.** Click a fact to edit it; it becomes Edited. The block menu adds a fact, regenerates the
 block, hides it, moves it up or down, or removes it. The qualification block has its method in the header (the
 call's Sales method, Essentials by default, shown by name; since PB-111 it is changed for the whole call, not on the
-sheet alone). **Refresh** rebuilds the sheet from the sources again and **never touches what you
+sheet alone, before the call starts; read only during the call). **Refresh** rebuilds the sheet from the sources again and **never touches what you
 edited**. A banner then says how many facts are new, changed and gone, with Accept all and Compare with version N.
 **Versions** keeps every earlier sheet; Open shows one read-only, **Use this version** makes it current again (the
 current one is kept as a version, nothing is deleted).

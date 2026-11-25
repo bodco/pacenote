@@ -362,6 +362,28 @@ def test_build_with_essentials_keeps_the_calls_method(tmp_path):
     assert sheet["readiness"]["state"] in ("ready", "almost", "not_ready")
 
 
+def test_refresh_of_the_block_after_the_method_changed(tmp_path):
+    # PB-111 round 1: prepared with BANT, the call moved to SPICED, Refresh of the Qualification block (the note's
+    # button) prepares it with SPICED and the block then says SPICED, so the note goes away
+    root, a, b = _project(tmp_path)
+    req = _req(root, a, b, method="bant")
+    assert B.build(req, emit=quiet, responder=lambda s, u: json.dumps(ANSWER)).get("done")
+    path = Path(req["base"] + ".sheet.json")
+    first = json.loads(path.read_text(encoding="utf-8"))
+    qb = next(x for x in first["blocks"] if x["type"] == "qualification")
+    assert qb["method"] == "bant"
+    seen = {}
+    def responder(system, user):
+        seen["user"] = system + user
+        return json.dumps(ANSWER)
+    res = B.build(_req(root, a, b, method="spiced", options={"blocks": [qb["id"]]}), refresh=True, emit=quiet, responder=responder)
+    assert res.get("done"), res
+    new = json.loads(path.read_text(encoding="utf-8"))
+    assert next(x for x in new["blocks"] if x["type"] == "qualification")["method"] == "spiced"
+    assert "Method spiced:" in seen["user"] and "Method bant:" not in seen["user"]
+    assert S.validate(new) == []
+
+
 def test_too_much_needs_a_choice_and_passes_merge(tmp_path, monkeypatch):
     root, a, b = _project(tmp_path)
     monkeypatch.setattr(Z, "per_pass", lambda info, windows: 40)      # every source is "big" for this test
