@@ -47,8 +47,8 @@ enum CallPageEdit {
         }
         o["decisions"] = decs
         if by.contains(where: { !$0.isEmpty }) { o["decision_owners"] = by } else { o.removeValue(forKey: "decision_owners") }
-        let updates = ((o["asks"] as? [[String: Any]]) ?? []).filter { ($0["type"] as? String) == "update" }
-        o["asks"] = updates + clean(open).map { ["what": $0, "type": "question"] }
+        let kept = OpenAsks.kept((o["asks"] as? [[String: Any]]) ?? [])     // PB-104: unheard asks stay unheard
+        o["asks"] = kept + clean(open).map { ["what": $0, "type": "question"] }
         o["risks"] = clean(risks).map { ["what": $0] }
         o["edited"] = ISO8601DateFormatter().string(from: Date())
         o["source"] = "call_page"

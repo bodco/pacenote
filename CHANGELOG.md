@@ -9,11 +9,13 @@ Pacenote. Earlier versions are described in the commit messages and in
   call and stayed muted for 39 min with no sign of it, so the tips never heard you. Now, once the other side has
   talked for 60 s in all since you muted, the tips window and the menu bar panel show "Your mic is muted in
   Pacenote" with one Unmute button, and the menu bar icon keeps an orange dot while it is open. The warning never
-  takes the focus, comes back at most every 5 min while you stay muted, and goes away when you unmute (any way) or
-  the call ends. A call that ends muted gets a closing line in the transcript, the meeting notes list each muted
+  takes the focus and stays until you close it, unmute (any way) or the call ends; once closed, a new one comes at
+  most every 5 min while you stay muted. A call that ends muted gets a closing line in the transcript, the meeting notes list each muted
   span under Unclear ("Your mic was muted in Pacenote until 10:39:07 (39 min)"), and a question to you from a muted
-  span is "Not heard (mic muted in Pacenote)" in the call summary, not "Unanswered", and is not counted in the
-  Deal tab's open questions. The notes model and the Meeting Sheet check are told which spans were muted, so a
+  span is "Not heard (mic muted in Pacenote)" in the call summary, not "Unanswered". It is not counted as an open
+  question anywhere else either: the call page, Home and its stats, Series, the after-call screen, the Deal tab, the
+  follow-up draft (which calls it not heard) and the project assistant's call facts; editing the open questions on the
+  call page keeps it as it was. The notes model and the Meeting Sheet check are told which spans were muted, so a
   question from them is not called open or "Not answered" only because your words are missing.
 - **Project memory, step 4: topic summaries and questions over all time (GraphRAG G2 S4, PB-87).** Still behind the
   flag `evidence_store` (off by default); with the flag off nothing changes and nothing new is sent. With it on and

@@ -62,7 +62,9 @@ off), can be moved, minimised and closed, and asks macOS to stay out of screen s
 Closed it by accident during a call? `touch control/prompter` reopens it with all tips so far.
 Try it without a call: `bin/prompter --demo`.
 Buttons: `🎙` mutes the mic transcription (creates `control/mic_muted`; the recorder drops mic
-audio and writes "мікрофон вимкнено / увімкнено" lines), `💬` sets how often the skill may
+audio and writes "мікрофон вимкнено / увімкнено" lines; a call that ends muted also gets
+"мікрофон вимкнено до кінця дзвінка", "microphone muted until the end of the call" in English, which closes the
+muted span, PB-104), `💬` sets how often the skill may
 suggest a comment (written to the inbox as `{"kind":"setting",...}`, read as `@@SET`).
 
 ## Pause tips

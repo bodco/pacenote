@@ -165,3 +165,47 @@ def test_engine_without_a_mute_is_unchanged():
     e.mic_mute(True, "10:00:07")                       # muted now, span still open
     assert e.muted_at("10:30:00")
     assert "10:00:07 to now" in e._situation_extra_input()
+
+
+# ---- review r0: every reader of the open asks honors "unheard" (acceptance line 4)
+
+MUTED_SIT = {"kind": "situation", "decisions": [], "actions": [],
+             "asks": [{"t": "10:25:10", "who": "Mike", "what": "confirm the release date", "type": "question", "unheard": True},
+                      {"t": "10:00:00", "who": "Emily", "what": "share the agenda", "type": "request"}]}
+
+
+def test_followup_draft_does_not_call_an_unheard_ask_open():
+    from livetips_m0.followup import picture_lines
+    lines = picture_lines(MUTED_SIT)
+    assert "Open: share the agenda" in lines
+    assert "Open: confirm the release date" not in lines
+    assert any(l.startswith("Not heard (the PM's mic was muted in Pacenote") and l.endswith("confirm the release date")
+               for l in lines)
+
+
+def test_pn_tools_call_facts_skip_unheard_asks(tmp_path):
+    import json
+    from livetips_m0 import pn_tools
+    from livetips_m0.call_lists import tips_paths
+    md = tmp_path / "2026-11-24_1000_weekly.md"
+    md.write_text(call_24_11(), encoding="utf-8")
+    tp = tips_paths(md)[0]
+    tp.parent.mkdir(parents=True, exist_ok=True)
+    tp.write_text(json.dumps(MUTED_SIT) + "\n", encoding="utf-8")
+    _, rows = pn_tools.call_facts(md)
+    assert [r[2] for r in rows if r[0] == "open"] == ["share the agenda"]
+
+
+def test_live_tips_model_does_not_get_unheard_asks_as_open():
+    e = bare_engine()
+    e.tips, e.tip_ratings = [], {}
+    e.situation = MUTED_SIT
+    e.clock = lambda: 36000.0
+    assert e._state()["situation"]["open_asks_to_pm"] == ["share the agenda"]
+
+
+def test_situation_model_is_told_to_keep_muted_span_asks_only_when_muted():
+    e = bare_engine()
+    assert "Keep an ask" not in e._situation_extra_input()
+    e.mic_mute(True, "10:00:07")
+    assert "Keep an ask to the PM from these times in asks" in e._situation_extra_input()

@@ -74,7 +74,9 @@ def picture_lines(sit: dict) -> list:
     return (["Decision: " + d for d in sit.get("decisions") or []] +
             ["PM will: {} {}".format(a.get("what", ""), _due(a)) for a in sit.get("actions") or []] +
             ["{} will: {} {}".format(a.get("who", ""), a.get("what", ""), _due(a)) for a in sit.get("theirs") or []] +
-            ["Open: " + a.get("what", "") for a in sit.get("asks") or [] if a.get("type") != "update"])
+            # PB-104: an ask from a span with the PM's mic muted in Pacenote may have been answered aloud
+            [("Not heard (the PM's mic was muted in Pacenote, maybe answered aloud): " if a.get("unheard") else "Open: ")
+             + a.get("what", "") for a in sit.get("asks") or [] if a.get("type") != "update"])
 
 
 def draft(md: Path, lang: str = "auto", model: str = "claude-sonnet-5-5", provider=None, lessons: str = "") -> dict:

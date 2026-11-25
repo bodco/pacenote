@@ -43,6 +43,21 @@ public enum MutedMicNotice {
     }
 }
 
+/// PB-104: the open questions to the PM in a situation row (tips.jsonl `asks`). A turn ("update") is not a question, and
+/// an ask the engine marked `unheard` (asked while the PM's mic was muted in Pacenote) may have been answered aloud, so
+/// it is not open either. Readers: the call page, Home, the stats, Series and the after-call screen.
+public enum OpenAsks {
+    public static func questions(_ asks: [[String: Any]]) -> [String] {
+        asks.filter { ($0["type"] as? String) != "update" && ($0["unheard"] as? Bool) != true }
+            .compactMap { $0["what"] as? String }.filter { !$0.isEmpty }
+    }
+
+    /// The asks a call-page edit of the open list keeps as they were: turns and the unheard ones (not in that list).
+    public static func kept(_ asks: [[String: Any]]) -> [[String: Any]] {
+        asks.filter { ($0["type"] as? String) == "update" || ($0["unheard"] as? Bool) == true }
+    }
+}
+
 /// 0.26.0: a call this short gets no Notion page (wrapup_notion.py refuses below the same number of real lines).
 public enum NotionGate {
     public static let minLines = 5

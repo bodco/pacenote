@@ -6470,6 +6470,14 @@ func mutedMicNoticePB104() {
     expect(posts.count == 8, "PB-104 24.11: 39 min muted gives 8 warnings, one per 5 min (\(posts.count))")
     expect(zip(posts, posts.dropFirst()).allSatisfy { $1 - $0 >= 300 }, "PB-104 24.11: never more often than every 5 min")
     expect(posts.allSatisfy { $0 < unmuteAt }, "PB-104 24.11: nothing after the unmute")
+    // Review r0: a situation row with an unheard ask (muted span) and a normal one: only the normal one is open.
+    let row = #"{"kind":"situation","asks":[{"t":"10:25:10","who":"Mike","what":"confirm the release date","type":"question","unheard":true},{"t":"10:00:00","who":"Emily","what":"share the agenda","type":"request"},{"who":"Sarah","what":"your update","type":"update"}]}"#
+    let asks = ((try? JSONSerialization.jsonObject(with: Data(row.utf8))) as? [String: Any])?["asks"] as? [[String: Any]] ?? []
+    expect(OpenAsks.questions(asks) == ["share the agenda"], "PB-104: an unheard ask is not an open question (\(OpenAsks.questions(asks)))")
+    let kept = OpenAsks.kept(asks)
+    expect(kept.count == 2 && kept.contains { ($0["unheard"] as? Bool) == true && ($0["t"] as? String) == "10:25:10" },
+           "PB-104: a call-page edit keeps the unheard ask with its flag and time")
+    expect(OpenAsks.questions([["what": "a", "type": "question"]]) == ["a"], "PB-104: no mute, no change")
 }
 mutedMicNoticePB104()
 print("core checks: \(passed) passed, \(failures) failed")

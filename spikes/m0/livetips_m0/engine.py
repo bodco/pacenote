@@ -1039,7 +1039,7 @@ class Engine:
         sit = self.situation
         if sit:
             st["situation"] = {"topic": sit.get("topic", ""), "owner": sit.get("owner", ""), "mine": sit.get("mine"),
-                               "open_asks_to_pm": [a.get("what", "") for a in sit.get("asks") or []][:4]}
+                               "open_asks_to_pm": [a.get("what", "") for a in sit.get("asks") or [] if not a.get("unheard")][:4]}   # PB-104
         return st
 
     # ---------- freshness checks (code, not prompt) ----------
@@ -2794,7 +2794,9 @@ class Engine:
         if self.mute_spans:        # PB-104: the PM's own lines are missing there, so silence is not "no answer"
             parts.append("THE PM'S MICROPHONE WAS MUTED IN PACENOTE (the PM's lines from these times are not in the transcript; "
                          "the PM may have spoken and answered aloud, so never take a missing PM line there as no answer): "
-                         + ", ".join("{} to {}".format(a, b or "now") for a, b in self.mute_spans))
+                         + ", ".join("{} to {}".format(a, b or "now") for a, b in self.mute_spans)
+                         + ". Keep an ask to the PM from these times in asks (it is shown as not heard, not as unanswered) "
+                         "unless another speaker's line shows it was answered or dropped.")
         if self.agenda_items:
             full = getattr(self, "agenda_full", None) or [t for t, _ in self.agenda_items]
             parts.append("AGENDA:\n" + "\n".join("{}. {}".format(i, t) for i, t in enumerate(full)))

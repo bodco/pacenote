@@ -80,7 +80,8 @@ def call_facts(md: Path) -> tuple:
     if m is not None:
         rows += [("open", i["t"], i["text"]) for i in m["open"][:PER_KIND]]
     else:
-        rows += [("open", "", a.get("what", "")) for a in (sit.get("asks") or [])[:PER_KIND] if a.get("type") != "update"]
+        rows += [("open", "", a.get("what", "")) for a in (sit.get("asks") or [])[:PER_KIND]
+                 if a.get("type") != "update" and not a.get("unheard")]      # PB-104: muted span, maybe answered aloud
     if not rows and m is not None and m["tldr"]:
         rows = [("summary", "", m["tldr"])]
     if rows:

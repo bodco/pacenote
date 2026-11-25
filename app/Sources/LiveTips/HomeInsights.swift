@@ -67,8 +67,7 @@ struct CallOutcome: Equatable {
                 var c = CallOutcome()
                 c.decisions = ((o["decisions"] as? [Any]) ?? []).compactMap { $0 as? String }.filter { !$0.isEmpty }
                 c.onMe = ((o["actions"] as? [[String: Any]]) ?? []).compactMap { $0["what"] as? String }.filter { !$0.isEmpty }
-                c.openQuestions = ((o["asks"] as? [[String: Any]]) ?? []).filter { ($0["type"] as? String) != "update" }
-                    .compactMap { $0["what"] as? String }.filter { !$0.isEmpty }
+                c.openQuestions = OpenAsks.questions((o["asks"] as? [[String: Any]]) ?? [])   // PB-104: not the unheard ones
                 c.theirs = ((o["theirs"] as? [[String: Any]]) ?? []).compactMap { d in
                     guard let w = d["what"] as? String, !w.isEmpty else { return nil }
                     return (who: (d["who"] as? String) ?? "", what: w)
