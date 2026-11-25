@@ -126,6 +126,11 @@ enum AIRoute {
     /// An AI worth trying now: not out, or its next check is due (its reset time passed).
     static func due(_ r: String) -> Bool { AIOut.due(outStates()[r], now: Date().timeIntervalSince1970) }
 
+    /// PB-96: the out line of `r` (shown or not) no longer matches its state, so the view redraws (AIOut.lineChanged).
+    static func outLineChanged(_ r: String, shown: Bool) -> Bool {
+        AIOut.lineChanged(shown: shown, outStates()[r], now: Date().timeIntervalSince1970)
+    }
+
     static var accountsPath: String { ((statePath as NSString).deletingLastPathComponent as NSString).appendingPathComponent("ai-accounts.json") }
     /// 0.24.1 (F7): the AI a job really ended on: the last switch of `job` (LT_AI_STAGE) written since `since`, else nil.
     static func switchedTo(job: String, since: Date) -> String? {

@@ -2716,10 +2716,11 @@ stay where they are, so a launch never moves them away and back.
 **What switches.** A real outage while the job runs, not only a check before it: "usage limit reached" (ChatGPT
 account), a plan limit, out of credits, a quota error, a key that is not valid, signed out, not installed. A plain short
 rate limit or a timeout does not switch. When the message names when the limit resets ("try again at 12:48 PM",
-"resets 9am"), that AI is left alone until then; otherwise it is tried again every 15 minutes. Get ready shows "is
-out right now" only until that time. Signing in to the Claude account again (in the app or in Terminal) ends a
-signed-out mark at the next sign-in check: when Get ready opens, at its Check step, or when you come back to Pacenote
-while Get ready is open.
+"resets 9am"), that AI is left alone until then; otherwise it is tried again every 15 minutes. Get ready and the Start
+call hint show "is out right now" only until that time; the line goes away on its own when the time passes. Signing in
+to the Claude account again (in the app or in Terminal) ends a signed-out mark at the next sign-in check: when Get
+ready or Start call opens, at the Check step, after Connect in the app, or when you come back to Pacenote while Get
+ready is open.
 A limit or credit mark stays until its time. The job goes back to the AI you chose as soon as it answers. A Meeting Sheet build moves a failed pass to the next AI and goes on; when
 the Claude account is out before the first pass, the build goes on with the next AI reading the sources itself (a web
 page only Claude would have opened is named as skipped).

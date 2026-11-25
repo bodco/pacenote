@@ -45,6 +45,9 @@ enum SheetPrepWindow {
 struct SheetPrepView: View {
     @ObservedObject var draft: SheetDraft
     @ObservedObject var lib = SheetLibrary.shared
+    /// PB-96: whether the out line of the route was shown at the last tick; the tick redraws when that changes.
+    @State private var outShown = false
+    private let outTick = Timer.publish(every: 10, on: .main, in: .common).autoconnect()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -70,8 +73,8 @@ struct SheetPrepView: View {
             PrepRunner.shared.refreshAuth(); draft.objectWillChange.send()
         }
         .onReceive(PrepRunner.shared.$loggedIn) { _ in draft.objectWillChange.send() }
-        .onReceive(Timer.publish(every: 30, on: .main, in: .common).autoconnect()) { _ in
-            if SheetRoutes.problem(draft.route) != nil { draft.objectWillChange.send() }     // the out line ends at its time
+        .onReceive(outTick) { _ in     // the out line ends at its time (a redraw on the change, also when it ends)
+            if AIRoute.outLineChanged(draft.route, shown: outShown) { outShown.toggle(); draft.objectWillChange.send() }
         }
         .onChange(of: lib.loaded) { if draft.presetSuggested { draft.applyPreset(draft.presetID) } }
     }

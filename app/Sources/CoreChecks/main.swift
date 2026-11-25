@@ -5668,6 +5668,12 @@ func pb96SignInAgain() {
     // the out line (SheetRoutes.problem = !due) is gone once the recheck time has passed
     expect(!AIOut.due(st["code"], now: 999) && AIOut.due(st["code"], now: 1000), "pb96: out 15 minutes, then due")
     expect(!AIOut.due(st["codex"], now: 4999) && AIOut.due(st["codex"], now: 5000), "pb96: out until the reset time, then due")
+    // review 1: the view redraws when the shown line ends (the old tick redrew only while the AI was still out)
+    expect(AIOut.lineChanged(shown: true, st["code"], now: 1000), "pb96: a shown out line is redrawn at its recheck time")
+    expect(!AIOut.lineChanged(shown: true, st["code"], now: 999), "pb96: no redraw while the line is still right")
+    expect(AIOut.lineChanged(shown: false, st["code"], now: 999), "pb96: an out not shown yet is drawn")
+    expect(!AIOut.lineChanged(shown: false, st["code"], now: 1000) && !AIOut.lineChanged(shown: false, st["gemini"], now: 0),
+           "pb96: nothing to redraw when nothing is out")
 
     // launch: Claude is the preparation and after-call AI, its sign-in check has not answered yet
     var r = AppConfig.AIRoutes(); r.prep = "code"; r.after = "code"; r.tips = "api"; r.seen = ["code", "api"]
