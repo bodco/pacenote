@@ -15,7 +15,7 @@ Pacenote. Earlier versions are described in the commit messages and in
   the Brief tab in the tips window, folded; Show text opens it as a large scrollable teleprompter that keeps its place
   while tips arrive. Headings, lists and emphasis are kept on the sheet page, in the tips window and in the exports.
   The block stays on this Mac: call sync does not send it, and when the next call of the series (or project memory)
-  reads this sheet again, it reads it without the Verbatim text.
+  reads this sheet again (also the search during that call), it reads it without the Verbatim text.
 - **Project memory, step 4: topic summaries and questions over all time (GraphRAG G2 S4, PB-87).** Still behind the
   flag `evidence_store` (off by default); with the flag off nothing changes and nothing new is sent. With it on and
   AI reading on, a pass ends by grouping what it read into topics (one client per topic, the same topics every time

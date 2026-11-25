@@ -460,3 +460,59 @@ def test_evidence_ingest_reads_sheet_files_without_verbatim_copies(tmp_path):
     for suffix in (".sheet.md", ".sheet.json"):
         text = IN.read_text(base + suffix)
         assert text.strip() and _clean(text) and "Orbit wants a pilot" in text, suffix
+
+
+# ---------------------------------------------------------------- review round 2: the search during the call
+
+def _passages_clean(docs):
+    return all(_clean(d.get("text") or "") and _clean(d.get("head") or "") for d in docs)
+
+
+@pytest.mark.parametrize("drop_md", [False, True])
+def test_the_search_during_the_next_call_never_finds_a_verbatim_copy(tmp_path, drop_md):
+    from livetips_m0.sheet import lookup as LK
+    root, base = _call_one(tmp_path)
+    if drop_md:
+        Path(base + ".sheet.md").unlink()
+    nxt = str(root / "live" / "prep-2026-12-03-1000-orbit-demo")
+    res = B.build(_req(root, ["header", "overview"], auto_sources=True, base=nxt,
+                       meeting={"title": "Orbit demo", "start": "2026-12-03T10:00:00+02:00"}),
+                  emit=quiet, responder=lambda s, u: json.dumps(ANSWER))
+    assert res.get("done"), res
+    sheet = _sheet(res)
+    assert any(str(s.get("path") or "").startswith(base) for s in sheet["sources"])   # the previous sheet is a source
+    docs = LK.collect("exports night", sheet)
+    assert any("Orbit wants a pilot" in d["text"] for d in docs if d.get("path", "").startswith(base))
+    assert _passages_clean(docs)
+    assert _passages_clean(LK.snippets("When do exports run every night", sheet, k=8))
+    assert _passages_clean(LK.FolderIndex([]).extra_docs(sheet))
+
+
+@pytest.mark.parametrize("suffix", [".sheet.md", ".sheet.json", ".sheet.request.json", ".sheet.v1.json"])
+def test_a_sheet_file_added_by_hand_or_in_a_folder_source_is_searched_without_copies(tmp_path, suffix):
+    import shutil
+    from livetips_m0.sheet import lookup as LK
+    root, base = _call_one(tmp_path)
+    assert Path(base + suffix).exists(), suffix
+    sheet = {"blocks": [], "sources": [{"id": "s1", "n": 1, "type": "file", "access": "ok", "path": base + suffix}]}
+    docs = LK.collect("exports night", sheet, folders=False)
+    assert docs and _passages_clean(docs), suffix
+    # a folder source holding renamed sheet files (the generated-file filters do not catch the new name)
+    folder = tmp_path / "notes"
+    folder.mkdir()
+    for s in dict.fromkeys((".sheet.json", ".sheet.md", suffix)):
+        shutil.copy(base + s, folder / ("orbit-notes" + s))
+    sheet = {"blocks": [], "sources": [{"id": "s2", "n": 2, "type": "folder", "access": "ok", "path": str(folder)}]}
+    docs = LK.collect("exports night", sheet)
+    assert any("orbit-notes" in d["path"] for d in docs) and _passages_clean(docs), suffix
+
+
+def test_a_sheet_file_that_cannot_be_cleaned_is_skipped_by_the_search_not_read_raw(tmp_path, monkeypatch):
+    from livetips_m0.sheet import lookup as LK
+    root, base = _call_one(tmp_path)
+
+    def boom(path):
+        raise RuntimeError("render failed")
+    monkeypatch.setattr(V, "sheet_file_text", boom)
+    sheet = {"blocks": [], "sources": [{"id": "s1", "n": 1, "type": "file", "access": "ok", "path": base + ".sheet.md"}]}
+    assert _passages_clean(LK.collect("exports night", sheet, folders=False))
