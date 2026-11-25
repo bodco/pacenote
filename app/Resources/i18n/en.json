@@ -2832,6 +2832,7 @@
  "sheet.ui.custom.saveLib": "Save to library",
  "sheet.ui.custom.updateLib": "Update in library",
  "sheet.ui.custom.saved": "Saved to your library.",
+ "sheet.ui.custom.saveFailed": "Your library could not be saved on this Mac. The change lasts until Pacenote quits.",
  "sheet.ui.custom.from": "from {src}",
  "sheet.ui.custom.allSources": "from the call's sources",
  "sheet.ui.custom.needsSource": "Verbatim needs a file or text: open Settings",

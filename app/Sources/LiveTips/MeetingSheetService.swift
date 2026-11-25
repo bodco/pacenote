@@ -564,9 +564,15 @@ final class CustomBlockStore: ObservableObject {
     func duplicate(_ id: String) { var l = library; l.duplicate(id, suffix: L("sheet.ui.custom.copySuffix")); commit(l) }
     func delete(_ id: String) { var l = library; l.delete(id); commit(l) }
 
+    /// PB-101 (review round 2): the library file could not be written (the change stays only until the app quits).
+    @Published private(set) var saveFailed = false
+
     private func commit(_ l: CustomBlockLibrary) {
         library = l
-        try? l.save(to: Self.url)
+        do { try l.save(to: Self.url); saveFailed = false } catch {
+            saveFailed = true
+            NSLog("Pacenote: custom block library not saved: %@", String(describing: type(of: error)))
+        }
     }
 }
 

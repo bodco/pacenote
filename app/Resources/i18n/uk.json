@@ -2832,6 +2832,7 @@
  "sheet.ui.custom.saveLib": "Зберегти в бібліотеку",
  "sheet.ui.custom.updateLib": "Оновити в бібліотеці",
  "sheet.ui.custom.saved": "Збережено у вашу бібліотеку.",
+ "sheet.ui.custom.saveFailed": "Не вдалося зберегти бібліотеку на цьому Mac. Зміна діє, доки Pacenote не закриється.",
  "sheet.ui.custom.from": "з {src}",
  "sheet.ui.custom.allSources": "з джерел дзвінка",
  "sheet.ui.custom.needsSource": "Дослівному блоку потрібен файл або текст: відкрийте Налаштування",

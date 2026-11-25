@@ -387,3 +387,63 @@ def test_a_custom_file_that_is_also_an_auto_source_serves_the_whole_sheet(tmp_pa
     src = [s for s in sheet["sources"] if s.get("path") == str(pb)]
     assert len(src) == 1 and not src[0].get("block")
     assert _by_id(sheet)["b-overview"]["facts"][0]["source_ids"] == ["s-b-custom-x-1"]
+
+
+# ---------------------------------------------------------------- review round 2
+
+def _hidden_keeps_facts(sheet):
+    """The hidden first custom block keeps its 3 facts, every cited source is in the sheet with a unique id and number,
+    and the kept source still belongs to the block."""
+    assert S.validate(sheet) == []
+    srcs = {s["id"]: s for s in sheet["sources"]}
+    ns = [s["n"] for s in sheet["sources"]]
+    assert len(ns) == len(set(ns)) and len(srcs) == len(sheet["sources"])
+    ob = _by_id(sheet)["b-custom-obj"]
+    assert ob["visible"] is False and len(ob["facts"]) == 3
+    assert all(i in srcs for b in sheet["blocks"] for f in b.get("facts") or [] for i in f.get("source_ids") or [])
+    kept = srcs["s-b-custom-obj-1"]
+    assert kept.get("block") == "b-custom-obj"
+    assert kept["n"] not in {s["n"] for s in sheet["sources"] if s["id"] != "s-b-custom-obj-1"}
+
+
+def test_hiding_a_custom_block_with_facts_then_refresh_keeps_it_and_builds(tmp_path):
+    root, pb, past, docs = _project(tmp_path)
+    req = _req(root, _blocks(pb, past, docs))
+    first = B.build(req, emit=quiet, responder=lambda s, u: json.dumps(_answer(3)))
+    assert first.get("done"), first
+    bl = _blocks(pb, past, docs)
+    bl[2] = dict(bl[2], visible=False)
+    res = B.build(dict(req, blocks=bl), refresh=True, emit=quiet, responder=lambda s, u: json.dumps(_answer()))
+    assert res.get("done"), res
+    _hidden_keeps_facts(_sheet(res))
+    # shown again: rebuilt from its sources, still one id and one number each
+    again = B.build(dict(req, blocks=_blocks(pb, past, docs)), refresh=True, emit=quiet,
+                    responder=lambda s, u: json.dumps(_answer(3)))
+    assert again.get("done"), again
+    sheet = _sheet(again)
+    assert S.validate(sheet) == [] and _by_id(sheet)["b-custom-obj"]["visible"] is True
+
+
+def test_a_custom_block_hidden_in_the_saved_sheet_survives_refresh_without_a_block_list(tmp_path):
+    root, pb, past, docs = _project(tmp_path)
+    req = _req(root, _blocks(pb, past, docs))
+    first = B.build(req, emit=quiet, responder=lambda s, u: json.dumps(_answer(3)))
+    assert first.get("done"), first
+    p = Path(first["sheet"])
+    sh = json.loads(p.read_text(encoding="utf-8"))
+    for b in sh["blocks"]:
+        if b["id"] == "b-custom-obj":
+            b["visible"] = False
+    p.write_text(json.dumps(sh), encoding="utf-8")
+    res = B.build({k: v for k, v in req.items() if k != "blocks"}, refresh=True, emit=quiet,
+                  responder=lambda s, u: json.dumps(_answer()))
+    assert res.get("done"), res
+    _hidden_keeps_facts(_sheet(res))
+
+
+def test_keep_cited_sources_keeps_a_free_number_and_gives_a_taken_one_the_next():
+    srcs = [{"id": "s-meeting", "n": 1}, {"id": "s-a", "n": 2}]
+    old = {"sources": [{"id": "s-old", "n": 2}, {"id": "s-free", "n": 7}]}
+    blocks = [{"facts": [{"source_ids": ["s-old", "s-free"]}]}]
+    B.keep_cited_sources(blocks, srcs, old)
+    assert [(s["id"], s["n"]) for s in srcs] == [("s-meeting", 1), ("s-a", 2), ("s-old", 3), ("s-free", 7)]

@@ -962,12 +962,20 @@ def _wanted(b: dict, only: set) -> bool:
 
 
 def keep_cited_sources(blocks: List[dict], srcs: List[dict], old: dict) -> None:
-    """A fact kept from the previous sheet may cite a source this request no longer lists: keep that source."""
+    """A fact kept from the previous sheet may cite a source this request no longer lists: keep that source. PB-101
+    (review round 2): it keeps its old number only when no source of this build has it, else it gets the next one
+    (a hidden custom block's sources are not read, so the others are numbered without them)."""
     have = {s["id"] for s in srcs}
+    taken = {s["n"] for s in srcs if isinstance(s.get("n"), int)}
     cited = {i for b in blocks for f in b.get("facts") or [] for i in f.get("source_ids") or []}
     for os_ in old.get("sources") or []:
         if os_.get("id") in cited - have:
-            srcs.append(dict(os_, used=os_.get("used") or "full"))
+            s = dict(os_, used=os_.get("used") or "full")
+            if isinstance(s.get("n"), int) and s["n"] in taken:
+                s["n"] = max(taken) + 1
+            if isinstance(s.get("n"), int):
+                taken.add(s["n"])
+            srcs.append(s)
             have.add(os_["id"])
 
 

@@ -1050,6 +1050,10 @@ struct SheetBlocksStep: View {
                     deletingCustom = nil
                 }
             } message: { Text(L("sheet.ui.custom.deleteNote")) }
+            if customs.saveFailed {
+                Text(L("sheet.ui.custom.saveFailed")).font(th.homeText(12)).foregroundStyle(PN.C.notreadyText)
+                    .fixedSize(horizontal: false, vertical: true).padding(.horizontal, 14).padding(.vertical, 6)
+            }
         }
     }
 
@@ -1345,7 +1349,8 @@ struct SheetCustomBlockSettings: View {
                     .accessibilityLabel(L("sheet.ui.custom.length") + ": " + L("sheet.ui.custom.len." + cs.length))
                 }
                 if saved {
-                    Text(L("sheet.ui.custom.saved")).font(th.homeText(12, .semibold)).foregroundStyle(PN.C.turn)
+                    Text(L(store.saveFailed ? "sheet.ui.custom.saveFailed" : "sheet.ui.custom.saved")).font(th.homeText(12, .semibold))
+                        .foregroundStyle(store.saveFailed ? PN.C.notreadyText : PN.C.turn).fixedSize(horizontal: false, vertical: true)
                 }
                 HStack {
                     Button(L("sheet.ui.verbatim.remove"), role: .destructive, action: remove).buttonStyle(.pnTertiary)
