@@ -77,15 +77,15 @@ not object storage), billing for storage (B10).
 | Call metadata, summary, decisions, tasks, risks, Meeting Sheet JSON, numbers | yes (Postgres, [enc]) | unchanged | Postgres |
 | Transcript `<stem>.md`, `<stem>.app.md` | no (link to Drive copy only) | yes | object, `content` bucket |
 | Call notes `.notes.md`, brief `.brief.md`, `.sheet.md` | notes as summary only | yes (files) | object, `content` |
-| `.work/` sidecars: `.tips.jsonl`, `.inbox.jsonl`, `.speakers.json`, sheet request, sources, judge | no | yes, one archive per call, **stripped** (2.4): `.speakers.json` goes without its voice vectors (`centroid`, `embs`), `.voices.json` is left out | object, `content` |
+| `.work/` sidecars: `.tips.jsonl`, `.inbox.jsonl`, `.speakers.json`, `.sheet.json`, `.sheet.request.json`, cards, facts, the HubSpot snapshot and the rest of the 2.4 table | no | yes, one archive per call, **stripped**, only the files listed in 2.4 (default deny): `.speakers.json` by a field allowlist without voice vectors (`centroid`, `embs`, `lib_added`), Verbatim blocks and lines removed, `.voices.json`, semantic vectors, model logs and `<stem>.judge/` left out | object, `content` |
 | `.work/web/<host>` stored site pages, `live/google/` picked copies | no | yes, owner only (`docs/en/live-tips.md:2612-2613` says researched pages never reach the server; decision 18) | object, `content` |
 | Project register `live/commitments.jsonl`, `live/lessons.md`, `live/sources/` | register items only (D40, org projects) | yes (files) | object, `content` |
 | Recording `video/<stem>.recording*.mp4` or `.m4a`, `.recording.json` | Drive link only | yes | object, `media` bucket |
 | Project folder files the app reads (docs, PDFs, notes in the folder) | no (D40 file index: name, date, 600-char description, vector, org projects only) | optional, per project (decision 6) | object, `content` |
-| Voice prints `.work/<stem>.voices.json`, the voice vectors inside `.speakers.json` (`centroid` and up to 10 `embs`, written by `recorder/src/fromfile.py` for calls from a file or recording), voice library | no | **no, stays on the Mac** (biometric data, decision 9); removed from the uploaded archive (2.4) | Mac |
+| Voice prints `.work/<stem>.voices.json`, the voice vectors inside `.speakers.json` (`centroid`, up to 10 `embs` and the name-to-vectors map `lib_added`, written by `recorder/src/fromfile.py` for calls from a file or recording), voice library | no | **no, stays on the Mac** (biometric data, decision 9); removed from the uploaded archive (2.4) | Mac |
 | Keys, tokens, settings, local usage log | no | no | Mac, Keychain |
 | Local evidence store `evidence/<uid>.sqlite` (G2) | no | optional encrypted snapshot (decision 8) | object, `content` |
-| Meeting Sheet Verbatim block text (PB-102, Unreleased: "The block stays on this Mac: call sync does not send it") | no | **no**: the sheet files and the `.work` archive are uploaded with the Verbatim text removed, as call sync does today, unless the owner changes that promise (decision 15); such files are never evicted (2.4) | Mac |
+| Meeting Sheet Verbatim blocks (PB-102, Unreleased: "The block stays on this Mac: call sync does not send it") | no | **no**: the sheet files and the `.work` archive are uploaded with the whole Verbatim blocks and the `kind: verbatim` tip lines removed, as call sync does today, with a fail-closed content check (2.4), unless the owner changes that promise (decision 15); such files are never evicted (2.4) | Mac |
 | HubSpot snapshot next to the brief | no | yes, inside the `.work` archive, owner only | object, `content` |
 | Live tip text | no (counts only) | in `.tips.jsonl` archive, owner only (decision 4) | object, `content` |
 
@@ -146,7 +146,7 @@ New Postgres table `objects` (RLS like `calls`, ADR 7.3):
 | rev, current | a new revision for every change; `current` marks the live one |
 | bytes, sha256_cipher | for verify and dedup on upload |
 | hmac_plain | HMAC-SHA256, with the person's **dedup key**, of the plaintext bytes **as uploaded** (for a stripped file, after the strip, 2.4): lets a Mac skip unchanged files without sending the plaintext or a plain hash. It is not hidden from the server itself: the server stores the dedup key wrapped and can unwrap it, like every other key (3.1, not end-to-end). The dedup key is a new random per-person key (not the DEK), stored wrapped in `user_keys` and handed to that person's signed-in devices, kept in the Keychain; it never reaches leads |
-| stripped | true when the uploaded bytes differ from the local file on purpose (Verbatim text or voice vectors removed, 2.4) |
+| stripped | true when the uploaded bytes differ from the local file on purpose (Verbatim blocks or tip lines removed, voice vectors removed, files left out of the `.work` archive, 2.4) |
 | verified_at, backup_verified_at | when the server confirmed the checksum (3.1), and when the nightly copy job confirmed the object in `pn-prod-backup` (same `sha256_cipher`); both are eviction conditions (4.2) |
 | wrapped_key, key_version | the object's data key, wrapped (section 3) |
 | bucket, created_at, deleted_at | |
@@ -156,21 +156,50 @@ New Postgres table `objects` (RLS like `calls`, ADR 7.3):
 
 ### 2.4 Files uploaded stripped (Verbatim text, voice vectors)
 
-Two things stay on the Mac and are removed from the files that carry them before encryption:
+Two things stay on the Mac: the Meeting Sheet Verbatim blocks (PB-102, decision 15) and voice prints (decision 9).
+They are kept out by **allowlists, never denylists**, so a file or field added later is not uploaded by accident.
 
-- the Meeting Sheet Verbatim text (PB-102, decision 15), in `.sheet.md`, the Meeting Sheet files and the sheet
-  request inside the `.work` archive;
-- voice prints (decision 9): the archive leaves out `.voices.json` and the voice library, and its `.speakers.json` is
-  rebuilt from an **allowlist** of fields per speaker (today `name`, `side`, `seconds`, `sample`, `first_quote`,
-  `last_quote`, `suggestions`); every other field is dropped, which today means the vectors `centroid` and `embs`. Without this,
-  phase 1 would upload the voice vectors that `recorder/src/fromfile.py` writes for calls transcribed from a file or
-  recording (and that `CallSpeakers.swift` reads). An allowlist, not a denylist, so a vector field added later is not
-  uploaded by accident.
+**The `.work` archive holds only the files in this table.** Every other file in `.work/` (and every subfolder:
+`<stem>.judge/` and `web/`, which is its own kind `web_pages`, decision 18) is left out, whatever its name. A
+`<stem>.app.<rest>` file follows the rule of `<stem>.<rest>`. The list comes from the suffixes the code writes on
+25.11 (`sidecar_of`, `sidecar` and `CallLayout.sidecar` calls in `recorder/src`, `spikes/m0/livetips_m0` and
+`app/Sources`); a new suffix stays out until it is added here.
+
+| Files | Rule | Why |
+|---|---|---|
+| `.speakers.json` | **stripped**: rebuilt from an allowlist at every level (below) | `recorder/src/fromfile.py` writes voice vectors into it: `centroid` and up to 10 `embs` per speaker (lines 291-292) and, after an edit, `lib_added`, a map from each name to that person's vectors (line 485) |
+| `.tips.jsonl` | **stripped**: lines with `"kind": "verbatim"` are dropped | `recorder/src/transcriber.py:2505` writes the sheet's Verbatim blocks, text included, as such lines |
+| `.sheet.json`, `.sheet.v<N>.json`, `.sheet.request.json` | **stripped**: every block with `"type": "verbatim"` is removed whole (its copy, pasted text, file path, sections and `sha256`) | as call sync does today (`CallSyncCore.swift:387-388`); the strip function is the one the evidence store already uses, `sheet_file_text` in `spikes/m0/livetips_m0/sheet/verbatim.py:261` |
+| `.sheet-live.json` | as is, with the content check below | holds the sheet file name, the question ids and texts and which were asked (`transcriber.py:2581`) |
+| `.inbox.jsonl`, `.feedback.jsonl`, `.edits.jsonl`, `.cards.json`, `.cards-fired.jsonl`, `.facts.json`, `.outline.json`, `.slides.json`, `.deck.json`, `.verify.json`, `.brief.preverify.md`, `.sales.json`, `.crm.json` (ids of the linked company, deal and contacts), `.crm.md` (the HubSpot snapshot, `CRMFlow.swift:5-9`), `.crm-log.json` | as is, with the content check below | call working files the call page, the after-call steps and a later preparation read |
+| `.voices.json`, `.semantic.npz`, `.semantic.jsonl`, `.semantic-summary.json`, `.llm.jsonl`, `.timing.jsonl`, `.context.json`, `.context-correction.txt`, `.context.md`, `.run.json`, `.summary.json`, `.sheet.sources.json`, `.sheet-check.json`, `.prep.json`, `.sync.json`, `.drive.json`, `.notion.json`, `.notion-blocks.json`, `.named.md`, `.meet.md`, `.clean.md`, `.speech.md`, `.digest.md`, `.instructions.md`, `.app-requests.json`, `.claude.json`, `.norec.json`, `.outlang.json` | **left out** | voice prints (decision 9); text vectors and their logs (derived, and a vector needs its own PRIVACY line, section 5); raw model and timing logs (may hold any prompt text, the Verbatim copy included); engine, sync, Drive and Notion state, sheet sources and derived transcript variants, whose writers were not read for this spec: leaving them out is the safe default, and whether a restore needs any of them is checked in the phase 1 design |
+| any file not named in this table | **left out** | default deny |
+
+**`.speakers.json` allowlist.** Top level: `clusters`, `roster`, `overrides`, `merged`, `skipped`, `rev`, `updated`,
+`source`, `remember`, `edited_at`; everything else is dropped (`lib_added` today). Per speaker in `clusters`:
+`name`, `side`, `seconds`, `first`, `how`, `score`, `named_by`, `sample`, `first_quote`, `last_quote`,
+`suggestions`; everything else is dropped (`centroid` and `embs` today). Nested values keep a fixed shape:
+`sample` only `start` and `end` (numbers); `first_quote` and `last_quote` only `t` and `text`; each item of
+`suggestions` only `name` and `score` (what `VoiceLibrary.suggest` returns, `transcriber.py:3872`). The other
+top-level values keep the shapes the code writes (`transcriber.py:4409-4421`, `4745-4746`, `fromfile.py:308-310`):
+`roster` items only `name`, `side` and `src` (strings); `overrides` and `merged` maps of strings to strings;
+`remember` a map of strings to booleans; `skipped` a list of strings; `rev` a number, `updated`, `source` strings,
+`edited_at` a number. A value of another shape drops the whole key. `side` (team or client) is uploaded on purpose, and PRIVACY says so (section 10).
+
+**Content check (fail closed).** Before the archive is built, the strip step reads every Verbatim block of the call's
+sheet files (`verbatim.text` and `verbatim.source.text`) and cuts each into its lines and into runs of 40
+characters. It then checks every entry on its **decoded** text: for JSON and JSONL every string value at any depth
+(so `\n` and `\"` escapes do not hide a match), for Markdown and text the file text, all compared after whitespace
+is collapsed. An entry that holds any such line (of 12 characters or more) or run is dropped from the archive and
+its file name is logged. A Verbatim text shorter than 12 characters is not checked (too many false matches). A file
+dropped this way is a bug to fix in this table, not a silent loss: the Mac keeps it (stripped files are never
+evicted, below).
 
 Such files are uploaded **stripped**: one deterministic strip function per kind, the row marked `stripped`. The
-`.work` archive is always stripped. It is built deterministically (entries sorted by path, fixed timestamps and
-permissions, no compression metadata that changes between runs), so the same local files always give the same bytes
-and the same `hmac_plain`. Rules:
+`.sheet.md` is a separate object (`sheet_md`), stripped by the same `sheet_file_text` (rendered again from its
+`.sheet.json` without the Verbatim blocks). The `.work` archive is always stripped. It is built deterministically
+(entries sorted by path, fixed timestamps and permissions, no compression metadata that changes between runs), so
+the same local files always give the same bytes and the same `hmac_plain`. Rules:
 
 - `hmac_plain` and `sha256_cipher` describe the stripped bytes. To compare a local file with the server, the Mac runs
   the same strip function (for the `.work` archive: the same deterministic build) on the local files first and
@@ -178,11 +207,26 @@ and the same `hmac_plain`. Rules:
   folder-sync dedup (4.3) and the location flag (4.4).
 - A stripped file is **never evicted** from the Mac, whatever the phase or the cache budget, and text eviction
   (decision 7b, phase 4) skips it. The Mac copy is the only full copy.
-- What a new or lost Mac gets: the sheets come back without the Verbatim text. A Verbatim block whose source is a file is
-  filled again on the next Refresh if that file is on the new Mac; pasted Verbatim text cannot be re-created
-  (CHANGELOG, PB-102). Settings
-  > Storage and the restore screen say so. Keeping a full copy would need decision 15(b). A restored
-  `.speakers.json` has no voice vectors: the names stay, and a new Mac re-learns voices (decision 9).
+- What a new or lost Mac gets: the sheets come back without their Verbatim blocks (the block, its source and its
+  text are not on the server), so the person adds the block again; a file source fills it on Refresh, pasted text
+  must be pasted again (CHANGELOG, PB-102). The `.work` folder comes back with the files of the table above only:
+  the semantic vectors are rebuilt by the app, the logs are gone, and for the other left-out files the restore
+effect is checked in the phase 1 design. Settings >
+  Storage and the restore screen say so. Keeping a full copy would need decision 15(b). A restored `.speakers.json`
+  has names, sides and quotes but no voice vectors and no `lib_added`, and a new Mac re-learns voices (decision 9).
+
+**Phase 1 acceptance test (archive builder, pytest).** Fixtures for one call folder: a Verbatim block with a marker
+string (pasted text and a file copy) in `.sheet.json`, `.sheet.v1.json`, `.sheet.request.json` and `.sheet.md`, a
+`"kind": "verbatim"` line with the marker in `.tips.jsonl` and `.app.tips.jsonl`, the marker in `.app.llm.jsonl`;
+voice vectors in `centroid`, `embs` and `lib_added` of `.speakers.json`, and a `.voices.json`; one unknown file and
+one unknown top-level and per-speaker key in `.speakers.json`; and, for the content check, a multi-line marker
+with quotes in it placed in an as-is file (`.facts.json`). The test builds the archive and checks the
+**unpacked plaintext entries before encryption** (a search in compressed or encrypted bytes would pass by itself):
+the entry names are a subset of the table above, the marker appears in no entry and in no other uploaded object
+(`sheet_md`), no number list appears in `.speakers.json`, the unknown file and keys are absent, `.facts.json` is dropped and logged by
+the content check, and building twice gives the same bytes. A second test lists the sidecar suffixes the code writes (the grep above) and fails when one
+is not named in any row of the table (the default-deny row does not count), so a new file gets a rule before it
+ships.
 
 ## 3. Encryption and access
 
@@ -219,7 +263,7 @@ The roles are unchanged: owner, admin, member (org); lead (team, D37); C-level (
 | Metadata, summary, decisions, tasks, risks, sheet (Postgres) | yes | yes (as today) | decisions, tasks, risks of non-private calls of the project (as today) | metadata counts only | metadata counts only |
 | Transcript, notes, brief | yes | **policy `share_transcripts`** (decision 4); the brief only if it carries no researched-page text (to check in phase 1 design, decision 18), otherwise owner only | no | no | no |
 | Recording | yes | **policy `share_recordings`** (decision 4) | no | no | no |
-| `.work` archive (tips text, inbox, sources) | yes | no | no | no | no |
+| `.work` archive (the files of the 2.4 table: tips text, inbox, speakers, cards, facts, HubSpot snapshot) | yes | no | no | no | no |
 | `.sheet.md` file, stored web pages (`web_pages`), Google copies (`google_copy`) | yes | no (leads see the sheet copy in Postgres, which call sync already sends without researched pages) | no | no | no |
 | Project files | yes | no | org project files: members of the org project (D40, decision 6) | no | no |
 | Evidence store snapshot | yes | no | no | no | no |
@@ -398,7 +442,7 @@ file and the summary row describe the same notes; the summary row stays the one 
 | Phase | What | Prerequisites | Can be rolled back by |
 |---|---|---|---|
 | 0 | Requirements before any upload: Postgres backups kept off the API server, nightly incremental bucket copy (new and changed objects only) to `pn-prod-backup` in a second location that sets `backup_verified_at`, a monthly restore test that includes a sample of objects, two offline copies of the master key; buckets created, `objects` table and API behind a flag | none | not needed |
-| 1 | Upload only: new calls and Upload history copy to the server; nothing evicted; owner-only access | phase 0 green | flag off; delete server objects (crypto-delete) |
+| 1 | Upload only: new calls and Upload history copy to the server; nothing evicted; owner-only access | phase 0 green; the archive tests of 2.4 (marker and vectors absent from the plaintext entries, every written suffix has a rule) pass | flag off; delete server objects (crypto-delete) |
 | 2 | Lead and C-level access to transcripts and recordings by policy (decision 4); call page opens from the server; Drive upload optional | phase 1 on the owner's own calls for 2 weeks with zero checksum mismatches | policy off; nothing is evicted in phase 2, so every file is still on the owner's Mac, and Drive upload keeps today's setting until phase 3 is stable (6.2), so leads keep Drive links where the person shares them |
 | 3 | Eviction of recordings under the per-file rule of 4.2 (app media folder, 4.3); deletion offers (4.5); Settings > Storage | a restore of a sample of recordings from `pn-prod-backup` passed; the copy job sets `backup_verified_at` reliably for 2 weeks | eviction off and **Restore all to this Mac** (re-download) |
 | 4 | Optional text eviction (decision 7) with the G2 location flag (4.4), store snapshot (decision 8) | phase 3 stable for a month | same as 3 |
@@ -509,8 +553,9 @@ verbatim from `PRIVACY.md` and `TERMS.md` on main (line numbers of 25.11); the U
     point to the new paragraph above; say that voice prints never go.
   - "Participants' names, whether they are from your company and how long each one spoke are not sent yet; this
     policy will say so before they are." This becomes false: transcripts carry speaker names and the `.work` archive
-    carries `.speakers.json` (without voice vectors, 2.4). Replace with: "Participants' names and how long each one
-    spoke are sent inside the call's files, encrypted, visible only to the people who may open those files."
+    carries `.speakers.json` (without voice vectors, but with each speaker's side, 2.4). Replace with: "Participants'
+    names, whether they are from your company and how long each one spoke are sent inside the call's files,
+    encrypted, visible only to the people who may open those files. Voice prints are not sent."
   - "Participants' email addresses are never sent." Transcripts, briefs, sheets and the HubSpot snapshot can contain
     attendee email addresses from the calendar invitation and the CRM. Either the line changes to "are sent only
     inside the call's files, encrypted, visible to the people who may open those files" or the upload removes email
@@ -618,7 +663,7 @@ Act employee evaluation rules.
 | ADR 10, D35, D41 (plan storage quotas, `history_months`) | amended | section 9.4, decision 16 |
 | ADR 12.2 and PRIVACY ("Delete my server data" leaves the Mac and Drive copies) | amended | section 4.5: offer to download first |
 | D44 (auto-delete of inactive accounts with data after 365 days) | still valid, wider effect | now deletes files too; the emails say so |
-| PB-102 (Verbatim block stays on the Mac) | still valid | removed from uploaded sheet files; those files are never evicted (2.4) |
+| PB-102 (Verbatim block stays on the Mac) | still valid | whole blocks removed from uploaded sheet files, `kind: verbatim` tip lines removed, a fail-closed content check on the `.work` archive; those files are never evicted (2.4) |
 | D57 (GraphRAG fully local, nothing new leaves the Mac) | still valid for the store | G2 adds a location flag (`local` or `server`) on the source row, not a new state (4.4); its optional snapshot is decision 8 |
 | PRIVACY and TERMS | to change | section 10 |
 
@@ -660,9 +705,13 @@ Act employee evaluation rules.
    90 days not pinned; (c) nothing evicted automatically, only by the person. Recommendation: (a); text is about 50 MB
    per heavy user per month and keeps preparation and offline full.
 8. **Encrypted weekly snapshot of the local evidence store on the server.** Options: (a) yes, owner only; (b) no,
-   rebuild on a new Mac (re-extraction cost). Recommendation: (a) in phase 4.
-9. **Voice prints.** Options: (a) stay on the Mac only; (b) on the server like other files. Recommendation: (a),
-   biometric data; a new Mac re-learns voices.
+   rebuild on a new Mac (re-extraction cost). Recommendation: (a) in phase 4. The store keeps sheet files without
+   their Verbatim copies (`spikes/m0/livetips_m0/evidence/ingest.py:54`); whether any other source it ingests can
+   carry Verbatim text is not checked yet, so phase 4 runs the content check of 2.4 on the decoded rows of the snapshot (not on the sqlite bytes) before
+   upload.
+9. **Voice prints.** Options: (a) stay on the Mac only: `.voices.json` and the voice library are not uploaded, and
+   `.speakers.json` goes by its field allowlist without `centroid`, `embs` and `lib_added` (2.4); (b) on the server
+   like other files. Recommendation: (a), biometric data; a new Mac re-learns voices.
 10. **Team search over transcripts.** Options: (a) none in phases 1 to 4; (b) blind keyword index; (c) Mac-computed
     vectors in pgvector. Recommendation: (a), then (b) when a team asks.
 11. **Retention of recordings.** Options: (a) keep while the account is active until SX13 adds deal-stage rules;
@@ -679,9 +728,12 @@ Act employee evaluation rules.
     projects until the lawyer answers; (b) sync them. Recommendation: (a).
 15. **Verbatim block (PB-102) on the server.** Options: (a) keep the promise: uploaded sheet files leave it out;
     (b) upload it like the rest and change the CHANGELOG and docs line. Recommendation: (a); it is usually a script
-    or a legal text the person already has. Consequence of (a) (2.4): stripped files are never evicted, and a new or
-    lost Mac gets sheets without the Verbatim text; a file-based block fills again on Refresh if the file is there,
-    pasted Verbatim text is lost with the Mac.
+    or a legal text the person already has. (a) removes the whole block (copy, pasted text, file path, sections),
+    like call sync, so the CHANGELOG line "The block stays on this Mac" stays literally true. Consequence of (a)
+    (2.4): stripped files are never evicted, and a new or lost Mac gets sheets without the Verbatim blocks; the
+    person adds them again (a file source fills on Refresh, pasted text is lost with the Mac). A middle way, upload
+    the block's settings (title, file path, sections) without its text so a file block refills by itself, would
+    change that CHANGELOG and docs line to "its text stays on this Mac"; not recommended for the small gain.
 16. **Storage quotas per plan.** Options: (a) count text only against today's `storage_mb` and give recordings a
     separate quota in hours (for example 20 hours stored on Solo, 100 hours per seat on Team, kept by the retention
     rule); (b) raise `storage_mb` to cover video (for example 25 GB per seat on Team); (c) keep today's numbers.
@@ -695,7 +747,8 @@ Act employee evaluation rules.
     stay on the Mac (`docs/en/live-tips.md:2612-2613`), and the pages may hold a token in a link. Options: (a) upload
     `.work/web/<host>`, the full `.sheet.md` and the brief as owner-only objects (encrypted; leads keep seeing only
     the Postgres sheet copy without researched pages, and the brief only if it carries no researched-page text), and
-    change the docs line; (b) keep the promise: leave `.work/web` out of the archive and strip researched-page text
+    change the docs line; (b) keep the promise: do not upload `web_pages` (`.work/web` is never in the `.work`
+    archive either way, 2.4) and strip researched-page text
     from uploaded sheet and brief files like the Verbatim text (2.4), so those files are never evicted and a new Mac
     gets them without it. Recommendation: (a): the pages are public text, the person is the only reader, and (b) adds a
     second strip function with the same restore loss as decision 15; links are uploaded inside the encrypted archive
