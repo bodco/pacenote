@@ -14,6 +14,7 @@ struct CallSetupView: View {
     @ObservedObject var runner = PrepRunner.shared
     @ObservedObject var upnext = UpNext.shared
     @ObservedObject private var cal = CalendarService.shared
+    @ObservedObject private var seriesStore = CallSeriesStore.shared      // PB-109: the series link shows its name at once
     @ObservedObject private var jobs = SheetJobs.shared       // 0.10.0 (Meeting Sheet, phase 4)
     var mode: CallSetupMode
     var live = false                 // a call is being recorded (plan mode switches to it only when confirmed)
@@ -172,6 +173,22 @@ struct CallSetupView: View {
                     Button(L("call.useSettings")) { model.apply(e); model.scanPrep() }.buttonStyle(.pnTertiary)
                 }
             }
+            seriesLink
+        }
+    }
+
+    /// PB-109: "Series": pick earlier calls of this project into the series of this call (a project and a title first).
+    @State private var seriesPicking = false
+    @ViewBuilder private var seriesLink: some View {
+        let proj = model.project?.name ?? model.workspace?.name ?? ""
+        let title = model.effectiveTitle.trimmingCharacters(in: .whitespaces)
+        if !proj.isEmpty && !title.isEmpty {
+            let named = CallSeriesStore.shared.book.manual(title: title, project: proj)?.name ?? ""
+            HomeLink(named.isEmpty ? L("seriesPick.open") : L("seriesPick.linkNamed", ["name": named]), size: 13) { if ModuleGate.allow("series") { seriesPicking = true } }
+                .help(L("page.seriesPick.help"))
+                .popover(isPresented: $seriesPicking, arrowEdge: .bottom) {
+                    SeriesPickerView(anchor: SeriesAnchor(file: nil, title: title, project: proj), done: { seriesPicking = false; model.scanPrep() })
+                }
         }
     }
 
@@ -641,6 +658,7 @@ struct CallSetupView: View {
                             TextField("", text: $model.title, prompt: Text(L("call.namePlaceholder"))).labelsHidden().pageField(32)
                                 .onChange(of: model.title) { model.scanPrep(); copied = false }
                         }
+                        setupRow(L("page.seriesPick")) { seriesLink }       // PB-109
                         setupRow(L("page.row.when")) {
                             DatePicker("", selection: $model.callDate, displayedComponents: [.date, .hourAndMinute]).labelsHidden()
                                 .datePickerStyle(.field).fixedSize()

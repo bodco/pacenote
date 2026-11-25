@@ -1430,6 +1430,18 @@ The skill and the app follow the same rules, in `rules/agenda.yaml`, `rules/comm
 - **Series.** A regular meeting (same project and title) as one page: what changed since last time, the open
   commitments of the series, the questions that stay open call after call ("open for 3 calls, since ..."), and the
   decisions call by call. It opens from the call page, Recent and Up next.
+- **Series picker (PB-109).** The call page (next to the project) and call setup (under the call's name) have
+  **Series**: give the series a name, pick earlier calls of the same project into it (newest first, with title, date
+  and length, and a search box by title or date such as 2026-11-03) and take a call out with **Take out**. Calls with
+  the same project and title still join by themselves; Take out undoes that for one call. A call is in one series at
+  most: picking it into another series moves it. Pacenote may suggest calls of the same project with a similar title
+  or the same people, but adds nothing until you click Add; calls of another project are never listed, and moving a
+  call to another project takes it out of its series. A series you put together works like a regular one: the
+  Series page lists the open commitments of all its calls (a call you add brings its items at once, a call you take
+  out takes them along), and the next call with the series' title gets its last settings, the agenda points not
+  raised last time, the people of its calls and, in the preparation, its calls and open commitments first. The series
+  are kept in `call-series.json` in the app folder and never leave the Mac; commitments keep their series key, so old
+  series work as before.
 - **Statistics.** Home > This week > Details adds "How the calls went": how much you spoke, questions to you left
   open, calls without a decision, and decisions per call with a brief and without. No dollars.
 - **Risks.** The call picture catches conditional threats ("if the API slips, the pilot moves a week"): a quiet Risk
