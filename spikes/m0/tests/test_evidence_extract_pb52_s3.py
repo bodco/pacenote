@@ -417,10 +417,11 @@ def test_call_starting_during_a_slow_request_cancels_it(env):
     st = open_store(root)
     ingest(st, root)
     tr = FakeTransport(delay=5.0)
-    threading.Timer(0.3, call_file).start()
-    t0 = time.monotonic()
+    # the call starts once the request is in flight: a fixed 0.3 s timer lost to the pass setup on a loaded machine
+    fired = call_file_when(lambda: len(tr.requests) >= 1)
     res = run_pass(st, root, tr)
-    assert time.monotonic() - t0 < 2.5 and tr.cancelled == 1
+    assert fired, ("the request never started", res)
+    assert time.monotonic() - fired[0] < 2.5 and tr.cancelled == 1, res
     assert len(tr.requests) == 1 and res["status"] == "paused_call"
     assert st.one("SELECT count(*) FROM revision WHERE extract_state='pending'")[0] >= 1
     assert res["in_tokens"] > 0                 # the aborted request's input is counted as spent

@@ -6688,5 +6688,146 @@ func callLinkPB117() {
     }
 }
 callLinkPB117()
+// MARK: PB-12 (owner 25.11): two-factor sign-in, the app part (the server checks the codes)
+func twoFactorPB12() {
+    typealias T = TwoFactor
+    typealias S0 = PacenoteServer
+    func obj(_ d: Data) -> [String: Any] { ((try? JSONSerialization.jsonObject(with: d)) as? [String: Any]) ?? [:] }
+    func pj(_ o: [String: Any]) -> Data { (try? JSONSerialization.data(withJSONObject: o)) ?? Data() }
+    // acceptance 1, 6, 8: the state in /v1/me and what the app offers
+    let meO: [String: Any] = ["user": ["id": "u", "email": "mike@example.com", "name": "Mike"], "organizations": [],
+                              "auth": ["google": false, "password": true,
+                                       "two_factor": ["enabled": true, "required": false, "recovery_codes_left": 7,
+                                                      "enabled_at": "2026-11-25T10:00:00Z"]]]
+    let st = PacenoteServer.me(meO)?.auth?.twoFactor
+    expect(st?.enabled == true && st?.recoveryLeft == 7 && st?.enabledAt != nil && st?.required == false, "PB-12: two_factor read from /v1/me")
+    expect(PacenoteServer.me(["user": ["email": "a@b.co"], "organizations": [], "auth": ["google": true, "password": false]])?.auth?.twoFactor == nil,
+           "PB-12: a server without two-factor: no state, nothing shown")
+    expect(T.state(["required": true]) == nil && T.state("x") == nil, "PB-12: no enabled field, no state")
+    expect(T.prompt(nil) == .none && T.prompt(T.State(enabled: true, required: true)) == .none, "PB-12: on (or unknown): nothing to ask")
+    expect(T.prompt(T.State(enabled: false)) == .none, "PB-12: off and not asked: no prompt (no behaviour change)")
+    expect(T.prompt(T.State(enabled: false, offer: true)) == .offer, "PB-12 a6: after a support reset the app offers enrolment")
+    expect(T.prompt(T.State(enabled: false, required: true, offer: true)) == .required, "PB-12 a6/a8: an organization that requires it forces enrolment")
+    // round 2: the requirement holds the app on the setup gate (the sign-in window), never during a call
+    expect(S0.gate(sessionKnown: true, signedIn: true, onboarded: true, callLive: false, twoFactorSetup: true) == .twoFactorSetup
+           && S0.gate(sessionKnown: true, signedIn: true, onboarded: false, callLive: false, twoFactorSetup: true) == .twoFactorSetup,
+           "PB-12 a6/a8: required and off: the setup gate before Home and onboarding")
+    expect(S0.gate(sessionKnown: true, signedIn: true, onboarded: true, callLive: true, twoFactorSetup: true) == .home,
+           "PB-12 a6/a8: never during a call (the gate comes after it)")
+    expect(S0.gate(sessionKnown: true, signedIn: false, onboarded: true, callLive: false, twoFactorSetup: true) == .signIn
+           && S0.gate(sessionKnown: false, signedIn: true, onboarded: true, callLive: false, twoFactorSetup: true) == .loading
+           && S0.gate(sessionKnown: true, signedIn: true, onboarded: true, callLive: false) == .home,
+           "PB-12: signed out or still loading goes first; no requirement, no gate")
+    let req = T.State(enabled: false, required: true), onReq = T.State(enabled: true, required: true)
+    expect(T.gateHeld(false, prompt: T.prompt(req)) && !T.gateHeld(false, prompt: T.prompt(nil)) && !T.gateHeld(false, prompt: .offer),
+           "PB-12 a8: the gate goes on for a requirement only (offline, unknown state: no gate)")
+    expect(T.gateHeld(true, prompt: T.prompt(onReq)), "PB-12 a8: confirmed (/v1/me says on): the gate stays until the recovery codes are closed")
+    expect(T.gateRelease(onReq) && T.gateRelease(T.State(enabled: false)) && !T.gateRelease(req),
+           "PB-12 a8: closing the setup lets the person in only when it is on (or no longer required)")
+    expect(T.enrollmentRequired(pj(["type": "two_factor_enrollment_required"]), status: 403)
+           && T.enrollmentRequired(pj(["type": "https://pacenote/problems/two_factor_enrollment_required"]), status: 403)
+           && !T.enrollmentRequired(pj(["type": "two_factor_enrollment_required"]), status: 401)
+           && !T.enrollmentRequired(pj(["type": "plan"]), status: 403) && !T.enrollmentRequired(Data(), status: 403),
+           "PB-12 a8: the server's 403 two_factor_enrollment_required turns the gate on")
+    expect(T.opensSettings(.offer, alreadyAsked: false, callLive: false) && !T.opensSettings(.offer, alreadyAsked: true, callLive: false)
+           && !T.opensSettings(.offer, alreadyAsked: false, callLive: true) && !T.opensSettings(.required, alreadyAsked: false, callLive: false)
+           && !T.opensSettings(.none, alreadyAsked: false, callLive: false),
+           "PB-12 a6: the offer after a support reset opens Settings once, never during a call; a requirement uses the gate")
+    // acceptance 9: the lock switch read at start fails closed
+    expect(T.lockOn(present: true, value: "1") && T.lockOn(present: true, value: nil) && T.lockOn(present: true, value: "")
+           && !T.lockOn(present: false, value: nil) && !T.lockOn(present: true, value: "0"),
+           "PB-12 a9: a lock item that cannot be read keeps the lock on")
+    // acceptance 5: the challenge after a right password
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    let c = T.challenge(pj(["type": "two_factor_required", "challenge_id": "ch1", "expires_in": 300]), status: 401, email: " Mike@Example.com ", now: now)
+    expect(c == T.Challenge(id: "ch1", expires: now.addingTimeInterval(300), email: "Mike@Example.com"), "PB-12 a5: challenge read")
+    expect(T.challenge(pj(["type": "https://pacenote/problems/two_factor_required", "challenge_id": "x"]), status: 401, email: "", now: now)?.expires
+           == now.addingTimeInterval(300), "PB-12 a5: a URI type and the default 5 min")
+    expect(T.challenge(pj(["type": "two_factor_required"]), status: 401, email: "") == nil, "PB-12 a5: no challenge id, no challenge")
+    expect(T.challenge(pj(["type": "invalid_credentials", "challenge_id": "x"]), status: 401, email: "") == nil, "PB-12 a5: a wrong password is not a challenge")
+    expect(T.challenge(pj(["type": "two_factor_required", "challenge_id": "x"]), status: 429, email: "") == nil, "PB-12 a5: a lockout is not a challenge")
+    // what is typed: a code or a recovery code
+    expect(T.proof("123 456") == .code("123456") && T.proof(" 123-456 ") == .code("123456"), "PB-12: six digits are a code")
+    expect(T.proof("K7M2P-9XQFD") == .recovery("k7m2p9xqfd") && T.proof("k7m2p 9xqfd") == .recovery("k7m2p9xqfd"), "PB-12: a recovery code, normalised")
+    expect(T.proof("12345") == nil && T.proof("1234567") == nil && T.proof("12345678") == nil && T.proof("abc") == nil && T.proof("") == nil,
+           "PB-12: neither a code nor a recovery code")
+    expect(T.formatCode("123456") == "123 456" && T.formatCode("12") == "12" && T.formatCode("1234567") == "123 456", "PB-12: the code field")
+    expect(T.codeComplete("123 456") && !T.codeComplete("12345"), "PB-12: six digits complete the code")
+    // bodies: only the fields the server knows
+    let vb = obj(T.verifyBody(challengeID: "ch1", proof: .code("123456")))
+    expect(Set(vb.keys) == ["challenge_id", "code"] && vb["code"] as? String == "123456", "PB-12 a5: verify body with a code")
+    expect(Set(obj(T.verifyBody(challengeID: "ch1", proof: .recovery("k7m2p9xqfd"))).keys) == ["challenge_id", "recovery_code"],
+           "PB-12 a5: verify body with a recovery code")
+    expect(Set(obj(T.proofBody(.code("123456"))).keys) == ["code"] && obj(T.proofBody(.recovery("r1234567a")))["recovery_code"] as? String == "r1234567a",
+           "PB-12 a3/a4: proof body")
+    expect(obj(T.confirmBody(setupID: "s1", code: "123 456")) as NSDictionary == ["setup_id": "s1", "code": "123456"] as NSDictionary,
+           "PB-12 a1: confirm body")
+    expect(Set(obj(PacenoteServer.loginBody(email: "mike@example.com", password: "p", device: [:])).keys) == ["email", "password", "device"],
+           "PB-12: the password body is unchanged (the code is a separate step)")
+    // acceptance 1: the standard otpauth URI (RFC 6238: SHA-1, 6 digits, 30 s)
+    let rfc = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"      // RFC 6238 test key "12345678901234567890" in Base32
+    let uri = T.otpauthURI(secret: rfc, account: "mike@example.com")
+    expect(uri == "otpauth://totp/Pacenote:mike%40example.com?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&issuer=Pacenote&algorithm=SHA1&digits=6&period=30",
+           "PB-12 a1: otpauth URI (\(uri))")
+    expect(T.uriValid(uri, secret: rfc), "PB-12 a1: our URI is valid")
+    expect(!T.uriValid(uri.replacingOccurrences(of: "SHA1", with: "SHA256"), secret: rfc)
+           && !T.uriValid(uri.replacingOccurrences(of: "digits=6", with: "digits=8"), secret: rfc)
+           && !T.uriValid(uri.replacingOccurrences(of: "period=30", with: "period=60"), secret: rfc)
+           && !T.uriValid(uri.replacingOccurrences(of: "totp", with: "hotp"), secret: rfc)
+           && !T.uriValid(uri, secret: "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"), "PB-12 a1: anything but TOTP SHA-1 / 6 / 30 s with this secret is refused")
+    let s1 = T.setup(["setup_id": "s1", "secret": "gezd gnbv gy3t qojq gezd gnbv gy3t qojq", "otpauth_uri": "otpauth://totp/X?secret=AAAA&digits=8"],
+                     account: "mike@example.com")
+    expect(s1?.secret == rfc && s1?.uri == uri, "PB-12 a1: a wrong server URI is replaced by the standard one")
+    let good = "otpauth://totp/Pacenote:mike%40example.com?secret=\(rfc)&issuer=Pacenote"
+    expect(T.setup(["setup_id": "s1", "secret": rfc, "otpauth_uri": good], account: "x")?.uri == good, "PB-12 a1: a valid server URI is kept")
+    expect(T.setup(["setup_id": "s1", "secret": "0189ABCDEFGHIJKL"], account: "x") == nil && T.setup(["secret": rfc], account: "x") == nil
+           && T.setup(["setup_id": "s1", "secret": "ABCD"], account: "x") == nil, "PB-12 a1: no setup without an id or a Base32 secret")
+    expect(T.groupedKey(rfc) == "GEZD GNBV GY3T QOJQ GEZD GNBV GY3T QOJQ" && T.groupedKey("ABCDEF") == "ABCD EF", "PB-12 a1: the text key in groups")
+    // acceptance 2: recovery codes, shown once and downloadable
+    let codes = (1...10).map { "c\($0)xxxx-yyyyy" }
+    expect(T.recoveryCodes(["recovery_codes": codes + [""]]) == codes && T.recoveryCodes([:]).isEmpty, "PB-12 a2: 10 recovery codes read")
+    let file = T.recoveryFile(codes: Array(codes.prefix(2)), heading: ["Pacenote recovery codes for mike@example.com", "Each code works once."])
+    expect(file == "Pacenote recovery codes for mike@example.com\nEach code works once.\n\nc1xxxx-yyyyy\nc2xxxx-yyyyy\n", "PB-12 a2: the download file")
+    // problems
+    typealias S = PacenoteServer
+    expect(T.messageKey(S.authProblem(pj(["type": "invalid_code", "attempts_left": 2]), status: 400)) == "auth.2fa.err.code"
+           && T.messageKey(S.authProblem(pj(["type": "invalid_code", "attempts_left": 0]), status: 400)) == "auth.2fa.err.spent",
+           "PB-12 a5: a wrong code, then no attempts left")
+    expect(T.messageKey(S.authProblem(pj(["type": "invalid_code"]), status: 400)) == "auth.2fa.err.codeNoCount",
+           "PB-12 a5: no attempts_left: no count (never \"0 attempts left\")")
+    expect(T.messageKey(S.authProblem(pj(["type": "invalid_code"]), status: 403), settings: true) == "account.2fa.err.code"
+           && T.messageKey(S.authProblem(pj(["type": "invalid_code", "attempts_left": 0]), status: 403), settings: true) == "account.2fa.err.code",
+           "PB-12 a3/a4: a wrong code in Settings: its own text, no count, no \"sign in again\"")
+    // the code step on the sign-in screen: which failures send the person back to the password
+    expect(T.backToPassword(S.AuthProblem(status: 410, type: "challenge_expired")) && T.backToPassword(S.AuthProblem(status: 400, type: "code_expired"))
+           && T.backToPassword(S.authProblem(pj(["type": "invalid_code", "attempts_left": 0]), status: 400))
+           && T.backToPassword(S.AuthProblem(status: 410, type: "gone")),
+           "PB-12 a5: an expired challenge or spent attempts: back to the password")
+    expect(!T.backToPassword(S.authProblem(pj(["type": "invalid_code", "attempts_left": 2]), status: 400))
+           && !T.backToPassword(S.authProblem(pj(["type": "invalid_code"]), status: 400))
+           && !T.backToPassword(S.AuthProblem(status: 429, type: "locked", retryAfter: 30)),
+           "PB-12 a5: a wrong code with attempts left, or the lockout (countdown on the code step): stay on the code step")
+    expect(T.messageKey(S.AuthProblem(status: 410, type: "challenge_expired")) == "auth.2fa.err.expired"
+           && T.messageKey(S.AuthProblem(status: 403, type: "two_factor_required_by_org")) == "account.2fa.err.required",
+           "PB-12 a5/a8: expired challenge, turning off a required one")
+    expect(T.messageKey(S.AuthProblem(status: 429, type: "locked")) == nil
+           && S.authMessage(S.AuthProblem(status: 429, type: "locked", retryAfter: 30), context: .code)?.key == "auth.err.locked",
+           "PB-12 a5: the lockout uses the password's text and countdown")
+    expect(S.failureCode(S.AuthProblem(status: 400, type: "invalid_code")) == "invalid_code"
+           && S.failureCode(S.AuthProblem(status: 410, type: "challenge_expired")) == "server_4xx",
+           "PB-12: analytics reasons stay in the catalog's list")
+    // texts: every key the feature uses, in both languages
+    let app = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+    func keys(_ lang: String) -> [String: String] {
+        let d = (try? Data(contentsOf: app.appendingPathComponent("Resources/i18n/\(lang).json"))) ?? Data()
+        return ((try? JSONSerialization.jsonObject(with: d)) as? [String: String]) ?? [:]
+    }
+    let en = keys("en"), uk = keys("uk")
+    let pb12 = en.keys.filter { $0.hasPrefix("auth.2fa.") || $0.hasPrefix("account.2fa.") || $0.hasPrefix("auth.lock.") || $0.hasPrefix("account.lock.") }
+    expect(pb12.count >= 50 && pb12.allSatisfy { uk[$0]?.isEmpty == false }, "PB-12 a10: every two-factor text in EN and UK (\(pb12.count))")
+    expect(["auth.2fa.lost", "account.2fa.lost"].allSatisfy { (en[$0] ?? "").contains("recovery code") && (en[$0] ?? "").contains("support") },
+           "PB-12 a7: the code prompt and the settings say: recovery code or support")
+}
+twoFactorPB12()
 print("core checks: \(passed) passed, \(failures) failed")
 exit(failures == 0 ? 0 : 1)

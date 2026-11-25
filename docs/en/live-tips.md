@@ -2903,6 +2903,26 @@ to Pacenote server on (below). Audio and transcripts stay on your Mac.
 - **Sign-in methods** in Settings > Account: Google (connect or disconnect) and the password (**Set a password**,
   **Change password**, **Remove password**). The last way to sign in cannot be removed. Changing the password signs
   out your other devices; an email tells you about a changed password or a new way to sign in.
+- **Two-factor sign-in** (PB-12) in Settings > Account. **Turn on two-factor sign-in** shows a QR code and the same key
+  as text; scan it (or type the key) in any authenticator app: Google Authenticator, Microsoft Authenticator, Authy,
+  Apple Passwords, 1Password and others (time-based, 6 digits, every 30 seconds). It is on only after you enter the
+  first code from the app. Then you get 10 recovery codes, shown once: **Download** or **Copy** them and keep them safe;
+  each one signs you in once. **New recovery codes** makes a new set and the old one stops working. **Replace phone or
+  app** (with a current code or a recovery code) shows a new QR; your old phone keeps working until you confirm the new
+  one. **Turn off** asks for a current code or a recovery code. With it on, signing in with your email and password asks
+  for the code after the password (or **Use a recovery code**); wrong codes count like wrong passwords and lock the
+  same way. Continue with Google never asks for the code. **Lost your phone?** Sign in with a recovery code, or write
+  to desk@bodco.pm: support can reset two-factor sign-in, you get an email about it, and you sign in with your password
+  only and are asked to turn it on again. An organization can require two-factor sign-in: Pacenote then shows the
+  setup on the sign-in screen and opens nothing else until it is on (never during a call: it waits for the call to
+  end; **Sign out** is there too), and it cannot be turned off. The secret and the recovery codes are kept on the
+  server (the codes only as hashes); this Mac keeps neither. The two-factor rows appear once your Pacenote server
+  supports two-factor sign-in; the code checks, the lockout, the support reset and its email are done by the server.
+- **Touch ID or your Mac password** (optional, PB-12): with **Ask for Touch ID or your Mac password when Pacenote opens
+  your account** on, Pacenote asks for it when it starts with your saved sign-in, before anything reaches the server;
+  **Unlock** on the sign-in screen, or sign in again. Only at that moment, never during work. The switch is kept in
+  this Mac's Keychain and is never sent. It guards the Pacenote screen; the saved sign-in itself stays in the
+  Keychain as before.
 - After signing in the page shows your workspace (the first sign-in makes a personal one, you are its owner) and the
   Macs signed in to your account. **Sign out** next to another Mac ends its session; **Sign out everywhere** ends all
   of them, this one too. Nothing on any Mac is deleted; a signed-out Mac shows the sign-in screen.

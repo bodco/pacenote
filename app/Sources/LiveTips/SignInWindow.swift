@@ -10,8 +10,10 @@ import LiveTipsCore
 
 @MainActor
 final class SignInModel: ObservableObject {
-    enum Step: String { case choose, email, code, resetAsk = "reset", resetCode = "reset_code", link }
-    enum Field: Hashable { case email, password, name, code, newPassword, linkPassword }
+    enum Step: String { case choose, email, code, resetAsk = "reset", resetCode = "reset_code", link, twoFactor = "two_factor" }
+    enum Field: Hashable { case email, password, name, code, newPassword, linkPassword, twoFactor }
+    /// The analytics screen: the two-factor step counts as the code step (the catalog's list stays as it is).
+    var screenSub: String { step == .resetCode ? "reset" : step == .twoFactor ? "code" : step.rawValue }
 
     @Published var step: Step = .choose { didSet { if step != oldValue { stepChanged() } } }
     @Published var creating = false
@@ -21,6 +23,9 @@ final class SignInModel: ObservableObject {
     @Published var code = ""
     @Published var newPassword = ""
     @Published var linkPassword = ""
+    /// PB-12: the code from the authenticator app, or a recovery code when `useRecovery`.
+    @Published var tfCode = ""
+    @Published var useRecovery = false
     @Published var showPassword = false
     @Published var busy = false
     @Published var error: String?
@@ -38,16 +43,16 @@ final class SignInModel: ObservableObject {
     private func stepChanged() {
         error = nil; errorField = nil; info = nil
         if quiet { return }
-        let sub = step == .resetCode ? "reset" : step.rawValue
-        AnalyticsTracker.shared.screen("sign_in", sub: sub)
+        AnalyticsTracker.shared.screen("sign_in", sub: screenSub)
     }
 
     /// Back to the start; the address stays, every secret goes.
     func restart() {
         password = ""; newPassword = ""; linkPassword = ""; code = ""; signupID = ""; resetID = ""
+        tfCode = ""; useRecovery = false; acct.cancelTwoFactor()
         lockedUntil = nil; resendAt = nil; step = .choose
     }
-    func clearSecrets() { password = ""; newPassword = ""; linkPassword = ""; code = "" }
+    func clearSecrets() { password = ""; newPassword = ""; linkPassword = ""; code = ""; tfCode = "" }
 
     private func run(_ field: Field? = nil, _ f: @escaping () async throws -> Void) {
         guard !busy else { return }
@@ -62,6 +67,15 @@ final class SignInModel: ObservableObject {
 
     private func handle(_ e: PacenoteAccount.AuthFailure, _ fallback: Field?) {
         guard let p = e.problem else { error = e.text; errorField = nil; return }
+        // PB-12: the password was right; the code from the app comes next (no error, every password field goes)
+        if p.type == "two_factor_required" {
+            password = ""; newPassword = ""; linkPassword = ""; tfCode = ""; useRecovery = false
+            step = .twoFactor; return
+        }
+        // the two-factor step ran out: back to the password, with the reason
+        if step == .twoFactor, acct.pendingTwoFactor == nil {
+            tfCode = ""; step = .email; error = e.text; errorField = nil; return
+        }
         if p.type == "resend_wait", let w = p.retryAfter { resendAt = Date().addingTimeInterval(Double(w)); return }
         if p.status == 429, p.type != "code_limit", let w = p.retryAfter {
             lockedUntil = Date().addingTimeInterval(Double(w)); error = nil; errorField = nil; return
@@ -71,7 +85,7 @@ final class SignInModel: ObservableObject {
         case "invalid_email", "undeliverable": errorField = .email
         case "weak_password": errorField = step == .resetCode ? .newPassword : .password
         case "invalid_credentials": errorField = step == .link ? .linkPassword : .password
-        case "invalid_code", "code_expired": errorField = .code
+        case "invalid_code", "code_expired": errorField = step == .twoFactor ? .twoFactor : .code
         default: errorField = fallback
         }
     }
@@ -152,6 +166,26 @@ final class SignInModel: ObservableObject {
         run(.linkPassword) { [self] in try await acct.linkGoogle(password: linkPassword) }
     }
     func cancelLink() { acct.cancelLink(); restart() }
+
+    // PB-12: two-factor sign-in
+    func tfTyped(_ v: String) {
+        if useRecovery { if v != tfCode { tfCode = v }; return }
+        let f = TwoFactor.formatCode(v)
+        // like the email code: only the keystroke that completes the six digits sends them
+        let wasComplete = TwoFactor.codeComplete(tfCode)
+        if f != tfCode { tfCode = f }
+        if step == .twoFactor, !wasComplete, TwoFactor.codeComplete(f), !busy { submitTwoFactor() }
+    }
+    func submitTwoFactor() {
+        let p = TwoFactor.proof(tfCode)
+        let isCode: Bool
+        if case .code = p { isCode = true } else { isCode = false }
+        guard let p, isCode != useRecovery else {
+            return local(useRecovery ? "auth.2fa.recovery.field" : "auth.2fa.code.field", .twoFactor)
+        }
+        run(.twoFactor) { [self] in try await acct.verifyTwoFactor(p) }
+    }
+    func toggleRecovery() { useRecovery.toggle(); tfCode = ""; error = nil; errorField = nil }
     func linkForgot() { email = acct.pendingLink?.email ?? email; acct.cancelLink(); forgot() }
 }
 
@@ -163,6 +197,9 @@ struct SignInView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: PN.Space.x4) {
+            if acct.signedIn && acct.twoFactorGate {
+                enrollStep       // PB-12: signed in, the organization requires two-factor sign-in
+            } else {
             switch m.step {
             case .choose: choose
             case .email: emailForm
@@ -170,6 +207,8 @@ struct SignInView: View {
             case .resetAsk: resetAsk
             case .resetCode: resetCode
             case .link: linkStep
+            case .twoFactor: twoFactorStep
+            }
             }
         }
         .padding(28)
@@ -183,7 +222,7 @@ struct SignInView: View {
                                  userInfo: [.announcement: e, .priority: NSAccessibilityPriorityLevel.high.rawValue])
         }
         .onAppear {
-            AnalyticsTracker.shared.screen("sign_in", sub: m.step == .resetCode ? "reset" : m.step.rawValue)
+            AnalyticsTracker.shared.screen("sign_in", sub: m.screenSub)
             Task { await acct.loadMethods() }
         }
     }
@@ -193,6 +232,18 @@ struct SignInView: View {
     @ViewBuilder private var choose: some View {
         Text(L("gate.title")).pnTitle()
         Text(L("gate.intro")).font(PN.Font.body).foregroundStyle(PN.C.text2).fixedSize(horizontal: false, vertical: true)
+        if let s = acct.lockedSession {
+            // PB-12 (acceptance 9): the saved session waits for Touch ID or the Mac password
+            VStack(alignment: .leading, spacing: PN.Space.x2) {
+                Button(action: acct.unlock) {
+                    Label(L("auth.lock.unlock", ["email": s.email]), systemImage: "touchid").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.pnPrimary)
+                Text(L("auth.lock.sub")).font(PN.Font.caption).foregroundStyle(PN.C.text3).fixedSize(horizontal: false, vertical: true)
+                if let e = acct.unlockProblem, !e.isEmpty { errorLine(e) }
+            }
+            .onAppear { acct.unlockOnce() }      // asks by itself once; coming back to this screen does not ask again
+        }
         VStack(alignment: .leading, spacing: PN.Space.x2) {
             Button(action: m.google) { Text(L("account.signIn")).frame(maxWidth: .infinity) }
                 .buttonStyle(.pnPrimary).keyboardShortcut(.defaultAction)
@@ -331,6 +382,40 @@ struct SignInView: View {
             Button(L("auth.link.submit"), action: m.submitLink).buttonStyle(.pnPrimary).keyboardShortcut(.defaultAction).disabled(m.locked)
         }
         .onAppear { focus = .linkPassword }
+    }
+
+    /// PB-12 (acceptance 6, 8): the organization requires two-factor sign-in and it is off: the setup, with Sign out in
+    /// place of Cancel. Closing it (after the recovery codes) opens the app; a failed setup starts again.
+    @ViewBuilder private var enrollStep: some View {
+        Text(L("auth.2fa.gate.title")).pnTitle()
+        Text(L("account.2fa.required")).foregroundStyle(PN.C.text2).fixedSize(horizontal: false, vertical: true)
+        TwoFactorSheet(kind: .enable, email: acct.session?.email ?? "",
+                       cancel: (L("account.signOut"), { Task { await acct.signOut(everywhere: false) } }),
+                       close: { Task { await acct.leaveTwoFactorGate() } }, embedded: true)
+            .id(acct.twoFactorGateRound)
+    }
+
+    /// PB-12: the code from the authenticator app after the password, or a recovery code; what to do without the phone.
+    @ViewBuilder private var twoFactorStep: some View {
+        Text(L("auth.2fa.title")).pnTitle()
+        Text(L(m.useRecovery ? "auth.2fa.recovery.intro" : "auth.2fa.intro")).foregroundStyle(PN.C.text2).fixedSize(horizontal: false, vertical: true)
+        field(L(m.useRecovery ? "auth.2fa.recovery.field" : "auth.2fa.code.field"), .twoFactor) {
+            TextField(m.useRecovery ? "xxxxx-xxxxx" : "123 456", text: Binding(get: { m.tfCode }, set: { m.tfTyped($0) }))
+                .font(PN.sys(22, .semibold, mono: true))
+                .textContentType(.oneTimeCode).focused($focus, equals: .twoFactor)
+                .onSubmit { m.submitTwoFactor() }
+        }
+        lockedLine
+        if m.error != nil, m.errorField == nil { errorLine(m.error!) }
+        Button(L(m.useRecovery ? "auth.2fa.useApp" : "auth.2fa.useRecovery"), action: m.toggleRecovery).buttonStyle(.pnTertiary)
+        Text(L("auth.2fa.lost")).font(PN.Font.caption).foregroundStyle(PN.C.text3).fixedSize(horizontal: false, vertical: true)
+        HStack {
+            Button(L("auth.code.back")) { m.restart() }.buttonStyle(.pnTertiary)
+            Spacer()
+            if m.busy { PNSpinner(size: 16) }
+            Button(L("auth.2fa.submit"), action: m.submitTwoFactor).buttonStyle(.pnPrimary).keyboardShortcut(.defaultAction).disabled(m.locked)
+        }
+        .onAppear { focus = .twoFactor }
     }
 
     // MARK: parts

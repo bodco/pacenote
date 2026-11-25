@@ -348,6 +348,39 @@ keep calendars and Drive on another. The server checks the ID token's `aud` agai
 deploy takes from `PACENOTE_GOOGLE_CLIENT_ID`, the same value `bundle.sh` writes into `google_oauth.json`. Nothing
 about calls is sent yet (B8).
 
+### Two-factor sign-in (PB-12, owner 25.11)
+
+TOTP (RFC 6238: SHA-1, 6 digits, 30 s), 10 one-time recovery codes, replace, turn off, the organization policy and the
+staff reset. The server keeps the secret and the hashed recovery codes and checks every code; the app shows, asks and
+sends. **The server and console part is in the server repository and was not in this branch.** The contract below is
+what the app expects (`LiveTipsCore/TwoFactor.swift`); the server PR must match it or this file changes with it.
+
+| What | Contract the app uses |
+|---|---|
+| State | `/v1/me` `auth.two_factor`: `enabled` (bool, required), `required` (an organization or the staff rule), `offer` (offer enrolment once, set by a support reset), `recovery_codes_left`, `enabled_at`. No `two_factor`: the section shows only the Touch ID switch, nothing else changes |
+| Sign-in | A right password on `POST /v1/auth/email/login`, `/v1/auth/password/reset` or `/v1/auth/google/link` answers 401 `type: two_factor_required` with `challenge_id` and `expires_in` (default 300). Then `POST /v1/auth/two-factor/verify` `{challenge_id, code}` or `{challenge_id, recovery_code}` gives the TokenPair. Errors: `invalid_code` (`attempts_left`), `code_expired` or `challenge_expired` (back to the password), 429 `locked` with `Retry-After` (same counter as passwords). Google sign-in never gets a challenge |
+| Turn on | `POST /v1/me/two-factor/setup` `{}` gives `{setup_id, secret (Base32), otpauth_uri}`; the app keeps `otpauth_uri` only when it is TOTP / SHA1 / 6 / 30 with the same secret, else builds it. `POST /v1/me/two-factor/confirm` `{setup_id, code}` turns it on and returns `recovery_codes` (10) |
+| Replace | `setup` with `{code}` or `{recovery_code}` while on; the old secret stays valid until `confirm`, which swaps them (no new recovery codes) |
+| Recovery codes | `POST /v1/me/two-factor/recovery-codes` with `{code}` or `{recovery_code}`: a new set of 10, the old set stops working. Recovery codes hold a letter; the app sends them lowercased, letters and digits only |
+| Turn off | `DELETE /v1/me/two-factor` with `{code}` or `{recovery_code}`; 403 `two_factor_required_by_org` while required |
+| Wrong code in Settings | confirm, setup with proof, recovery-codes and turn off answer a wrong code with 403 `invalid_code` (`attempts_left` optional), never 401: the app reads a 401 as an expired token, refreshes it and sends the same request again, which would spend a second attempt |
+| Required, not set up | The server may refuse any other route of that account with 403 `two_factor_enrollment_required`; `/v1/me`, the two-factor routes, token refresh and sign-out must stay open. The app treats it like `required` in `/v1/me`. The server sets `required` only for accounts with a password (two-factor sign-in guards email and password; a Google-only account is never held on the gate) |
+
+The app: `SignInWindow.swift` (step `twoFactor`, analytics sub `code` so the catalog stays as it is; `enrollStep`, the
+setup gate), `PacenoteAccount.swift` (`pendingTwoFactor`, `verifyTwoFactor`, the settings calls; a reset or a Google link
+that ends with the code records its events after the code; `askTwoFactorIfNeeded`: an offer opens Settings > Account
+once per launch, never during a call (`UpdateService.callIsLive`); a requirement turns on `twoFactorGate`). The gate
+(`PacenoteServer.gate` case `twoFactorSetup`, `gatedToSignIn`): while an organization requires two-factor sign-in and it
+is off, the sign-in window shows the setup with Sign out in place of Cancel, and Home, onboarding, Settings and a new
+call wait; a live call is never cut (the gate comes after it). It stays until the person closes the setup, so the
+recovery codes are shown first; closing it while still off starts the setup again. `TwoFactorSettings.swift` (the
+section and the sheet; the QR is drawn with CoreImage on the Mac; Copy marks the clipboard
+`org.nspasteboard.ConcealedType`). Touch ID or the Mac password (`SecretStore.Key.signInLock`, LocalAuthentication
+`.deviceOwnerAuthentication`): with it on, the saved session read at start waits in `lockedSession` and the sign-in
+screen offers Unlock (asked by itself once per start); nothing reaches the server before that. An item that is there
+but cannot be read counts as on. It is a screen lock: the session item in the Keychain has no Touch ID access control
+(the combined secrets item would then ask for every key); a follow-up if that is wanted. CoreChecks `twoFactorPB12`.
+
 ## Plans and entitlements (0.19.0, B3; server 0.9.0, D41, D42)
 
 What a plan opens comes from the server signed; the app only shows it. Spec: `research/pacenote-b2-entitlements-spec-2026-11-17.md`

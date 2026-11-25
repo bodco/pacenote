@@ -163,10 +163,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let a = PacenoteAccount.shared
         let onboarded = UserDefaults.standard.bool(forKey: "onboardingDone") || UserDefaults.standard.bool(forKey: "onboarded")
         // (the gate only tells onboarding from Home after sign-in; launchWindows decides whether onboarding opens)
-        switch PacenoteServer.gate(sessionKnown: a.sessionKnown, signedIn: a.signedIn, onboarded: onboarded, callLive: callIsLive) {
+        switch PacenoteServer.gate(sessionKnown: a.sessionKnown, signedIn: a.signedIn, onboarded: onboarded, callLive: callIsLive,
+                                   twoFactorSetup: a.twoFactorGate) {
         case .loading, .afterCall:
             return      // after the call: CallEngine.callEnded routes again
-        case .signIn:
+        case .signIn, .twoFactorSetup:      // PB-12: a required two-factor setup holds the app on the sign-in window too
             HomeWindow.window?.close()
             SettingsWindow.window?.close()
             OnboardingWindow.window?.close()
@@ -183,7 +184,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 0.22.0 (D50): without a session every way into the app opens the sign-in screen (a live call excepted).
     @MainActor func gatedToSignIn() -> Bool {
         let a = PacenoteAccount.shared
-        guard a.sessionKnown, !a.signedIn, !callIsLive else { return false }
+        guard a.sessionKnown, !a.signedIn || a.twoFactorGate, !callIsLive else { return false }   // PB-12: or the required setup
         SignInWindow.show()
         return true
     }
