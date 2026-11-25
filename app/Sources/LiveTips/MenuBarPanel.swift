@@ -101,6 +101,7 @@ struct MenuBarPanel: View {
             header.padding(.bottom, 10)
             AskPanelSection(relayout: { model.app?.panel?.place() })         // 0.26.0 (block 2): End call? asked here
             NoticePanelSection(relayout: { model.app?.panel?.place() })      // 0.26.0: the app's notices wait here
+            KeyRejectedPanelSection(relayout: { model.app?.panel?.place() })  // PB-97: a rejected API key, with Fix
             if model.micMissing { micBanner.padding(.bottom, 10) }
             if model.isLive { liveCard } else { nextCard }
             let rows = model.isLive ? ([model.next].compactMap { $0 } + model.later) : model.later

@@ -173,6 +173,60 @@ public enum AIOut {
     }
 }
 
+/// PB-97 (owner 25.11): a rejected API key. A key route (Claude API, OpenAI API, Gemini API) whose key failed its
+/// check in Settings, or whose real run got HTTP 401 or 403, carries `"rejected": <status>` in state/ai-routes.json
+/// (0 when the error names no status). The mark sticks through other outages (a timeout on a recheck) and clears only
+/// when the route answers again (mark_up) or the key passes its check. A rejected route is disabled in every AI
+/// picker, the automatic choice of AI (AIDefaults) never takes it, and Home, Settings > AI and the menu bar icon show
+/// it. Same rules as livetips_m0.routing (RouteState.mark_down). Pure, for CoreChecks.
+public enum AIKeyRejected {
+    public static let keyRoutes: Set<String> = ["api", "openai", "gemini"]
+
+    /// The HTTP status of a rejected key named in an error text ("HTTP 401", "Error code: 403"), nil when none.
+    public static func status(_ text: String) -> Int? {
+        guard let rx = try? NSRegularExpression(pattern: #"(?<!\d)(401|403)(?!\d)"#),
+              let m = rx.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+              let r = Range(m.range(at: 1), in: text) else { return nil }
+        return Int(text[r])
+    }
+
+    /// The `rejected` value a down entry gets: set for an auth outage of a key route (the status of `text`, else the
+    /// one it had, else 0), kept through any other outage, nil when the route is not a key route or never rejected.
+    public static func mark(route: String, reason: String, text: String, previous: Any?) -> Int? {
+        guard keyRoutes.contains(route) else { return nil }
+        let prev = (previous as? NSNumber)?.intValue
+        return reason == "auth" ? (status(text) ?? prev ?? 0) : prev
+    }
+
+    /// The rejected key routes and their status (0: unknown), from the state file. A key route down for `auth`
+    /// written before PB-97 (no `rejected` field) counts too.
+    public static func parse(_ o: [String: Any]) -> [String: Int] {
+        var out: [String: Int] = [:]
+        for r in keyRoutes {
+            guard let d = o[r] as? [String: Any] else { continue }
+            if let n = d["rejected"] as? NSNumber { out[r] = n.intValue; continue }
+            if (d["down"] as? Bool) == true && (d["reason"] as? String) == "auth" { out[r] = 0 }
+        }
+        return out
+    }
+
+    /// The entry after the key passed its check: an auth outage ends, any other outage stays as it is without the mark.
+    /// nil: nothing to change.
+    public static func cleared(_ entry: [String: Any]?, now: Double) -> [String: Any]? {
+        guard var d = entry else { return nil }
+        let authDown = (d["down"] as? Bool) == true && (d["reason"] as? String) == "auth"
+        guard d["rejected"] != nil || authDown else { return nil }
+        if authDown { return ["down": false, "back_at": now] }
+        d.removeValue(forKey: "rejected")
+        return d
+    }
+
+    /// What the AI choice may use: the connected AIs without the rejected keys.
+    public static func usable(_ connected: Set<String>, rejected: [String: Int]) -> Set<String> {
+        connected.subtracting(rejected.keys)
+    }
+}
+
 /// 0.10.0 (AI chain): what the accounts report about their own limits. Claude Code prints a `rate_limit_event` in
 /// stream-json (rate_limit_info.unifiedWindows.five_hour / seven_day: utilization 0-1, resetsAt); Codex logs
 /// `rate_limits` (primary / secondary: used_percent, window_minutes, resets_at). The latest per account lives in

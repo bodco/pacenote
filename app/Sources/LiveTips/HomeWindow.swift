@@ -374,6 +374,7 @@ struct HomeView: View {
         VStack(alignment: .leading, spacing: 10) {
             if demo && Self.shotState == "banners" { demoBanners }
             if let e = auto.suggestion, !live { autoBanner(e) }
+            KeyRejectedHomeLine()  // PB-97: an API key the provider rejected, with Fix
             UpdateHomeLine()      // 0.23.0 (Bohdan 18.11): the update banner at the top
             InvitesHomeLine()     // 0.17.0 (B6b): "Mike invited you to Acme · Join…"
             OrgSetupHomeLine()    // 0.17.0 (5.3): "Acme is ready. Set it up…" for its owner

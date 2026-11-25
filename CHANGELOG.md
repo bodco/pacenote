@@ -27,6 +27,14 @@ Pacenote. Earlier versions are described in the commit messages and in
   with a server that does not have them nothing changes except the new Touch ID switch. The staff Reset 2FA, the
   organization policy, the email notice and the console sign-in are server and console work.
 
+- **A rejected API key is no longer offered as an AI, and you see it at once (PB-97).** Before, a Claude API, OpenAI
+  API or Gemini API key that the provider rejected (HTTP 401 or 403) stayed in every AI picker, the automatic choice
+  could still put a job on it, and the only sign was inside the key's details. Now a key that fails its check in
+  Settings, or whose real run gets 401 or 403, is disabled in every AI picker ("OpenAI API · key rejected (401)"),
+  and the jobs on it move to the next connected AI. A red banner on Home and on top of Settings > AI, a red line in
+  the menu bar panel and a red dot on the menu bar icon say so, each with Fix, which opens the key. The mark clears as
+  soon as the key passes its check (or a job on it answers again); a timeout or a lost connection neither sets nor
+  clears it. The engine writes the status into `state/ai-routes.json` (`rejected`), the app reads it from there.
 - **Meeting Sheet: a Verbatim block for text that must stay word for word (PB-102).** + Add a block now offers
   Verbatim, as often as you need it in one call. In its Settings you give it a title, a source (a file of the call,
   any file, or pasted text) and, if you want only part of a Markdown file, sections such as 1-4 by heading. The

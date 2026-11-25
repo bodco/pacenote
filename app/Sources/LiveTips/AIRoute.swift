@@ -40,9 +40,44 @@ enum AIRoute {
         let now = Date().timeIntervalSince1970
         var d: [String: Any] = ["down": true, "reason": reason, "since": (cur["down"] as? Bool) == true ? (cur["since"] ?? now) : now, "checked": now]
         if let u = AIOut.resetTime(text, now: Date())?.timeIntervalSince1970, u > now { d["until"] = u }
+        if let s = AIKeyRejected.mark(route: r, reason: reason, text: text, previous: cur["rejected"]) { d["rejected"] = s }   // PB-97
         o[r] = d
         write(o)
     }
+
+    // MARK: PB-97 (owner 25.11): a rejected API key
+
+    /// The key routes whose key was rejected (401 or 403) and the status (0: unknown).
+    static func rejected() -> [String: Int] { AIKeyRejected.parse(read()) }
+
+    /// The result of a key check in Settings: a 401 or 403 marks the route rejected, a pass clears the mark. Any other
+    /// failure (offline, a timeout, 429) changes nothing. Then the status, the alerts and the AI choice follow.
+    @MainActor static func noteKeyCheck(_ r: String, ok: Bool, status: Int) {
+        if ok {
+            var o = read()
+            guard let d = AIKeyRejected.cleared(o[r] as? [String: Any], now: Date().timeIntervalSince1970) else { return }
+            o[r] = d
+            write(o)
+        } else if status == 401 || status == 403 {
+            markDown(r, "auth", text: "HTTP \(status)")
+        } else { return }
+        AIStatusModel.shared.refresh(force: true)
+    }
+
+    /// A removed key leaves no mark behind.
+    @MainActor static func forgetRejected(_ r: String) { noteKeyCheck(r, ok: true, status: 0) }
+
+    /// " · key rejected (401)" after an AI's name in a picker, "" when its key is not rejected.
+    static func rejectedNote(_ r: String, _ rej: [String: Int]) -> String { rejectedState(r, rej).map { " · " + $0 } ?? "" }
+
+    /// "key rejected (401)", "key rejected" when the status is not known; nil when the key is not rejected.
+    static func rejectedState(_ r: String, _ rej: [String: Int]) -> String? {
+        guard let s = rej[r] else { return nil }
+        return s > 0 ? L("ai.key.rejectedCode", ["code": "\(s)"]) : L("ai.key.rejected")
+    }
+
+    /// The Settings > AI anchor of a key route's key.
+    static func keyAnchor(_ r: String) -> String { r == openai ? "ai.openai" : r == gemini ? "ai.gemini" : "ai.claude" }
 
     // MARK: 0.10.0 (AI chain, owner 12.11)
 
@@ -61,7 +96,12 @@ enum AIRoute {
 
     /// 0.24.1 (F3): what is surely connected: an account once its sign-in was checked and is on, a key that is saved,
     /// a downloaded model on this Mac. The routes follow this set (AIDefaults), so an unchecked account never wins.
+    /// PB-97: never a key that was rejected (401 or 403), so autoAssign and the pickers skip it.
     @MainActor static func confirmed() -> Set<String> {
+        AIKeyRejected.usable(confirmedRaw(), rejected: rejected())
+    }
+
+    @MainActor private static func confirmedRaw() -> Set<String> {
         var out = Set<String>()
         let p = PrepRunner.shared
         if PrepRunner.claudePath != nil && p.loggedIn == true { out.insert(code) }
@@ -229,8 +269,9 @@ enum AIRoute {
         // 0.24.1 (F3): a job never starts on an AI that is not there: the chosen one when it can run, else the first
         // that can (AIDefaults.pick over the AIs with a key or a tool), the same rule Settings saves.
         var c = c0
-        let avail = Set(([api, code, codex, openai, gemini] as [String]).filter { available($0) }
-                        + (LocalLLM.downloaded().isEmpty ? [] : [local]))
+        // PB-97: a rejected key is not there either
+        let avail = AIKeyRejected.usable(Set(([api, code, codex, openai, gemini] as [String]).filter { available($0) }
+                        + (LocalLLM.downloaded().isEmpty ? [] : [local])), rejected: rejected())
         // PB-52 G2 (S5, spec 8.6): with the flag on, indexing stays on its AI when `after` is replaced (AIDefaults.runtime)
         c.ai = AIDefaults.runtime(c0.ai, connected: avail, holdIndexing: EvidenceFlag.on(c0))
         return EconomyPlan.apply(c, on: Economy.isOn(stateDir: (statePath as NSString).deletingLastPathComponent),
