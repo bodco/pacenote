@@ -10,7 +10,11 @@ calls spec of 17.11 (D47, server search), the decision log D20 to D58 of the pri
 `docs/specs/PB-52-g2-evidence-store.md` (sections 1 to 4, 5.2, 12, 13.4), `docs/specs/PB-53-g3-related-evidence-in-preparation.md`
 (sections 1 to 3, 8, 10), `PRIVACY.md`, `TERMS.md`, `CHANGELOG.md` (Unreleased, PB-102 Verbatim block),
 `docs/en/live-tips.md` (call folders, recording), `app/Sources/LiveTipsCore/RecordingCore.swift` (recording presets)
-on main `d84f227`.
+on main `d84f227`. For section 5.1 (owner addendum of 26.11): `spikes/m0/livetips_m0/evidence/` (module docstrings
+and imports of `extract.py`, `store.py`, `search.py`, `worker.py`, `__init__.py`, a grep of `ingest.py`),
+`spikes/m0/livetips_m0/judge.py` (docstring), `rules/evidence.yaml`,
+`spikes/m0/bench/g0/` (`run.py` imports, `gold.yaml`, `gold_v2.yaml`, fixtures, results), PB-52 sections 11.4, 11.5 and 14,
+and the CQ1 to CQ5 task titles (PB-90 to PB-94) in the team plan.
 
 Not verified in this step: current Hetzner Object Storage and Cloud prices (no web access in this step; every price
 below is an unverified example and a named parameter), whether Hetzner Object Storage offers all three locations,
@@ -28,11 +32,16 @@ calls a month for one heavy user, ADR section 15).
   recommended: not now). Two exceptions stay on the Mac only: voice prints and the Meeting Sheet Verbatim text
   (decision 15). The Mac becomes a cache that keeps what the next calls need.
 - **What stays.** Live calls never depend on the server (zero new network calls on the tip path, offline works).
-  Preparation and live search keep running on the local evidence store (G2, G3). Voice prints, keys and settings stay
-  on the Mac. Admins and Pacenote staff never read content. Private calls stay private.
+  Voice prints, keys and settings stay on the Mac. Admins and Pacenote staff never read content. Private calls stay
+  private.
+- **Where the evidence graph is built is open (decision 19).** Section 5.1 answers the owner's doubt (why build a
+  local graph if the server holds everything, and how quality is kept) and compares a graph built on the Mac over
+  server-synced data (A, recommended), on the server (B) and a hybrid (C). With A, preparation and live search keep
+  running on the local evidence store (GraphRAG G2, G3) and the G0 gold set and CQ metrics stay the quality gate
+  wherever the data lives.
 - **What it overrides.** D27 ("transcripts stay on the Mac, never on our server") and the matching ADR lines (0.1, 2,
-  9 "the Mac is the source of truth", 13 "nothing in AI on the server" stays). Section 12 lists every decision as
-  overridden, amended or still valid.
+  9 "the Mac is the source of truth"). ADR 13 ("nothing in AI on the server") stays unless decision 19 picks B or C.
+  Section 12 lists every decision as overridden, amended or still valid.
 - **How it ships.** Five phases. Phase 1 only copies (nothing leaves the Mac's disk); eviction starts in phase 3,
   after off-server backups and a restore test, and then only file by file under one rule (4.2): verified on the
   server, at least 30 days since that, and present in the backup bucket. Rollback before phase 3 loses nothing.
@@ -51,20 +60,23 @@ The sales pilot (one rep for a month, then a team) needs three things the curren
    recording and transcript from Drive, if the Drive folder is shared with them. Two permission systems, two places.
 3. **A second Mac or a new Mac starts where the last one stopped**, without copying folders by hand.
 
-Goals:
+Goals of this spec (named SG1 to SG6; in this document G0 to G7 always mean the GraphRAG phases of block G):
 
-- G1. A copy of record on the server for every call artifact and the project register listed in section 2.1, except
+- SG1. A copy of record on the server for every call artifact and the project register listed in section 2.1, except
   voice prints and the Verbatim text (decision 15). Project folder files only if decision 6 says so; with the
-  recommended 6(a) they are not covered by G1 and stay in the person's folder or the shared Drive folder.
-- G2. Access to it by the same roles as today (D36, D37, D40, D47), with one extra rule for transcripts and recordings
+  recommended 6(a) they are not covered by SG1 and stay in the person's folder or the shared Drive folder.
+- SG2. Access to it by the same roles as today (D36, D37, D40, D47), with one extra rule for transcripts and recordings
   that the owner decides (decision 4).
-- G3. The Mac keeps a bounded cache and works fully offline for calls and preparation of pinned calls.
-- G4. Migration of existing local and Drive data without loss, verified by checksums, reversible. The one planned
+- SG3. The Mac keeps a bounded cache and works fully offline for calls and preparation of pinned calls.
+- SG4. Migration of existing local and Drive data without loss, verified by checksums, reversible. The one planned
   difference: files uploaded stripped (Verbatim text or voice vectors removed, 2.4) are verified against their
   stripped bytes, and the Mac keeps the full local file (it is never evicted).
-- G5. Rollback at every phase.
+- SG5. Rollback at every phase.
+- SG6. Quality maintenance (G0 gold set, CQ metrics, regression gate) keeps working when the content lives on the
+  server, not only when it is local (section 5.1).
 
-Non-goals (this spec): server-side AI (preparation on the server stays B11), a web or phone client (B11 PWA), a team
+Non-goals (this spec): designing server-side AI (preparation on the server stays B11; a server-built graph is only
+compared in 5.1 and decided by decision 19), a web or phone client (B11 PWA), a team
 graph (G7), video retention by deal stage (SX13 builds on this spec), the lead calendar (SX1, small rows in Postgres,
 not object storage), billing for storage (B10).
 
@@ -390,11 +402,11 @@ Mac copy (ADR 12.2, PRIVACY). After eviction the server copy can be the only one
 
 | Need | Where it runs | Why |
 |---|---|---|
-| Preparation context (G3), live lookup (G4), after-call links (G5) | **Mac, local G2 store** (unchanged, D57) | zero network during a call, works offline, cost and route chosen by the person, already measured on G0 |
-| A person's own search over all their calls, including evicted ones | Mac store (it keeps snippet text of evicted sources, 4.4) | no server change needed |
+| Preparation context (GraphRAG G3), live lookup (GraphRAG G4), after-call links (GraphRAG G5) | **Mac, local G2 store** with the recommended decision 19(a) (D57) and with 19(c); 19(b) changes this row (5.1) | zero network during a call, works offline, cost and route chosen by the person, already measured on G0 |
+| A person's own search over all their calls, including evicted ones | Mac store (it keeps snippet text of evicted sources, 4.4) on the Mac that extracted them; calls this Mac never held need the extract-from-server step (5.1.2) | no server change needed |
 | Lead or C-level search over the team's calls (B9) | server, as today: decrypt within the visible set (summaries, decisions, tasks, risks; 90 days, cap 2000 calls) | unchanged in phases 1 to 4 |
 | Lead search over the team's **transcripts** | not in this spec's phases 1 to 4 (decision 10) | decrypting 2000 transcripts (about 120 MB) per query does not scale on the current server |
-| Team graph (G7) | later, on the server objects of org projects (D40) | out of scope |
+| Team graph (G7) | later, on the server objects of org projects (D40); this is the server graph of decision 19(c) | out of scope |
 
 Options for team transcript search later (decision 10): (a) none, leads open a call and use find on the page;
 (b) a blind keyword index: the owner's Mac uploads HMAC-hashed word tokens per call, the server matches hashed query
@@ -403,12 +415,134 @@ transcript chunk in pgvector, as D40 already allows for project files: better re
 the plaintext and partly invertible, so it needs its own PRIVACY line. Recommendation: (a) now, (b) when a team asks,
 (c) only with G7.
 
-No option puts an AI model on the server; ADR section 13 ("the server sends nothing to AI") stays valid.
+None of the decision 10 options puts an AI model on the server. A graph built on the server is a separate choice
+(option B of 5.1, decision 19); only that option or the hybrid C would change ADR section 13 ("the server sends
+nothing to AI"). With the recommended 19(a), ADR 13 stays valid.
 
 The evidence store is derived data, but rebuilding it on a new Mac re-runs LLM extraction (G2 section 13.4: rebuild
 redoes extraction under the cost ceiling). An
 encrypted weekly snapshot of the store file in `pn-prod-content`, owner only, lets a new Mac restore it instead
-(decision 8).
+(decision 8; this is the "optional snapshot" of option A in 5.1).
+
+### 5.1 Quality when the server is the source of truth
+
+**The owner's doubt, plainly.** If the server becomes the source of truth and may hold every transcript, note and
+sheet, why spend a week on a local evidence graph (GraphRAG G2 to G5) on the Mac? And when the content is on the
+server, how is quality still measured and kept from regressing? The requirement: quality maintenance must keep working
+when the copy of record is on the server, not only when the content is local (SG6).
+
+**Short answer.** Most of the GraphRAG work is not about where the files sit. It is about what is extracted, from
+which sources, with which evidence and how it is scored. That part works the same over server-held content, because
+the Mac downloads (or already caches, 4.1) the text it extracts from. What is tied to the Mac is the SQLite store
+class and the live path (GraphRAG G4). So: keep G2 and G3, keep G5 after G3, and hold G4 until decision 19 is taken.
+
+#### 5.1.1 What is storage-independent and what is tied to the local store
+
+Checked in this step (read in the PB-122 worktree, no code run):
+
+| Part | Where it is | Tied to storage? | Checked how |
+|---|---|---|---|
+| Extraction prompt, schema and rules (hedge patterns, rules version) | `rules/evidence.yaml`, `rules/evidence_schema.json`; `extract.load_rules`, `extract.prefix`, `extract.extractor_id` (`<rules_version>:<sha256 of the prompt prefix>:10`) | **No**: files plus pure functions; the same prompt runs on any machine | read `extract.py:1-15` and `:39-41`, listed `rules/` |
+| Evidence model (entities, claims, edges, snippets with line numbers, modality, quotes checked against snippet text) | the extraction contract of PB-52 sections 8.3, 8.4 and 8.6, coded in `extract.py` | **The model is not**; its code is today: `segment_view`, `catalog` and `validate` take a `store.Store` and call `store._fold`, `store._find_quote`, `store.claim_nkey`, `search.prepare` (`extract.py:102`, `:165-206`, `:313-473`) | read the imports and the call sites by grep |
+| Applying the result (`apply_extraction`), the state-request log (`state_request` table), locks | `store.py:100`, `:475`; `store.py` uses `sqlite3` and `fcntl` directly (`:14`, `:19`, `:275-278`) | **Yes**: SQLite on the Mac | grep of `store.py` |
+| Source selection and revoke (hide, exclude, revoked Notion pages, the state-only pass) | `ingest.ingest(store, root, hidden_calls, revoked, ...)` and `ingest.apply_state` (`ingest.py:3-4`), the hidden and revoked lists kept in store meta and `source.state` (`ingest.py:297-307`), `store.py:147-150` | **Rules are not, the state is**: which sources count is decided from lists the app passes and project folder paths; the state lives in SQLite | grep of `ingest.py` and `store.py`; the revoke code paths were not read line by line |
+| Tip scoring (blind judge, rubric by call type) | `livetips_m0/judge.py` (reads a call `.md` and a tips `.jsonl` by path, writes `judge.jsonl` and `judge.summary.json`) | **No**: it reads files; it needs the call's transcript and tips log on the Mac when it runs | read the `judge.py` docstring only; a grep for `rubric` or `judge` also hits `signals.py`, `sheet/aftercheck.py`, `sales.py`, `routing.py`, `fact_quality.py`, `engine.py` (not read); `rules/` not grepped |
+| Search (`search`, `entity_card`, access and time in SQL before ranking) | `search.py:340`, `:507` | **Yes**: SQL over FTS5 in the store | read the docstring and signatures |
+| Extraction worker (route, cost ceiling, call-active abort) | `worker.py` imports `routing` and `cost` | **No** for the route: requests go to the AI the person chose (`evidence/__init__.py:5-7`); runs on the Mac | read imports and the package docstring |
+| G0 gold set and benchmark | `spikes/m0/bench/g0/gold.yaml`, `gold_v2.yaml` (39 questions, CHANGELOG), synthetic fixtures (`fixtures/northpoint`, `v2`, `extract`, `topics`), `run.py` | **No** for the data (synthetic, D57, PB-52 line 75; never the owner's real calls). `run.py` drives the evidence CLI (`from livetips_m0.evidence import __main__`), so variant C today runs through the SQLite store | listed `bench/g0`, read `run.py` imports |
+| Live path (GraphRAG G4) | PB-52 section 11.4: snapshot loaded into memory at call start, `search(mode="live")` opens the SQLite file read-only, answers within `budget.ms` (150 ms default), no query embedding | **Yes**: a local read-only SQLite file and an in-memory snapshot, by design (zero network on the tip path) | read PB-52 `:1326-1346`; `docs/specs/` has no G4 spec (only PB-37, PB-52, PB-53) |
+| CQ1 to CQ5 (rubric v2, local metrics and `quality.json`, selective judge on the person's route, `call_quality` and `tip_scored` events, console Quality page) | tasks PB-90 to PB-94 | **Not verified in code here**: the names come from the team plan; a grep for `tip_scored`, `call_quality`, `quality.json` and `CQ1` to `CQ5` on this branch finds nothing. By their titles they score tips and calls on the Mac and send scores as events, which does not depend on where the files are stored | grep (no hits) and task titles only |
+
+Not verified: whether any extraction step reads a file path directly instead of segment text (only the docstrings and
+signatures say so), and how long a store-agnostic split of `extract.validate` and `catalog` would take (estimate
+below).
+
+What is wasted if the content moves to the server: nothing of the list above, with option A. With option B, the
+SQLite store class and search SQL would be rewritten for Postgres (or kept only as the Mac's local copy, see C), and
+GraphRAG G4 would be designed around a server-made snapshot pulled to the Mac (5.1.3); the prompt, schema, evidence model, gold set and CQ metrics carry over.
+
+#### 5.1.2 The quality loop with server-held content
+
+- **Where extraction runs.** A: on the Mac, as today. A source that is evicted (decision 7, text eviction is off by
+  default) is already extracted before eviction; its snippets stay in the store (4.4). **Open gap this spec adds to
+  option A:** a source that exists only on the server for this Mac (a call made on a second Mac, or history on a
+  new Mac, 6.1 item 5 downloads only pinned objects) is not in this Mac's store today. A needs an **extract from
+  server** step. Scope: only the person's own objects, never calls they see through a lead policy (decision 4), so a
+  lead's Mac never sends a rep's transcript to the lead's AI route. Mechanism (not checked against `ingest.py`
+  beyond its signature; `ingest(store, root, ...)` walks the project folder, `ingest.py:3` and `:225`): download the
+  file to its normal path in the project folder, run the normal ingest and extraction pass, then let the per-file
+  eviction rule (4.2) evict it and set the G2 location flag to `server` (4.4). Phase: with phase 4 (section 8); until
+  then a second Mac's store covers only the files that Mac holds. On a new Mac the decision 8 snapshot replaces this
+  for everything older than the snapshot. Two Macs of one person each extract new calls they did not record,
+  so extraction is paid twice unless the snapshot is shared (the cost per call is not estimated in this step; S3
+  calibrates it). B: on the server, which decrypts the content (it can today, 3.1 "What the server can read") and sends
+  it to a model. C: both.
+- **Where the gold set and CQ metrics run.** The G0 gold set is synthetic and lives in the repo, so it runs wherever
+  the code runs (developer Mac, CI, or a server job for B); it never needs real content. CQ metrics score the person's
+  own calls where they are computed: on the Mac for A and C (the tips log and transcript are local during and after
+  the call). For B, a server-side CQ run on real content would need its own consent line; not recommended.
+- **What the Mac pulls to evaluate.** For the gold set: nothing (fixtures are in the repo). For CQ and the judge on
+  its own calls: only the transcript and tips log of the calls it scores. Scoring runs right after the call, when
+  everything of the call is pinned (4.1: everything of a call until its upload is confirmed). A call scored later
+  after eviction is downloaded on demand.
+- **What telemetry carries.** Scores and counts only (`call_quality`, `tip_scored` as named in CQ4), the model,
+  route and release ids, and a `store` field (`sqlite_local`, later `server` for B or C) and a `source_location`
+  share (local or extracted from server) so a regression can be split by store and data location; never transcript,
+  note or tip text. This is a requirement of this spec for any option, not a claim about existing code (CQ4 is not
+  on this branch).
+- **How a regression is caught when the store or the data location changes.** Two cases:
+  - **A location change** (option A: phase 4 text eviction, the extract-from-server step) keeps the SQLite store. The
+    gate: the same extraction code and `extractor_id` (same rules version and prompt hash) on both sides, the same G0
+    gold hash (G0 already fails a C run on any small-gold miss as "fixture stale", PB-52 section 14), and a G0 run
+    with the fixture's sources marked evicted or extracted from server, under the PB-52 G0 gate wording "no existing
+    column regresses" (PB-52 `:1739-1740`). No new interface is needed.
+  - **A store change** (option B, or the server graph of C) adds, on top of that gate, a store-agnostic interface:
+    the store calls of `extract.segment_view`, `catalog`, `validate` and `search` go through one small interface
+    (`fold`, `find_quote`, `claim_nkey`, `visible_entities`, `search`) with the SQLite store as the first
+    implementation; the second store is a new G0 variant that must not regress any column of the SQLite variant.
+    Estimate, not measured: 2 to 4 days for the interface, mostly moving calls (store code about 590 lines, extract
+    and search about 1230, counted with `wc -l`).
+  - In both cases the CQ scores per release, per model and route and per `store` value on the console Quality page
+    (CQ5) catch a drop in real calls that the synthetic gold set misses.
+
+#### 5.1.3 Three architectures compared
+
+| | (A) Graph on the Mac over server-synced data | (B) Graph on the server | (C) Hybrid: Mac graph for live and prep, server graph for team search later (G7) |
+|---|---|---|---|
+| Quality | same extraction and gold set as today; one store per person, built from what that Mac can read (own calls, plus the extract-from-server step of 5.1.2); the extraction model is each person's route, so G0 and CQ are reported per model and route | same prompt and gold set can run; one model for everyone, so one set of scores; the server sees every synced call of the person, so a full rebuild is easier; no extra quality from location alone | A for the person; team graph quality measured separately on G0 plus a team gold set (none exists) |
+| Live latency | local read-only SQLite and an in-memory snapshot, 150 ms budget (PB-52 11.4) | a network call on the tip path, which breaks "zero new network calls" (D57, section 7), or a server-made snapshot pulled to the Mac before the call and answered locally; GraphRAG G4 would then be designed around that pulled snapshot instead of the local SQLite file of PB-52 11.4 | as A for live |
+| Privacy | content decrypted only on the Mac; the AI route is the person's (D57); store snapshot optional, owner only (decision 8) | the server decrypts content and sends it to a model: **an ADR 13 change**, a new PRIVACY line and a consent (the person agrees that the server sends their calls to the named model); D57 overridden | as A for the person; the team graph needs B's changes but only for org projects that opt in |
+| Cost | extraction on the person's route and ceiling, as today; storage: the snapshot only (small) | **a model on the server**: per-token cost of every extraction for every user (not estimated in this step; it would be on the order of today's per-person extraction cost, multiplied by users, paid by Pacenote); plus Postgres and compute growth | A's cost plus the team graph cost for org projects only |
+| Offline | full: prep and live work offline (section 7) | prep needs the server; live needs a pre-pulled snapshot | as A |
+| Who pays | the person (their route or the model on their Mac) | Pacenote, unless plans price it (B10) | the person for their graph, the organization's plan for the team graph |
+| What it needs | the location flag (4.4), the extract-from-server step (5.1.2), decision 8, the location-change gate (5.1.2) | a model choice for the server (a hosted API under a DPA or a self-hosted model on a GPU host), an ADR 13 change, a consent and cost decision, PRIVACY and TERMS text | A, plus B's needs limited to org projects, after G7 is specified |
+
+#### 5.1.4 Recommendation and what it means for GraphRAG G2 to G5
+
+Recommendation: **(A) now, with (C) as the later path for team search (G7)**. Reasons: the live path must stay local
+for latency and offline in every option, so a Mac-side store is needed anyway; the person's route keeps the cost and
+consent model of today; and the store is derived data that a new Mac can restore from the decision 8 snapshot or
+rebuild from server-held text.
+
+Order of GraphRAG phases:
+
+1. **G2 (store) keep**, finish as planned; add the location flag of 4.4 before text eviction (phase 4).
+2. **G3 (related evidence in preparation) keep**: preparation runs on the Mac in every option and benefits first.
+3. **G5 (after-call links) after G3**: it runs after the call, so it does not touch the live path.
+4. **G4 (live lookup) hold** until decision 19 is taken. G4 is the only phase tied to the local SQLite file by
+   design (PB-52 11.4); with B it would be redesigned around a pulled snapshot. Today's live lookup over the in-memory
+   `FolderIndex` keeps working meanwhile.
+5. Before any of these reads server-held data (text eviction, the extract-from-server step): the location-change
+   gate of 5.1.2. The store-agnostic interface is needed only if decision 19 picks B or C.
+
+What stays valid if the owner picks B or C: the prompt, schema and rules, the evidence model, source selection and
+revoke rules, the G0 gold set and fixtures, tip scoring (`judge.py`), CQ1 to CQ5 and the telemetry rule (scores,
+never content), GraphRAG G3 preparation logic (it reads search results, not SQLite rows directly; not checked in
+code, G3 is a spec on main). What would be redone with B: the SQLite store class, the search SQL, and GraphRAG G4
+(held, so nothing is lost). With C the Mac store, its search and G4 stay as in A; a server store and its search are
+added for org projects only.
+
+Estimates in this section (2 to 4 days for the interface, B's cost order) are estimates, not measurements.
 
 ## 6. Migration of existing data
 
@@ -451,7 +585,7 @@ file and the summary row describe the same notes; the summary row stays the one 
   network (unchanged). Uploads queue and resume.
 - Preparation offline uses pinned data. A source that is evicted and cannot be downloaded shows in Sources as "On the
   Pacenote server, offline" and the preparation runs without it; the local evidence store still holds its snippets
-  (4.4), so project memory can still use it.
+  (4.4) on the Mac that extracted it (otherwise 5.1.2), so project memory can still use it.
 - D50 stays: with a saved session the app works offline; the first launch offline shows the explanation and Retry.
 - Server down for days: nothing is lost on the Mac (not yet uploaded files are pinned); evicted files open again when
   the server is back. The health line (D53) shows "Pacenote server unreachable".
@@ -465,8 +599,8 @@ file and the summary row describe the same notes; the summary row stays the one 
 | 1 | Upload only: new calls and Upload history copy to the server; nothing evicted; owner-only access | phase 0 green; the archive tests of 2.4 (marker and vectors absent from the plaintext entries, every written suffix has a rule) pass; the section 10 acceptance grep is clean (also before phases 2 and 3) | flag off; delete server objects (crypto-delete) |
 | 2 | Lead and C-level access to transcripts and recordings by policy (decision 4); call page opens from the server; Drive upload optional | phase 1 on the owner's own calls for 2 weeks with zero checksum mismatches | policy off; nothing is evicted in phase 2, so every file is still on the owner's Mac, and Drive upload keeps today's setting until phase 3 is stable (6.2), so leads keep Drive links where the person shares them |
 | 3 | Eviction of recordings under the per-file rule of 4.2 (app media folder, 4.3); deletion offers (4.5); Settings > Storage | a restore of a sample of recordings from `pn-prod-backup` passed; the copy job sets `backup_verified_at` reliably for 2 weeks | eviction off and **Restore all to this Mac** (re-download) |
-| 4 | Optional text eviction (decision 7) with the G2 location flag (4.4), store snapshot (decision 8) | phase 3 stable for a month | same as 3 |
-| 5 | Team transcript search (decision 10), G7 | owner decision | flag off |
+| 4 | Optional text eviction (decision 7) with the G2 location flag (4.4), store snapshot (decision 8), the extract-from-server step for the person's own calls (5.1.2) | phase 3 stable for a month; the regression gate of 5.1.2 (same `extractor_id` and gold hash, the evicted-source G0 variant matches) | same as 3 |
+| 5 | Team transcript search (decision 10), G7 (the server graph of option C, decision 19) | owner decision; for a server graph also the ADR 13 change, consent and model choice (5.1.3) | flag off |
 
 ## 9. Cost for 5 and 50 users
 
@@ -778,7 +912,7 @@ Act employee evaluation rules.
 | ADR section 9 "the Mac stays the source of truth for its calls" | **overridden** | the server is the copy of record; the Mac is a cache |
 | ADR section 3 (Drive upload, `drive.file`, folder move) | amended | stays as an optional export; the server never gets Drive tokens |
 | ADR section 11 (per-user DEK, crypto-delete) | still valid, extended | object keys wrapped by the DEK |
-| ADR section 13 (no AI on the server) | still valid | no server AI in this spec |
+| ADR section 13 (no AI on the server) | still valid unless decision 19 picks (b) or (c) | no server AI in this spec's phases; a server-built graph (5.1, option B) would change it |
 | D25 (leads review recordings and transcripts) | partly restored | through the server, by policy (decision 4) |
 | D30 (sync off by default, per project, "Don't sync this call") | amended by decision 3 | |
 | D34 (live tip fragments only in transit through the proxy) | still valid | the tips log is stored after the call, owner only |
@@ -792,7 +926,7 @@ Act employee evaluation rules.
 | ADR 12.2 and PRIVACY ("Delete my server data" leaves the Mac and Drive copies) | amended | section 4.5: offer to download first; a deleted call's files are removed within 30 days (3.1) |
 | D44 (auto-delete of inactive accounts with data after 365 days) | still valid, wider effect | now deletes files too; the emails say so |
 | PB-102 (Verbatim block stays on the Mac) | still valid | whole blocks removed from uploaded sheet files, `kind: verbatim` tip lines removed, a fail-closed content check on the `.work` archive; those files are never evicted (2.4) |
-| D57 (GraphRAG fully local, nothing new leaves the Mac) | still valid for the store | G2 adds a location flag (`local` or `server`) on the source row, not a new state (4.4); its optional snapshot is decision 8 |
+| D57 (GraphRAG fully local, nothing new leaves the Mac) | still valid for the store with decision 19(a); overridden by 19(b), amended for org projects by 19(c) | G2 adds a location flag (`local` or `server`) on the source row, not a new state (4.4); its optional snapshot is decision 8; quality loop in 5.1 |
 | PRIVACY and TERMS | to change | section 10 |
 
 ## 13. Risks
@@ -804,6 +938,7 @@ Act employee evaluation rules.
 | A lead sees more than people expect | organization policy (decision 4), never for private calls or the personal organization, a visible "Visible to your team lead" line on the call page, Who viewed my calls |
 | Storage cost grows with video | retention rules (SX13), sound-only by default for sales calls, cost shown in the console |
 | Eviction breaks preparation or the evidence store | pinning (4.1), the G2 location flag (4.4) before text eviction, text eviction off by default |
+| Extraction or tip quality drops when content moves to the server or the store changes, and nobody sees it | the regression gate of 5.1.2 (same `extractor_id` and G0 gold hash, a G0 variant per location or store), CQ scores split by model, route and `store` (5.1.2), GraphRAG G4 held until decision 19 |
 | The only copy of a file is in one bucket in one location | per-file eviction rule (4.2): verified, 30 days of dual-keep, present in `pn-prod-backup`; over budget only warns |
 | Employer client data on the server | per project sync off stays available (decision 3), lawyer answer before work projects are synced |
 | Upload eats bandwidth on calls | never during a call, resumable, paused on metered networks |
@@ -827,13 +962,14 @@ Act employee evaluation rules.
    copy; (c) remove. Recommendation: (a).
 6. **Project folder files on the server.** Options: (a) no, only call artifacts and the register (files stay in the
    person's folder or the shared Drive folder of D40); (b) yes, for org projects only; (c) yes, for every synced
-   project. Recommendation: (a) now, (b) with G7. With (a), goal G1 does not cover project folder files: a lost Mac
+   project. Recommendation: (a) now, (b) with G7. With (a), goal SG1 does not cover project folder files: a lost Mac
    loses them unless the folder is in Google Drive or iCloud or backed up otherwise.
 7. **What the Mac evicts.** Options: (a) recordings only, text never by default; (b) recordings and text older than
    90 days not pinned; (c) nothing evicted automatically, only by the person. Recommendation: (a); text is about 50 MB
    per heavy user per month and keeps preparation and offline full.
 8. **Encrypted weekly snapshot of the local evidence store on the server.** Options: (a) yes, owner only; (b) no,
-   rebuild on a new Mac (re-extraction cost). Recommendation: (a) in phase 4. The store keeps sheet files without
+   rebuild on a new Mac (re-extraction cost). Recommendation: (a) in phase 4 (it is the optional snapshot of option A
+   in 5.1; with decision 19(b) it is not needed). The store keeps sheet files without
    their Verbatim copies (`spikes/m0/livetips_m0/evidence/ingest.py:54`); whether any other source it ingests can
    carry Verbatim text is not checked yet, so phase 4 runs the content check of 2.4 on the decoded rows of the snapshot (not on the sqlite bytes) before
    upload.
@@ -841,7 +977,8 @@ Act employee evaluation rules.
    `.speakers.json` goes by its field allowlist without `centroid`, `embs` and `lib_added` (2.4); (b) on the server
    like other files. Recommendation: (a), biometric data; a new Mac re-learns voices.
 10. **Team search over transcripts.** Options: (a) none in phases 1 to 4; (b) blind keyword index; (c) Mac-computed
-    vectors in pgvector. Recommendation: (a), then (b) when a team asks.
+    vectors in pgvector. Recommendation: (a), then (b) when a team asks. A server-built team graph is decision 19(c),
+    not an option here.
 11. **Retention of recordings.** Options: (a) keep while the account is active until SX13 adds deal-stage rules;
     (b) a default of 90 days for recordings, text kept; (c) organization setting only. Recommendation: (b) as the
     default with (c) to override, after the head of sales answers question 11 of the sales review.
@@ -885,3 +1022,16 @@ Act employee evaluation rules.
     gets them without it. Recommendation: (a): the pages are public text, the person is the only reader, and (b) adds a
     second strip function with the same restore loss as decision 15; links are uploaded inside the encrypted archive
     only, never into Postgres or logs.
+19. **Where the evidence graph is built, and how quality is kept, when the server is the source of truth** (owner
+    addendum 26.11, section 5.1). Options: (a) graph built on the Mac over server-synced data (the store stays local
+    and derived, optional snapshot by decision 8; ADR 13 and D57 stay; needs an extract-from-server step for calls
+    this Mac did not record, 5.1.2); (b) graph built on the server (needs a model
+    on the server and its choice, an ADR 13 change, a consent and who-pays decision, a PRIVACY line; the live path
+    still needs a local snapshot); (c) hybrid: (a) for preparation and live, a server graph for team search over
+    org projects later with G7. Recommendation: (a) now, (c) when G7 is specified. Either way: GraphRAG G2 and G3
+    continue, G5 after G3, **GraphRAG G4 (live lookup) is held** until this decision is taken; the G0 gold set, CQ1
+    to CQ5 and the regression gate of 5.1.2 (same extraction code and gold hash; for (b) or (c) also a store-agnostic
+    interface and a G0 variant per store) are the quality check for any of the three. With (b) or (c), the prompt,
+    schema, evidence model, source selection and revoke rules, gold set, tip scoring and CQ metrics stay valid. With
+    (b) the SQLite store class, the search SQL and GraphRAG G4 would be redone; with (c) the Mac store stays and a
+    server store is added for org projects.
