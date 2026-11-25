@@ -115,13 +115,89 @@ public enum SheetEdit {
         }
         let bi = s.blocks.firstIndex(where: { $0.type == blockType })!
         var n = s.blocks[bi].facts.count + 1
-        let taken = Set(s.blocks.flatMap(\.facts).map(\.id))
+        // PB-100: a deleted fact's id is never given again (Refresh keeps it out of the sheet)
+        let taken = Set(s.blocks.flatMap(\.facts).map(\.id) + (s.deletedFacts ?? []))
         while taken.contains("u-\(blockType.rawValue)-\(n)") { n += 1 }
         let id = "u-\(blockType.rawValue)-\(n)"
         s.blocks[bi].facts.append(SheetFact(id: id, label: label, text: t, sourceIds: [], locator: nil, checkedAt: now, status: .edited,
                                             conflictWith: nil, origin: .user, value: nil, diff: nil))
         s.blocks[bi].editedByUser = true
         return id
+    }
+
+    /// PB-100: what a fact delete took away, so Undo can put it back where it was.
+    public struct DeletedFact: Equatable {
+        public var fact: SheetFact
+        public var blockID: String
+        public var index: Int
+        public var blockWasEdited: Bool
+        public var partners: [SheetFact]      // conflict partners as they were before the delete
+        public var replaced: [Replaced] = []  // the older "was X" values that went with it, in file order
+
+        public struct Replaced: Equatable {
+            public var fact: SheetFact
+            public var blockID: String
+            public var index: Int
+        }
+    }
+
+    /// PB-100: a fact (a card line, a fact, an agenda point, a question) deleted from the sheet. The block is marked
+    /// edited_by_user and the id goes to deleted_facts, so Refresh and the readiness check (auto questions) never
+    /// bring it back. A conflict partner left alone is no longer a conflict: it becomes needs_check. The older "was X"
+    /// values of the fact (superseded_by) are shown only under it, so they go with it (merge.py drops them on Refresh).
+    @discardableResult
+    public static func deleteFact(_ s: inout MeetingSheet, factID: String) -> DeletedFact? {
+        guard let bi = s.blocks.firstIndex(where: { $0.facts.contains { $0.id == factID } }),
+              let fi = s.blocks[bi].facts.firstIndex(where: { $0.id == factID }) else { return nil }
+        let f = s.blocks[bi].facts[fi]
+        var replaced: [DeletedFact.Replaced] = []
+        for rbi in s.blocks.indices {
+            for (rfi, r) in s.blocks[rbi].facts.enumerated() where r.supersededBy == factID && r.id != factID {
+                replaced.append(.init(fact: r, blockID: s.blocks[rbi].id, index: rfi))
+            }
+        }
+        let goneIDs = Set(replaced.map(\.fact.id) + [factID])
+        var partners: [SheetFact] = []
+        for pbi in s.blocks.indices {
+            for pfi in s.blocks[pbi].facts.indices where !goneIDs.contains(s.blocks[pbi].facts[pfi].id)
+                && !goneIDs.isDisjoint(with: s.blocks[pbi].facts[pfi].conflictWith ?? []) {
+                partners.append(s.blocks[pbi].facts[pfi])
+                let left = (s.blocks[pbi].facts[pfi].conflictWith ?? []).filter { !goneIDs.contains($0) }
+                s.blocks[pbi].facts[pfi].conflictWith = left.isEmpty ? nil : left
+                if left.isEmpty && s.blocks[pbi].facts[pfi].status == .conflict { s.blocks[pbi].facts[pfi].status = .needsCheck }
+            }
+        }
+        let d = DeletedFact(fact: f, blockID: s.blocks[bi].id, index: fi, blockWasEdited: s.blocks[bi].editedByUser,
+                            partners: partners, replaced: replaced)
+        for gbi in s.blocks.indices { s.blocks[gbi].facts.removeAll { goneIDs.contains($0.id) } }
+        s.blocks[bi].editedByUser = true
+        var gone = s.deletedFacts ?? []
+        if !gone.contains(factID) { gone.append(factID) }
+        s.deletedFacts = gone
+        return d
+    }
+
+    /// PB-100: Undo of a delete: the fact goes back at its place, its conflict partners as they were, the block's
+    /// edited mark as it was, its "was X" values with it. False when the block is gone or the fact is already there.
+    @discardableResult
+    public static func restoreFact(_ s: inout MeetingSheet, _ d: DeletedFact) -> Bool {
+        guard let bi = s.blocks.firstIndex(where: { $0.id == d.blockID }), s.fact(id: d.fact.id) == nil else { return false }
+        // all taken facts back in their old order: inserting by ascending old index rebuilds each block as it was
+        let back = ([DeletedFact.Replaced(fact: d.fact, blockID: d.blockID, index: d.index)] + d.replaced)
+            .filter { r in r.fact.id == d.fact.id || s.fact(id: r.fact.id) == nil }.sorted { $0.index < $1.index }
+        for r in back {
+            guard let rbi = s.blocks.firstIndex(where: { $0.id == r.blockID }) else { continue }
+            s.blocks[rbi].facts.insert(r.fact, at: min(max(r.index, 0), s.blocks[rbi].facts.count))
+        }
+        s.blocks[bi].editedByUser = d.blockWasEdited
+        for p in d.partners {
+            for pbi in s.blocks.indices {
+                if let pfi = s.blocks[pbi].facts.firstIndex(where: { $0.id == p.id }) { s.blocks[pbi].facts[pfi] = p }
+            }
+        }
+        let left = (s.deletedFacts ?? []).filter { $0 != d.fact.id }
+        s.deletedFacts = left.isEmpty ? nil : left
+        return true
     }
 
     public enum BlockAction: String { case hide, show, moveUp, moveDown, delete }

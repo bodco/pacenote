@@ -2663,7 +2663,13 @@ are never one), a "Not found" line goes when its block has real facts, and a blo
 shown: Conflicts and gaps lists what is missing, and a line under the blocks names them. Tested on 15 real calls:
 fewer repeats and empty blocks, the same share of the call's topics covered.
 
-**Editing and Refresh.** Click a fact to edit it; it becomes Edited. The block menu adds a fact, regenerates the
+**Editing and Refresh.** Click a fact to edit it; it becomes Edited. The trash button next to the pencil deletes a
+fact, an agenda point or a question; a line with **Undo** stays in its block for 10 seconds instead of a confirm
+dialog, and Refresh never brings a deleted fact back (an automatic question you deleted is not asked again either).
+Deleting a value that replaced an older one also deletes its "was" value; Undo brings both back. A delete marks its
+block as edited, like an edit: Refresh keeps that block as you left it, so no new or reworded item from the sources
+is added to it.
+The block menu adds a fact, regenerates the
 block, hides it, moves it up or down, or removes it. The qualification block has its method in the header (BANT by
 default, or any method of Sales, shown by name). **Refresh** rebuilds the sheet from the sources again and **never touches what you
 edited**. A banner then says how many facts are new, changed and gone, with Accept all and Compare with version N.

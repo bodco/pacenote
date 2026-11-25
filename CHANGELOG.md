@@ -43,6 +43,13 @@ Pacenote. Earlier versions are described in the commit messages and in
   when the app gets focus or within 2 minutes, without a restart, and clears the "signed out" mark. Check no longer
   reads only the local sign-in file: it sends one tiny live request ("Reply with OK" on the smallest model) and shows
   the result with the time, or says it could not, because the tips engine is not set up.
+- **Meeting Sheet: delete a fact, an agenda point or a question (PB-100).** Every item you can edit on the sheet page
+  now has a trash button next to the pencil (also in the cards, My focus and a conflict on the Readiness tab). There
+  is no confirm dialog: a line with Undo stays in its block for 10 seconds. A delete is kept like an edit:
+  Refresh never brings the item back, and an automatic question you deleted (such as the budget question) is not
+  added again. A value that replaced an older one goes together with its "was" value, and Undo brings both back.
+  A delete marks its block as edited, like an edit: Refresh keeps that block as you left it, with no new or
+  reworded items from the sources. If saving a delete fails, the save error shows and no Undo is offered.
 - **Meeting Sheet: a Verbatim block for text that must stay word for word (PB-102).** + Add a block now offers
   Verbatim, as often as you need it in one call. In its Settings you give it a title, a source (a file of the call,
   any file, or pasted text) and, if you want only part of a Markdown file, sections such as 1-4 by heading. The
