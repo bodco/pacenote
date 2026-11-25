@@ -365,8 +365,17 @@ public enum CallSync {
         var o = only(raw, topKeys)
         let sources = (o["sources"] as? [[String: Any]]) ?? []
         let web = Set(sources.filter { ($0["type"] as? String) == "web_page" }.compactMap { $0["id"] as? String })
+        // PB-101: a custom block's own source (the build marks it with `block`; a folder's files follow the folder) keeps
+        // only its id, type and state: its path, link and title stay on this Mac
+        var ownCustom = Set(sources.filter { !(($0["block"] as? String) ?? "").isEmpty }.compactMap { $0["id"] as? String })
+        ownCustom.formUnion(sources.filter { ownCustom.contains(($0["parent"] as? String) ?? "") }.compactMap { $0["id"] as? String })
         if o["sources"] != nil {
             o["sources"] = sources.map { s -> [String: Any] in
+                if ownCustom.contains((s["id"] as? String) ?? "") {
+                    var c = only(s, webSourceKeys)
+                    c["title"] = ""
+                    return c
+                }
                 guard (s["type"] as? String) == "web_page" else {
                     // a link (also one found on a researched page and taken) goes without its query, fragment or login,
                     // where a token may sit; a title that repeats the link is cut the same way

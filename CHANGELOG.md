@@ -15,7 +15,8 @@ Pacenote. Earlier versions are described in the commit messages and in
   has Duplicate and Delete. Custom blocks move like any block, several fit one call, and Refresh keeps them in place
   with their settings. During the call each one sits folded on top of the Brief tab in the tips window, next to the
   Verbatim blocks; Show text opens it in the scrollable reading box. Call sync never sends a custom block's settings
-  (instruction, file paths, links, pasted text).
+  (instruction, file paths, links, pasted text) or the path, link and title of its own sources, and the other blocks
+  of the sheet never cite those sources.
 - **Meeting Sheet: a Verbatim block for text that must stay word for word (PB-102).** + Add a block now offers
   Verbatim, as often as you need it in one call. In its Settings you give it a title, a source (a file of the call,
   any file, or pasted text) and, if you want only part of a Markdown file, sections such as 1-4 by heading. The

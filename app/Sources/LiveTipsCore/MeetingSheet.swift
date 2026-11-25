@@ -346,8 +346,11 @@ public struct SheetSource: Codable, Equatable, Identifiable {
     public var parent: String?
     public var days: Int?
     public var folder: SheetFolderInfo?
+    // PB-101: the custom block whose own source this is (only it cites the source; call sync keeps its path, link and
+    // title on this Mac)
+    public var block: String?
     enum CodingKeys: String, CodingKey, CaseIterable {
-        case id, n, type, uri, path, title, chars, access, used, reason, pass, auto, why, deck, parent, days, folder
+        case id, n, type, uri, path, title, chars, access, used, reason, pass, auto, why, deck, parent, days, folder, block
         case sizeTokens = "size_tokens", accessReason = "access_reason", fixAction = "fix_action", modifiedAt = "modified_at"
     }
 }

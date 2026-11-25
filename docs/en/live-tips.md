@@ -2524,7 +2524,8 @@ A Verbatim block is never saved into a preset, and call sync does not send it at
 file path or title); the other blocks go as before.
 
 **Custom blocks (PB-101).** **+ Add a block** starts with **New custom block** and then **Your custom blocks**, your
-personal library (one file on this Mac, never synced). A custom block has a title, an **Instruction** (what it does on
+personal library (one file on this Mac, never synced; a library file that cannot be read is kept next to it under a
+name with `unreadable`, never overwritten). A custom block has a title, an **Instruction** (what it does on
 this call), its own **Sources**, an **Output format** and a **Length**. Sources: **File or folder…** (a folder gives
 its recent files, like a folder source), one of the **Sources of this call**, the **Transcript of a past call** (the
 latest calls of Home), a **Link** or **Free text**; a file reads as a file (Markdown keeps its headings and lists) and
@@ -2543,7 +2544,8 @@ never saved into a preset, and Refresh keeps them with their place and settings 
 the call the **Brief** tab of the tips window lists every custom block on top with the Verbatim blocks, each folded:
 **Show text** opens it in the same scrollable reading box (a checklist as boxes, Q&A as question and answer). Call
 sync sends a custom block's points like any block's, never its settings (instruction, file paths, links or pasted
-text); a Verbatim one not at all.
+text), and its own sources only without their path, link and title; a Verbatim one not at all. A block's own sources
+serve that block only: the other blocks of the sheet never cite them.
 
 **Quick or Expert.** **Get ready** opens one of two ways into the same sheet; the switch is in the header.
 

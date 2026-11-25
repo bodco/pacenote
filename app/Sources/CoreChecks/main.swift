@@ -2784,6 +2784,33 @@ func customBlocksPB101() {
     expect(synced.contains("b-custom-aa11") && synced.contains("Point to the free pilot") && !synced.contains("PASTED-NOTE-4410")
            && !synced.contains("playbook.md") && !synced.contains("Answers to what Emily") && !synced.contains("orbit.example/pricing")
            && !synced.contains("\"custom\":") && !synced.contains("Pricing script"), "custom: settings stay on this Mac, a verbatim one entirely")
+    // review round 1: the sources the build adds for a custom block (marked `block`, a folder's files by `parent`) keep
+    // only their id, type and state; a call's own source keeps its path; the block's facts still go
+    let built = """
+    {"schema":"pacenote.sheet/1","id":"x","title":"Meeting Sheet: Orbit","sources":[
+      {"id":"s1","n":1,"type":"file","path":"/p/orbit/brief.md","title":"brief.md","access":"ok","used":"full"},
+      {"id":"s-b-custom-aa11-1","n":2,"type":"file","path":"/p/orbit/playbook.md","title":"playbook.md","access":"ok","used":"full","block":"b-custom-aa11"},
+      {"id":"s-b-custom-aa11-2","n":3,"type":"web","uri":"https://orbit.example/pricing?token=abc","title":"Web page: https://orbit.example/pricing?token=abc","access":"ok","used":"full","block":"b-custom-aa11"},
+      {"id":"s-b-custom-aa11-3","n":4,"type":"folder","path":"/p/orbit/secret-deals","title":"secret-deals","access":"ok","used":"full","block":"b-custom-aa11"},
+      {"id":"s9","n":5,"type":"folder_file","path":"/p/orbit/secret-deals/acme-terms.md","title":"acme-terms.md","access":"ok","used":"full","parent":"s-b-custom-aa11-3"},
+      {"id":"s-b-custom-aa11-4","n":6,"type":"transcript","path":"/p/orbit/live/sync.md","title":"Orbit sync with David","access":"ok","used":"full","block":"b-custom-aa11"}],
+     "blocks":[{"id":"b-custom-aa11","type":"custom","title":"Objection answers","visible":true,"order":1,"facts":[
+       {"id":"f-1","label":"Too expensive","text":"Point to the free pilot","source_ids":["s-b-custom-aa11-1"],"status":"found","origin":"model"}]}]}
+    """
+    let up = CallSync.sheetBody(Data(built.utf8))?["sheet"] as? [String: Any] ?? [:]
+    let upSrc = Dictionary(uniqueKeysWithValues: ((up["sources"] as? [[String: Any]]) ?? []).compactMap { s in (s["id"] as? String).map { ($0, s) } })
+    let upText = String(data: CallSync.json(["sheet": up]), encoding: .utf8) ?? ""
+    expect(upSrc["s1"]?["path"] as? String == "/p/orbit/brief.md", "custom sync: a call's own source keeps its path")
+    expect(["s-b-custom-aa11-1", "s-b-custom-aa11-2", "s-b-custom-aa11-3", "s9", "s-b-custom-aa11-4"].allSatisfy { upSrc[$0] != nil }
+           && !upText.contains("playbook") && !upText.contains("orbit.example") && !upText.contains("token") && !upText.contains("secret-deals")
+           && !upText.contains("acme-terms") && !upText.contains("Orbit sync with David") && !upText.contains("\"block\""),
+           "custom sync: a custom block's sources go without path, link or title")
+    expect(upText.contains("Point to the free pilot"), "custom sync: the block's facts still go")
+    // the app saves the sheet through its model, so the mark must survive a decode and encode
+    let one = #"{"id":"s-b-custom-aa11-1","n":2,"type":"file","path":"/p/orbit/playbook.md","title":"playbook.md","access":"ok","used":"full","block":"b-custom-aa11"}"#
+    let src1 = try? JSONDecoder().decode(SheetSource.self, from: Data(one.utf8))
+    let again = src1.flatMap { try? JSONEncoder().encode($0) }.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+    expect(src1?.block == "b-custom-aa11" && again?["block"] as? String == "b-custom-aa11", "custom sync: the source mark survives the app's save")
     // the personal library
     var lib = CustomBlockLibrary()
     let id1 = lib.save(title: "Objection answers", settings: a.custom!, id: nil)
@@ -2799,6 +2826,12 @@ func customBlocksPB101() {
     let url = FileManager.default.temporaryDirectory.appendingPathComponent("pb101-\(UUID().uuidString)/custom-blocks.json")
     try? lib.save(to: url)
     expect(CustomBlockLibrary.load(url) == lib, "custom library: saved and loaded")
+    // review round 1: a library file that cannot be read is kept aside, never overwritten by the next save
+    try? Data("{not json".utf8).write(to: url)
+    expect(CustomBlockLibrary.load(url).blocks.isEmpty && !FileManager.default.fileExists(atPath: url.path)
+           && ((try? FileManager.default.contentsOfDirectory(atPath: url.deletingLastPathComponent().path)) ?? [])
+               .contains { $0.hasPrefix("custom-blocks.unreadable-") && $0.hasSuffix(".json") },
+           "custom library: an unreadable file is moved aside")
     try? FileManager.default.removeItem(at: url.deletingLastPathComponent())
     expect(CustomBlockLibrary.load(url).blocks.isEmpty, "custom library: none yet is an empty library")
 }

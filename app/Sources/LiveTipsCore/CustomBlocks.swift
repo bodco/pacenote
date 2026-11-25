@@ -144,9 +144,15 @@ public struct CustomBlockLibrary: Codable, Equatable {
 
     public func block(_ id: String?) -> CustomBlockDef? { id.flatMap { i in blocks.first { $0.id == i } } }
 
+    /// No file yet is an empty library. A file that is there but cannot be read is moved aside (a name with
+    /// `.unreadable-<time>`), so the next save never overwrites the PM's library with an empty one.
     public static func load(_ url: URL) -> CustomBlockLibrary {
-        guard let d = try? Data(contentsOf: url), let l = try? JSONDecoder().decode(CustomBlockLibrary.self, from: d) else { return .init() }
-        return l
+        guard FileManager.default.fileExists(atPath: url.path) else { return .init() }
+        if let d = try? Data(contentsOf: url), let l = try? JSONDecoder().decode(CustomBlockLibrary.self, from: d) { return l }
+        let name = url.deletingPathExtension().lastPathComponent + ".unreadable-\(Int(Date().timeIntervalSince1970)).json"
+        let aside = url.deletingLastPathComponent().appendingPathComponent(name)
+        try? FileManager.default.moveItem(at: url, to: aside)
+        return .init()
     }
 
     public func save(to url: URL) throws {

@@ -1112,6 +1112,12 @@ def build(req: dict, refresh: bool = False, emit=say, responder: Optional[Callab
             notes.append(f"Auto sources failed: {type(e).__name__}")
         for c in autos:
             if c.get("path") and os.path.realpath(os.path.expanduser(c["path"])) in have:
+                # PB-101: the same whole file as a custom block's source serves the whole sheet, like a call source
+                rp = os.path.realpath(os.path.expanduser(c["path"]))
+                for s in raw:
+                    if s.get("block") and s.get("path") and not s.get("sections") \
+                            and os.path.realpath(os.path.expanduser(s["path"])) == rp:
+                        s.pop("block")
                 continue
             if c["type"] == "tracker":
                 tracker = c.pop("_tracker", None)
@@ -1461,9 +1467,14 @@ def build(req: dict, refresh: bool = False, emit=say, responder: Optional[Callab
             if C.is_custom(b):
                 # PB-101: only the block's own sources count, and the chosen length
                 b["facts"] = C.cap(C.own_sources(b, b["facts"]), (b.get("custom") or {}).get("length"))
+                if not (b.get("custom") or {}).get("source_ids"):
+                    b["facts"] = C.not_custom_sources(b["facts"], srcs)   # no own sources: the call's, not another's
+            else:
+                b["facts"] = C.not_custom_sources(b["facts"], srcs)   # PB-101: a custom block's sources are its own
         else:
-            # 0.10.0 (round 2): a block not rebuilt (options.blocks) or hidden keeps what it had
-            ob = old_blocks.get(b.get("id")) or old_blocks.get(t)
+            # 0.10.0 (round 2): a block not rebuilt (options.blocks) or hidden keeps what it had; PB-101: a custom
+            # block only by its id (several share the type, and a new one has nothing to keep)
+            ob = old_blocks.get(b.get("id")) or (None if C.is_custom(b) else old_blocks.get(t))
             b["facts"] = copy.deepcopy((ob or {}).get("facts") or [])
         if b.get("only_if_data") and b in ask_blocks and t not in ("header", "gaps"):
             if not any(f.get("status") != "not_found" for f in b["facts"]):

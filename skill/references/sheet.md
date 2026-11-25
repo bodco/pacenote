@@ -45,7 +45,8 @@ for the same sheet fact get `"sheet_fact": "<fact id>"`, so the recorder shows t
   as it is, the app copies and checks it on every build. A `custom` block (PB-101) is the PM's own block: fill it only
   from its `custom.source_ids` (or the call's sources when it has none), as `custom.instruction` asks, in
   `custom.format` (summary, bullets, table, qa, checklist), with no more points than `custom.length` allows (short 3,
-  medium 6, long 12); never change its `custom` settings. A Verbatim block with `custom` settings is a custom block in
+  medium 6, long 12); never change its `custom` settings. A source with `block` belongs to custom blocks: never cite
+  it in any other block. A Verbatim block with `custom` settings is a custom block in
   format verbatim: treat it as any Verbatim block.
 - **Agenda and questions are separate blocks.** `agenda` is the checklist of topics; `questions` are the questions
   for the call (each fact one question). Both reach the live window.

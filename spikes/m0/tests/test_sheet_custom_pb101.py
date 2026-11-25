@@ -316,3 +316,74 @@ def test_a_sectioned_custom_file_does_not_replace_the_whole_file_as_an_auto_sour
     assert res.get("done"), res
     paths = [s for s in _sheet(res)["sources"] if s.get("path") == str(pb)]
     assert len(paths) == 2 and "Margin floor is 22 percent" in seen[0]                   # the whole file for the rest
+
+
+# ---------------------------------------------------------------- review round 1
+
+def test_refresh_with_a_new_hidden_custom_block_takes_no_other_blocks_facts(tmp_path):
+    root, pb, past, docs = _project(tmp_path)
+    req = _req(root, _blocks(pb, past, docs))
+    assert B.build(req, emit=quiet, responder=lambda s, u: json.dumps(_answer())).get("done")
+    new = _custom("b-custom-new", "New", "bullets", "short", [{"kind": "text", "text": "NEW-NOTE-7702"}], lib_id="cb-3")
+    new["visible"] = False
+    res = B.build(dict(req, blocks=_blocks(pb, past, docs) + [new]), refresh=True, emit=quiet,
+                  responder=lambda s, u: json.dumps(_answer()))
+    assert res.get("done"), res
+    sheet = _sheet(res)
+    assert S.validate(sheet) == []
+    by = _by_id(sheet)
+    assert by["b-custom-new"]["facts"] == [] and by["b-custom-new"]["visible"] is False
+    assert len(by["b-custom-obj"]["facts"]) == 3
+
+
+def test_a_custom_blocks_sources_are_its_own_marked_and_never_cited_by_built_in_blocks(tmp_path):
+    root, pb, past, docs = _project(tmp_path)
+    bl = ["header", _custom("b-custom-obj", "Pilot", "bullets", "medium",
+                            [{"kind": "text", "text": NOTE}, {"kind": "folder", "path": str(docs)},
+                             {"kind": "url", "uri": "https://orbit.example/pricing?token=abc"}]), "overview"]
+    ans = {"blocks": {"b-custom-obj": [{"label": "SSO", "text": "SSO asked twice", "source_ids": ["s-b-custom-obj-1"]}],
+                      "overview": [{"text": "SSO came up twice", "source_ids": ["s-b-custom-obj-1"]},
+                                   {"text": "Orbit wants a pilot", "source_ids": ["s-meeting", "s-b-custom-obj-1"]}]}}
+    seen = []
+    res = B.build(_req(root, bl), emit=quiet, responder=lambda s, u: (seen.append(u), json.dumps(ans))[1])
+    assert res.get("done"), res
+    sheet = _sheet(res)
+    assert S.validate(sheet) == []
+    own = {s["id"] for s in sheet["sources"] if s.get("block") == "b-custom-obj"}
+    assert {"s-b-custom-obj-1", "s-b-custom-obj-2", "s-b-custom-obj-3"} <= own
+    files = [s for s in sheet["sources"] if s.get("parent") == "s-b-custom-obj-2"]
+    assert files and all(s.get("block") == "b-custom-obj" for s in files)     # a folder's files follow the folder
+    by = _by_id(sheet)
+    ov = {f["text"]: f for f in by["b-overview"]["facts"]}
+    assert ov["SSO came up twice"]["source_ids"] == [] and ov["SSO came up twice"]["status"] == "needs_check"
+    assert ov["Orbit wants a pilot"]["source_ids"] == ["s-meeting"]
+    assert by["b-custom-obj"]["facts"][0]["source_ids"] == ["s-b-custom-obj-1"]
+    assert "ONLY for the user's own blocks" in seen[0]
+    # the paths and the link live only in the sources and the block's own settings, nowhere else on the sheet
+    rest = {k: v for k, v in sheet.items() if k != "sources"}
+    rest["blocks"] = [{k: v for k, v in b.items() if k != "custom"} for b in sheet["blocks"]]
+    dump = json.dumps(rest)
+    assert str(docs) not in dump and "orbit.example" not in dump and "token=abc" not in dump
+
+
+def test_a_custom_block_without_own_sources_never_cites_another_blocks_own_source(tmp_path):
+    root, pb, past, docs = _project(tmp_path)
+    bl = ["header", _custom("b-custom-a", "A", "bullets", "short", [{"kind": "text", "text": NOTE}]),
+          _custom("b-custom-b", "B", "bullets", "short", [])]
+    ans = {"blocks": {"b-custom-b": [{"label": "SSO", "text": "SSO asked", "source_ids": ["s-b-custom-a-1", "s-meeting"]}]}}
+    res = B.build(_req(root, bl), emit=quiet, responder=lambda s, u: json.dumps(ans))
+    assert res.get("done"), res
+    assert _by_id(_sheet(res))["b-custom-b"]["facts"][0]["source_ids"] == ["s-meeting"]
+
+
+def test_a_custom_file_that_is_also_an_auto_source_serves_the_whole_sheet(tmp_path, monkeypatch):
+    root, pb, past, docs = _project(tmp_path)
+    monkeypatch.setattr(B.SRC, "auto_sources", lambda req: [{"type": "file", "path": str(pb), "title": "playbook.md", "auto": True}])
+    bl = ["header", _custom("b-custom-x", "X", "bullets", "short", [{"kind": "file", "path": str(pb)}]), "overview"]
+    ans = {"blocks": {"overview": [{"text": "The pilot is free", "source_ids": ["s-b-custom-x-1"]}]}}
+    res = B.build(_req(root, bl, auto_sources=True), emit=quiet, responder=lambda s, u: json.dumps(ans))
+    assert res.get("done"), res
+    sheet = _sheet(res)
+    src = [s for s in sheet["sources"] if s.get("path") == str(pb)]
+    assert len(src) == 1 and not src[0].get("block")
+    assert _by_id(sheet)["b-overview"]["facts"][0]["source_ids"] == ["s-b-custom-x-1"]

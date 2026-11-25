@@ -113,7 +113,9 @@ def _real(p: str) -> str:
 def add_sources(blocks: List[dict], raw: List[dict]) -> List[dict]:
     """Each custom block's sources join the build's sources (one read, one report). A source the call already has
     (same file or link, no section pick) is used under its id; the others get ids s-<block id>-<n>. The ids land in
-    the block's custom.source_ids; a folder's files are added after the folders are expanded (with_folder_files)."""
+    the block's custom.source_ids; a folder's files are added after the folders are expanded (with_folder_files).
+    A source added here names its block ("block"): only that block may cite it, and call sync keeps its path, link
+    and title on this Mac."""
     out = list(raw)
     by_path = {_real(s["path"]): s for s in out if s.get("path")}
     by_uri = {s.get("uri") or s.get("url"): s for s in out if s.get("uri") or s.get("url")}
@@ -130,7 +132,7 @@ def add_sources(blocks: List[dict], raw: List[dict]) -> List[dict]:
                 if not s.get("text", "").strip():
                     continue
                 out.append({"id": sid, "type": "text", "title": s.get("title") or "Text for " + str(b.get("title") or ""),
-                            "text": s["text"]})
+                            "text": s["text"], "block": b["id"]})
                 ids.append(sid)
                 continue
             if k == "url" or (k == "call_source" and s.get("uri") and not s.get("path")):
@@ -141,7 +143,7 @@ def add_sources(blocks: List[dict], raw: List[dict]) -> List[dict]:
                 if have:
                     ids.append(have["id"])
                     continue
-                x = {"id": sid, "uri": u}
+                x = {"id": sid, "uri": u, "block": b["id"]}
                 if s.get("title"):
                     x["title"] = s["title"]
                 out.append(x)
@@ -159,7 +161,7 @@ def add_sources(blocks: List[dict], raw: List[dict]) -> List[dict]:
                 ids.append(have["id"])
                 continue
             typ = "folder" if (k == "folder" or os.path.isdir(os.path.expanduser(p))) else ("transcript" if k == "transcript" else "file")
-            x = {"id": sid, "type": typ, "path": p}
+            x = {"id": sid, "type": typ, "path": p, "block": b["id"]}
             if s.get("title"):
                 x["title"] = s["title"]
             if s.get("sections") and typ != "folder":
@@ -173,7 +175,12 @@ def add_sources(blocks: List[dict], raw: List[dict]) -> List[dict]:
 
 
 def with_folder_files(blocks: List[dict], srcs: List[dict]) -> None:
-    """After the folders are expanded: a custom block that names a folder also reads the files taken from it."""
+    """After the folders are expanded: a custom block that names a folder also reads the files taken from it (and they
+    belong to custom blocks like the folder)."""
+    own = {s["id"]: s["block"] for s in srcs if s.get("block")}
+    for s in srcs:
+        if s.get("parent") in own and not s.get("block"):
+            s["block"] = own[s["parent"]]
     for b in blocks:
         if not is_custom(b):
             continue
@@ -230,6 +237,22 @@ def own_sources(b: dict, facts: List[dict]) -> List[dict]:
     for f in facts:
         g = dict(f)
         g["source_ids"] = [i for i in f.get("source_ids") or [] if i in ids]
+        if g.get("status") == "found" and not g["source_ids"]:
+            g["status"] = "needs_check"
+        out.append(g)
+    return out
+
+
+def not_custom_sources(facts: List[dict], srcs: List[dict]) -> List[dict]:
+    """A built-in block never cites a custom block's own source (sources with "block"): those ids are dropped, and a
+    found fact left with no source becomes needs_check."""
+    ids = {s["id"] for s in srcs if s.get("block")}
+    if not ids:
+        return list(facts)
+    out = []
+    for f in facts:
+        g = dict(f)
+        g["source_ids"] = [i for i in f.get("source_ids") or [] if i not in ids]
         if g.get("status") == "found" and not g["source_ids"]:
             g["status"] = "needs_check"
         out.append(g)
