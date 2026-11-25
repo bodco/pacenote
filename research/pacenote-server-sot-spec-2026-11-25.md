@@ -143,7 +143,7 @@ New Postgres table `objects` (RLS like `calls`, ADR 7.3):
 | call_id or project_id | exactly one |
 | kind | `transcript`, `transcript_app`, `notes`, `brief`, `sheet_md`, `work_archive`, `web_pages`, `google_copy`, `register`, `lessons`, `recording`, `recording_meta`, `project_file`, `evidence_snapshot` |
 | rel_path **[enc]** | the path inside the project folder, so the Mac can restore the file at the same place (the content is exact except for stripped files, 2.4) |
-| rev, current | a new revision for every change; `current` marks the live one |
+| rev, current | a new revision for every change; `current` marks the live one. Each revision is its own row with its own `object_id` (a new object key; an object key is never overwritten, so S3 versioning only holds deleted objects). A revision that is no longer current is kept 30 days after it was replaced (so a bad release or a wrong edit can be undone), then the nightly sweep deletes it like a deleted object (2.2); the current revision is kept until the call or the account is deleted or a retention rule removes it (4.5, decision 11) |
 | bytes, sha256_cipher | for verify and dedup on upload |
 | hmac_plain | HMAC-SHA256, with the person's **dedup key**, of the plaintext bytes **as uploaded** (for a stripped file, after the strip, 2.4): lets a Mac skip unchanged files without sending the plaintext or a plain hash. It is not hidden from the server itself: the server stores the dedup key wrapped and can unwrap it, like every other key (3.1, not end-to-end). The dedup key is a new random per-person key (not the DEK), stored wrapped in `user_keys` and handed to that person's signed-in devices, kept in the Keychain; it never reaches leads |
 | stripped | true when the uploaded bytes differ from the local file on purpose (Verbatim blocks or tip lines removed, voice vectors removed, files left out of the `.work` archive, 2.4) |
@@ -163,7 +163,10 @@ They are kept out by **allowlists, never denylists**, so a file or field added l
 `<stem>.judge/` and `web/`, which is its own kind `web_pages`, decision 18) is left out, whatever its name. A
 `<stem>.app.<rest>` file follows the rule of `<stem>.<rest>`. The list comes from the suffixes the code writes on
 25.11 (`sidecar_of`, `sidecar` and `CallLayout.sidecar` calls in `recorder/src`, `spikes/m0/livetips_m0` and
-`app/Sources`); a new suffix stays out until it is added here.
+`app/Sources`, plus the suffixes the code only reads or skips); a new suffix stays out until it is added here.
+Files outside the call folder are not in the archive at all: the preparation run copies (`prep-runs/` in
+Application Support, `PrepRunner.swift:77`) and the evidence store with its `<uid>.state-requests.jsonl` log
+(`evidence/store.py:348`, decision 8).
 
 | Files | Rule | Why |
 |---|---|---|
@@ -173,6 +176,9 @@ They are kept out by **allowlists, never denylists**, so a file or field added l
 | `.sheet-live.json` | as is, with the content check below | holds the sheet file name, the question ids and texts and which were asked (`transcriber.py:2581`) |
 | `.inbox.jsonl`, `.feedback.jsonl`, `.edits.jsonl`, `.cards.json`, `.cards-fired.jsonl`, `.facts.json`, `.outline.json`, `.slides.json`, `.deck.json`, `.verify.json`, `.brief.preverify.md`, `.sales.json`, `.crm.json` (ids of the linked company, deal and contacts), `.crm.md` (the HubSpot snapshot, `CRMFlow.swift:5-9`), `.crm-log.json` | as is, with the content check below | call working files the call page, the after-call steps and a later preparation read |
 | `.voices.json`, `.semantic.npz`, `.semantic.jsonl`, `.semantic-summary.json`, `.llm.jsonl`, `.timing.jsonl`, `.context.json`, `.context-correction.txt`, `.context.md`, `.run.json`, `.summary.json`, `.sheet.sources.json`, `.sheet-check.json`, `.prep.json`, `.sync.json`, `.drive.json`, `.notion.json`, `.notion-blocks.json`, `.named.md`, `.meet.md`, `.clean.md`, `.speech.md`, `.digest.md`, `.instructions.md`, `.app-requests.json`, `.claude.json`, `.norec.json`, `.outlang.json` | **left out** | voice prints (decision 9); text vectors and their logs (derived, and a vector needs its own PRIVACY line, section 5); raw model and timing logs (may hold any prompt text, the Verbatim copy included); engine, sync, Drive and Notion state, sheet sources and derived transcript variants, whose writers were not read for this spec: leaving them out is the safe default, and whether a restore needs any of them is checked in the phase 1 design |
+| `.brief.orig.md` | as is, with the content check below | the brief as the model wrote it, copied before the person's first edit (`PrepDoc.swift:154`, `Prompter.swift:440`); a later preparation compares it with the brief to keep the person's edits (`PrepRunner.swift:485`), so a restore needs it |
+| `.brief.prev.md`, `.slides.prev.json`, `.outline.prev.json`, `.agenda.json` | **left out** | the previous version kept for Restore previous version (`PrepRunner.swift:116`, `Deck.swift:550`) and the agenda that `sheet/derive.py:317` writes from the sheet (a fallback file for the recorder, `derive.py:1-7`); a restored call has no Restore previous version for its last preparation; whether the agenda must be derived again on restore is checked in the phase 1 design |
+| `.speakers.md`, `.fired.jsonl`, `.status.json`, `.stdout`, `.stderr`, any `.npz`, `.entries.json` | **left out** | named in readers and skip lists (`pn_tools.py:26`, `sheet/lookup.py:33-34`, `47-48`) or written by the semantic eval tool (`semantic_eval.py:149`), not by a call; listed so the suffix test has a rule for them |
 | any file not named in this table | **left out** | default deny |
 
 **`.speakers.json` allowlist.** Top level: `clusters`, `roster`, `overrides`, `merged`, `skipped`, `rev`, `updated`,
@@ -193,7 +199,8 @@ characters. It then checks every entry on its **decoded** text: for JSON and JSO
 is collapsed. An entry that holds any such line (of 12 characters or more) or run is dropped from the archive and
 its file name is logged. A Verbatim text shorter than 12 characters is not checked (too many false matches). A file
 dropped this way is a bug to fix in this table, not a silent loss: the Mac keeps it (stripped files are never
-evicted, below).
+evicted, below), and Settings > Storage and the restore screen show how many files of which calls the check left
+out ("3 files of 2 calls kept only on this Mac: they repeat Verbatim text"), so the person sees it.
 
 Such files are uploaded **stripped**: one deterministic strip function per kind, the row marked `stripped`. The
 `.sheet.md` is a separate object (`sheet_md`), stripped by the same `sheet_file_text` (rendered again from its
@@ -247,6 +254,14 @@ ships.
   dump that holds it expires, within 30 days. Object lock on `pn-prod-backup` must therefore keep objects no longer
   than the dumps (30 days), or it extends this window. The bucket objects themselves are removed within 30 days by a
   sweep. PRIVACY must say "within 30 days", not "at once" (section 10).
+- Deleting one call from the server (per-object crypto-delete): after the choice of 4.5 (a Download to this Mac
+  first finishes before anything is cleared), the API at once sets `deleted_at` on every `objects` row of the call
+  (every revision, not only `current`), clears their `wrapped_key` in the live database and starts no new download.
+  A download already started (its 5-minute URL and its unwrapped key were handed out together, 3.1 Download) can
+  still finish. The Mac's manifest marks the call excluded, so its files are not uploaded again. The
+  person's DEK stays (other calls need it), so this is not a full crypto-delete: the wrapped object keys stay in the
+  Postgres dumps and the bytes stay as noncurrent versions and in `pn-prod-backup` until the nightly sweep and the
+  lifecycle rules remove them, within 30 days (2.2). PRIVACY must say so (section 10).
 - `PN_MASTER_KEY` loss would now lose transcripts and recordings, not only summaries. Before phase 3 (eviction):
   two offline copies of the master key in different places and a written recovery procedure (decision 12).
 - What the server can read: like today, the API can unwrap keys (it does for leads), so this is protection against a
@@ -360,7 +375,9 @@ Today "Delete my server data", deleting a call from the server, `retention_month
 Mac copy (ADR 12.2, PRIVACY). After eviction the server copy can be the only one. Rules:
 
 - Deleting a call or all server data first shows how much exists only on the server and offers **Download to this Mac
-  first** (default) or **Delete everywhere**. Without a choice nothing is deleted.
+  first** (default) or **Delete everywhere**. Without a choice nothing is deleted. Then the call's `objects` rows
+  are marked deleted and their keys cleared at once, and the files are removed from storage and backups within 30
+  days (3.1).
 - `retention_months` and plan `history_months` never delete server files that are the only copy without the same
   offer by email and in the app 30 days before.
 - D44 auto-delete of an inactive account with data (365 days, two emails) now deletes files too; the emails say so and
@@ -468,7 +485,9 @@ file and the summary row describe the same notes; the summary row stays the one 
 Stored after `m` months, with no retention rule: `users x m x H x (text + r x video)`. Monthly storage cost:
 `2 x (P_base + max(0, TB - 1) x P_tb)` (content and media together with their copy in the backup bucket). This
 assumes the base price is charged once per account group of buckets and its included TB is shared; if it is per
-bucket, add one `P_base` per extra bucket (not verified).
+bucket, add one `P_base` per extra bucket (not verified). Replaced revisions (kept 30 days, 2.3) are left out: they
+are text only (a recording is written once), and every text-only row stays far under the included 1 TB, so even
+several rebuilds of each `.work` archive within 30 days change no row.
 
 ### 9.2 Results (H = 40, standard H.264, unverified example prices)
 
@@ -516,7 +535,8 @@ The plans (ADR 10, D35, D41) set `storage_mb` at 500 for Solo, 2,000 per seat fo
 Enterprise, and Solo shows 12 months of history (`history_months`); over quota the API answers `402`. These numbers were
 set for summaries and sheets only. With video one heavy user adds about 23 GB a month, so:
 
-- What counts: every current object revision of the person (noncurrent versions and the backup copy do not count).
+- What counts: every current object revision of the person (replaced revisions kept 30 days, 2.3, S3 noncurrent
+  versions of deleted objects and the backup copy do not count).
 - At quota: uploads stop with a clear line in Settings > Storage and on the call page; **nothing is evicted that is
   not uploaded**, so the Mac keeps everything new and the person is never left without a copy. Text keeps uploading
   before recordings, so quota is hit by recordings first.
@@ -573,6 +593,11 @@ verbatim from `PRIVACY.md` and `TERMS.md` on main (line numbers of 25.11); the U
     backups within 30 days, and cannot be read by anyone once the last backup expires." Where PRIVACY says deleting
     server data leaves the Mac copy, say instead: Pacenote shows what exists only on the server and offers to
     download it first (4.5).
+  - Deleting one call. Today: "A call's page can leave that one call out, or delete that call from the server (it is
+    removed at once and not sent again)." (UK `PRIVACY.uk.md:14`: "видалити його із сервера (він зникає одразу і
+    більше не надсилається)".) Once its files are on the server, they are not removed at once (3.1). Replace the
+    bracket with: "(it disappears from your account at once and is not sent again; its files are removed from the
+    storage and its backups within 30 days)". The UK line changes the same way.
 - `PRIVACY.md:11`, HubSpot: "a local snapshot next to the brief" becomes "a snapshot stored with the call, on your Mac
   and, encrypted, on the Pacenote server".
 - `PRIVACY.md:16`, "Organizations":
@@ -638,8 +663,9 @@ Act employee evaluation rules.
   an organization; per project, sync off stops new uploads but does not delete server files unless the person asks.
 - **Server loss**: Postgres from the off-server dump, buckets from `pn-prod-backup`, keys from the offline master key
   copies; the monthly restore test covers a sample of objects, not only Postgres.
-- **Bad release**: the server keeps the deploy rollback by tag (ADR 4.2); object writes are append-only revisions, so
-  a rollback never loses an uploaded file.
+- **Bad release**: the server keeps the deploy rollback by tag (ADR 4.2); object writes are new revisions and never
+  overwrite an object, and a replaced revision stays 30 days (2.3), so a release found bad within that time can go
+  back to the previous revisions.
 
 ## 12. What this overrides and what stays valid
 
@@ -661,7 +687,7 @@ Act employee evaluation rules.
 | D49 (quotes up to 20 words for leads as an exception to D27) | amended | stays the scorecard rule; full transcript only by policy |
 | D50 (account required, offline with a session works) | still valid | |
 | ADR 10, D35, D41 (plan storage quotas, `history_months`) | amended | section 9.4, decision 16 |
-| ADR 12.2 and PRIVACY ("Delete my server data" leaves the Mac and Drive copies) | amended | section 4.5: offer to download first |
+| ADR 12.2 and PRIVACY ("Delete my server data" leaves the Mac and Drive copies) | amended | section 4.5: offer to download first; a deleted call's files are removed within 30 days (3.1) |
 | D44 (auto-delete of inactive accounts with data after 365 days) | still valid, wider effect | now deletes files too; the emails say so |
 | PB-102 (Verbatim block stays on the Mac) | still valid | whole blocks removed from uploaded sheet files, `kind: verbatim` tip lines removed, a fail-closed content check on the `.work` archive; those files are never evicted (2.4) |
 | D57 (GraphRAG fully local, nothing new leaves the Mac) | still valid for the store | G2 adds a location flag (`local` or `server`) on the source row, not a new state (4.4); its optional snapshot is decision 8 |
@@ -733,7 +759,10 @@ Act employee evaluation rules.
     (2.4): stripped files are never evicted, and a new or lost Mac gets sheets without the Verbatim blocks; the
     person adds them again (a file source fills on Refresh, pasted text is lost with the Mac). A middle way, upload
     the block's settings (title, file path, sections) without its text so a file block refills by itself, would
-    change that CHANGELOG and docs line to "its text stays on this Mac"; not recommended for the small gain.
+    change that CHANGELOG and docs line to "its text stays on this Mac"; not recommended for the small gain. The
+    block's source file is a separate file: the source can be any path (`verbatim.py:52`), and if the person picks a
+    file that is itself uploaded (for example a Google copy in `live/google/`, `google_copy`), that file goes to the
+    server whole as its own kind, owner only. The block stays off the server either way.
 16. **Storage quotas per plan.** Options: (a) count text only against today's `storage_mb` and give recordings a
     separate quota in hours (for example 20 hours stored on Solo, 100 hours per seat on Team, kept by the retention
     rule); (b) raise `storage_mb` to cover video (for example 25 GB per seat on Team); (c) keep today's numbers.
@@ -749,7 +778,8 @@ Act employee evaluation rules.
     the Postgres sheet copy without researched pages, and the brief only if it carries no researched-page text), and
     change the docs line; (b) keep the promise: do not upload `web_pages` (`.work/web` is never in the `.work`
     archive either way, 2.4) and strip researched-page text
-    from uploaded sheet and brief files like the Verbatim text (2.4), so those files are never evicted and a new Mac
+    from uploaded sheet and brief files, the brief copies `.brief.orig.md` and `.brief.preverify.md` in the `.work`
+    archive included, like the Verbatim text (2.4), so those files are never evicted and a new Mac
     gets them without it. Recommendation: (a): the pages are public text, the person is the only reader, and (b) adds a
     second strip function with the same restore loss as decision 15; links are uploaded inside the encrypted archive
     only, never into Postgres or logs.
