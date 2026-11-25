@@ -942,8 +942,9 @@ struct SheetBlocksStep: View {
                     }
             }
             if b.wrappedValue.type == "qualification" {
-                // PB-111: the call's method while Sales is on; a pick here changes it for the whole call
-                PrepMenuField(value: SalesMethods.shared.label(b.wrappedValue.method ?? draft.qualificationMethod())) {
+                // PB-111: the call's method while Sales is on (also after a later change in the Sales picker); a pick
+                // here changes it for the whole call
+                PrepMenuField(value: SalesMethods.shared.label(draft.qualificationMethod(preset: b.wrappedValue.method))) {
                     ForEach(lib.methods, id: \.self) { k in Button(SalesMethods.shared.label(k)) { draft.setQualificationMethod(k, block: b.wrappedValue.id) } }   // S1: names, not keys
                 }
                 .onAppear { SalesMethods.shared.load() }
@@ -1092,7 +1093,7 @@ struct SheetBlocksStep: View {
                                   "hidden": kept.filter { !$0.visible }.map(\.type),
                                   "only_if_data": draft.blocks.filter(\.onlyIfData).map(\.type),
                                   "mode": draft.mode.rawValue, "readiness": draft.preset?.readiness ?? [], "base": draft.presetID,
-                                  "method": draft.blocks.first { $0.type == "qualification" }?.method ?? draft.qualificationMethod(),   // PB-111
+                                  "method": draft.qualificationMethod(preset: draft.blocks.first { $0.type == "qualification" }?.method),   // PB-111
                                   "suggest_new_domains": suggestNew]
         saveNote = ""; saved = ""
         lib.change(req) { e in

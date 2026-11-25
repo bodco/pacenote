@@ -344,6 +344,24 @@ def test_build_contract_conflicts_report_and_derive(tmp_path):
     assert AG.IDENTITY.search(brief) and chr(0x2014) not in brief
 
 
+def test_build_with_essentials_keeps_the_calls_method(tmp_path):
+    # PB-111 (SX4): a call on Essentials (key general) is prepared with Essentials, not BANT
+    root, a, b = _project(tmp_path)
+    seen = {}
+    def responder(system, user):
+        seen["user"] = system + user
+        return "```json\n" + json.dumps(ANSWER) + "\n```"
+    res = B.build(_req(root, a, b, method="general"), emit=quiet, responder=responder)
+    assert res.get("done"), res
+    sheet = json.loads(Path(res["sheet"]).read_text(encoding="utf-8"))
+    assert S.validate(sheet) == []
+    assert next(x for x in sheet["blocks"] if x["type"] == "qualification")["method"] == "general"
+    assert "Method general:" in seen["user"] and "Method bant:" not in seen["user"]
+    qs = next(x for x in sheet["blocks"] if x["type"] == "questions")["facts"]
+    assert not any(f["id"] == "q-readiness-budget" for f in qs)                       # no BANT question on Essentials
+    assert sheet["readiness"]["state"] in ("ready", "almost", "not_ready")
+
+
 def test_too_much_needs_a_choice_and_passes_merge(tmp_path, monkeypatch):
     root, a, b = _project(tmp_path)
     monkeypatch.setattr(Z, "per_pass", lambda info, windows: 40)      # every source is "big" for this test
