@@ -835,18 +835,31 @@ def _write_pending(md: Path, page_id: str, ids, fps, prev=None, nxt=None) -> Non
 
 def _stray_by_content(children: list, pend: dict, owned: set) -> list:
     """The blocks of an append whose ids were never saved: only those between the recorded neighbours, in the order
-    written (a block the PM typed in between is skipped). Nothing landed (the neighbours are next to each other) or a
-    neighbour is gone: none."""
+    written, aligned as a longest common subsequence (a block the PM typed or copied in between is skipped, and so is a
+    written block already taken off by a partial rollback or reconcile). Nothing landed (the neighbours are next to each
+    other) or a neighbour is gone: none."""
     prev, nxt, fps = pend.get("prev"), pend.get("nxt"), list(pend.get("fps") or ())
     pos = {b.get("id"): k for k, b in enumerate(children)}
     if _UNKNOWN in (prev, nxt) or (prev is not None and prev not in pos) or (nxt is not None and nxt not in pos):
         return []
     lo = 0 if prev is None else pos[prev] + 1
     hi = len(children) if nxt is None else pos[nxt]
-    out = []
-    for b in children[lo:hi]:
-        if len(out) < len(fps) and b.get("id") not in owned and _fingerprint(b) == fps[len(out)]:
-            out.append(b["id"])
+    cand = [b for b in children[lo:hi] if b.get("id") not in owned]
+    got = [_fingerprint(b) for b in cand]
+    n, m = len(got), len(fps)
+    suf = [[0] * (m + 1) for _ in range(n + 1)]     # longest common subsequence of got[i:] and fps[j:]
+    for i in range(n - 1, -1, -1):
+        for j in range(m - 1, -1, -1):
+            suf[i][j] = suf[i + 1][j + 1] + 1 if got[i] == fps[j] else max(suf[i + 1][j], suf[i][j + 1])
+    out, i, j = [], 0, 0
+    while i < n and j < m:                          # the earliest blocks of a longest alignment: the run wrote them together
+        if got[i] == fps[j] and suf[i][j] == suf[i + 1][j + 1] + 1:
+            out.append(cand[i]["id"])
+            i, j = i + 1, j + 1
+        elif suf[i + 1][j] >= suf[i][j + 1]:
+            i += 1
+        else:
+            j += 1
     return out
 
 

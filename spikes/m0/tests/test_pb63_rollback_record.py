@@ -87,9 +87,10 @@ def test_a_failed_append_on_a_page_without_a_record_keeps_the_old_blocks(call, c
     assert old <= {b["id"] for b in pages[pid]}                          # the old blocks are kept, as before PB-63
 
 
-def _strand_without_ids(monkeypatch):
-    """One run in which the record, the rollback and the ids after the append all fail; returns a restore function."""
-    good_notion, good_set, good_pending, n = W.notion, W.set_owned, W._write_pending, [0]
+def _strand_without_ids(monkeypatch, deletes_ok=0):
+    """One run in which the record, the rollback (after the first deletes_ok blocks) and the ids after the append all
+    fail; returns a restore function."""
+    good_notion, good_set, good_pending, n, d = W.notion, W.set_owned, W._write_pending, [0], [0]
 
     def before_append_only(*a, **k):
         n[0] += 1
@@ -99,7 +100,9 @@ def _strand_without_ids(monkeypatch):
 
     def no_delete(method, path, body=None):
         if method == "DELETE":
-            raise RuntimeError("Notion 502")
+            d[0] += 1
+            if d[0] > deletes_ok:
+                raise RuntimeError("Notion 502")
         return good_notion(method, path, body)
     monkeypatch.setattr(W, "_write_pending", before_append_only)
     monkeypatch.setattr(W, "set_owned", _broken_record)
@@ -125,6 +128,19 @@ def test_stranded_blocks_are_found_by_content_past_a_block_the_pm_typed_in_betwe
     assert {"pm1", "pm3"} <= ids and len(pages[pid]) == clean + 1
 
 
+def test_a_pm_copy_of_a_later_stranded_block_typed_in_between_stays(call, capsys, monkeypatch):
+    pages, pid, clean = _page_with_pm_note(call, capsys, monkeypatch)
+    restore = _strand_without_ids(monkeypatch)
+    assert W.main(call.base + ["--page", pid]) == 1
+    heading = next(i for i, b in enumerate(pages[pid]) if b["type"] == "heading_2")
+    pages[pid].insert(heading + 2, dict(pages[pid][heading + 3], id="pm3"))   # s1, the PM's copy of s3, s2, s3
+    restore()
+    capsys.readouterr()
+    assert W.main(call.base + ["--page", pid]) == 0
+    ids = {b["id"] for b in pages[pid]}
+    assert {"pm1", "pm3"} <= ids and len(pages[pid]) == clean + 1
+
+
 def test_stranded_blocks_of_a_section_removed_by_hand_are_found_by_content(call, capsys, monkeypatch):
     pages, pid, clean = _page_with_pm_note(call, capsys, monkeypatch)
     heading, end = W._generated_section(pages[pid])
@@ -138,6 +154,38 @@ def test_stranded_blocks_of_a_section_removed_by_hand_are_found_by_content(call,
     capsys.readouterr()
     assert W.main(call.base + ["--page", pid]) == 0
     assert len(pages[pid]) == before + stranded and "pm1" in {b["id"] for b in pages[pid]}   # one section, not two
+
+
+def test_stranded_blocks_without_their_ids_are_found_by_content_after_a_partial_rollback(call, capsys, monkeypatch):
+    pages, pid, clean = _page_with_pm_note(call, capsys, monkeypatch)
+    restore = _strand_without_ids(monkeypatch, deletes_ok=1)            # the rollback takes off only the first block
+    assert W.main(call.base + ["--page", pid]) == 1
+    assert len(pages[pid]) > clean
+    restore()
+    capsys.readouterr()
+    assert W.main(call.base + ["--page", pid]) == 0
+    assert len(pages[pid]) == clean and "pm1" in {b["id"] for b in pages[pid]}
+
+
+def test_a_partial_reconcile_by_content_still_finds_the_rest_next_time(call, capsys, monkeypatch):
+    pages, pid, clean = _page_with_pm_note(call, capsys, monkeypatch)
+    restore = _strand_without_ids(monkeypatch)
+    assert W.main(call.base + ["--page", pid]) == 1
+    restore()
+    good, deletes = W.notion, [0]
+
+    def one_delete(method, path, body=None):
+        if method == "DELETE":
+            deletes[0] += 1
+            if deletes[0] > 1:
+                raise RuntimeError("Notion 502")
+        return good(method, path, body)
+    monkeypatch.setattr(W, "notion", one_delete)
+    assert W.main(call.base + ["--page", pid]) == 1                      # the reconcile removed one block, not all
+    assert "not reconciled" in _last(capsys)["error"]
+    monkeypatch.setattr(W, "notion", good)
+    assert W.main(call.base + ["--page", pid]) == 0
+    assert len(pages[pid]) == clean and "pm1" in {b["id"] for b in pages[pid]}
 
 
 def test_stranded_blocks_without_their_ids_are_found_by_content(call, capsys, monkeypatch):
