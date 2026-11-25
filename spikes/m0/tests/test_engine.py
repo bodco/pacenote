@@ -226,6 +226,25 @@ def test_replay_helper_ignores_a_slow_machine(tmp_path, monkeypatch):
     assert seen(timing2, tips2) == seen(timing, tips)
 
 
+def test_replay_writes_its_files_and_starts_clean(tmp_path):
+    """PB-43: run() above no longer goes through replay(); this keeps the wall-time replay itself covered, with no
+    timing assertions: the run and summary files are written and a folder used before starts clean."""
+    from livetips_m0.replay import replay, select_lines
+    from livetips_m0.transcript import load_call
+    cfg = dict(CFG, budget=dict(CFG["budget"], ledger=str(tmp_path / "spend.json")))
+    lines, _ = select_lines(load_call(FIX / "demo-call.md", cfg["me_label"]))
+    out = tmp_path / "out"
+    out.mkdir()
+    for kind in ("tips", "timing"):
+        (out / ("demo-call.app." + kind + ".jsonl")).write_text('{"left": "from an older run"}\n')
+    eng = replay(cfg, FIX / "demo-call.md", out, speed=10000, provider=FakeProvider(responder, 0.0, 0.0), verbose=False)
+    summary = json.loads((out / "demo-call.app.summary.json").read_text())
+    assert summary["lines"] == len(lines) and summary["tips"] == len(eng.tips)
+    assert json.loads((out / "demo-call.app.run.json").read_text())["lines"] == len(lines)
+    for kind in ("tips", "timing"):
+        assert "from an older run" not in (out / ("demo-call.app." + kind + ".jsonl")).read_text()
+
+
 def test_partial_head_needs_gist_level_and_topic():
     from livetips_m0.engine import partial_head
     assert partial_head('{"gist": "🟠 Додай: ціна", "level": "orange"') is None
