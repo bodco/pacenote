@@ -33,6 +33,16 @@ extension PacenoteServer {
         public var canRemovePassword: Bool { password && google }
         public var canDisconnectGoogle: Bool { google && password }
     }
+
+    /// PB-110: one sheet of Settings > Account > Sign-in methods and which fields it asks for. A Google account sets
+    /// its first password without a current one (Google is confirmed in the browser instead).
+    public enum MethodAction: String, Identifiable, CaseIterable {
+        case change, set, connectGoogle, disconnectGoogle
+        public var id: String { rawValue }
+        /// Setting a first password on a Google account asks only for the new one.
+        public var needsCurrent: Bool { self != .set }
+        public var needsNew: Bool { self == .change || self == .set }
+    }
     public static func authInfo(_ o: Any?) -> AuthInfo? {
         guard let a = o as? [String: Any] else { return nil }
         return AuthInfo(google: (a["google"] as? Bool) == true, password: (a["password"] as? Bool) == true,

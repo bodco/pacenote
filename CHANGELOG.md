@@ -5,6 +5,11 @@ Pacenote. Earlier versions are described in the commit messages and in
 
 ## Unreleased
 
+- **Password flows checked end to end (PB-110).** Nothing changes in how you sign in. Forgot password (app and console
+  /login/forgot), Change password, Set a password on a Google account (no current password, Google is confirmed
+  instead) and Connect Google on a password account were traced through the app and server code; the guide
+  (14.1z3, EN and UK) now describes all four step by step, with what happens to your other devices and which email
+  you get. New app checks pin each flow (CoreChecks `passwordFlowsPB110`).
 - **Meeting Sheet: a Verbatim block for text that must stay word for word (PB-102).** + Add a block now offers
   Verbatim, as often as you need it in one call. In its Settings you give it a title, a source (a file of the call,
   any file, or pasted text) and, if you want only part of a Markdown file, sections such as 1-4 by heading. The

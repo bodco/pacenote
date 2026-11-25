@@ -2890,6 +2890,27 @@ to Pacenote server on (below). Audio and transcripts stay on your Mac.
 - **Sign-in methods** in Settings > Account: Google (connect or disconnect) and the password (**Set a password**,
   **Change password**, **Remove password**). The last way to sign in cannot be removed. Changing the password signs
   out your other devices; an email tells you about a changed password or a new way to sign in.
+- **The four password flows, step by step.** The console in the browser
+  (https://pacenote-admin.bodco.pm/login) uses the same account, the same codes and the same emails as the app.
+  1. **Forgot password.** In the app: Continue with email > **Forgot password?**, enter the address, **Send the code**.
+     In the console: /login > **Forgot password?** (/login/forgot). The email has an 8-digit code (15 minutes); enter it
+     with a new password. Asking again cancels the earlier code. After the reset every Mac and every console session of
+     the account is signed out; the Mac or browser where you reset it is signed in with the new password, and a
+     "password changed" email follows. A Google-only address gets a hint to use Google instead of a code, an unknown
+     address gets nothing; the screen looks the same either way.
+  2. **Change password.** Settings > Account > Sign-in methods > **Change password**: the current password and a new
+     one. This Mac stays signed in, your other Macs and console sessions are signed out, and a "password changed"
+     email tells you when and on which device.
+  3. **A Google account adds a password.** Settings > Account > Sign-in methods > **Set a password**: no current
+     password, only the new one; after Save the browser asks you to confirm Google instead. From then on the Google address
+     and this password sign in to the same account, in the app (Continue with email) and in the console (/login), and
+     Continue with Google still works. An email tells you a new way to sign in was added.
+  4. **A password account adds Google.** Settings > Account > Sign-in methods > **Connect Google**: the current
+     password, then the Google account with the same email in the browser (another email or a Google account of
+     someone else is refused). Continue with Google on the sign-in screen does the same: it asks for the password once.
+     From then on both ways open the same account.
+  Settings > Account lists the ways this account signs in (Google, Password with the date it last changed). In the
+  console, Organization > Members of a team organization shows how each member signs in (Google, Password, or both).
 - After signing in the page shows your workspace (the first sign-in makes a personal one, you are its owner) and the
   Macs signed in to your account. **Sign out** next to another Mac ends its session; **Sign out everywhere** ends all
   of them, this one too. Nothing on any Mac is deleted; a signed-out Mac shows the sign-in screen.

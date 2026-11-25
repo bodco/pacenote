@@ -379,7 +379,7 @@ struct AccountSignInMethodsSection: View {
 
 /// The small sheet for one change: the current password and/or a new one. Google steps open the browser.
 struct MethodSheet: View {
-    enum Kind: String, Identifiable { case change, set, connectGoogle, disconnectGoogle; var id: String { rawValue } }
+    typealias Kind = PacenoteServer.MethodAction   // PB-110: the fields each sheet asks for live in LiveTipsCore (CoreChecks)
     let kind: Kind
     let email: String
     let done: () -> Void
@@ -391,8 +391,8 @@ struct MethodSheet: View {
     @State private var error: String?
     @FocusState private var focus: Int?
 
-    private var needsCurrent: Bool { kind != .set }
-    private var needsNew: Bool { kind == .change || kind == .set }
+    private var needsCurrent: Bool { kind.needsCurrent }
+    private var needsNew: Bool { kind.needsNew }
     private var title: String {
         switch kind {
         case .change: return L("account.methods.password.change")
