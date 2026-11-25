@@ -1,4 +1,4 @@
-# Call and tip quality (CQ, owner request 24.11, task PB-90). Spec: docs/specs/PB-90-cq1-call-quality.md.
+# Call and tip quality (CQ, owner request 25.11, owner decisions 24.11, task PB-90). Spec: docs/specs/PB-90-cq1-call-quality.md.
 # STATUS: CQ1 draft. Nothing reads this file yet: CQ2 reads `local` and `sidecar`, CQ3 reads `eligibility`, `judge`
 # and `rubric`, CQ4 copies `events` into rules/analytics.yaml. Every number below is a PROPOSED default (spec section
 # 13 lists the ones that need the owner or a measurement); none of them has been measured.
@@ -24,23 +24,26 @@ local:
   # every shown kind counts (tips_shown equals call_ended.tips); by_kind and lags come from <stem>.app.tips.jsonl
 
 # --- which calls are judged (CQ3) --------------------------------------------------------------------------------------
-# A call is judged only when every rule passes and the caps leave room. The first failing rule is the skip reason
+# A call is judged only when every rule passes and the caps leave room. The rules are checked in the order of the keys
+# below (spec section 6; no_route and budget have no key) and the first failing rule is the skip reason
 # (call_quality.why). Owner 24.11: only calls worth scoring, by preparation, brief and duration.
 eligibility:
   needs_switch: true               # Settings > General > Privacy > Rate tips on some calls (default on)
   needs_analytics: true            # and Help improve Pacenote on (the scores would have nowhere to go otherwise)
-  min_minutes: 10                  # no maximum: the cost grows with the tips judged (max_tips), not the call length
-  min_tips_shown: 3
-  brief_kinds: [chosen, auto, late]  # call_ended.brief: a call with no preparation is not judged
   skip_call_types: [rehearsal, transcript]
+  min_minutes: 10                  # no maximum: the cost grows with the tips judged (max_tips), not the call length
+  brief_kinds: [chosen, auto, late]  # call_ended.brief: a call with no preparation is not judged
+  min_tips_shown: 3
   min_lines: 60                    # transcript lines in total
   min_other_lines: 20              # lines of the other side (a call where only the PM spoke is not judged)
   max_muted_share: 0.3             # PB-104 muted spans: more than 30% of the call muted, the PM's side is missing
-  per_day: 1                       # judged calls per Mac per local day
-  per_week: 3                      # judged calls per Mac per rolling 7 days
+  per_day: 1                       # cap slots per Mac per local day: queued, running and ended runs (spec 6, Cap slots)
+  per_week: 3                      # cap slots per Mac per rolling 7 days; only expired or never-sent runs give one back
   skip_routes: [local]             # the model on this Mac scores about 60% of Sonnet (docs 14.1g): not comparable
   skip_economy: true               # economy mode on: no judge
   skip_near_limit: true            # metered routes only: a provider over its alert share (rules/ai.yaml > provider_limits)
+  slot_states: [queued, running, done, partial, failed]  # quality.json judge.state values that hold a cap slot
+  slots_file: state/quality-slots.jsonl  # next to spend-ledger.jsonl, on this Mac only, not synced
   expire_hours: 24                 # a queued judge not started within 24 h of the call's end is dropped (why: expired)
 
 # --- the judge (CQ3) ---------------------------------------------------------------------------------------------------
@@ -78,7 +81,8 @@ rubric:
 # --- events (CQ4 copies these into rules/analytics.yaml) ---------------------------------------------------------------
 # Types are names from rules/analytics.yaml (types or enums) or the new enums below.
 new_enums:
-  quality_skip: [judged, 'off', analytics_off, short, few_tips, no_brief, call_type, few_lines, one_sided, muted,
+  # judged, then the section 6 rules in their order (the first failing one is `why`), then the judge's own outcomes
+  quality_skip: [judged, 'off', analytics_off, call_type, short, no_brief, few_tips, few_lines, one_sided, muted,
                  day_cap, week_cap, local_route, no_route, economy, near_limit, budget, expired, failed, partial]
   quality_correct: ['yes', 'no', unknown]
   quality_reason: [good, generic, redundant, off_topic, late, wrong_fact, too_long, noise, unclear]

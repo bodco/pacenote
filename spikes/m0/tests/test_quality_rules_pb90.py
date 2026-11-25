@@ -38,9 +38,73 @@ def test_rubric_lists_match_event_enums():
     r = Q["rubric"]
     assert r["reasons"] == Q["new_enums"]["quality_reason"]
     assert r["correct"] == Q["new_enums"]["quality_correct"]
-    assert r["useful"]["min"] >= CAT["types"]["small"]["min"] and r["useful"]["max"] <= CAT["types"]["small"]["max"]
     assert set(Q["judge"]["judged_kinds"]) == set(Q["new_enums"]["quality_tip_kind"])
     assert Q["judge"]["chain"] is False
+
+
+def test_useful_scale_matches_spec_and_fits_events():
+    """The rubric scale is the one the spec and PRIVACY state, and useful_avg (mean x 20) fits its `score` type."""
+    lo, hi = Q["rubric"]["useful"]["min"], Q["rubric"]["useful"]["max"]
+    s = SPEC.read_text(encoding="utf-8")
+    assert (lo, hi) == (1, 5)
+    assert f"| `useful` | {lo} to {hi} |" in s
+    assert f"| `useful` | small ({lo} to {hi}) |" in s
+    assert f"useful ({lo} to {hi})" in s
+    assert f"корисна (від {lo} до {hi})" in s
+    assert "mean `useful` x 20" in s
+    avg = CAT["types"][Q["events"]["call_quality"]["useful_avg"]]
+    assert avg["min"] <= lo * 20 and hi * 20 <= avg["max"]
+
+
+def _section(s: str, n: int) -> str:
+    start = s.index(f"\n## {n}. ")
+    return s[start:s.index(f"\n## {n + 1}. ", start)]
+
+
+def test_skip_order_matches_spec_section_6():
+    """The `why` column of section 6, top to bottom, is the order of quality_skip after `judged` and of the
+    eligibility keys (the first failing rule is the reason, so the order is behaviour)."""
+    rows = re.findall(r"^\| \d+ \|.*\| `([a-z_]+)` \|$", _section(SPEC.read_text(encoding="utf-8"), 6), re.M)
+    assert len(rows) == 16
+    skip = Q["new_enums"]["quality_skip"]
+    assert skip[0] == "judged" and skip[1:1 + len(rows)] == rows
+    key_for = {"needs_switch": "off", "needs_analytics": "analytics_off", "skip_call_types": "call_type",
+               "min_minutes": "short", "brief_kinds": "no_brief", "min_tips_shown": "few_tips", "min_lines": "few_lines",
+               "min_other_lines": "one_sided", "max_muted_share": "muted", "per_day": "day_cap", "per_week": "week_cap",
+               "skip_routes": "local_route", "skip_economy": "economy", "skip_near_limit": "near_limit"}
+    keyed = [key_for[k] for k in Q["eligibility"] if k in key_for]
+    assert len(keyed) == len(key_for)
+    assert keyed == [w for w in rows if w in keyed]
+
+
+def test_cap_slots_cover_queued_runs():
+    """Review PB-90 r0: the caps count queued and started runs (slots), so two calls queued together cannot both be
+    judged; only a run that never sent a request (expired, or rules 12 to 16 failed at start) gives its slot back."""
+    s = SPEC.read_text(encoding="utf-8")
+    states = re.search(r"- `judge\.state`: (.*?)\n- ", _section(s, 5), re.S).group(1)
+    listed = re.findall(r"`([a-z_]+)`", states.split("holds a cap slot")[0])
+    holding = re.findall(r"`([a-z_]+)`", states.split("holds a cap slot")[1])
+    slots = Q["eligibility"]["slot_states"]
+    assert holding == slots
+    assert set(slots) <= set(listed)
+    assert "queued" in slots and "expired" not in slots and "not_eligible" not in slots
+    sec6 = _section(s, 6)
+    assert "Cap slots" in sec6 and "Rules 10 to 16 are checked again when the judge starts" in sec6
+    assert Q["eligibility"]["slots_file"] in sec6
+
+
+def test_open_questions_table_is_one_table():
+    """A blank line inside the section 13 table would render the rows after it as a table without a header."""
+    lines = _section(SPEC.read_text(encoding="utf-8"), 13).splitlines()
+    first = next(i for i, ln in enumerate(lines) if ln.startswith("| # |"))
+    block = []
+    for ln in lines[first:]:
+        if not ln.startswith("|"):
+            break
+        block.append(ln)
+    ids = [ln.split("|")[1].strip() for ln in block[2:]]
+    all_q = [ln.split("|")[1].strip() for ln in lines if re.match(r"^\| Q\d+ \|", ln)]
+    assert ids == all_q == [f"Q{i}" for i in range(1, len(all_q) + 1)]
 
 
 def test_only_sendable_models_are_sent():

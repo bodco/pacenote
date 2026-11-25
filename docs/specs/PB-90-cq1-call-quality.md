@@ -1,6 +1,6 @@
 # PB-90 CQ1: call and tip quality, spec (rubric v2, selection, events, privacy, console)
 
-Status: CQ1 spec for review. SPEC ONLY: no product code changes. Task PB-90 (stream B, owner request 25.11, the
+Status: CQ1 spec for review. SPEC ONLY: no product code changes. Task PB-90 (stream B, owner request 25.11, owner decisions 24.11, the
 task page in the Product Backlog). Priority: after GraphRAG G3 (owner 24.11).
 
 Where this file lives: the task asks for the spec "in research/". `research/` is the Pacenote root folder, outside the
@@ -150,7 +150,8 @@ Where each field comes from (checked on main at 4bf745b; "CQ2 adds" = no per-cal
 
 | Field | Source |
 |---|---|
-| `call.minutes`, `type`, `brief`, `sheet`, `lines` | the same values `call_ended` gets today (`AnalyticsTracker.callEnded`, `CallBriefSignal`) |
+| `call.minutes`, `brief`, `sheet`, `lines` | the same values `call_ended` gets today (`AnalyticsTracker.callEnded`, `CallBriefSignal`) |
+| `call.type` | the value `call_started` gets today (`call_ended` has no `type`) |
 | `call.other_lines` | the transcript (`<stem>.app.md`), lines whose speaker is not the PM |
 | `call.muted_s` | CQ2 adds: the PB-104 muted-span marks in the transcript, summed |
 | `local.tips_shown` | equal to `call_ended.tips` (`AnalyticsTracker.callCounts.tips`: every shown kind, all 16 `tip_shown` kinds) |
@@ -166,7 +167,9 @@ their usefulness depends on the call plan more than on the transcript (open ques
 
 Rules:
 
-- `judge.state`: `not_eligible`, `queued`, `running`, `done`, `partial` (a budget cap stopped it), `failed`, `expired`.
+- `judge.state`: `not_eligible`, `queued`, `running`, `done`, `partial` (a budget cap or a second stop at call start
+  ended it with some tips scored, or a restarted run with scores failed rules 12 to 16), `failed`, `expired`. A call
+  holds a cap slot (section 6) in `queued`, `running`, `done`, `partial` and `failed`.
 - `lag_s` = shown time minus trigger line time (`at` minus `src` in the tips file), capped at `local.lag_cap_s`
   (600). `late` counts tips with `lag_s` above `local.late_lag_s` (20).
 - `asks_muted`: questions from a muted span (PB-104 `OpenAsks`) are counted apart and never as open.
@@ -179,8 +182,8 @@ Rules:
 
 ## 6. Selection: which calls are judged
 
-Defaults in `rules/quality.yaml > eligibility`. Decided once, right after the local metrics at the end of the call.
-The first failing rule is the skip reason (`why`):
+Defaults in `rules/quality.yaml > eligibility`. Decided right after the local metrics at the end of the call, and
+rules 10 to 16 again when the judge starts (below). The first failing rule is the skip reason (`why`):
 
 | Order | Rule (proposed default) | `why` when it fails |
 |---|---|---|
@@ -201,10 +204,28 @@ The first failing rule is the skip reason (`why`):
 | 15 | Metered routes (api, openai, gemini): the provider is under its monthly alert share (`rules/ai.yaml > provider_limits`, providers with a key only). Plan routes (code, codex) have no limit source in the app, so this rule does not apply to them; rule 13 covers a route marked down | `near_limit` |
 | 16 | The budget estimate fits (section 7) | `budget` |
 
-Rules 12 to 16 are checked again when the judge starts (the route may have changed). An eligible call is `queued`; the
-judge starts after the call's after-call jobs (notes, follow-up, Notion) are done and no call is running. A queued call
-that has not started within `expire_hours` (24) of its end is dropped with `expired` (the Mac was asleep, calls back to
-back). The caps count calls whose judge started, not calls that were eligible.
+An eligible call is `queued`; the judge starts after the call's after-call jobs (notes, follow-up, Notion) are done and
+no call is running. A queued call that has not started within `expire_hours` (24) of its end is dropped with `expired`
+(the Mac was asleep, calls back to back).
+
+**Cap slots.** The caps (rules 10 and 11) count slots, not finished runs, so calls that wait in the queue together
+cannot pass the caps together:
+
+- A call takes a slot when it is queued, dated by its queue time. Rules 10 and 11 count every call that holds a slot:
+  `queued`, `running`, `done`, `partial` and `failed`. A second call that ends while the first one still waits is
+  skipped with `day_cap` or `week_cap`.
+- A slot is given back only when the judge never sent a request: the call is `expired`, or rules 12 to 16 fail when it
+  starts (then `why` is that rule's code). A run that sent at least one request keeps its slot whatever its end state.
+- Rules 10 to 16 are checked again when the judge starts (the route, the spend or the caps may have changed); for
+  rules 10 and 11 the call's own slot is not counted.
+- A run stopped at call start (section 7) keeps its slot and goes back to the queue once. The requests it already sent
+  stay in the ledger and count toward the month cap; the restarted run scores only the tips not scored yet, within the
+  same `per_call_usd` minus what the stopped run spent. A second stop ends it `partial` (some tips scored) or `failed`
+  (none).
+- A slot is dated by `eligibility.decided` (the queue time). The slots live in one file, `state/quality-slots.jsonl`
+  next to `spend-ledger.jsonl` (one row per slot: call stem, decided, state; rows older than 8 days are dropped on
+  write), so a restart of the app does not reset them and no scan of call folders is needed. It stays on this Mac and
+  is not synced; `quality.json` stays the record of each call.
 
 There is no maximum length: the cost grows with the tips judged (at most 20), not with the call.
 
@@ -217,7 +238,7 @@ There is no maximum length: the cost grows with the tips judged (at most 20), no
   retried on another route. `quality.json` and the event record the route and model that actually answered (from the
   completion), not the planned ones. The key goes to the child process only, as today.
 - **Never during a call**: `CallEngine` keeps the judge `Process` (as `judgeRunning` today) and terminates it at call
-  start; the call is re-queued once. The PB-88 `call-active.json` is not used: it is written only with the
+  start; the call is re-queued once and keeps its cap slot (section 6, "Cap slots"). The PB-88 `call-active.json` is not used: it is written only with the
   `evidence_store` flag on.
 - **Before the first request**: estimate the tokens (system prompt once, cached; per tip: the 110 s window and the
   tip, plus at most 300 output tokens) and price them with `livetips_m0.cost` PRICES for metered routes (api, openai,
@@ -310,8 +331,8 @@ most 3 judged calls a week per Mac, so at most 60 `tip_scored` a week per Mac.
     call AI scores up to 20 tips against the transcript. Pacenote gets only the scores, never the words. It uses that
     AI's credit or plan, like a summary does."
   - UK: "Оцінювати підказки на деяких дзвінках" / "Кілька разів на тиждень, після підготовленого дзвінка від 10 хвилин,
-    ваш ШІ для роботи після дзвінка оцінює до 20 підказок за транскриптом. Pacenote отримує лише оцінки, ніколи слова.
-    Це витрачає кредит чи план цього ШІ, як і підсумок."
+    ваш AI для роботи після дзвінка оцінює до 20 підказок за транскриптом. Pacenote отримує лише оцінки, ніколи слова.
+    Це витрачає кредит чи план цього AI, як і саммарі."
 - **No per-call button** (D3).
 - **The developer switch** `judgeAfterCall` (Settings > AI > After the call): recommended to become "Score every call
   (developer)": it bypasses the caps and the brief rule but not the budget guard and not rule 12, writes v2 into
@@ -328,27 +349,36 @@ EN:
 >   asks the AI you chose for after-call work in Settings > AI to score up to 20 of the tips it showed you, each
 >   against the part of the transcript around it. Those transcript excerpts and tips go only to that AI provider,
 >   under your own key or account, the same way your call summary does, and it uses that provider's credit or plan.
->   Pacenote itself receives only the scores and fixed codes: whether a tip was on time, useful (1 to 5), correct by
->   the transcript, concrete or repeated, a reason from a fixed list, the delay in seconds, the call type and its
->   length. The provider's written reason stays on your Mac. On every call Pacenote also counts, on your Mac, how many
->   tips were shown, how late, and how you rated them, and sends these numbers with product analytics. Only Pacenote
->   staff see the scores; the owner and admins of your organization do not. Turn it off in Settings >
->   General > Privacy > Rate tips on some calls; turning off Help improve Pacenote stops it too. The same retention
->   and account deletion rules as product analytics apply.
+>   Pacenote itself receives only numbers and fixed codes, never words: for each scored tip its kind, whether it was
+>   on time, useful (1 to 5), correct by the transcript, concrete or repeated, a reason from a fixed list, its delay
+>   in seconds and your own rating of it; for the call its type, its length, whether it was prepared, if it was not scored the reason as a code, the averages of
+>   the scores, how long the scoring took, and which AI provider and model gave the scores. The provider's written
+>   reason stays on your Mac. On every call Pacenote also counts, on your Mac, how many tips were shown, withdrawn and
+>   late, how late they were, how you rated them, and how many questions were asked and left open, and sends these
+>   numbers with product analytics. Only Pacenote staff see the scores; the owner and admins of your organization do
+>   not. Turning off Settings > General > Privacy > Rate tips on some calls stops the scoring by the AI provider only.
+>   The counts are product analytics: they follow Help improve Pacenote, or your organization's analytics setting for
+>   calls in that organization. Turning off Help improve Pacenote also stops the scoring. The same retention and
+>   account deletion rules as product analytics apply.
 
 UK:
 
 > - **Оцінки якості підказок (увімкнено за замовчуванням).** Кілька разів на тиждень, після підготовленого дзвінка від
->   10 хвилин, Pacenote просить ШІ, який ви обрали для роботи після дзвінка в Settings > AI, оцінити до 20 показаних
->   вам підказок, кожну за частиною транскрипту навколо неї. Ці уривки транскрипту й підказки йдуть лише до цього
->   провайдера ШІ, з вашим ключем чи акаунтом, так само як підсумок дзвінка, і витрачають кредит чи план цього
->   провайдера. Сам Pacenote отримує лише оцінки й фіксовані коди: чи підказка була вчасно, корисна (від 1 до 5),
->   правильна за транскриптом, конкретна чи повторна, причину з фіксованого списку, затримку в секундах, тип дзвінка і
->   його тривалість. Пояснення провайдера лишається на вашому Mac. На кожному дзвінку Pacenote також рахує на вашому
->   Mac, скільки підказок показано, з якою затримкою і як ви їх оцінили, і надсилає ці числа разом із продуктовою
->   аналітикою. Оцінки бачить лише персонал Pacenote; owner і адміни вашої організації їх не бачать.
->   Вимкнути: Settings > General > Privacy > Rate tips on some calls; вимкнення Help improve Pacenote теж це зупиняє.
->   Діють ті самі правила зберігання і видалення акаунта, що й для продуктової аналітики.
+>   10 хвилин, Pacenote просить AI, який ви обрали для роботи після дзвінка в Налаштування > AI, оцінити до 20
+>   показаних вам підказок, кожну за частиною транскрипту навколо неї. Ці уривки транскрипту й підказки йдуть лише до
+>   цього AI-провайдера, з вашим ключем чи акаунтом, так само як саммарі дзвінка, і витрачають кредит чи план цього
+>   провайдера. Сам Pacenote отримує лише числа й фіксовані коди, ніколи слова: для кожної оціненої підказки її вид, чи
+>   була вона вчасно, корисна (від 1 до 5), правильна за транскриптом, конкретна чи повторна, причину з фіксованого
+>   списку, затримку в секундах і вашу власну оцінку; для дзвінка його тип, тривалість, чи він був підготовлений,
+>   якщо його не оцінювали, причину у вигляді коду, середні оцінки, скільки тривало оцінювання і які AI-провайдер і модель дали оцінки. Пояснення провайдера
+>   лишається на вашому Маку. На кожному дзвінку Pacenote також рахує на вашому Маку, скільки підказок показано,
+>   відкликано і показано із запізненням, наскільки пізно, як ви їх оцінили, скільки питань поставили і скільки
+>   лишилося без відповіді, і надсилає ці числа разом із продуктовою аналітикою. Оцінки бачить лише персонал Pacenote;
+>   власник і адміністратори вашої організації їх не бачать. Вимкнення «Оцінювати підказки на деяких дзвінках» у
+>   Налаштування > Загальні > Приватність зупиняє лише оцінювання AI-провайдером. Лічильники належать до продуктової
+>   аналітики: вони діють за перемикачем «Допомогти покращити Pacenote» або, для дзвінків в організації, за
+>   налаштуванням аналітики вашої організації. Вимкнення «Допомогти покращити Pacenote» зупиняє й оцінювання. Діють
+>   ті самі правила зберігання і видалення акаунта, що й для продуктової аналітики.
 
 The bullet "Otherwise nothing is sent to the author" then names "the tip quality scores above" too.
 
@@ -386,8 +416,8 @@ Each step is mergeable on its own and changes nothing the next step needs to und
 
 | Step | What | Files (repo) | Tests | Visible to users |
 |---|---|---|---|---|
-| CQ2 | Local metrics on every call and `quality.json` (`call`, `local`, `eligibility` with the decision only; nothing judged, nothing sent) | new `LiveTipsCore/CallQuality.swift` (pure: tips file, transcript, call sidecars to metrics; the eligibility decision from `rules/quality.yaml`), `CallEngine.swift` (end-of-call hook), `rules/quality.yaml` (status to active for `sidecar`, `local`, `eligibility`), `rules/call_layout.yaml` and the three call-layout implementations if the sidecar list is named there, `CallReassign`/`CallMigration` (move the new sidecar), call sync (confirm it is not sent) (app) | CoreChecks: metrics from fixture calls (lag, late, retracted, muted asks), every eligibility rule and its `why`, the day and week caps, atomic write keeping other sections; a reassign test that moves `.quality.json` | no (a file on disk) |
-| CQ3 | Selective judge v2, budget guard, Privacy switch | `livetips_m0/judge.py` (`--rubric v2`, `--quality-json` merge, per-route models from `rules/quality.yaml`, no Anthropic-only extras), `livetips_m0/cost.py` if a judge stage is missing, `CallEngine.runJudge` (queue, after-call order, call-active stop), `LiveTipsCore/Settings.swift` (`shareQuality`), `SettingsView.swift` (Privacy row; the developer row of section 9), i18n `en.json` and `uk.json`, `rules/quality.yaml` (`judge`, `rubric` to active), docs EN/UK (app) | pytest: rubric v2 parse and validation with FakeProvider, per-route model choice, budget estimate and caps (per call, month, partial), unpriced model, merge into an existing `quality.json`; CoreChecks: switch defaults and the disabled state, queue order, expiry; the replay of section 4.5 on 5 calls with the measured cost in the notes | yes (switch; spend in Settings > Usage) |
+| CQ2 | Local metrics on every call and `quality.json` (`call`, `local`, `eligibility` with the decision only; nothing judged, nothing sent) | new `LiveTipsCore/CallQuality.swift` (pure: tips file, transcript, call sidecars to metrics; the eligibility decision from `rules/quality.yaml`), `CallEngine.swift` (end-of-call hook), `state/quality-slots.jsonl` (the cap slots of section 6), `rules/quality.yaml` (status to active for `sidecar`, `local`, `eligibility`), `rules/call_layout.yaml` and the three call-layout implementations if the sidecar list is named there, `CallReassign`/`CallMigration` (move the new sidecar), call sync (confirm it is not sent) (app) | CoreChecks: metrics from fixture calls (lag, late, retracted, muted asks), every eligibility rule and its `why`, the day and week caps counted as slots (two calls queued together: the second gets `day_cap`; an expired call gives its slot back), atomic write keeping other sections; a reassign test that moves `.quality.json` | no (a file on disk) |
+| CQ3 | Selective judge v2, budget guard, Privacy switch | `livetips_m0/judge.py` (`--rubric v2`, `--quality-json` merge, per-route models from `rules/quality.yaml`, no Anthropic-only extras), `livetips_m0/cost.py` if a judge stage is missing, `CallEngine.runJudge` (queue, after-call order, call-active stop), `LiveTipsCore/Settings.swift` (`shareQuality`), `SettingsView.swift` (Privacy row; the developer row of section 9), i18n `en.json` and `uk.json`, `rules/quality.yaml` (`judge`, `rubric` to active), docs EN/UK (app) | pytest: rubric v2 parse and validation with FakeProvider, per-route model choice, budget estimate and caps (per call, month, partial), unpriced model, merge into an existing `quality.json`; CoreChecks: switch defaults and the disabled state, queue order, expiry, rules 10 to 16 again at start, a run stopped at call start keeps its slot and scores only the rest within the remaining per-call budget; the replay of section 4.5 on 5 calls with the measured cost in the notes | yes (switch; spend in Settings > Usage) |
 | CQ4 | Events, catalog, PRIVACY | `rules/analytics.yaml` (section 8.4), `AnalyticsCatalog.swift` regenerated by `tools/gen_analytics_catalog.py`, the sender in `CallEngine`/`AnalyticsTracker` (one `call_quality` per call, `tip_scored` per tip, `sent` section), `PRIVACY.md`, `PRIVACY.uk.md`, `telemetry.toggle.sub` if it names what is sent, docs EN/UK, CHANGELOG (app); `analytics_events.yaml` byte copy (server); `pacenote-usage-v2-2026-11-17.yaml` byte copy (research) | `test_quality_rules_pb90.py` stays green (the catalog must equal the draft in `rules/quality.yaml`, or both change); CoreChecks: catalog parity and every `code` with values; the events built from a fixture `quality.json` pass the catalog; nothing sent with the switches off; org switch sends `call_quality` but no judge; pytest (server): the two events accepted, a bad `reason` dropped | yes (PRIVACY, Show what is sent) |
 | CQ5 | Console Quality page and funnel | `console/aplatform.py` (`PAGES`, `quality()`, route), `templates/platform/analytics/quality.html`, `funnels.yaml`, `console/labels.py` (server) | pytest (server): page renders with fixture events, filters, CSV per table, fewer-than-3 rule, the funnel counts a fixture path, staff only (403 for an org admin) | staff only |
 
@@ -423,7 +453,6 @@ need the owner's go for those commits and for the server deploy (rule 5 of the t
 | Q8 | Do users see their own scores (Stats or the call page)? | a) not in CQ2 to CQ5; b) a line on the call page | a. D1 asks for statistics for the team; showing a user their own scores is a product choice for later. |
 | Q9 | Judge route when the "after" route is the model on this Mac | a) skip (`local_route`); b) judge on it and mark the provider `local` | a. Its scores are not comparable with the cloud judges (about 60% of Sonnet in docs 14.1g) and would mix into the averages. |
 | Q10 | When a Pacenote AI key exists | a) keep the user's route (D4); b) judge on Pacenote's key | a until the owner decides; the route is one value in `rules/quality.yaml > judge.job` and a provider `pacenote` already exists in the catalog. |
-
 | Q11 | Judge the other shown kinds (agenda, coach, risk, wrap-up, presentation Q&A)? | a) only tip, fact, answer (v1 filter); b) all kinds | a. The other kinds are counted locally; judging them needs the call plan and the register in the prompt, a later rubric part. |
 
 None of these blocks CQ2. Q1 and Q2 should be answered before CQ3 merges; the defaults follow the recommendations.
