@@ -7,8 +7,9 @@ database: >-
   the transcript), Source (url of the meeting page, when there is one), Status = Active, Stated by (who said it,
   text), Project and Workspace (the properties chosen in Settings, any of relation, select, multi-select or text).
   Door only when said outright on the call; never invented (projects/_standards.md section 9). PB-127 (owner 25.11):
-  the write is plain Notion API, no model request. Area, Door and Context come from the call notes step (### Decision
-  register of the Meeting notes, rules/notes.yaml); notes without them leave Area, Door and Context empty.
+  the write is plain Notion API, no model request. Area, Door and Context come from the call notes step (the call's
+  <stem>.decision-register.json, rules/notes.yaml), matched by the decision text cut the same way as the title (long
+  dash to "-", at most 200 characters); calls without them leave Area, Door and Context empty.
 after_call: >-
   The call page's Decisions section has "Add to decision register" (hover and the row menu) and "Add all N" above the
   section. Nothing is written without the PM's click unless he turned on the automatic add. After the write the row
@@ -35,8 +36,9 @@ snapshot:
   content: >-
     The project's active decisions, newest first, at most 30, one line each:
     "- YYYY-MM-DD | <decision> | <stated by> | <area>". The live engine reads only this file and never calls Notion
-    during a call. PB-127: before them one line "Area options: <the database's own Area options>", which the call
-    notes step reads for its Decision register; readers of the decisions read only the "- " lines.
+    during a call. PB-127: the database's own Area options are written with it to .decision-areas.json in the same
+    folder (a JSON list, so an option with a comma stays whole; hidden, so no folder walk reads it), which the call notes step reads for its Decision
+    register; the snapshot itself carries only the decisions.
 brief: >-
   The brief has a section "Active decisions": the last 10 active decisions of the project from the snapshot, with
   their dates. No snapshot, no section.

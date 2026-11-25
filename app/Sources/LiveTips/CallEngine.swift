@@ -686,6 +686,8 @@ final class CallEngine {
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     Self.notesRewriteProcs[file] = nil
+                    // PB-127 (review): decisions whose auto-add waited while this rewrite held the notes go now
+                    NotionAutoAdd.notesDone(file: file)
                     if let usd = d["cost_usd"] as? Double, usd > 0 {
                         SpendDays.add(usd)
                         CallHistory.shared.addCost(file: file, usd)
@@ -737,11 +739,11 @@ final class CallEngine {
             notionResult = L("notion.tooShort"); notify(notionResult); return
         }
         let store = SecretStore(service: Bundle.main.bundleIdentifier ?? "io.github.example.livetips")
-        let aiOK = AIRoute.canRun(job: "after", config: c)
-        guard aiOK, let notionToken = NotionAuth.token() else {
-            AppLog.app("notion: not written (\(aiOK ? "no token" : "no AI for after the call")) call=\(AppLog.stem(file))")
-            notionResult = L(aiOK ? "notion.err.noToken" : "notion.err.noAI")
-            notify(notionResult, level: .error, settingsTab: aiOK ? "notion" : "ai"); return
+        // PB-127 (review): the page makes no model request, so it needs the Notion token only, not an AI for After the call
+        guard let notionToken = NotionAuth.token() else {
+            AppLog.app("notion: not written (no token) call=\(AppLog.stem(file))")
+            notionResult = L("notion.err.noToken")
+            notify(notionResult, level: .error, settingsTab: "notion"); return
         }
         let hasConfig = !projectConfig.isEmpty && FileManager.default.fileExists(atPath: projectConfig)
         // 0.8.6 (C): a project without a config may send its pages to its own database (Settings > Notion)
@@ -778,7 +780,9 @@ final class CallEngine {
         if Thread.isMainThread { args += MainActor.assumeIsolated { Self.actionsArg(file) } }   // the call page's own task lines
         p.arguments = args
         p.currentDirectoryURL = URL(fileURLWithPath: c.engine.sidecarDir)
-        var env = AIRoute.env(job: "after", config: c)
+        // PB-127 (review): no model request in this child, so it gets no AI keys, only the Notion token
+        var env = ProcessInfo.processInfo.environment
+        for k in ["CLAUDE_API", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "CLAUDE_WORKSPACE"] { env.removeValue(forKey: k) }
         env["LT_AI_STAGE"] = "after_notion"
         env["NOTION_TOKEN"] = notionToken          // passed to the child only, never written or logged
         env["PYTHONDONTWRITEBYTECODE"] = "1"

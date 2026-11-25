@@ -140,13 +140,14 @@ def test_actions_from_the_call_page_register_win(call, capsys):
 def test_the_notes_step_writes_the_register_fields_in_the_same_request(tmp_path):
     """Acceptance 5: the Meeting notes request gets the areas and the active decisions from the snapshot; the model's
     numbers become the decision's text and the replaced decision's title; the call page's decisions are unchanged."""
-    from livetips_m0.decision_notion import snapshot_text
+    from livetips_m0.decision_notion import areas_path, snapshot_text
     live = tmp_path / "Orbit" / "live"
     live.mkdir(parents=True)
     (tmp_path / "Orbit" / "pacenote").mkdir()
-    (tmp_path / "Orbit" / "pacenote" / "decisions.md").write_text(snapshot_text(
-        [{"date": "2026-10-01", "title": "Pilot goes to Acme first", "stated_by": "David Kim", "area": "Scope"}], "now",
-        ["Scope", "Delivery"]))
+    snap = tmp_path / "Orbit" / "pacenote" / "decisions.md"
+    snap.write_text(snapshot_text(
+        [{"date": "2026-10-01", "title": "Pilot goes to Acme first", "stated_by": "David Kim", "area": "Scope"}], "now"))
+    areas_path(snap).write_text(json.dumps(["Scope", "Budget, Q4"]))
     md = live / "2026-10-12-1000-orbit.md"
     md.write_text("[10:00:01] Me (en): hi\n")
     seen = []
@@ -159,27 +160,60 @@ def test_the_notes_step_writes_the_register_fields_in_the_same_request(tmp_path)
                 '- {"n": 7, "area": "x", "door": "", "context": "", "replaces": 0}\n- not json\n')
     sec = callnotes.make_meeting(md, "notes", "[10:00:01] Me (en): hi", "en", ask)
     assert len(seen) == 1 and "### Decision register" in seen[0][0]
-    assert "# AREAS\nScope, Delivery" in seen[0][1] and "1. Pilot goes to Acme first (2026-10-01)" in seen[0][1]
-    rows = callnotes.decision_register(sec)
-    assert rows == [{"decision": "Pilot goes to Northwind first", "area": "Scope", "door": "two-way",
-                     "context": "Northwind has the accounts.", "replaces": "Pilot goes to Acme first"}]
+    assert "# AREAS\n- Scope\n- Budget, Q4\n" in seen[0][1] and "1. Pilot goes to Acme first (2026-10-01)" in seen[0][1]
+    rows = callnotes.register_in(sec)
+    want = [{"decision": "Pilot goes to Northwind first", "area": "Scope", "door": "two-way",
+             "context": "Northwind has the accounts.", "replaces": "Pilot goes to Acme first"}]
+    assert rows == want
     m = callnotes.parse_meeting(sec)
     assert [i["text"] for i in m["decisions"]] == ["**Emily Clark**: Pilot goes to Northwind first"] and m["unclear"][0]["text"] == "one name"
     assert "not json" not in sec
+    # the register leaves the notes for its own file: the notes every reader sees have no JSON lines
+    notes = callnotes.take_register(md, callnotes.put_meeting("# Notes\n\n## Summary\nx\n", sec))
+    assert "Decision register" not in notes and '"decision"' not in notes and "one name" in notes and "## Summary" in notes
+    assert callnotes.decision_register(md) == want and callnotes.register_path(md).name.endswith(".decision-register.json")
+    # the PM edits the Meeting notes on the call page (the app rewrites the section): the register stays
+    callnotes.put_meeting(notes, "## Meeting notes\n### TL;DR\nEdited.\n")
+    assert callnotes.decision_register(md) == want
+    # notes written again with no decisions: the register is emptied, not left stale
+    callnotes.take_register(md, "## Meeting notes\n### TL;DR\nNothing decided.\n")
+    assert callnotes.decision_register(md) == []
 
 
-def test_the_snapshot_keeps_the_area_options_and_its_readers_still_read_only_decisions():
-    from livetips_m0.decision_notion import parse_snapshot, snapshot_areas, snapshot_text
-    t = snapshot_text([{"date": "2026-10-01", "title": "Acme first", "stated_by": "", "area": "Scope"}], "now", ["Scope", "Budget, Q4"])
-    assert snapshot_areas(t) == ["Scope", "Budget  Q4"] and [d["title"] for d in parse_snapshot(t)] == ["Acme first"]
-    assert snapshot_areas(snapshot_text([], "now")) == []                                 # an older snapshot: no line
+def test_register_file_in_a_call_folder_is_one_for_the_transcript_and_the_named_copy(tmp_path):
+    """PB-127 review: the call-folder layout; the notes step may get X.app.named.md (.work) or X.app.md, the decisions
+    write gets X.app.md: all three name one register file in .work, and the muted-mic lines of ### Unclear stay."""
+    folder = tmp_path / "Orbit" / "live" / "2026-11-18-orbit-sync"
+    (folder / ".work").mkdir(parents=True)
+    md = folder / "2026-11-18-1512-orbit-sync.app.md"
+    named = folder / ".work" / "2026-11-18-1512-orbit-sync.app.named.md"
+    assert callnotes.register_path(md) == callnotes.register_path(named)
+    assert callnotes.register_path(md).parent.name == ".work"
+    sec = callnotes.with_muted("## Meeting notes\n### Decisions\n- [10:00:02] Ship on Friday\n### Unclear\n- one name\n"
+                               '### Decision register\n- {"decision": "Ship on Friday", "area": "Delivery"}', ["[10:01:00] muted 2 min"])
+    notes = callnotes.take_register(named, callnotes.put_meeting("", sec))
+    assert "muted 2 min" in notes and "one name" in notes and "Decision register" not in notes
+    assert callnotes.decision_register(md) == [{"decision": "Ship on Friday", "area": "Delivery"}]
+    from livetips_m0.decision_notion import notes_details
+    assert notes_details(md, "Ship on Friday")["area"] == "Delivery"
+
+
+def test_the_area_options_live_beside_the_snapshot_not_in_it(tmp_path):
+    """PB-127 review: the preparation and the evidence read decisions.md as text; the options are kept apart, whole."""
+    from livetips_m0.decision_notion import areas_path, parse_snapshot, read_areas, snapshot_text
+    snap = tmp_path / "decisions.md"
+    t = snapshot_text([{"date": "2026-10-01", "title": "Acme first", "stated_by": "", "area": "Scope"}], "now")
+    assert "Area options" not in t and [d["title"] for d in parse_snapshot(t)] == ["Acme first"]
+    assert read_areas(snap) == []                                                          # an older snapshot: no file
+    areas_path(snap).write_text(json.dumps(["Scope", "Budget, Q4"]))
+    assert read_areas(snap) == ["Scope", "Budget, Q4"] and areas_path(snap).name == ".decision-areas.json"
 
 
 def test_old_notes_have_no_register_and_no_snapshot_is_fine(tmp_path):
-    assert callnotes.decision_register(NOTES) == []
     md = tmp_path / "live" / "2026-10-12-1000-x.md"
+    assert callnotes.register_in(NOTES) == [] and callnotes.decision_register(md) == []
     assert callnotes.active_decisions(md) == [] and callnotes.area_options(md) == []
     assert "(none)" in callnotes.register_input([])
-    assert "# AREAS\nScope" in callnotes.register_input([{"title": "a", "area": "Scope"}])     # no options line: the areas in use
+    assert "# AREAS\n- Scope" in callnotes.register_input([{"title": "a", "area": "Scope"}])     # no options file: the areas in use
     sec = callnotes.with_register("## Meeting notes\n### TL;DR\nx\n### Decision register\n- {\"n\": 1}\n", [])
     assert "Decision register" not in sec                  # no decisions: no empty heading left behind

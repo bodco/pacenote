@@ -12,10 +12,12 @@ Pacenote. Earlier versions are described in the commit messages and in
   title is the meeting's name plus the topic from the notes ("Weekly sync: Release plan"). The page no longer waits up
   to 10 minutes for the notes: it is written at once with the transcript and "The meeting notes are being written",
   and the notes take that line's place when they are ready. When the notes fail, the page says so; Make meeting notes
-  on the call page writes them and updates the page. Decisions sent to the Notion Decisions database get Area, Door and
+  on the call page writes them and updates the page. The page needs only the Notion token now, no AI set for After
+  the call. Decisions sent to the Notion Decisions database get Area, Door and
   Context from the same request that writes the notes, which also checks them against the project's active decisions
   for "Replaces ...?"; the write itself is plain Notion API (the automatic add after a call now waits for the notes,
-  so it has them). Area is picked from the database's own options, which the decisions snapshot now keeps. Decisions
+  so it has them, also after Rewrite notes). Area is picked from the database's own options, kept beside the decisions
+  snapshot; these register fields live in a file of their own, so editing the Meeting notes keeps them. Decisions
   from older notes get empty Area, Door and
   Context, and Trade-off, Alternatives rejected and Review trigger are no longer filled in. Model requests per call:
   one fewer for the meeting page (two when its reply needed a JSON repair) and one or two fewer for each decision added

@@ -46,11 +46,14 @@ meeting_notes: |
   0.12.2 (L1-L3): the call page, Summary, Home, Export, follow-up, CRM and the server read Decisions, Tasks and Risks
   by one rule (LiveTipsCore CallLists): the PM's edit on the call page, else these Meeting notes, else the live call
   picture, else the older notes sections. Notes of schema 2 have no ### Risks: their risks come from the live picture.
-  PB-127: ### Decision register (last, after ### Unclear): one JSON line per decision for the Notion Decisions
-  register, {"decision", "area", "door", "context", "replaces"}, written in the same request from AREAS and the
-  numbered ACTIVE DECISIONS of <project>/pacenote/decisions.md (rules/decisions.yaml > snapshot); the model's numbers
-  are turned into the decision's text and the replaced decision's title before the file is written. The app's readers
-  skip this heading; older notes have none.
+  PB-127: ### Decision register (last, after ### Unclear, in the model's answer only): one JSON line per decision for
+  the Notion Decisions register, {"decision", "area", "door", "context", "replaces"}, written in the same request from
+  AREAS (.decision-areas.json beside the snapshot) and the numbered ACTIVE DECISIONS of <project>/pacenote/decisions.md
+  (rules/decisions.yaml > snapshot); the model's numbers are turned into the decision's text and the replaced
+  decision's title. The lines then leave the notes for <stem>.decision-register.json (the call's .work/), written each
+  time the Meeting notes are (an empty list when there are no decisions), so the notes file never carries them (the
+  call page, an edit of it, the preparation, the evidence and the server copy read plain notes) and an edit of the
+  Meeting notes keeps them. Older calls have no such file.
 rewrite: |
   0.26.2 (owner: "the notes are always written again by AI, a speaker change only marks them stale"). After a speaker
   change on the call page (edited_at in speakers.json newer than the notes) the Transcript and Meeting notes tabs show

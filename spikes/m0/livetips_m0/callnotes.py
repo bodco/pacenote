@@ -248,10 +248,15 @@ def make_meeting(md: Path, notes: str, transcript: str, lang: str, ask, names: s
 REGISTER_HEAD = "### Decision register"
 
 
+def _snapshot_path(md: Path) -> Path:
+    """<project>/pacenote/decisions.md, the snapshot the app keeps (decision_notion --snapshot)."""
+    return call_layout.live_folder(md).parent / "pacenote" / "decisions.md"
+
+
 def _snapshot(md: Path) -> str:
-    """<project>/pacenote/decisions.md, the snapshot the app keeps (decision_notion --snapshot); "" when there is none."""
+    """The snapshot's text; "" when there is none."""
     try:
-        snap = call_layout.live_folder(md).parent / "pacenote" / "decisions.md"
+        snap = _snapshot_path(md)
         return snap.read_text(encoding="utf-8", errors="replace") if snap.exists() else ""
     except OSError:
         return ""
@@ -264,17 +269,17 @@ def active_decisions(md: Path) -> List[dict]:
 
 
 def area_options(md: Path) -> List[str]:
-    """The Decisions database's own Area options, from the snapshot; [] for a snapshot older than PB-127."""
-    from .decision_notion import snapshot_areas
-    return snapshot_areas(_snapshot(md))
+    """The Decisions database's own Area options, kept beside the snapshot; [] for a snapshot older than PB-127."""
+    from .decision_notion import read_areas
+    return read_areas(_snapshot_path(md))
 
 
 def register_input(active: List[dict], areas: List[str] = None) -> str:
-    """AREAS (the database's own options, else the areas the register already uses) and the numbered ACTIVE DECISIONS
-    for ### Decision register."""
+    """AREAS (the database's own options, else the areas the register already uses), one per line so an option with a
+    comma stays whole, and the numbered ACTIVE DECISIONS for ### Decision register."""
     areas = areas or sorted({a.strip() for d in active for a in (d.get("area") or "").split(",") if a.strip()})
     rows = ["{}. {} ({})".format(i + 1, d["title"], d.get("date", "")) for i, d in enumerate(active)]
-    return "# AREAS\n{}\n\n# ACTIVE DECISIONS\n{}".format(", ".join(areas) or "(none)", "\n".join(rows) or "(none)")
+    return "# AREAS\n{}\n\n# ACTIVE DECISIONS\n{}".format("\n".join("- " + a for a in areas) or "(none)", "\n".join(rows) or "(none)")
 
 
 def _register_rows(section: str) -> List[tuple]:
@@ -325,9 +330,46 @@ def with_register(section: str, active: List[dict]) -> str:
     return "\n".join(out[:at + 1] + [l for _, l in keep] + out[at + 1:])
 
 
-def decision_register(notes: str) -> List[dict]:
-    """PB-127: the Decision register lines of the Meeting notes, [] for older notes (they have none)."""
-    return [o for _, o in _register_rows(meeting_text(notes)) if o and o.get("decision")]
+def register_in(section: str) -> List[dict]:
+    """The ### Decision register lines of a Meeting notes section as the model wrote them (after with_register)."""
+    return [o for _, o in _register_rows(section) if o and o.get("decision")]
+
+
+def register_path(md: Path) -> Path:
+    """PB-127: <stem>.decision-register.json in the call's .work/, beside the notes (one stem for X.md and X.named.md)."""
+    from .call_lists import _stem
+    return call_layout.sidecar(re.sub(r"\.named$", "", _stem(md)), ".decision-register.json")
+
+
+def take_register(md: Path, notes: str) -> str:
+    """PB-127: the ### Decision register leaves the notes for its own file, so the notes stay readable everywhere they
+    are read (the call page, an edit of it, the preparation, the evidence, the server copy) and the register is not
+    lost when the PM edits the Meeting notes. The file is written every time the Meeting notes are (an empty list when
+    the call has no decisions); the notes come back without the heading."""
+    lines = notes.split("\n")
+    start = next((i for i, l in enumerate(lines) if l.strip() == MEETING_HEAD), None)
+    if start is None:
+        return notes
+    end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("## ") or lines[i].startswith("Coverage: ")), len(lines))
+    sec = lines[start:end]
+    at = next((i for i, l in enumerate(sec) if l.strip().lower().rstrip(":") == REGISTER_HEAD.lower()), None)
+    rows = register_in("\n".join(sec)) if at is not None else []
+    if at is not None:
+        stop = next((i for i in range(at + 1, len(sec)) if sec[i].lstrip().startswith("#")), len(sec))
+        sec = sec[:at] + sec[stop:]
+    p = register_path(md)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(rows, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    return "\n".join(lines[:start] + sec + lines[end:])
+
+
+def decision_register(md: Path) -> List[dict]:
+    """PB-127: the call's decision register lines (register_path), [] for older notes (they have none)."""
+    try:
+        v = json.loads(register_path(md).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    return [o for o in v if isinstance(o, dict) and o.get("decision")] if isinstance(v, list) else []
 
 
 def muted_items(transcript: str, lang: str) -> List[str]:
@@ -466,7 +508,7 @@ def make_meeting_only(md: Path, model: str, lang: str, provider=None, aliases: L
     text = (named if named.exists() else md).read_text(encoding="utf-8", errors="replace")
     lang = notes_lang(md, text, lang, meta)
     notes = out.read_text(encoding="utf-8")
-    notes = put_meeting(notes, make_meeting(md, notes, text, lang, ask, names_block(aliases or [], config)))
+    notes = take_register(md, put_meeting(notes, make_meeting(md, notes, text, lang, ask, names_block(aliases or [], config))))
     _write_then_check(out, md, notes, text, lang, ask)
     _written_in(md, "meeting_notes", lang)
     _register_tasks(md, notes, aliases)
@@ -558,7 +600,7 @@ def make_notes(md: Path, model: str, lang: str, provider=None, aliases: List[str
     notes = notes.rstrip() + "\n\n" + coverage_line(c) + f". Made {time.strftime('%Y-%m-%d %H:%M')} by {model}.\n"
     failed: list = []
     try:   # 0.9.5.2 (rules/notes.yaml schema 2): the readable meeting notes; the full notes are kept whatever happens
-        notes = put_meeting(notes, make_meeting(md, notes, text, lang, ask, names))
+        notes = take_register(md, put_meeting(notes, make_meeting(md, notes, text, lang, ask, names)))   # PB-127: register to its file
     except Exception as e:  # noqa: BLE001
         print("meeting notes: " + str(e)[:200], file=sys.stderr)
         failed.append("meeting_notes")

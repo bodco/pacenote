@@ -10,8 +10,8 @@
   ... --supersede <old page id> --new <new page id>   only after the PM's click: old Status = Superseded + links
 
 PB-127 (owner 25.11): plain Notion API, no model request. Area, Door, the Context sentence and the active decision a
-new one replaces come from the call's notes step (### Decision register of the Meeting notes, written in the same
-request as the notes from the decisions snapshot); Area and Door only take the database's own options. Older notes
+new one replaces come from the call's notes step (<stem>.decision-register.json, written in the same request as the
+Meeting notes from the decisions snapshot); Area and Door only take the database's own options. Older notes
 without them: those fields stay empty. Needs NOTION_TOKEN (the app passes it to the child only). Prints one JSON line
 {"ok", "url", "id", "error", ...}.
 """
@@ -100,21 +100,20 @@ def decision_props(sc: dict, title: str, d: dict, ids: dict, project_name: str, 
 
 # ---------------------------------------------------------------- PB-127: the fields come from the call notes
 def _key(s: str) -> str:
-    return re.sub(r"\s+", " ", (s or "").replace("**", "")).strip().lower()
+    """The match key of a decision: the same cut as write_one (long dash to "-", at most 200 characters), so a long
+    decision still finds its register line."""
+    s = (s or "").replace(chr(0x2014), "-").strip()[:200]
+    return re.sub(r"\s+", " ", s.replace("**", "")).strip().lower()
 
 
 def notes_details(md: Optional[Path], decision: str) -> dict:
     """Area, Door, Context and the active decision it replaces, as the notes step wrote them for this decision
-    (### Decision register of the Meeting notes, callnotes.decision_register). {} for older notes, an edited decision
-    or no notes: then those fields stay empty. Never a model request."""
+    (the call's decision register file, callnotes.decision_register). {} for older notes, an edited decision or no
+    notes: then those fields stay empty. Never a model request."""
     if not md:
         return {}
-    from .call_lists import notes_path
     from .callnotes import decision_register
-    try:
-        rows = decision_register(notes_path(md).read_text(encoding="utf-8", errors="replace"))
-    except OSError:
-        return {}
+    rows = decision_register(md)
     row = next((r for r in rows if _key(r.get("decision", "")) == _key(decision)), None)
     if not row:
         return {}
@@ -131,8 +130,8 @@ def door_option(value: str, allowed: List[str]) -> str:
 
 def supersede_candidate(replaces: str, active: List[dict]) -> Optional[dict]:
     """The active decision the notes said this one replaces, matched by its title; None when it is not active any more."""
-    k = _key(replaces)
-    return next((d for d in active if k and _key(d.get("title", "")) == k), None)
+    k = _key(replaces)      # the title as the snapshot line carries it ("|" to "/", one line)
+    return next((d for d in active if k and _key(d.get("title", "").replace("|", "/").replace("\n", " ")) == k), None)
 
 
 # ---------------------------------------------------------------- reading the register
@@ -193,25 +192,32 @@ def list_active(ds: str, sc: dict, ids: dict, project_name: str, limit: int = 30
     return out
 
 
-AREA_OPTIONS = "Area options: "
-
-
-def snapshot_text(active: List[dict], when: str, areas: Optional[List[str]] = None) -> str:
-    """rules/decisions.yaml > snapshot: one line per active decision, newest first. PB-127: the database's own Area options
-    on one line before them (the notes step picks Area from them); readers of the decisions read only the "- " lines."""
+def snapshot_text(active: List[dict], when: str) -> str:
+    """rules/decisions.yaml > snapshot: one line per active decision, newest first."""
     head = ["# Active decisions", "", "Snapshot of the Notion Decisions register, taken {}. Read by Pacenote; do not edit.".format(when), ""]
-    if areas:
-        head += [AREA_OPTIONS + ", ".join(a.replace(",", " ") for a in areas), ""]
     rows = ["- {} | {} | {} | {}".format(d.get("date", ""), d.get("title", "").replace("|", "/").replace("\n", " "),
                                          d.get("stated_by", "").replace("|", "/"), d.get("area", "").replace("|", "/"))
             for d in active if d.get("title")]
     return "\n".join(head + rows) + "\n"
 
 
-def snapshot_areas(text: str) -> List[str]:
-    """The Area options line of a snapshot, [] when it has none (a snapshot older than PB-127)."""
-    ln = next((l for l in (text or "").splitlines() if l.startswith(AREA_OPTIONS)), "")
-    return [a.strip() for a in ln[len(AREA_OPTIONS):].split(",") if a.strip()]
+AREAS_FILE = ".decision-areas.json"
+
+
+def areas_path(snapshot: Path) -> Path:
+    """PB-127: the Decisions database's own Area options, kept as a JSON list next to the snapshot (not in it, so the
+    preparation and the evidence never read them as decisions, and an option with a comma stays whole). A hidden
+    name, so the folder walks of the preparation, the Meeting Sheet and the evidence skip it."""
+    return Path(snapshot).with_name(AREAS_FILE)
+
+
+def read_areas(snapshot: Path) -> List[str]:
+    """The Area options next to this snapshot, [] when there is no such file (a snapshot older than PB-127)."""
+    try:
+        v = json.loads(areas_path(snapshot).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    return [str(a).strip() for a in v if str(a).strip()] if isinstance(v, list) else []
 
 
 def parse_snapshot(text: str) -> List[dict]:
@@ -327,7 +333,8 @@ def run(a) -> dict:
         if a.snapshot:
             p = Path(a.snapshot)
             p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_text(snapshot_text(active, dt.datetime.now().strftime("%Y-%m-%d %H:%M"), sc["area_options"]), encoding="utf-8")
+            p.write_text(snapshot_text(active, dt.datetime.now().strftime("%Y-%m-%d %H:%M")), encoding="utf-8")
+            areas_path(p).write_text(json.dumps(sc["area_options"], ensure_ascii=False), encoding="utf-8")   # PB-127
         return {"ok": True, "n": len(active), "decisions": active if a.list_active else None}
     md = Path(a.call_file) if a.call_file else None
     if a.from_call:

@@ -1947,7 +1947,9 @@ Superseded and links Supersedes and Superseded By; without the click nothing cha
 **Since PB-127 the Decisions write asks no AI.** Area, Door, the Context sentence and which active decision a new one
 replaces are written by the same request that writes the call notes (it sees the snapshot of the project's active
 decisions and the database's Area options); Pacenote only carries them to Notion through the API, and the automatic
-add waits for the notes when they are still being written. Area and Door take only the database's own options.
+add waits for the notes when they are still being written (or rewritten). The fields are kept in a file of their own
+beside the notes, so editing the Meeting notes on the call page keeps them. Area and Door take only the database's own
+options.
 A decision from older notes gets empty Area, Door and Context; Trade-off, Alternatives rejected and Review trigger are
 no longer filled in automatically.
 
@@ -3319,7 +3321,7 @@ menu bar: **Send last call to Notion**.
 1. The page carries the call's Meeting notes (14.1t): Summary, What happened, decisions, action items, open
    questions, risks and topics. Decisions, action items and risks are the call page's own lists, word for word (your
    edits on the call page included). Since PB-127 this step asks no AI at all and costs nothing: the page is written
-   through the Notion API only, and its title is the meeting's name plus the topic from the notes ("Weekly sync:
+   through the Notion API only (it needs the Notion token, not an AI for After the call), and its title is the meeting's name plus the topic from the notes ("Weekly sync:
    Release plan"). When the notes are still being written, the page is written at once with the transcript and the
    line "The meeting notes are being written"; the notes replace that line when they are ready. When the notes
    failed, the page says so, and **Make meeting notes** on the call page writes them and updates the page.

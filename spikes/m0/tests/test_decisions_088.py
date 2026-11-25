@@ -61,12 +61,13 @@ def text(props, name):
 
 
 def notes_with_register(md, rows, decisions=("Orbit pilot goes to Northwind first",)):
-    """PB-127: the call's Meeting notes with a ### Decision register written by the notes step."""
+    """PB-127: the call's Meeting notes with a ### Decision register written by the notes step (it goes to its own file)."""
     from livetips_m0.call_lists import notes_path
+    from livetips_m0.callnotes import take_register
     body = ["## Meeting notes", "### TL;DR", "We picked the pilot client.", "### Decisions"]
     body += ["- [10:00:0%d] **Emily Clark**: %s" % (i, d) for i, d in enumerate(decisions)]
     body += ["### Decision register"] + ["- " + json.dumps(r) for r in rows]
-    notes_path(md).write_text("\n".join(body) + "\n\n## Summary\nx\n", encoding="utf-8")
+    notes_path(md).write_text(take_register(md, "\n".join(body) + "\n\n## Summary\nx\n"), encoding="utf-8")
 
 
 @pytest.fixture
@@ -120,6 +121,18 @@ def test_old_notes_without_the_register_leave_area_and_door_empty(tmp_path, monk
     assert p["Decision"]["title"][0]["text"]["content"] == "Orbit pilot goes to Northwind first"
     for empty in ("Area", "Door", "Context"):
         assert empty not in p
+
+
+def test_a_long_decision_with_a_long_dash_still_finds_its_register_line(tmp_path, monkeypatch, capsys, no_model):
+    """PB-127 review: write_one cuts the title to 200 characters and turns a long dash into "-"; the match does the same."""
+    calls = fake(monkeypatch)
+    md = call_file(tmp_path)
+    long = ("Orbit pilot goes to Northwind first " + chr(0x2014) + " " + "and the rollout waits for the accounts " * 8).strip()
+    notes_with_register(md, [{"decision": long, "area": "Scope", "door": "", "context": "The accounts are late."}], decisions=(long,))
+    assert D.main(["--db", "dec1", "--call-file", str(md), "--from-call"]) == 0
+    p = posts(calls)[0]["properties"]
+    assert len(p["Decision"]["title"][0]["text"]["content"]) == 200
+    assert p["Area"] == {"select": {"name": "Scope"}} and text(p, "Context") == "The accounts are late."
 
 
 def test_door_option_matches_the_database_wording():
