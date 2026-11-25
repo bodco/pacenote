@@ -311,6 +311,13 @@ top 80.0%, duplicates 5, suggested 8, wrong identity 4, false agreed 0, gold v2 
 leaks; only latency moves between runs. No coverage is lost: the call's own client's items and the project-wide items
 all stay in its Tracker, and only the other client's are left out (`tests/test_client_scope_notes_pb73.py`).
 
+Review round 2: the Tracker (and the register in the folder search and in the evidence store) now decides an item's
+client by the client it was written with first, then by its series, call name or text as before. Without it, an item
+the notes wrote with the call's client still reached the other client's Tracker when both series share a title such as
+"Weekly sync". On the fixture every register item names its client in the series, so a re-run gives the same numbers
+as the table above (only latency moves, `A-2026-11-25-pb73r2.json`); the shared-title case is covered by `tests/test_client_scope_notes_pb73.py`
+and `test_register_written_client_parity_pb73` in `tests/test_evidence_store_pb52_s1.py`.
+
 ## What is measured
 
 Each target call is replayed on a clean copy of the fixture project, with every file dated by the date in its name

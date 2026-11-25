@@ -18,6 +18,7 @@ import pytest
 
 from livetips_m0 import call_layout as CL
 from livetips_m0 import client_scope as CS
+from livetips_m0 import commitments as CM
 from livetips_m0 import identity as ID
 from livetips_m0.evidence import __main__ as CLI
 from livetips_m0.evidence import ingest as IG
@@ -779,6 +780,43 @@ def test_register_parity_with_filter_register(env):
     CLI.rebuild(st, str(root), quiet_s=0, voices={})
     for sc in (sc_a, sc_g):
         parity(st, sc)
+
+
+def test_register_written_client_parity_pb73(env):
+    """PB-73: a register item's written client decides its side first, in the store as in filter_register: two clients
+    share the series "Weekly sync" with no client word in the call name or text, an Acme task names only Globex."""
+    root = env
+    two_clients(root)
+    add = lambda cid, text, client: {"v": 1, "op": "add", "id": cid, "text": text, "owner": "me",  # noqa: E731
+                                     "series": "|weeklysync", "call": "2026-11-10-1000-weekly-sync.md",
+                                     "client": client, "created": "2026-11-10T10:00:00+00:00"}
+    reg = [add("c-aaaaaaaaaa", "confirm the osprey user mapping", "acme"),
+           add("c-gggggggggg", "send the pelican pricing sheet", "globex"),
+           add("c-pppppppppp", "ask the Globex reseller for the heron quote", "acme"),
+           add("c-nnnnnnnnnn", "book the plover review room", "")]
+    put(root, IG.REGISTER, "\n".join(json.dumps(e) for e in reg) + "\n")
+    st = open_store(root=root)
+    run(st, root)
+    sc_a = acme(root)
+    sc_g = CS.decide(str(root), "Globex weekly", ["Globex"])
+    assert _kept_events(sc_a) == {1, 3, 4} and _kept_events(sc_g) == {2, 4}
+    for sc in (sc_a, sc_g):
+        parity(st, sc)
+    assert "pelican" not in texts(SE.search(st, "pelican pricing sheet", scope=sc_a))
+    assert "osprey" not in texts(SE.search(st, "osprey user mapping", scope=sc_g))
+    SE.prepare(st, sc_a, None)
+    side = {r["id"]: r["side"] for r in st.q("SELECT id, side FROM _eside WHERE id LIKE 'c-%'")}
+    assert side == {"c-aaaaaaaaaa": "own", "c-gggggggggg": "other", "c-pppppppppp": "own", "c-nnnnnnnnnn": "shared"}
+    # a later join of an Acme task with a Globex mention: two written clients, the store follows item_side again
+    reg.append({"v": 1, "op": "same", "id": "c-gggggggggg", "to": "c-aaaaaaaaaa", "at": "2026-11-12T10:00:00+00:00"})
+    put(root, IG.REGISTER, "\n".join(json.dumps(e) for e in reg) + "\n", mtime=OLD + 60)
+    run(st, root)
+    item = next(i for i in CM.load(str(root / "live")) if i["id"] == "c-aaaaaaaaaa")
+    assert CS.item_clients(item) == {"acme", "globex"}
+    for sc in (sc_a, sc_g):
+        SE.prepare(st, sc, None)
+        got = st.one("SELECT side FROM _eside WHERE id='c-aaaaaaaaaa'")["side"]
+        assert got == {"own": "own", "other": "other", None: "shared"}[CS.item_side(sc, item)], sc["client"]
 
 
 def test_task_name_and_status_come_from_the_visible_register_events(env):

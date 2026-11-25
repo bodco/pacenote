@@ -13,6 +13,7 @@ import pytest
 from livetips_m0 import client_scope as CS
 from livetips_m0 import commitments as C
 from livetips_m0.callnotes import _register_tasks
+from livetips_m0.sheet import tracker as TR
 
 G0 = Path(__file__).resolve().parents[1] / "bench" / "g0"
 CALL = "2026-11-17-1000-weekly-sync.md"          # no client word in the name: only the sheet can tell the client
@@ -88,3 +89,60 @@ def test_bench_tracker_keeps_to_the_call_client_without_loss(bench, own, title, 
     keep = [x["text"] for x in rows(full) if side(x) != other]
     assert sorted(x["text"] for x in rows(scoped)) == sorted(keep)
     assert len(rows(scoped)) + scoped["other_client"] == len(rows(full))
+
+
+# ---------------------------------------------------------------- round 2: the Tracker reads the written client
+
+def _scope(root, client, other):
+    return {"client": client, "others": [other], "folders": {}, "root": str(root), "why": "test"}
+
+
+def _add(cid, text, client, series="|weeklysync", call="2026-11-10-1000-weekly-sync.md"):
+    return {"v": 1, "op": "add", "id": cid, "text": text, "owner": "me", "series": series, "call": call,
+            "client": client, "created": "2026-11-10T10:00:00+00:00"}
+
+
+def _tracker(root, scope):
+    tr = TR.collect({"project": {"root": str(root)}, "today": "2026-11-17", "_client_scope": scope})
+    return sorted(x["text"] for x in tr["on_me"] + tr["waiting"]), tr["other_client"]
+
+
+def test_tracker_follows_the_client_an_item_was_written_with(tmp_path):
+    """Two clients share the series "Weekly sync" and nothing in the call name or text names a client: only the client
+    the item was written with tells them apart. An Acme item whose text names only Globex stays Acme's."""
+    live = tmp_path / "live"
+    live.mkdir()
+    reg = [_add("c-aaaaaaaaaa", "confirm the SSO user mapping for item 13", "acme"),
+           _add("c-gggggggggg", "send the item 13 pricing sheet", "globex"),
+           _add("c-pppppppppp", "ask the Globex reseller for the pilot quote", "acme"),
+           _add("c-nnnnnnnnnn", "book the project review room", "")]
+    (live / "commitments.jsonl").write_text("\n".join(json.dumps(e) for e in reg) + "\n", encoding="utf-8")
+    acme = _scope(tmp_path, "acme", "globex")
+    globex = _scope(tmp_path, "globex", "acme")
+    assert _tracker(tmp_path, acme) == (["ask the Globex reseller for the pilot quote","book the project review room",
+                                         "confirm the SSO user mapping for item 13"], 1)
+    assert _tracker(tmp_path, globex) == (["book the project review room", "send the item 13 pricing sheet"], 2)
+    assert len(_tracker(tmp_path, None)[0]) == 4
+    raw = (live / "commitments.jsonl").read_text(encoding="utf-8")
+    assert "c-gggggggggg" not in CS.filter_register(acme, raw) and "c-aaaaaaaaaa" in CS.filter_register(acme, raw)
+    assert "c-aaaaaaaaaa" not in CS.filter_register(globex, raw)
+
+
+def test_joined_mentions_of_two_clients_fall_back_to_the_series():
+    item = dict(_add("c-aaaaaaaaaa", "send the pilot user list", "acme", series="|globexweekly"),
+                history=[{"client": "acme"}, {"client": "globex"}])
+    scope = {"client": "acme", "others": ["globex"], "folders": {}, "root": "/", "why": ""}
+    assert CS.client_side(scope, item) is None
+    assert CS.item_side(scope, item) == "other"                       # two clients: the series decides, as before
+    assert CS.item_side(scope, dict(item, history=[])) == "own"       # one written client wins over the series
+
+
+def test_notes_items_stay_out_of_the_other_client_tracker(tmp_path):
+    """End to end: the after-call notes write the sheet's client, and the next call of the other client, with the same
+    series title, does not see them in its Tracker; the call's own client still does."""
+    live, md = _call(tmp_path, {"client": "acme", "others": ["globex"], "folders": {}, "root": str(tmp_path),
+                                "why": "the other side's company"})
+    _register_tasks(md, NOTES, ["David"])
+    mine, _ = _tracker(tmp_path, _scope(tmp_path, "acme", "globex"))
+    theirs, hidden = _tracker(tmp_path, _scope(tmp_path, "globex", "acme"))
+    assert len(mine) == 2 and theirs == [] and hidden == 2

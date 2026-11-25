@@ -816,8 +816,9 @@ def ingest_register(ctx: Ctx) -> None:
                                " extract_state) VALUES (?,?,?,?,?,?,?, 'not_needed')",
                                (sid, h, st.st_mtime, st.st_size, len(raw), vf, ctx.observed)).lastrowid
         items = CM.fold([{k: v for k, v in e.items() if k != "_line"} for e in events])
-        # the side of an event is the item_side of the add events with its own id, as filter_register decides it:
-        # pos k = the k-th such add (an id with any add on another client's side is other), names stored uncut
+        # the side of an event is the item_side of the add events with its own id, as filter_register decides it
+        # (its written client first, PB-73): pos k = the k-th such add (an id with any add on another client's side
+        # is other), names stored uncut
         adds: Dict[str, List[list]] = {}
         for e in events:
             if e.get("op") == "add":
@@ -826,6 +827,7 @@ def ingest_register(ctx: Ctx) -> None:
                 marks = [("rtext", x) for x in CS._names(str(e.get("text") or ""))]
                 marks += [("rseries", series)] if series else []
                 marks += [("rcall", m.group(1))] if m else []
+                marks += [("rclient", c) for c in CS.item_clients(e)]      # PB-73: the client it was written with
                 adds.setdefault(str(e["id"]), []).append(marks)
         for n, e in enumerate(events):
             txt = _event_text(e)
@@ -842,9 +844,12 @@ def ingest_register(ctx: Ctx) -> None:
         for it in items:
             series = CS.slug(str(it.get("series") or "").split("|")[-1])
             m = CS.CALL_NAME.match(os.path.basename(str(it.get("call") or "")).lower())
+            clients = CS.item_clients(it)                                  # PB-73: kept only when there is one
             marks = {"series": {series} if series else set(), "call": {m.group(1)} if m else set(),
-                     "text": CS._names(it.get("text") or ""),
+                     "text": CS._names(it.get("text") or ""), "client": clients if len(clients) == 1 else set(),
                      "callstem": {ID.call_stem(str(h.get("call") or "")) for h in CM.history_of(it) if h.get("call")}}
+            # PB-73: the client mark is redone, never kept: a later join with another client's mention drops it
+            ctx.conn.execute("DELETE FROM entity_mark WHERE entity_id=? AND kind='client'", (it["id"],))
             _entity(ctx, it["id"], "task", it.get("text") or it["id"], "g1", sid, marks, status=it.get("status"))
             for x in it.get("ids") or []:
                 if x != it["id"]:

@@ -295,13 +295,16 @@ request's scope, with the same rules as `side`, `side_of_name`, `series_side`, `
   cut to the universe) of the source path's folder and file-name words (`kind = path`, the word rule of `side`), the
   universe names of each ancestor heading with its level (`kind = heading`), and of each line (`kind = line`, with the
   line number). For a deterministic entity (register and Tracker items) the store writes `entity_mark` rows: the
-  series slug (`kind = series`), the first word of its call's file name (`kind = call`) and every name of its text
-  (`kind = text`, not cut to the universe), the inputs of `item_side`. Extra marks are harmless: only names in the
+  series slug (`kind = series`), the first word of its call's file name (`kind = call`), every name of its text
+  (`kind = text`, not cut to the universe) and, when every mention joined into it was written with one and the same
+  client, that client (`kind = client`, PB-73, redone on every register revision so a later join with another
+  client's mention drops it), the inputs of `item_side`. Extra marks are harmless: only names in the
   request's `scope.client` and `scope.others` are ever consulted. Path and entity text marks stay uncut because the
   relabel of an added slug (section 5.2) finds work only through snippet text: a call folder or a Tracker item that
   names a client before its folder exists must carry that name already (PB-84 review round 2). Heading titles are
   snippet text, so heading and line marks are redone by the relabel. A register event's snippet carries the
-  `item_side` inputs of every `add` event with **its own id** (`kind = rseries`, `rcall`, `rtext`, uncut, `pos` = the
+  `item_side` inputs of every `add` event with **its own id** (`kind = rclient`, `rseries`, `rcall`, `rtext`, uncut,
+  `rclient` = the client the `add` was written with, PB-73, `pos` = the
   index of that `add`), never the folded item's: `filter_register` decides by the event's own id and the `add` fields
   only, so a moved item (dropped by `fold()`), an `add` joined by `op same` to another client's item and an item edited
   later to name a client all keep the reference side (PB-84 review round 3). Tracker snippets keep their `item` mark
@@ -315,10 +318,12 @@ request's scope, with the same rules as `side`, `side_of_name`, `series_side`, `
   3. else (a shared file) the text rule of `filter_text`: the snippet is other when any ancestor heading's marks hold
      an `o` and not `scope.client`, or any line's marks hold an `o` and not `scope.client` (a line that names the own
      client passes even if it names another).
-  4. a register event: other when, for any `pos`, its `rseries`, then `rcall`, then `rtext` marks give **other** (the
+  4. a register event: other when, for any `pos`, its `rclient`, then `rseries`, then `rcall`, then `rtext` marks give
+     **other** (the
      `item_side` order), as `filter_register` drops every event of an id with an `add` on another client's side; a
      Tracker snippet: other when its item's entity is other.
-  A deterministic entity's side is `series_side`, then `side_of_name`, then `text_side` on its `entity_mark` rows,
+  A deterministic entity's side is `client_side` (its `client` mark, PB-73), then `series_side`, then `side_of_name`,
+  then `text_side` on its `entity_mark` rows,
   except a register task: it is visible when an event with one of its ids (its own or a g1 alias) passes, and its
   name, status and ids come only from `fold()` over the register events the request may see, never from the stored
   entity (folded from every event). A mention of another client joined by `op same` is seen by that client under its
@@ -1255,7 +1260,8 @@ filters on a ranked list:
    or ignored. The same check covers the rows that have no evidence of their own:
    - **Entity**: visible when at least one of its claims or edges passes (with its evidence, as above), or it has a
      deterministic origin (`g1`, `tracker`, `voices`, `pm`) whose source passes and whose query-time side from its
-     `entity_mark` rows (`series_side`, then `side_of_name`, then `text_side`, the `item_side` order) is not
+     `entity_mark` rows (`client_side`, then `series_side`, then `side_of_name`, then `text_side`, the `item_side`
+     order) is not
      **other**. An entity that is not visible is never a match, a graph step end, a catalog entry (section
      8.3) or a `why` path element, and its name is not returned.
    - **Alias**: matched only when its entity is visible and, for an `llm` alias, `EXISTS` a passing `alias_seen`

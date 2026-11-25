@@ -9,7 +9,10 @@ Pacenote. Earlier versions are described in the commit messages and in
   clients, the tasks that the Meeting notes' Action items add to the register now carry the call's client, taken from
   the client scope of the call's Meeting Sheet (PB-70), just like the tasks written during the call. A later call
   for another client never joins them with its own tasks or suggests them as the same task, even when both
-  series share a title such as "Weekly sync". A call without a Meeting Sheet, or one where the
+  series share a title such as "Weekly sync". The Tracker of the other client's call leaves them out too: a Tracker
+  item now belongs to the client it was written with (during the call or from the notes), and only an item without
+  one is placed by its series, call name or text as before; the folder search and project memory follow the same
+  rule. A call without a Meeting Sheet, or one where the
   preparation could not tell the client, works as before. The GraphRAG benchmark now reads a call's Tracker the way
   the preparation does, within that scope: the other client's "item 13" in a call's Tracker drops from 4 to 0, and
   no other number changes.
