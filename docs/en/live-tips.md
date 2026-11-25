@@ -2082,6 +2082,14 @@ to Google Drive, Recording settings) and Runs on: the AI of the preparation, the
 the due date of a commitment sits at the right of its row, Add appears on the decision or risk you point at, and adding
 a risk to the project register asks first.
 
+**A link to a call page (PB-117).** The "..." menu of a past call page has Copy link, next to Open in Notion. It copies
+`pacenote://call/<id>`, where the id is the transcript's name (for example `2026-11-25-1455-acme-demo`), and says so in
+a short notice. Paste it in Notion, Slack or a task: opening it on a Mac with Pacenote brings Pacenote forward on that
+call page (after sign-in, if the app was closed; a link not opened within 3 minutes is dropped). The link survives moving the call to another project. A call this
+Mac does not have (removed, or held on another Mac, such as a colleague's call) opens Home with the notice "This call
+is not on this Mac"; never a system alert. The call's Notion page gets the same link as the last line of its Pacenote
+section, as text to copy. A web link for people without the app comes later.
+
 **Tracker, Past calls and Series (0.25).** The Tracker follows its board: Back, the sync line (or "Kept on this Mac"
 with Connect Notion), the title with New task, the Tasks, Decisions and Risks tabs with counts, the filters (workspace,
 project, call, owner, status) and Find, then the groups: Overdue, This week and Later for tasks, open and Closed for

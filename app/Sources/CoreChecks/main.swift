@@ -6637,5 +6637,56 @@ func mutedMicNoticePB104() {
     expect(OpenAsks.questions([["what": "a", "type": "question"]]) == ["a"], "PB-104: no mute, no change")
 }
 mutedMicNoticePB104()
+
+/// PB-117 (SX8): pacenote://call/<id>. The same vectors as spikes/m0/tests/test_call_link_pb117.py (the Notion page link).
+func callLinkPB117() {
+    let vectors = [("/p/live/2026-11-25-1455-acme-demo.md", "pacenote://call/2026-11-25-1455-acme-demo"),
+                   ("/p/live/2026-11-25-1455/2026-11-25-1455-weekly.app.md", "pacenote://call/2026-11-25-1455-weekly"),
+                   ("/p/live/2026-11-25-1455-демо.md", "pacenote://call/2026-11-25-1455-%D0%B4%D0%B5%D0%BC%D0%BE"),
+                   ("/p/live/a b&c?d#e.md", "pacenote://call/a%20b%26c%3Fd%23e")]
+    for (file, url) in vectors {
+        expect(CallLink.url(file: file) == url, "PB-117: link of \(file) (\(CallLink.url(file: file)))")
+        // the round trip: the link opens the same call id
+        expect(URL(string: url).flatMap { CallLink.id(of: $0) } == CallLink.id(ofFile: file), "PB-117: \(url) parses back")
+    }
+    expect(CallLink.url(file: "/p/live/.md") == "", "PB-117: no id, no link")
+    // links that are not a call: another host, no id, a nested path, a path out of the folder, another scheme
+    for bad in ["pacenote://call/", "pacenote://call", "pacenote://home/2026-11-25-1455-acme-demo", "pacenote://call/a/b",
+                "pacenote://call/..", "pacenote://call/%2E%2E", "pacenote://call/..%2Fsecret", "https://call/2026-11-25-1455-acme-demo"] {
+        expect(URL(string: bad).flatMap { CallLink.id(of: $0) } == nil, "PB-117: \(bad) is not a call link")
+    }
+    expect(URL(string: "PACENOTE://Call/x").flatMap { CallLink.id(of: $0) } == "x", "PB-117: scheme and host in any case")
+    expect(URL(string: "pacenote://call/x").map { CallLink.isPacenote($0) } == true
+           && !CallLink.isPacenote(URL(fileURLWithPath: "/tmp/call.mp3")), "PB-117: only pacenote links take the link path")
+    // resolve: equality with the known calls only, the file must exist, the newest of two with the same id
+    let old = Date(timeIntervalSince1970: 1_000), new = Date(timeIntervalSince1970: 2_000)
+    let calls: [(file: String, start: Date)] = [("/a/live/2026-11-25-1455-acme-demo.md", old),
+                                                ("/b/live/2026-11-25-1455-acme-demo.md", new),
+                                                ("/c/live/2026-11-20-0900-weekly.md", old)]
+    let all: (String) -> Bool = { _ in true }
+    expect(CallLink.resolve("2026-11-25-1455-acme-demo", calls: calls, exists: all) == "/b/live/2026-11-25-1455-acme-demo.md", "PB-117: newest of two")
+    expect(CallLink.resolve("2026-11-25-1455-acme-demo", calls: calls, exists: { $0.hasPrefix("/a/") }) == "/a/live/2026-11-25-1455-acme-demo.md",
+           "PB-117: a removed file is skipped")
+    expect(CallLink.resolve("2026-11-20-0900-weekly", calls: calls, exists: { _ in false }) == nil, "PB-117: file gone: no call (the notice)")
+    expect(CallLink.resolve("2026-11-01-0000-unknown", calls: calls, exists: all) == nil, "PB-117: unknown id: no call (the notice)")
+    expect(CallLink.resolve("../c/live/2026-11-20-0900-weekly", calls: calls, exists: all) == nil, "PB-117: never a path")
+    // a link waiting for sign-in or Home: taken within 3 min, dropped later (no call page jump after the next call)
+    let clicked = Date(timeIntervalSince1970: 10_000)
+    expect(CallLink.stillWanted(receivedAt: clicked, now: clicked.addingTimeInterval(20)), "PB-117: cold launch and keys: still wanted")
+    expect(!CallLink.stillWanted(receivedAt: clicked, now: clicked.addingTimeInterval(3600)), "PB-117: an hour later (after a call): dropped")
+    expect(!CallLink.stillWanted(receivedAt: .distantPast, now: clicked), "PB-117: no link time: dropped")
+    // the app registers the scheme and has the texts in both languages
+    let dir = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+    let bundle = (try? String(contentsOf: dir.appendingPathComponent("buildtools/bundle.sh"), encoding: .utf8)) ?? ""
+    expect(bundle.contains("<key>CFBundleURLSchemes</key><array><string>pacenote</string></array>"), "PB-117: bundle.sh registers pacenote://")
+    for lang in ["en", "uk"] {
+        let d = (try? Data(contentsOf: dir.appendingPathComponent("Resources/i18n/\(lang).json")))
+            .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: String] } ?? [:]
+        for k in ["callLink.copy", "callLink.copied", "callLink.notFound", "callLink.notACall"] {
+            expect(!(d[k] ?? "").isEmpty, "PB-117: \(lang) has \(k)")
+        }
+    }
+}
+callLinkPB117()
 print("core checks: \(passed) passed, \(failures) failed")
 exit(failures == 0 ? 0 : 1)

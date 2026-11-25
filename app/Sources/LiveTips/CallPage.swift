@@ -785,6 +785,15 @@ struct CallPageView: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { copied = false }
     }
 
+    /// PB-117 (SX8): the link to this page as text; opening it brings Pacenote forward here.
+    private func copyCallLink() {
+        let link = CallLink.url(file: file)
+        guard !link.isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(link, forType: .string)
+        NoticeCenter.shared.post(L("callLink.copied", ["link": link]), level: .info)
+    }
+
     // MARK: What was discussed (the Summary before 0.9.5.2; 2026-11-05 redesign: the story on the left, what is next on the right)
 
     @ViewBuilder private func summaryTab(_ o: CallOutcome, _ agenda: [(text: String, state: String)]) -> some View {
@@ -937,6 +946,8 @@ struct CallPageView: View {
                 if let u = record?.notionURL.flatMap({ URL(string: $0) }) { Button(L("home.recent.notion")) { NSWorkspace.shared.open(u) } }
                 // 0.26.0: why there is no Notion page: too short to write one (info, not a failure)
                 else if let r = record, r.source == nil, r.end != nil, NotionGate.tooShort(lines: r.lines) { Text(L("notion.tooShort")) }
+                // PB-117 (SX8): pacenote://call/<id>, to paste in Notion, Slack or a task and come back to this page
+                Button(L("callLink.copy")) { copyCallLink() }
                 Button(L("home.recent.finder")) { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: file)]) }
                 Button(L("reassign.menu")) { reassigning = true }       // 0.10.1 (A3)
                 // 0.12.0 (B8b): one call kept off the server in a project that syncs

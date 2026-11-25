@@ -101,6 +101,7 @@ TXT = {
            "next": "Наступний крок", "objection": "Заперечення", "topics": "Теми", "unclear": "Під питанням", "recap": "Що було",
            "stage": "Стадія", "stakeholder": "Стейкхолдер", "map": "План дій", "competitor": "Конкурент",
            "price": "Ціна", "over_limit": "Понад межу", "us": "ми", "them": "вони",
+           "link": "Сторінка дзвінка в Pacenote (вставте в адресний рядок браузера на Mac з Pacenote): ",
            "footer": "Нотатки Pacenote · транскрибовано на пристрої"},
     "en": {"actions": "Action items", "decisions": "Decisions", "agenda": "Agenda", "commit": "Our commitments",
            "new": "New requests (possible scope changes)", "open": "Open questions", "risks": "Risks",
@@ -111,6 +112,7 @@ TXT = {
            "next": "Next step", "objection": "Objection", "topics": "Topics", "unclear": "Unclear", "recap": "What happened",
            "stage": "Stage", "stakeholder": "Stakeholder", "map": "Mutual plan", "competitor": "Competitor",
            "price": "Price", "over_limit": "Over the limit", "us": "us", "them": "them",
+           "link": "Pacenote call page (paste it in a browser's address bar on a Mac with Pacenote): ",
            "footer": "Notes by Pacenote · transcribed on device"},
 }
 
@@ -407,6 +409,25 @@ def agenda_lines(md: Path, lang: str) -> list:
             for it in strip or [] if str(it.get("text", "")).strip()]
 
 
+def call_link(md: Path) -> str:
+    """PB-117 (SX8): pacenote://call/<id>, the same string as CallLink.url in the app. The id is the call key: the
+    transcript's name without .md and .app (CommitmentRegister.callKey), every other character percent-encoded."""
+    n = Path(str(md)).name
+    if n.endswith(".md"):
+        n = n[:-3]
+    n = n.replace(".app", "")
+    return "pacenote://call/" + urllib.parse.quote(n, safe="") if n else ""
+
+
+def link_block(md: Path, T: dict) -> list:
+    """The call page link as plain text (a custom scheme is not sent as a Notion link, so a page write never fails on it)."""
+    url = call_link(md)
+    if not url:
+        return []
+    return [{"type": "bulleted_list_item", "bulleted_list_item": {"rich_text": rt(T["link"]) + [
+        {"type": "text", "text": {"content": url}, "annotations": {"code": True}}]}}]
+
+
 def pacenote_blocks(stats: dict, md: Path, prep_used: bool, T: dict) -> list:
     tips = stats.get("tips", {})
     tr = stats.get("transcript", {})
@@ -414,7 +435,7 @@ def pacenote_blocks(stats: dict, md: Path, prep_used: bool, T: dict) -> list:
             bullet(T["tips"].format(shown=tips.get('shown', 0), cards=tips.get('cards_fired', 0), facts=tips.get('facts_shown', 0),
                                     late=tips.get('late', 0), med=tips.get('delay_median_s', '?'), mx=tips.get('delay_max_s', '?'))),
             bullet(T["prep"] + (T["prep_yes"] if prep_used else T["prep_no"])),
-            bullet(T["tr"].format(n=tr.get('lines_real', '?'), langs=", ".join((tr.get('langs') or {}).keys()), f=md.name))]
+            bullet(T["tr"].format(n=tr.get('lines_real', '?'), langs=", ".join((tr.get('langs') or {}).keys()), f=md.name))] + link_block(md, T)
 
 
 # ---------------------------------------------------------------- Notion
