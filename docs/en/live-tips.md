@@ -1413,8 +1413,8 @@ The skill and the app follow the same rules, in `rules/agenda.yaml`, `rules/comm
   when the call has ended.
 - **Output language.** A call with two or three languages (each at least 10% of the call) shows an Output language
   menu and **Regenerate** under the status lines. The default is the dominant language of the call. It is measured:
-  the recorder counts seconds of speech per language over the whole call (a language switch in the tips window keeps
-  the count) and saves them in `<stem>.recording.json` when the call ends and again after lines deleted in the
+  the recorder counts seconds of speech per language over the whole call, only for lines written to the transcript (a
+  mic echo of the other side is not counted; a language switch in the tips window keeps the count) and saves them in `<stem>.recording.json` when the call ends and again after lines deleted in the
   transcript pane; a call that ends within a minute of its first speech has no dominant language, then the language with the most seconds is
   used. Choosing another
   only remembers it for this call; nothing is rewritten until you press Regenerate, which writes the notes, Summary,

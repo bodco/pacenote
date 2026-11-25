@@ -34,6 +34,11 @@ def _call(tmp_path, text=WRONG_TAGS):
     return t
 
 
+def _said(s, lang, secs):
+    """A line heard (live share) and written (call totals), as the recorder does for a line the Writer keeps."""
+    s.count(lang, s.add(lang, secs))
+
+
 def _meta(t):
     return json.loads(CL.meta_path(t).read_text("utf-8"))
 
@@ -41,8 +46,8 @@ def _meta(t):
 def test_end_of_call_save_writes_seconds_and_the_dominant_language_both_readers_use(T, tmp_path):
     s = T.LangShare(["en", "uk"], warmup_s=60)
     s.dominant(T0)                                    # the first segment starts the call
-    s.add("uk", 1260.5)
-    s.add("en", 310.2)
+    _said(s, "uk", 1260.5)
+    _said(s, "en", 310.2)
     t = _call(tmp_path)
     assert T.save_call_languages(t, s, T0 + 1800)
     d = _meta(t)
@@ -53,7 +58,7 @@ def test_end_of_call_save_writes_seconds_and_the_dominant_language_both_readers_
 def test_dominant_is_none_in_the_first_minute_but_the_seconds_are_kept(T, tmp_path):
     s = T.LangShare(["en", "uk"], warmup_s=60)
     s.dominant(T0)
-    s.add("uk", 40.0)
+    _said(s, "uk", 40.0)
     assert s.spoken(T0 + 59) == ({"uk": 40.0}, None)
     assert s.spoken(T0 + 60) == ({"uk": 40.0}, "uk")
     t = _call(tmp_path)
@@ -66,13 +71,13 @@ def test_dominant_is_none_in_the_first_minute_but_the_seconds_are_kept(T, tmp_pa
 def test_totals_survive_a_mid_call_language_switch(T, tmp_path):
     s = T.LangShare(["uk", "en"], warmup_s=60)
     s.dominant(T0)
-    s.add("uk", 900.0)
-    s.add("en", 100.0)
+    _said(s, "uk", 900.0)
+    _said(s, "en", 100.0)
     s.reset(["de", "en"])                             # the PM switches the call to German + English
     assert s.secs == {}                               # the live share starts again (PB-30, unchanged)
     s.dominant(T0 + 1000)
-    s.add("de", 300.0)
-    s.add("uk", 50.0)                                 # not in the new set: not counted anywhere
+    _said(s, "de", 300.0)
+    _said(s, "uk", 50.0)                                 # not in the new set: not counted anywhere
     assert s.spoken(T0 + 1300) == ({"uk": 900.0, "en": 100.0, "de": 300.0}, "uk")
     assert s.spoken(T0 + 1010)[1] == "uk"             # the warm-up counts from the call start, not the switch
     t = _call(tmp_path)
@@ -92,7 +97,7 @@ def test_after_the_end_of_call_edits_a_deleted_line_no_longer_counts(T, tmp_path
                ("10:01:00", "Let us talk about the budget", "en", 400.0),
                ("10:02:00", "Добре", "uk", 200.0)]
     for _, _, lang, secs in credits:
-        s.add(lang, secs)
+        _said(s, lang, secs)
     T.save_call_languages(t, s, T0 + 900)
     assert _meta(t)["dominant_language"] == "en"
     dropped = []
@@ -107,8 +112,8 @@ def test_after_the_end_of_call_edits_a_deleted_line_no_longer_counts(T, tmp_path
 
 def test_a_deleted_row_that_was_translated_matches_the_line_of_its_second(T):
     s = T.LangShare(["uk", "en"])
-    s.add("uk", 50.0)
-    s.add("en", 30.0)
+    _said(s, "uk", 50.0)
+    _said(s, "en", 30.0)
     credits = [("10:00:05", "Добрий день", "uk", 50.0), ("10:00:09", "Hello", "en", 30.0)]
     assert T.uncount_dropped(s, credits, [("10:00:05", "Good afternoon (← uk)"), ("10:09:00", "gone")]) == 1
     assert s.total == {"uk": 0.0, "en": 30.0} and s.spoken(0)[0] == {"en": 30.0}
@@ -120,13 +125,13 @@ def test_the_recorder_path_credits_each_line_with_the_seconds_it_added(T):
     assert T.Decoded(("a", "uk", None)).credit == (None, 0.0)
     w = make(T, ["uk", "en"], says={"en": "Sure, go ahead"}, probs={"uk": 0.05, "en": 0.9})
     res, share = run(T, w, seg_of(T, 0.05, 1.0), last="uk")              # clearly English: counted
-    assert res.credit == ("en", 1.0) and share.total == {"en": 1.0}
+    assert res.credit == ("en", 1.0) and share.secs == {"en": 1.0} and share.total == {}   # counted once written
     w = make(T, ["uk", "en"], says={"en": "I would like a coffee please"}, probs={"uk": 0.05, "en": 0.15, "fr": 0.7})
     res, share = run(T, w, seg_of(T, 0.05, 3.0), dominant="en")           # French written in English: not counted
-    assert res[2] == "fr" and res.credit == (None, 0.0) and share.total == {"en": 100.0}
+    assert res[2] == "fr" and res.credit == (None, 0.0) and share.secs == {"en": 100.0}
     w = make(T, ["uk", "en"], says={"uk": "Так, добре"}, probs={"uk": 0.4, "en": 0.45})
     res, share = run(T, w, seg_of(T, 0.05, 1.0), last="uk")              # unclear: no evidence, nothing to undo
-    assert res.credit[1] == 0.0 and share.total == {}
+    assert res.credit[1] == 0.0 and share.secs == {}
 
 
 def test_no_speech_and_no_recording_writes_no_file(T, tmp_path):
@@ -140,14 +145,14 @@ def test_a_failed_write_is_logged_and_does_not_raise(T, tmp_path, monkeypatch):
         raise OSError("disk full")
     monkeypatch.setattr(T.call_layout, "save_spoken", boom)
     s = T.LangShare(["uk"])
-    s.add("uk", 5.0)
+    _said(s, "uk", 5.0)
     assert T.save_call_languages(_call(tmp_path), s, T0) is False
 
 
 def test_a_deleted_translated_row_sharing_its_second_with_another_language_takes_nothing_out(T):
     s = T.LangShare(["uk", "en"])
-    s.add("uk", 50.0)
-    s.add("en", 30.0)
+    _said(s, "uk", 50.0)
+    _said(s, "en", 30.0)
     credits = [("10:00:05", "Добрий день", "uk", 50.0), ("10:00:05", "Hello there", "en", 30.0)]
     assert T.uncount_dropped(s, credits, [("10:00:05", "Good afternoon (← uk)")]) == 0
     assert s.total == {"uk": 50.0, "en": 30.0} and len(credits) == 2       # a stale count, not the wrong language
@@ -157,7 +162,7 @@ def test_a_deleted_translated_row_sharing_its_second_with_another_language_takes
 
 def test_a_failing_read_of_the_totals_is_logged_and_does_not_stop_the_shutdown(T, tmp_path, monkeypatch):
     s = T.LangShare(["uk"])
-    s.add("uk", 5.0)
+    _said(s, "uk", 5.0)
 
     def boom(t):
         raise RuntimeError("dictionary changed size during iteration")
@@ -174,7 +179,8 @@ def test_the_recorder_path_starts_the_call_clock_for_the_warm_up(T):
 def test_main_saves_the_languages_after_the_recording_ends_and_again_after_the_edits():
     src = SRC.read_text(encoding="utf-8")
     main = src[src.index("\ndef main() -> int:"):]
-    assert main.index("lang_credits.append(") < main.index("writer.add(line_obj)")
+    assert main.index("writer.on_written = count_written(lang_share, lang_credits)") < main.index("writer.add(line_obj)")
+    assert "credit=getattr(res, \"credit\"" in main and "lang_credits.append(" not in main   # counted in the Writer only
     close = main.index("L('кінець запису', 'end of recording')")
     end = main.index("call_end = now()")
     first = main.index("save_call_languages(out, lang_share, call_end)")
@@ -182,3 +188,50 @@ def test_main_saves_the_languages_after_the_recording_ends_and_again_after_the_e
     edits = main.index("apply_line_edits(out, dropped)")
     unc = main.index("uncount_dropped(lang_share, lang_credits, dropped)", edits)
     assert first < edits < unc < main.index("save_call_languages(out, lang_share, call_end)", unc)   # same end time
+
+
+def _line(T, ch, t, lang, text, secs):
+    return T.Line(ch, t, lang, text, credit=(lang, secs))
+
+
+def test_saved_totals_are_the_seconds_of_the_written_lines_only_mic_echo_does_not_count(T, tmp_path):
+    """Round 2 review: on speakers the mic hears the client again. The Writer drops those echo lines (an echo of a row
+    already written, and a held mic line that a later system row matches); their seconds must not count, or the
+    client's language counts twice and the saved dominant flips from uk (the line tags on main) to en."""
+    t = _call(tmp_path, "")
+    s = T.LangShare(["uk", "en"], warmup_s=60)
+    s.dominant(T0)
+    credits = []
+    cfg = dict(T.DEFAULTS, mic_hold=3600)
+    w = T.Writer(t, cfg, "", them_speech=lambda: T.now())          # the client talks: a mic line waits for its echo check
+    w.on_written = T.count_written(s, credits)
+    base = T.now() - 300                                             # every line is in the past: the mic lines are held
+    client = ["We can ship the release on Monday", "The budget for the next quarter is fine",
+              "Please send the contract to Emily", "David will join the call next week"]
+    for i, text in enumerate(client):                                # 4 client lines in English, 10 s each
+        if i % 2:                                                    # the echo comes first and is held, then dropped
+            w.add(_line(T, "me", base + i * 20 + 0.5, "en", text, 10.0))
+            w.add(_line(T, "them", base + i * 20, "en", text, 10.0))
+        else:                                                        # the client row first, its echo is dropped at once
+            w.add(_line(T, "them", base + i * 20, "en", text, 10.0))
+            w.add(_line(T, "me", base + i * 20 + 0.5, "en", text, 10.0))
+    for i in range(5):                                               # 5 PM lines in Ukrainian, held, written at close
+        w.add(_line(T, "me", base + 100 + i * 10, "uk", f"Добре, я підготую документ номер {i}", 10.0))
+    w.close("")
+    rows = [r for r in t.read_text("utf-8").splitlines() if r.startswith("[")]
+    assert len(rows) == 9 and sum(" (en): " in r for r in rows) == 4
+    assert T.save_call_languages(t, s, T0 + 900)
+    assert _meta(t)["languages"] == {"en": 40.0, "uk": 50.0} and _meta(t)["dominant_language"] == "uk"
+    assert len(credits) == 9                                         # end-of-call deletes match written rows only
+
+
+def test_a_failing_count_never_loses_the_row(T, tmp_path):
+    t = _call(tmp_path, "")
+    w = T.Writer(t, dict(T.DEFAULTS), "", them_speech=lambda: None)
+
+    def boom(line):
+        raise RuntimeError("count failed")
+    w.on_written = boom
+    w.add(_line(T, "them", T.now(), "en", "Hello there everyone", 2.0))
+    w.close("")
+    assert "Hello there everyone" in t.read_text("utf-8")

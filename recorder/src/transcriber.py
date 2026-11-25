@@ -309,13 +309,19 @@ class LangShare:
         self.t0: float | None = None
 
     def add(self, lang: str | None, secs: float) -> float:
-        """Credit the seconds to `lang` when it is in the set; returns the seconds credited (0.0 when not)."""
+        """Credit the seconds to `lang` in the live share when it is in the set; returns the seconds credited (0.0 when
+        not). The call totals are counted only when the line is written (count())."""
         if lang not in self.langs:
             return 0.0
         s = max(0.0, secs)
         self.secs[lang] = self.secs.get(lang, 0.0) + s
-        self.total[lang] = self.total.get(lang, 0.0) + s
         return s
+
+    def count(self, lang: str | None, secs: float) -> None:
+        """PB-72: a written line adds its credited seconds to the call totals. No set check: the credit was decided when
+        the line was heard, and a held line may be written after a language switch."""
+        if lang and secs > 0:
+            self.total[lang] = self.total.get(lang, 0.0) + secs
 
     def uncount(self, lang: str | None, secs: float) -> None:
         """PB-72: a line deleted at the end of the call no longer counts in the call totals."""
@@ -369,7 +375,7 @@ class Decoded(tuple):
     """PB-30: a decode result (text, language tag, translated_from) that also says whether a kept segment was unsure
     (`low_conf`). It compares equal to the plain tuple."""
     low_conf = False
-    credit = (None, 0.0)      # PB-72: (language, seconds) this segment added to the call's language totals
+    credit = (None, 0.0)      # PB-72: (language, seconds) the line adds to the call's language totals once written
 
     def __new__(cls, items, low_conf: bool = False):
         self = super().__new__(cls, items)
@@ -409,7 +415,7 @@ def asr_segment(whisper, seg: "Segment", cfg: dict, lang_share: LangShare, last_
         return None                                 # "Дякую за перегляд!", "Bye." on near-silence
     credit_lang = None if translated_from else (heard or (lang if auto else None))
     res = Decoded((text, lang, translated_from), low_conf)
-    res.credit = (credit_lang, lang_share.add(credit_lang, seg.speech_s))    # PB-72: undone if the line is deleted
+    res.credit = (credit_lang, lang_share.add(credit_lang, seg.speech_s))    # PB-72: counted when the line is written
     return res
 
 
@@ -919,6 +925,7 @@ class Line:
     seq: int = 0              # PB-30: stable id of the line in this call (the timing record and "translated" event carry it)
     row: str = ""             # the transcript row as written (set by Writer._write)
     row_occ: int = 0          # how many rows with the same text were written before this one: tells identical rows apart
+    credit: tuple = (None, 0.0)   # PB-72: (language, seconds) the line adds to the call's language totals once written
 
 
 def tr_mark(src: str | None) -> str:
@@ -951,6 +958,7 @@ class Writer:
         self.written_rows: dict[str, int] = {}           # row text -> how many were appended
         self.closed = False
         self.on_row = None          # PB-30: called with a line just before its row is appended (publishes the row's seq)
+        self.on_written = None      # PB-72: called with a line after its row is appended (an echo dropped here never is)
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "a", encoding="utf-8") as f:
             f.write(header)
@@ -1056,6 +1064,11 @@ class Writer:
             f.write(line.row + "\n")
             f.flush()
             os.fsync(f.fileno())
+        if self.on_written is not None:
+            try:
+                self.on_written(line)
+            except Exception as e:  # noqa: BLE001
+                log(f"call languages: count failed ({e!r})")
         self.lines += 1
         self.last_line_at = now()
 
@@ -4108,6 +4121,16 @@ def apply_line_edits(path: Path, dropped: list | None = None) -> int:
     return n
 
 
+def count_written(share: LangShare, credits: list):
+    """PB-72: the Writer hook that counts a written line in the call's language totals and keeps (time, text, language,
+    seconds) for uncount_dropped(). Only written rows count: a mic echo the Writer drops is never counted."""
+    def on_written(line: "Line") -> None:
+        lang, secs = line.credit
+        credits.append((hhmmss(line.t), line.text, lang, secs))
+        share.count(lang, secs)
+    return on_written
+
+
 def uncount_dropped(share: LangShare, credits: list, dropped: list) -> int:
     """PB-72: take the seconds of the deleted rows out of the call's language totals. `credits` holds
     (time, text, language, seconds) per written line; a deleted row (time, text) matches a line of the same second,
@@ -5477,6 +5500,7 @@ def main() -> int:
                  "them": cfg["langs"][0]}
     lang_share = LangShare(cfg["langs"], float(cfg.get("lang_warmup_s", 60.0)))
     lang_credits: list = []                 # PB-72: (time, text, language, seconds) per written line
+    writer.on_written = count_written(lang_share, lang_credits)
     prompt = cfg.get("prompt")
     prompt_words = set(re.findall(r"\w+", (prompt or "").lower()))
     global PROMPT_HEAD
@@ -5607,9 +5631,8 @@ def main() -> int:
                     sid = tracker.observe(hhmmss(seg.t_start), seg.t_start, seg.t_end, emb, seg.duration, text)
             except Exception as e:  # noqa: BLE001
                 log(f"speakers: {e!r}")
-        lang_credits.append((hhmmss(seg.t_start), text, *getattr(res, "credit", (None, 0.0))))
         line_obj = Line(seg.channel, seg.t_start, lang, text, sid=sid, translated_from=translated_from,
-                        seq=next(line_seq))
+                        seq=next(line_seq), credit=getattr(res, "credit", (None, 0.0)))
         writer.add(line_obj)
         if tr_worker is not None and needs_translation(text, lang, translated_from, low_conf):
             tr_worker.submit({"text": text, "src": translated_from, "dst": lang, "line": line_obj,

@@ -98,9 +98,10 @@ def recording_meta(transcript) -> Path:
 
 def save_spoken(transcript, secs: dict, dominant=None) -> Path:
     """PB-30/PB-32 (D56): keep what the recorder heard in the call's metadata, where both output-language readers look:
-    `languages` = seconds of speech per language (LangShare.secs), `dominant_language` = the language spoken most. The
-    recorder calls it when the recording ends and again after the end-of-call transcript correction. Every other field
-    (the app's recording parts) is kept; one flock with the app's RecordingMeta.update; atomic; raises OSError."""
+    `languages` = seconds of speech per language of the written lines (LangShare.total), `dominant_language` = the
+    language spoken most. The recorder calls it when the recording ends and again after the end-of-call transcript
+    correction. Every other field (the app's recording parts) is kept; one flock with the app's RecordingMeta.update;
+    atomic; raises OSError."""
     import fcntl
     import json
     p = recording_meta(transcript)

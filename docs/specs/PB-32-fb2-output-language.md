@@ -202,7 +202,9 @@ finding 1).
 Done in PB-72: `transcriber.save_call_languages` calls `save_spoken` after `writer.close` and again after
 `apply_line_edits` when any edit was applied. The counts are `LangShare.total` (seconds of the whole call; `reset()` on a
 language switch clears only the live share `secs`), the dominant is `LangShare.spoken(t)`: `None` with no speech or
-under `warmup_s` from the call's first segment. Each written line keeps the seconds it credited, and a line deleted in
+under `warmup_s` from the call's first segment. A line is counted in `total` only when `Writer._write` appends its row
+(`Writer.on_written`, `count_written`), so a mic echo the Writer drops never counts (review round 2). Each written line
+keeps the seconds it credited, and a line deleted in
 the transcript pane is taken out of the totals (`uncount_dropped`); a deleted row whose words no longer match (a
 background translation) and that shares its second with other lines is left in, so no other language loses seconds.
 Both saves use one end time taken when the recording ends. No file is made for a call with no speech counted

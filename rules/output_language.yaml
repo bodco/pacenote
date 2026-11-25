@@ -25,7 +25,7 @@ tips_switch: removed for one-language calls, kept for multi-language calls (answ
 telemetry: none (answer 7A)
 labels: text in the output language, fixed English headings and labels for languages without static strings (answer 8A)
 adapter:                               # the one place that reads the recorder (PB-30); everything else asks the resolver
-  per_call_fields: [dominant_language, languages]   # optional, in the call's metadata; PB-30 (not merged when this was written) writes neither
+  per_call_fields: [dominant_language, languages]   # optional, in the call's metadata; the recorder writes both at the end of the call (PB-72)
   fallback: >-
     majority of the transcript line tags "[hh:mm:ss] Name (xx):" (same value as livetips_m0.callnotes.call_lang),
     else the header "- Languages: Я = xx"

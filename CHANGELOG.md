@@ -6,7 +6,8 @@ Pacenote. Earlier versions are described in the commit messages and in
 ## Unreleased
 
 - **Call language: the output language now follows the speech that was measured (PB-72).** The recorder counts the
-  seconds of speech per language over the whole call and saves them, with the dominant language, in the call's
+  seconds of speech per language over the whole call, only for lines written to the transcript (on speakers the
+  mic's echo of the client is not counted twice), and saves them, with the dominant language, in the call's
   `<stem>.recording.json` when the call ends and again after lines deleted in the transcript pane (deleted lines no
   longer count). The notes, Summary, Recap and follow-up default to that language instead of a guess from the language
   tags of the lines, so a call whose lines were tagged wrong still gets the right language. A switch of languages in
