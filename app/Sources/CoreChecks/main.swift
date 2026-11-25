@@ -5484,12 +5484,16 @@ func passwordFlowsPB110() {
               "auth": ["google": g, "password": p, "password_changed_at": p ? "2026-11-25T09:00:00Z" as Any : NSNull()]])?.auth
     }
     let dev = S.deviceInfo(deviceName: "Emily's Mac", appVersion: "0.27.2")
-    let keys: Set<String> = {
+    // a text counts only when it is there, not empty, in both en.json and uk.json
+    func texts(_ lang: String) -> Set<String> {
         let f = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("Resources/i18n/en.json")
+            .appendingPathComponent("Resources/i18n/\(lang).json")
         let o = (try? JSONSerialization.jsonObject(with: (try? Data(contentsOf: f)) ?? Data())) as? [String: Any]
-        return Set((o ?? [:]).keys)
-    }()
+        return Set((o ?? [:]).compactMap { k, v in ((v as? String) ?? "").isEmpty ? nil : k })
+    }
+    let enKeys = texts("en"), ukKeys = texts("uk")
+    expect(enKeys.count > 100 && ukKeys.count > 100, "pb110: en.json and uk.json are read")
+    let keys = enKeys.intersection(ukKeys)
 
     // 1) Forgot password: the reset id of the forgot answer travels with the code (that the server cancels the earlier
     //    reset of the address is server SQL, app.reset_start)
