@@ -2911,6 +2911,8 @@ to Pacenote server on (below). Audio and transcripts stay on your Mac.
      From then on both ways open the same account.
   Settings > Account lists the ways this account signs in (Google, Password with the date it last changed). In the
   console, Organization > Members of a team organization shows how each member signs in (Google, Password, or both).
+  The console's own account page (/me) does not list your sign-in methods yet; until it does, check them in Settings >
+  Account.
 - After signing in the page shows your workspace (the first sign-in makes a personal one, you are its owner) and the
   Macs signed in to your account. **Sign out** next to another Mac ends its session; **Sign out everywhere** ends all
   of them, this one too. Nothing on any Mac is deleted; a signed-out Mac shows the sign-in screen.

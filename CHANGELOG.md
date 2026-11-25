@@ -10,7 +10,8 @@ Pacenote. Earlier versions are described in the commit messages and in
   instead) and Connect Google on a password account were reviewed in the app and server code; the guide (14.1z3, EN
   and UK) now describes all four step by step, with what happens to your other devices and which email you get. New
   app checks pin the app side of each flow and that the texts they name exist in EN and UK (CoreChecks
-  `passwordFlowsPB110`).
+  `passwordFlowsPB110`). Known gap: the console's own account page (/me) does not list your sign-in methods yet (only
+  Organization > Members does); the guide says so, and the server fix is a follow-up task.
 - **Meeting Sheet: a Verbatim block for text that must stay word for word (PB-102).** + Add a block now offers
   Verbatim, as often as you need it in one call. In its Settings you give it a title, a source (a file of the call,
   any file, or pasted text) and, if you want only part of a Markdown file, sections such as 1-4 by heading. The
