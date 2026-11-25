@@ -23,6 +23,7 @@ import time
 from pathlib import Path
 
 from . import call_language, call_layout
+from .transcript import hms_to_s, muted_spans
 from typing import List
 
 PART_CHARS = 25_000
@@ -67,6 +68,10 @@ Use these headings:
 For every topic: who said what (by name), the numbers and dates, what was decided or left open, 1-3 short quotes.
 ### Questions
 Every question: who asked whom, the answer (fully / partly / not answered) and what exactly was answered.
+Between a "--- microphone muted HH:MM:SS ---" ("--- мікрофон вимкнено ...") line and the next "microphone on"
+("мікрофон увімкнено") or "microphone muted until the end of the call" ("мікрофон вимкнено до кінця дзвінка") line,
+which ends the span, the PM's microphone was off in Pacenote: the PM's words there are not in the transcript,
+so a question to the PM in that span is "not heard (mic muted)", never "not answered".
 ### Decisions
 Who decided: the decision (the name only when it is clear).
 ### Action items
@@ -123,7 +128,9 @@ without a number on where things stand overall (for example: no blockers, moving
 ### Action items
 - [HH:MM:SS] **Owner**: what (due: when, only if said)
 ### Open questions
-- [HH:MM:SS] a question or blocker left open
+- [HH:MM:SS] a question or blocker left open (a question to the PM asked while the PM's microphone was muted in
+  Pacenote, between a "--- microphone muted HH:MM:SS ---" line and the next "--- microphone on" or "--- microphone muted
+  until the end of the call" line, is not open: the PM's answer was not recorded)
 ### Risks
 - [HH:MM:SS] a conditional threat said on the call: what may go wrong and what it depends on, max 16 words ("the
   pilot moves if the accounts come after Friday"). Not every problem is a risk: a bug being fixed now is not.
@@ -225,7 +232,42 @@ def make_meeting(md: Path, notes: str, transcript: str, lang: str, ask, names: s
     sec = ask(MEETING_SYS.replace("{LANG}", L).replace("{NAMES}", names),
               f"Call file: {md.name}.\n\n# FULL NOTES\n{notes[:60000]}\n\n# TRANSCRIPT\n{transcript[:150000]}", 5000)
     i = sec.find(MEETING_HEAD)
-    return sec[i:] if i >= 0 else MEETING_HEAD + "\n" + sec
+    return with_muted(sec[i:] if i >= 0 else MEETING_HEAD + "\n" + sec, muted_items(transcript, lang))
+
+
+def muted_items(transcript: str, lang: str) -> List[str]:
+    """PB-104: one line per span the PM's mic was muted in Pacenote (the recorder's markers), no model involved."""
+    times = TIME_ANY.findall(transcript or "")
+    out = []
+    for a, b in muted_spans(transcript):
+        end = b or (times[-1] if times else "")
+        mins = max(0, round((hms_to_s(end) - hms_to_s(a)) / 60)) if end and end >= a else None
+        if lang == "uk":
+            till = (" до " + end if end else " до кінця дзвінка") + (f" ({mins} хв)" if mins is not None else "")
+            out.append(f"[{a}] Ваш мікрофон був вимкнений у Pacenote{till}: ваших слів за цей час немає в транскрипті, "
+                       "тож на питання до вас тоді ви могли відповісти вголос.")
+        else:
+            till = (" until " + end if end else " until the end of the call") + (f" ({mins} min)" if mins is not None else "")
+            out.append(f"[{a}] Your mic was muted in Pacenote{till}: your own words from this time are not in the "
+                       "transcript, so questions to you then may have been answered aloud.")
+    return out
+
+
+TIME_ANY = re.compile(r"^\[(\d\d:\d\d:\d\d)\]", re.M)
+
+
+def with_muted(section: str, items: List[str]) -> str:
+    """PB-104: the muted spans go under ### Unclear of the meeting notes (the heading is added when the model left it out)."""
+    if not items:
+        return section
+    lines = section.rstrip().split("\n")
+    at = next((i for i, l in enumerate(lines) if l.strip().lower().rstrip(":") == "### unclear"), None)
+    if at is None:
+        return "\n".join(lines + ["### Unclear"] + ["- " + x for x in items])
+    end = next((i for i in range(at + 1, len(lines)) if lines[i].startswith("#")), len(lines))
+    while end > at + 1 and not lines[end - 1].strip():
+        end -= 1
+    return "\n".join(lines[:end] + ["- " + x for x in items] + lines[end:])
 
 
 def parts(text: str, size: int = PART_CHARS) -> List[str]:

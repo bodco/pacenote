@@ -543,6 +543,14 @@ The layout since 1.8.0, top to bottom (hover any control for a hint):
   and `--- мікрофон увімкнено HH:MM:SS ---`, the status shows `mic=muted`, and the skill does
   not count your silence as a problem and does not run the answer check for that time. Press
   it again when you unmute. Every call starts unmuted.
+  Muted by mistake (PB-104, the Pacenote app; the skill's window is unchanged): once the other side has talked for 60 s in all since you muted, the
+  window and the menu bar panel show "Your mic is muted in Pacenote" with an Unmute button (the
+  menu bar icon keeps an orange dot while it is open). It never takes the focus, comes back at most
+  every 5 min while you stay muted and goes away when you unmute or the call ends. A call that
+  ends muted gets `--- microphone muted until the end of the call HH:MM:SS ---`. The meeting
+  notes list each muted span under Unclear, and a question to you from a muted span is "Not
+  heard (mic muted in Pacenote)" in the call summary, not "Unanswered". The status has
+  `mic_muted_s`, `muted_them_s` and `mic_muted_warn`.
 - **The input.** Typing searches the fact book on the Mac at once, no model involved: the
   matching facts show under the field as you type. Enter sends the text to Claude as a
   question (`find: <words>` when the local search found nothing useful: Claude then searches

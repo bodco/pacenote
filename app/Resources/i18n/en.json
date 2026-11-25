@@ -4482,6 +4482,8 @@
  "ea.s3.daysDefault": "As in Settings ({n} days)",
  "ea.s3.daysN": "{n} days",
  "ea.li.optional": "Optional",
+ "notice.micMuted": "Your mic is muted in Pacenote. The other side is talking, and your words are not in the transcript or the tips.",
+ "notice.unmute": "Unmute",
  "notice.geminiAccountRemoved": "Pacenote removed Gemini account sign-in because Google's terms prohibit access through third-party apps and Google can suspend your account. To keep using Gemini, add an API key from Google AI Studio.",
  "notice.geminiKey": "Open Gemini API key settings",
  "notice.tryAgain": "Try again",

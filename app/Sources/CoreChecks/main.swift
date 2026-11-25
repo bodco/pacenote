@@ -6432,5 +6432,45 @@ func tailReaderPB30() {
 }
 tailReaderPB30()
 evidenceS5PB88()
+
+/// PB-104: the "Your mic is muted in Pacenote" notice follows the recorder's warning count; the 24.11 run replayed
+/// (muted 7 s after the start, 39 min muted, the other side talking). The recorder's cadence is in pytest.
+func mutedMicNoticePB104() {
+    typealias M = MutedMicNotice
+    expect(M.step(recording: true, muted: true, warn: 1, seen: 0, open: false) == .post, "PB-104: a new warning posts the notice")
+    expect(M.step(recording: true, muted: true, warn: 1, seen: 1, open: false) == .none, "PB-104: the same warning is not posted twice")
+    expect(M.step(recording: true, muted: true, warn: 2, seen: 1, open: true) == .none, "PB-104: no second card while the first is open")
+    expect(M.step(recording: true, muted: false, warn: 2, seen: 2, open: true) == .dismiss, "PB-104: unmuted: the notice goes")
+    expect(M.step(recording: false, muted: true, warn: 2, seen: 2, open: true) == .dismiss, "PB-104: the call ended: the notice goes")
+    expect(M.step(recording: true, muted: false, warn: 0, seen: 0, open: false) == .none, "PB-104: nothing while the mic is on")
+    // The status file says so.
+    let path = NSTemporaryDirectory() + "pacenote-pb104-status.json"
+    try? #"{"state": "recording", "mic": "muted", "mic_muted_warn": 3}"#.write(toFile: path, atomically: true, encoding: .utf8)
+    let st = EngineStatus.load(path: path)
+    expect(st.micMutedWarn == 3 && st.mic == "muted", "PB-104: status mic_muted_warn is read")
+    try? #"{"state": "recording", "mic": "ok"}"#.write(toFile: path, atomically: true, encoding: .utf8)
+    expect(EngineStatus.load(path: path).micMutedWarn == 0, "PB-104: an older recorder: no warnings")
+    try? FileManager.default.removeItem(atPath: path)
+    // 24.11 replayed: status every 2 s, muted from 7 s to 39 min 7 s, the recorder's warnings at 67 s and every 300 s
+    // after (the other side talks all the time). The PM closes each notice 30 s after it shows.
+    let muteAt = 7, unmuteAt = 7 + 39 * 60
+    var seen = 0, open = false, openedAt = 0, posts: [Int] = []
+    for t in stride(from: 0, through: unmuteAt + 120, by: 2) {
+        let muted = t >= muteAt && t < unmuteAt
+        let warn = muted && t >= muteAt + 60 ? 1 + (t - muteAt - 60) / 300 : seen
+        if open && t - openedAt >= 30 && muted { open = false }          // the PM closed it
+        switch M.step(recording: true, muted: muted, warn: warn, seen: seen, open: open) {
+        case .post: posts.append(t); open = true; openedAt = t
+        case .dismiss: open = false
+        case .none: break
+        }
+        seen = max(seen, warn)
+    }
+    expect(posts.first.map { $0 >= muteAt + 60 && $0 <= muteAt + 62 } == true, "PB-104 24.11: the first warning about a minute after the mute (\(posts.first ?? -1) s)")
+    expect(posts.count == 8, "PB-104 24.11: 39 min muted gives 8 warnings, one per 5 min (\(posts.count))")
+    expect(zip(posts, posts.dropFirst()).allSatisfy { $1 - $0 >= 300 }, "PB-104 24.11: never more often than every 5 min")
+    expect(posts.allSatisfy { $0 < unmuteAt }, "PB-104 24.11: nothing after the unmute")
+}
+mutedMicNoticePB104()
 print("core checks: \(passed) passed, \(failures) failed")
 exit(failures == 0 ? 0 : 1)

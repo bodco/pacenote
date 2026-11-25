@@ -71,6 +71,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             floatingControls = FloatingCallController(app: self)
             // 0.26.0 (block 1): the app's notices: the tips window shows them during a call, the icon gets a dot otherwise
             NoticeCenter.tipsVisible = { [weak self] in self?.tips?.window?.isVisible == true }
+            NoticeCenter.unmuteMic = { [weak self] in self?.unmuteMic() }
             NoticeCenter.changed = { [weak self] in
                 self?.tips?.pushNotice()
                 DispatchQueue.main.async { self?.refresh() }       // not inside the refresh that posted it
@@ -287,6 +288,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let month = SpendLedger.monthSpent()
         lastStatus = st
         warnIfNoAudio(st)
+        warnIfMicMuted(st)
         if menuLang != L10n.lang { menuLang = L10n.lang; installMainMenu() }     // the app menu follows the language
         MainActor.assumeIsolated {
             fillPanel(st, month: month, cfg: cfg)
@@ -302,7 +304,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             : nearLimit ? .nearLimit
             : UpdateService.shared.newVersion != nil ? .update
             : st.state == "standby" ? .waiting : .idle
-        item?.button?.image = Brand.menuBarImage(icon, notice: MainActor.assumeIsolated { NoticeCenter.shared.unread })
+        // PB-104: the muted-mic warning keeps its dot on the icon while it is open, also when the tips window showed it
+        let dot: NoticeLevel? = MainActor.assumeIsolated {
+            let unread = NoticeCenter.shared.unread
+            let muted: NoticeLevel? = mutedNotice.map { NoticeCenter.shared.isOpen($0) } == true ? .warning : nil
+            return [unread, muted].compactMap { $0 }.max { $0.rank < $1.rank }
+        }
+        item?.button?.image = Brand.menuBarImage(icon, notice: dot)
         item?.button?.contentTintColor = nil
         setClock(st.state == "recording")      // ticks the panel's elapsed time; nothing is written next to the icon
     }
@@ -420,6 +428,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if tips == nil { showTips() }
             MainActor.assumeIsolated { tips?.push("window.addItems && window.addItems(\(js))") }
         }
+    }
+
+    /// PB-104 (rules/recording.yaml > muted_mic): "Your mic is muted in Pacenote" with Unmute, an app notice (the tips
+    /// window, the menu bar panel and the icon's dot), never the focus. The recorder decides when (mic_muted_warn).
+    var mutedNotice: UUID?
+    var mutedWarnSeen = 0
+    var mutedWarnCall: String?
+    func warnIfMicMuted(_ st: EngineStatus) {
+        if mutedWarnCall != st.file { mutedWarnCall = st.file; mutedWarnSeen = 0 }     // every call counts from 0
+        MainActor.assumeIsolated {
+            let open = mutedNotice.map { NoticeCenter.shared.isOpen($0) } ?? false
+            switch MutedMicNotice.step(recording: st.state == "recording", muted: st.mic == "muted",
+                                       warn: st.micMutedWarn, seen: mutedWarnSeen, open: open) {
+            case .post: mutedNotice = NoticeCenter.shared.post(L("notice.micMuted"), level: .warning, action: .unmute)
+            case .dismiss: if let id = mutedNotice { NoticeCenter.shared.dismiss(id) }; mutedNotice = nil
+            case .none: break
+            }
+        }
+        mutedWarnSeen = max(mutedWarnSeen, st.micMutedWarn)
+    }
+
+    /// PB-104: Unmute from the notice: the mic goes on whether the tips window is open or not (a set, not a toggle).
+    func unmuteMic() {
+        CallRecorder.shared.micMuted = false
+        try? FileManager.default.removeItem(atPath: (appRoot as NSString).appendingPathComponent("control/mic_muted"))
+        MainActor.assumeIsolated { tips?.push("window.LiveTips && LiveTips.unmute && LiveTips.unmute()") }
     }
 
     /// End call from the hot key, the menu or the floating controls: asked in the tips when they are open, otherwise

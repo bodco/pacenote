@@ -3395,6 +3395,14 @@ def mic_watchdog(*, now_t: float, alive: bool, switching: bool, stalled: bool, m
     return None, silent_s, zero_for
 
 
+def muted_warning(*, muted: bool, them_talk_s: float, now_t: float, last_warn: float | None,
+                  talk_s: float = 60.0, repeat_s: float = 300.0) -> bool:
+    """PB-104 (rules/recording.yaml > muted_mic): a new "your mic is muted in Pacenote" warning is due. The other side
+    has talked talk_s seconds in all since the PM muted the mic in Pacenote, and the last warning of this call was at
+    least repeat_s ago (one muted span or several)."""
+    return bool(muted and them_talk_s >= talk_s and (last_warn is None or now_t - last_warn >= repeat_s))
+
+
 def tap_recovery(*, now_t: float, live: bool, zero_since: float, output_playing, done: bool,
                  zero_s: float = 45.0) -> bool:
     """0.8.7 (rules/recording.yaml > tap_recovery): rebuild the system audio tap once per call when the call is live,
@@ -5446,6 +5454,7 @@ def main() -> int:
     else:
         log(f"semantic: off: {status['semantic_reason']}")
     talk = {"me": 0.0, "them": 0.0, "last_ch": None, "mono": 0.0, "mono_end": 0.0, "lags": []}
+    mute_track = {"since": None, "them0": 0.0, "warned": None, "n": 0}   # PB-104: the muted-mic warning
     pcell = [prompt]
     pwords = [prompt_words]
     recent: list[tuple[float, str, str]] = []   # (t, channel, text) of the last ~2 min, for SOS
@@ -6013,6 +6022,8 @@ def main() -> int:
             tap_fix["checked"] = now()
         muted = mute_file.exists()
         if muted != segs["me"].muted:
+            # PB-104: the other side's talk counts from the mute; the warning cadence is per call
+            mute_track.update(since=now() if muted else None, them0=talk["them"])
             segs["me"].set_muted(muted)
             writer.marker(L("мікрофон вимкнено", "microphone muted") if muted else L("мікрофон увімкнено", "microphone on"))
             log("mic muted in the tips window" if muted else "mic unmuted")
@@ -6028,6 +6039,14 @@ def main() -> int:
         if now() - last_status >= 2:
             last_status = now()
             errs = [c.error for c in caps if c.error]
+            muted_s = now() - mute_track["since"] if mute_track["since"] is not None else 0.0
+            them_s = talk["them"] - mute_track["them0"] if mute_track["since"] is not None else 0.0
+            if muted_warning(muted=segs["me"].muted, them_talk_s=them_s, now_t=now(), last_warn=mute_track["warned"],
+                             talk_s=float(cfg.get("muted_warn_talk_s", 60)), repeat_s=float(cfg.get("muted_warn_repeat_s", 300))):
+                mute_track["warned"] = now()
+                mute_track["n"] += 1
+                log(f"mic muted for {round(muted_s)} s while the other side talked {round(them_s)} s: warning {mute_track['n']}")
+            status.update(mic_muted_s=round(muted_s), muted_them_s=round(them_s), mic_muted_warn=mute_track["n"])
             status.update(lines=writer.lines, queue=segq.qsize(), errors=errs,
                           last_line_at=hhmmss(writer.last_line_at) if writer.last_line_at else None,
                           audio_lost_s={k: round(v.lost) for k, v in segs.items()},
@@ -6073,6 +6092,9 @@ def main() -> int:
         time.sleep(0.3)
     if tr_worker is not None:
         tr_worker.stop(float(cfg.get("translate_drain_s", 20.0)))    # the footer stays the last row
+    if segs["me"].muted:
+        # PB-104: a call that ends muted closes its muted span, so the transcript and the notes show where it ends
+        writer.marker(L("мікрофон вимкнено до кінця дзвінка", "microphone muted until the end of the call"))
     writer.close(f"\n--- {L('кінець запису', 'end of recording')} {hhmmss(now())} ---\n")
     sheet_live.save_state(out)               # 0.10.0 (Meeting Sheet, phase 7): for the after-call check
     if spk["worker"] is not None:

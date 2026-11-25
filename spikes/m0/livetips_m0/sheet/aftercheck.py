@@ -67,6 +67,12 @@ def build_user(qs: List[dict], outs: List[dict], transcript: str, asked: set) ->
     lines = ["QUESTIONS:"] + ["{} | {}{}".format(q["id"], q["text"], " (the PM asked it during the call)" if q["id"] in asked else "")
                               for q in qs]
     lines += ["", "BEST OUTCOME:"] + ["{} | {}".format(o["id"], o["text"]) for o in outs]
+    from ..transcript import muted_spans
+    spans = muted_spans(transcript)
+    if spans:      # PB-104: the PM's own questions there are not in the transcript; the other side's answers still count
+        lines += ["", "THE PM'S MICROPHONE WAS MUTED IN PACENOTE: " + ", ".join(
+            "{} to {}".format(a, b or "the end") for a, b in spans) + ". The PM's own words from these times are not in "
+            "the transcript: a question is not \"not\" only because no PM line asks it there; judge by what the others said."]
     return "\n".join(lines) + "\n\n<transcript_data>\n" + transcript[-120000:] + "\n</transcript_data>"
 
 

@@ -29,6 +29,20 @@ public enum NoticeRules {
     public static let repeatWindow: Double = 120
 }
 
+/// PB-104 (rules/recording.yaml > muted_mic): the "Your mic is muted in Pacenote" notice. The recorder decides when a
+/// warning is due (60 s of the other side's speech since the mute, at most every 5 min) and counts them in
+/// status.json `mic_muted_warn`; the app posts a notice for each new count and takes it away once the mic is on again.
+public enum MutedMicNotice {
+    public enum Step: Equatable, Sendable { case none, post, dismiss }
+
+    /// warn: the recorder's count for this call; seen: the last count the app acted on; open: the notice is still up.
+    /// A new count while the PM has not closed the last one posts nothing new (no second card on top of the first).
+    public static func step(recording: Bool, muted: Bool, warn: Int, seen: Int, open: Bool) -> Step {
+        guard recording, muted else { return open ? .dismiss : .none }
+        return warn > seen && !open ? .post : .none
+    }
+}
+
 /// 0.26.0: a call this short gets no Notion page (wrapup_notion.py refuses below the same number of real lines).
 public enum NotionGate {
     public static let minLines = 5

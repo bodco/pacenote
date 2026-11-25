@@ -26,6 +26,17 @@ tap_recovery:
   action: rebuild the system audio tap once per call (a fresh audiocap --source system) and log it
   never: switch, mute or change the user's output device; a second rebuild in the same call
   zero_s: 45
+muted_mic:
+  # PB-104 (owner, 25.11: on 24.11 the PM muted the mic in Pacenote 7 s after the start and the call ran 39 min muted,
+  # with no warning; the tips ran blind to the PM's speech)
+  status_fields: mic_muted_s (seconds since the mute), muted_them_s (the other side's speech since the mute), mic_muted_warn (warnings so far in this call)
+  when: the mic is muted in Pacenote and the other side has talked 60 s in all since the mute (recorder muted_warning)
+  repeat_s: 300
+  talk_s: 60
+  show: '"Your mic is muted in Pacenote" with Unmute, as an app notice (the tips window and the menu bar panel; the menu bar icon gets the warning dot while it is open); never takes the focus'
+  clears: on unmute (any way) and at the end of the call
+  transcript: '--- microphone muted HH:MM:SS --- ... --- microphone on HH:MM:SS --- (or --- microphone muted until the end of the call HH:MM:SS ---); the notes get one line with the muted spans'
+  engine: a question to the PM asked inside a muted span is "not heard", never "unanswered"
 clears: by itself as soon as the silent side has sound again
 show: a red strip under the window title with the action and Details (the levels and the reason); the brief and the tips stay (2026-11-02, owner)
 who: the app window; the skill's window shows the same status line it always had (no change there)

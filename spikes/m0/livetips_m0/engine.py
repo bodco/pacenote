@@ -525,7 +525,9 @@ def picture_items(sit: dict, uk: bool) -> List[str]:
     items += [L("На мені: ", "On me: ") + a.get("what", "") + _due(a) for a in sit.get("actions") or []]
     items += [L("За ними: ", "On them: ") + a.get("who", "") + ": " + a.get("what", "") + _due(a) for a in sit.get("theirs") or []]
     items += [L("Ризик: ", "Risk: ") + r.get("what", "") for r in sit.get("risks") or []]
-    items += [L("Без відповіді: ", "Unanswered: ") + a.get("what", "") + (" · " + a["who"] if a.get("who") else "")
+    # PB-104: an ask from a span with the PM's mic muted in Pacenote was maybe answered aloud: "not heard", not "unanswered"
+    items += [(L("Не почуто (мікрофон вимкнено в Pacenote): ", "Not heard (mic muted in Pacenote): ") if a.get("unheard")
+               else L("Без відповіді: ", "Unanswered: ")) + a.get("what", "") + (" · " + a["who"] if a.get("who") else "")
               for a in sit.get("asks") or [] if a.get("type") != "update"]
     return items
 
@@ -837,6 +839,7 @@ class Engine:
         self.sit_interval = cfg.get("situation_interval_s", 10)
         self.sit_enabled = cfg.get("situation", True) and bool(self.models.get("classify"))
         self.sit_asks_tipped = set()
+        self.mute_spans: List[list] = []         # PB-104: [[start, end or None], ...] HH:MM:SS, the PM's mic muted in Pacenote
         self.speech_items: List[str] = []
         self.speech_item: Optional[dict] = None
         self.ask_log: List[dict] = []
@@ -2661,8 +2664,27 @@ class Engine:
             out.append(a)
         return dict(sit, actions=out)
 
+    def mic_mute(self, on: bool, t: str) -> None:
+        """PB-104: the recorder's mute marker (live.py reads it from the transcript). Read again after a rewrite: no change."""
+        with self.lock:
+            spans = self.mute_spans
+            if on and (not spans or spans[-1][1] is not None) and not any(sp[0] == t for sp in spans):
+                spans.append([t, None])
+            elif not on and spans and spans[-1][1] is None and t >= spans[-1][0]:
+                spans[-1][1] = t
+
+    def muted_at(self, t: str) -> bool:
+        """The PM's mic was muted in Pacenote at this transcript time (HH:MM:SS)."""
+        return bool(t) and any(sp[0] <= t and (sp[1] is None or t <= sp[1]) for sp in self.mute_spans)
+
+    def mark_unheard(self, sit: dict) -> dict:
+        """PB-104: asks to the PM from a muted span: the PM may have answered aloud, Pacenote did not hear it."""
+        if not self.mute_spans or not sit.get("asks"):
+            return sit
+        return dict(sit, asks=[dict(a, unheard=True) if self.muted_at(str(a.get("t") or "")) else a for a in sit["asks"]])
+
     def _publish_situation(self, sit: dict, line_id: int) -> None:
-        sit = self.fix_onme(sit)
+        sit = self.mark_unheard(self.fix_onme(sit))
         with self.lock:
             self.sit_last_line = line_id
             changed = sit != self.situation
@@ -2769,6 +2791,10 @@ class Engine:
 
     def _situation_extra_input(self) -> str:
         parts = []
+        if self.mute_spans:        # PB-104: the PM's own lines are missing there, so silence is not "no answer"
+            parts.append("THE PM'S MICROPHONE WAS MUTED IN PACENOTE (the PM's lines from these times are not in the transcript; "
+                         "the PM may have spoken and answered aloud, so never take a missing PM line there as no answer): "
+                         + ", ".join("{} to {}".format(a, b or "now") for a, b in self.mute_spans))
         if self.agenda_items:
             full = getattr(self, "agenda_full", None) or [t for t, _ in self.agenda_items]
             parts.append("AGENDA:\n" + "\n".join("{}. {}".format(i, t) for i, t in enumerate(full)))
@@ -2973,12 +2999,12 @@ class Engine:
     def final_wrapup(self) -> Optional[dict]:
         """P2 (26.10): at the end, the window gets what the call picture holds: decisions, what is on the PM,
         open asks and the speech points never said. No model call."""
-        sit = self.situation or {}
+        sit = self.mark_unheard(self.situation or {})
         self._emit_agenda(final=True)
         if getattr(self, "sales", None) is not None and self.cfg.get("call_md"):
             try:                     # 0.8.7: the Sales section and the scorecard of the call page (<stem>.sales.json)
                 md = Path(self.cfg["call_md"])
-                asks = [a for a in (sit.get("asks") or []) if a.get("type") != "update"]
+                asks = [a for a in (sit.get("asks") or []) if a.get("type") != "update" and not a.get("unheard")]   # PB-104
                 self.sales.write(call_layout.sidecar_of(md, ".sales.json") if md.name.endswith(".md") else call_layout.sidecar(md, ".sales.json"),
                                  open_questions=len(asks))
             except Exception as e:  # noqa: BLE001
