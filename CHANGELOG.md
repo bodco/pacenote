@@ -15,7 +15,9 @@ Pacenote. Earlier versions are described in the commit messages and in
   A sentence is shown only while every fact it names is allowed for the call that asks: hiding a call, a document
   that lost access, a deleted file or a file skipped for one preparation hides the sentences written from it (the
   other sentences of the topic stay) until the topic is summarised again, and a replay of an earlier call never
-  sees a summary written after it. New commands for the app and the skill: `evidence topics` (summarise now) and
+  sees a summary written after it. A call for one client never gets another client's topic, not even a sentence
+  that names only shared facts, and a sentence that states a fact of a decision the PM marked as replaced is not
+  shown. New commands for the app and the skill: `evidence topics` (summarise now) and
   `evidence global` (a topic's summary and its dated timeline; never during a call). The benchmark now evaluates
   every gold row: the timeline of "What happened with SSO since October?" finds 3 of its 4 facts in order (the
   fourth is said on a call with no link to SSO), and no hidden, revoked, deleted or future fact leaks.

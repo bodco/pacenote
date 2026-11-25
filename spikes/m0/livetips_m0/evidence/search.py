@@ -10,7 +10,8 @@ any candidate is selected, so ranking never sees a row the request may not see. 
 scope), `ignored` (source deleted, or in the request's `exclude`) or `pass`. A claim or edge passes when a passing row
 exists and no denied row does; every returned field comes from the passing rows only. No access query reads
 `client_set` or `entity.client`: the side is decided from `source.uri`, `snippet_mark` and `entity_mark` against the
-request's scope.
+request's scope. The one exception is S4's topics (prepare_topics): a topic summary was written from all of its
+topic's facts, so a scoped request sees only shared topics and its own client's, by `topic.client_set`.
 """
 from __future__ import annotations
 
@@ -64,7 +65,7 @@ def prepare(store: S.Store, scope: Optional[dict], as_of: Optional[str], exclude
     _src(id, cls) for sources, _ent(id) for visible entities."""
     c = store.conn
     for t in ("_others", "_ownf", "_othf", "_deny", "_excl", "_eside", "_snip", "_src", "_rev", "_ent", "_claim", "_edge",
-              "_tsent"):
+              "_tsent", "_ttop"):
         c.execute("DROP TABLE IF EXISTS temp.{}".format(t))
     c.execute("CREATE TEMP TABLE _others(name TEXT PRIMARY KEY)")
     c.execute("CREATE TEMP TABLE _ownf(rel TEXT)")
@@ -559,19 +560,35 @@ def entity_card(store: S.Store, entity_id: str, *, scope: Optional[dict] = None,
 
 # ---------------------------------------------------------------- global questions (S4, section 8.7)
 
-def prepare_topics(store: S.Store, as_of: Optional[str]) -> None:
-    """TEMP _tsent(id, topic_id): the topic sentences this request may see, after prepare(). A sentence passes when
-    its summary was written at or before as_of; it has at least one cite and every cited claim or edge passes (in
-    _claim/_edge: a passing row valid at as_of and no denied row); and no cited target has an ignored row (a deleted
-    source, or one in this request's exclude) on a source the summary was written from (topic_source). Ignored rows are
-    strict for sentences (a sentence cannot be split by row), and a re-summarise written without that source returns."""
+def prepare_topics(store: S.Store, as_of: Optional[str], scope: Optional[dict] = None, stale: bool = False) -> None:
+    """TEMP _ttop(id): the topics this request may see; TEMP _tsent(id, topic_id): their sentences it may see, after
+    prepare(). With a scope, a topic passes only when it is shared (client_set '') or the request's own client: a
+    sentence's text was written from all of its topic's facts, so a sentence citing only shared facts of another
+    client's topic could still carry that client's words (the one access check here that reads a stored label; the
+    topic's partition is fixed at detect, section 8.7). A stale scope (the live reader cannot relabel) passes no topic.
+    A sentence passes when its topic passes; its summary was written at or before as_of; it has at least one cite and
+    every cited claim or edge passes (in _claim/_edge: a passing row valid at as_of and no denied row); and no cited
+    target has an ignored row (a deleted source, or one in this request's exclude) on a source the summary was written
+    from (topic_source). Ignored rows are strict for sentences (a sentence cannot be split by row), and a re-summarise
+    written without that source returns."""
     c = store.conn
     c.execute("DROP TABLE IF EXISTS temp._tsent")
+    c.execute("DROP TABLE IF EXISTS temp._ttop")
     if not c.execute("SELECT 1 FROM sqlite_master WHERE name='topic_source'").fetchone():
+        c.execute("CREATE TEMP TABLE _ttop(id INTEGER PRIMARY KEY)")
         c.execute("CREATE TEMP TABLE _tsent(id INTEGER, topic_id INTEGER)")     # a store written before S4
         return
+    sp = _scope_parts(scope)
+    if sp and stale:
+        c.execute("CREATE TEMP TABLE _ttop(id INTEGER PRIMARY KEY)")
+    elif sp:
+        c.execute("CREATE TEMP TABLE _ttop AS SELECT id FROM topic WHERE client_set='' OR client_set=?", (sp[0],))
+    else:
+        c.execute("CREATE TEMP TABLE _ttop AS SELECT id FROM topic")
+    c.execute("CREATE INDEX temp._ttop_i ON _ttop(id)")
     c.execute("CREATE TEMP TABLE _tsent AS SELECT ts.id AS id, ts.topic_id AS topic_id FROM topic_sentence ts"
-              " JOIN topic t ON t.id=ts.topic_id WHERE t.summary_at IS NOT NULL AND (?1='' OR t.summary_at<=?1)"
+              " JOIN topic t ON t.id=ts.topic_id JOIN _ttop tt ON tt.id=t.id"
+              " WHERE t.summary_at IS NOT NULL AND (?1='' OR t.summary_at<=?1)"
               " AND EXISTS (SELECT 1 FROM topic_cite tc WHERE tc.sentence_id=ts.id)"
               " AND NOT EXISTS (SELECT 1 FROM topic_cite tc WHERE tc.sentence_id=ts.id AND NOT ("
               "(tc.target='claim' AND tc.target_id IN (SELECT id FROM _claim))"
@@ -626,7 +643,7 @@ def ask_global(store: S.Store, query: str, *, scope: Optional[dict] = None, as_o
     as_of = S.utc(as_of) if as_of else None
     stale, relabel_rep = _relabel_if_stale(store, scope, mode)
     prepare(store, scope, as_of, exclude, stale=stale, window=window)
-    prepare_topics(store, as_of)
+    prepare_topics(store, as_of, scope, stale)
     fold = IG.register_fold_at(store, as_of, passing=True)
     score: Dict[int, float] = {}
     q = fts_query(query)
@@ -651,7 +668,8 @@ def ask_global(store: S.Store, query: str, *, scope: Optional[dict] = None, as_o
                                                                                                     as_of, fold):
             matched.add(r["entity_id"])
     for eid in sorted(matched):
-        for r in store.q("SELECT topic_id, weight FROM topic_member WHERE entity_id=?", (eid,)):
+        for r in store.q("SELECT m.topic_id, m.weight FROM topic_member m JOIN _ttop tt ON tt.id=m.topic_id"
+                         " WHERE m.entity_id=?", (eid,)):
             score[r["topic_id"]] = score.get(r["topic_id"], 0.0) + 2.0
     picked = sorted(score, key=lambda t: (-round(score[t], 9), t))[:max_topics]
     visible = {r[0] for r in store.q("SELECT id FROM _ent")}
@@ -670,6 +688,9 @@ def ask_global(store: S.Store, query: str, *, scope: Optional[dict] = None, as_o
             cites = [(c["target"], c["target_id"]) for c in store.q("SELECT target, target_id FROM topic_cite"
                                                                      " WHERE sentence_id=? ORDER BY target, target_id",
                                                                      (s["id"],))]
+            if sup and any(tgt == "claim" and (store.one("SELECT subject_id FROM claim WHERE id=?", (tid2,))
+                                               or [None])[0] in sup for tgt, tid2 in cites):
+                continue            # a superseded entity's claim is never returned as current (as the timeline)
             dates = [r[0] for tgt, tid2 in cites for r in store.q(
                 "SELECT min(sn.said_at) FROM evidence ev JOIN _snip x ON x.sid=ev.snippet_id AND x.cls='pass' AND x.tok=1"
                 " JOIN snippet sn ON sn.id=ev.snippet_id WHERE ev.target=? AND ev.target_id=?", (tgt, tid2)) if r[0]]

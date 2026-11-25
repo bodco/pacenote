@@ -1017,6 +1017,17 @@ All of this is pure code and runs the same for every route.
   can still be returned. So a summary written before a source was excluded, revoked or hidden, or
   one that cites a file in this request's `exclude`, never returns that source's facts. A topic with no passing
   sentence is not returned at all.
+- **Client before cites.** A sentence's text was written from all of its topic's facts, so passing cites are not
+  enough: a request with a client scope sees only shared topics and its own client's topics (`topic.client_set` empty
+  or the request's label), before any scoring, and a sentence of another client's topic never passes, even when it
+  cites only shared facts. A request whose scope is stale (the live reader cannot relabel, section 5.3) sees no topic
+  sentence. A request with no scope sees every topic, as before. This is the one access check that reads a stored
+  label: a topic's partition is fixed when it is detected.
+- **Superseded.** A sentence citing a claim of an entity the PM superseded (at `as_of`) is not returned, as the
+  timeline leaves out that entity's claims: a superseded decision is never returned as current. A sentence citing
+  only an edge of that entity still passes (the timeline keeps such edges too). A relabel (section 5.2) does not yet
+  mark topics pending: a topic summarised before a new label existed keeps its `client_set` until the next detect
+  (follow-up).
 - **Staleness on state change.** When a source changes state (excluded, hidden, deleted, revoked, or back to
   active), every topic with a sentence citing a claim or edge that has evidence on that source is marked `stale`
   (`topic_cite_target` index), and the next pass re-summarises it; until then the per-sentence filter above keeps it
@@ -2128,9 +2139,12 @@ Implementation notes (S4, PB-87):
   to the model on this Mac once (as extraction), else counts toward the three-errors stop and leaves the topic as it
   was. `topics_pass` (`evidence topics`) is the lazy path: detect and summarise now, no extraction. `evidence global`
   runs `ask_global`; `evidence status` counts topics by state. `--extract` recordings run with `topics: lazy`.
-- `ask_global` (in `search.py`): after `prepare`, `prepare_topics` builds the passing sentences (`summary_at <=
-  as_of`, at least one cite, every cite in `_claim` or `_edge`, no ignored row on a `topic_source` source). Topics are
-  found by `topic_fts` over passing sentences only and by visible aliases contained in the query; up to 3 topics. A
+- `ask_global` (in `search.py`): after `prepare`, `prepare_topics` builds the topics the request may see (`_ttop`:
+  with a scope, `client_set` empty or the own label; none on a stale scope; all with no scope) and their passing
+  sentences (`summary_at <= as_of`, at least one cite, every cite in `_claim` or `_edge`, no ignored row on a
+  `topic_source` source). Topics are found by `topic_fts` over passing sentences only and by visible aliases contained
+  in the query, both only among `_ttop`, so another client's topic never takes a slot or counts in `pending_topics`;
+  up to 3 topics. A sentence citing a claim of a superseded entity is skipped. A
   topic is returned only with a passing sentence; each sentence is dated by its earliest cited passing row. The
   timeline is the members' passing claims and edges plus "changed later" claims, oldest first, at most 40; it is
   returned also for topics with no passing sentence (a replay older than the summary gets claims, no summary).

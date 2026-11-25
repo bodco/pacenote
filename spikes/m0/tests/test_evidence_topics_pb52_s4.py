@@ -515,3 +515,97 @@ def test_cli_topics_and_global(env, capsys):
     assert CLI.main(["global"] + base + ["--query", "SSO", "--mode", "live"]) == 1
     assert CLI.main(["status"] + base) == 0
     assert json.loads(capsys.readouterr().out.strip().split("\n")[-1])["topics"] == {"ready": 2}
+
+
+# ---------------------------------------------------------------- review round 1: client, supersede, PM reject
+
+def globex_scope(root):
+    from livetips_m0 import client_scope as CS
+    return CS.decide(str(root), "Globex weekly", ["Globex"])
+
+
+def test_another_clients_topic_is_never_returned_even_citing_only_shared_facts(env):
+    """A shared fact (a file of neither client) lands in the Acme topic; its sentence cites only that fact but was
+    written from the whole topic, so it may carry Acme words. A Globex request gets none of the Acme topic."""
+    root = env
+    st = world(root)
+    put(root, "docs/vendors.md", "# Vendors\nMike reviews the Okta tenant.\n", mtime=ts("2026-11-08T09:00:00Z"))
+    ingest(st, root)
+    extract(st, "docs/vendors.md", [("Mike", "person"), "Okta tenant"],
+            rels=[("Mike", "reviews", "Okta tenant", "Mike reviews the Okta tenant")])
+    blended = "Mike reviews Okta while Acme item 13 blocks the Acme SSO integration."
+
+    def answer(user):
+        refs = {}
+        for ln in user.split("\n"):
+            if ln.startswith("f") and " | " in ln:
+                ref, _d, what = [x.strip() for x in ln.split(" | ")[:3]]
+                refs[what] = ref
+        okta = [r for w, r in refs.items() if "-> reviews -> Okta" in w][:1]
+        if okta and "Client: acme" in user:            # only the Acme request holds Acme facts to blend in
+            return json.dumps({"sentences": [{"text": blended, "cites": okta}]})
+        return json.dumps({"sentences": [{"text": "Fact: " + w, "cites": [r]} for w, r in refs.items()]})
+
+    T.detect(st)
+    T.summarise(st, Ask(answer), RULES, at="2026-11-20T12:00:00Z")
+    tid = st.one("SELECT topic_id FROM topic_sentence WHERE text=?", (blended,))[0]
+    assert st.one("SELECT client_set FROM topic WHERE id=?", (tid,))[0] == "acme"
+    cited = st.q("SELECT tc.target, tc.target_id FROM topic_cite tc JOIN topic_sentence ts ON ts.id=tc.sentence_id"
+                 " WHERE ts.text=?", (blended,))
+    assert [r["target"] for r in cited] == ["edge"]
+    assert st.one("SELECT client_set FROM edge WHERE id=?", (cited[0]["target_id"],))[0] == ""   # a shared fact
+    gs = globex_scope(root)
+    assert gs and gs["client"] == "globex"
+    assert st.one("SELECT 1 FROM topic WHERE client_set=?", (gs["client"],))
+    # positive controls: no scope and the Acme scope return the sentence
+    assert blended in texts(SE.ask_global(st, "Okta tenant"))
+    assert blended in texts(SE.ask_global(st, "Okta tenant", scope=acme_scope(root)))
+    res = SE.ask_global(st, "Okta tenant", scope=gs)
+    assert blended not in texts(res) and tid not in [t["id"] for t in res["topics"]]
+    assert res["pending_topics"] == 0 and "Acme" not in json.dumps(res["topics"])
+    # the alias path (a member's name in the query) does not pick it either
+    res = SE.ask_global(st, "What does Mike review?", scope=gs)
+    assert tid not in [t["id"] for t in res["topics"]]
+
+
+def test_stale_scope_gets_no_topic_sentence(env):
+    root = env
+    st = world(root)
+    summarise(st)
+    scope = acme_scope(root)
+    ok = SE.ask_global(st, "Acme SSO integration", scope=scope)
+    assert not ok["scope_stale"] and texts(ok)                            # control: the scope as it is
+    stale = dict(scope, others=list(scope["others"]) + ["initech"])      # a label the store has not seen
+    res = SE.ask_global(st, "Acme SSO integration", scope=stale)
+    assert res["scope_stale"] and res["topics"] == [] and res["pending_topics"] == 0
+
+
+def test_sentence_citing_a_superseded_entitys_claim_is_not_returned(env):
+    root = env
+    st = world(root)
+    summarise(st)
+    q = "What about item 13?"
+    assert any("waits for Mike" in s for s in texts(SE.ask_global(st, q, scope=acme_scope(root))))
+    IG.write_override(st, {"target": "entity", "key": S.entity_llm_id("task", "Item 13"), "field": "supersede",
+                           "value": "", "at": "2026-11-21T00:00:00Z"})
+    res = SE.ask_global(st, q, scope=acme_scope(root))
+    assert not any("waits for Mike" in s for s in texts(res))
+    assert texts(res)                                       # the topic's other sentences still return
+    early = SE.ask_global(st, q, scope=acme_scope(root), as_of="2026-11-20T12:00:00Z")
+    assert any("waits for Mike" in s for s in texts(early))           # before the supersede: as it was
+
+
+def test_pm_reject_hides_the_sentence_and_marks_the_topic_pending(env):
+    root = env
+    st = world(root)
+    T.detect(st)
+    acme_only(st)
+    T.summarise(st, Ask(_two_sentences), RULES, at="2026-11-20T12:00:00Z")
+    tid = topic_of(st, "Acme SSO integration")
+    assert st.one("SELECT state FROM topic WHERE id=?", (tid,))[0] == "ready"
+    nkey = st.one("SELECT nkey FROM claim WHERE value='blocked by item 13'")[0]
+    IG.write_override(st, {"target": "claim", "key": nkey, "field": "reject", "at": "2026-11-21T00:00:00Z"})
+    assert texts(SE.ask_global(st, "Acme SSO integration", scope=acme_scope(root))) == \
+        ["Mike owns the SSO integration."]
+    T.detect(st)
+    assert st.one("SELECT state FROM topic WHERE id=?", (tid,))[0] in ("pending", "stale")

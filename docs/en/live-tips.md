@@ -1370,8 +1370,9 @@ The skill and the app follow the same rules, in `rules/agenda.yaml`, `rules/comm
   after-call model, inside the same ceilings and never during a call; with "only when asked" the summaries wait for a
   preparation or a question about a topic over all time. Each summary sentence names the facts it comes from and is
   shown only when every one of them is still allowed for that call: hiding a call, losing access to a document or
-  deleting a file hides the sentences written from it until the topic is summarised again. Summaries are never
-  counted as a source or a confirmation.
+  deleting a file hides the sentences written from it until the topic is summarised again. A call for one client
+  never gets another client's topic, and a sentence that states a fact of a decision you marked as replaced is not
+  shown. Summaries are never counted as a source or a confirmation.
 - **Brief freshness.** Home, Later and the call form compare when the brief was made with the files of the project
   folder (and the folders added in the form): "Brief is 2 days old · 3 changes since". Refresh updates only the
   sections the changed files touch and keeps your edits and the checklist. Nothing is refreshed by itself.
