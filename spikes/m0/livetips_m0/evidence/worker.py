@@ -52,14 +52,76 @@ def models(route: str, ai_yaml: Optional[Path] = None) -> Dict[str, str]:
         m = (yaml.safe_load(Path(ai_yaml or AI_YAML).read_text(encoding="utf-8")) or {}).get("evidence") or {}
     except (OSError, ValueError):
         m = {}
-    local = os.environ.get("LT_LOCAL_MODEL", "gemma4:26b")
+    if route == "local" and os.environ.get("LT_LOCAL_MODEL"):
+        local = os.environ["LT_LOCAL_MODEL"]           # the PM's model on this Mac wins over the map
+        return {"extract": local, "summary": local}
+    local = "gemma4:26b"
     ext = (m.get("extract") or {}).get(route) or (local if route == "local" else R.PING_MODEL.get(route))
     summ = (m.get("summary") or {}).get(route) or (local if route == "local" else after.get(route) or R.PING_MODEL.get(route))
     return {"extract": ext, "summary": summ}
 
 
+def sent_model(route: str, model: str) -> str:
+    """The model the route's provider really sends for `model`: OpenAIProvider and GeminiProvider replace a name
+    without their own prefix with their default (the request child builds them without a job model). Asked of the
+    provider class itself (describe needs no key), so the worker and the provider cannot drift. PB-103 review r1."""
+    if route == "openai":
+        from ..openai_provider import OpenAIProvider
+        return OpenAIProvider("").describe(model)["model"]
+    if route == "gemini":
+        from ..gemini_provider import GeminiProvider
+        return GeminiProvider("").describe(model)["model"]
+    return model
+
+
+def pick_model(route: str, settings: dict) -> str:
+    """The extraction model of a route: settings.model, else the map; then the name the provider really sends."""
+    return sent_model(route, settings.get("model") or models(route, settings.get("ai_yaml"))["extract"])
+
+
 def ceiling_kind(route: str) -> str:
     return "usd" if route in USD_ROUTES else "pct" if route in PCT_ROUTES else "minutes"
+
+
+# the app's limits (EvidencePrefs.limits, PB-88) in the worker's ceiling names
+_LIMIT_UNITS = {"usd": "usd", "pct": "pct", "min": "minutes"}
+_LIMIT_SCOPES = {"pass": "pass", "day": "day", "all_day": "all_projects_day"}
+
+
+def app_settings(env: Optional[dict] = None) -> dict:
+    """The PM's settings as the app passes them to `evidence pass` (PB-88, spec section 17 S5): `LT_EVIDENCE_LIMITS`
+    = {"pass"|"day"|"all_day": {"usd", "pct", "min"}, "extract", "local_overflow", "topics"} and `LT_LOCAL_FALLBACK`
+    ("0" = the model on this Mac is off in the chain). Unset: {} (the rules' defaults). Unreadable: AI reading off,
+    so a setting the worker cannot read never sends project text (PB-103 review r1)."""
+    env = os.environ if env is None else env
+    out: dict = {}
+    if env.get("LT_LOCAL_FALLBACK") == "0":
+        out["no_local"] = True
+    raw = env.get("LT_EVIDENCE_LIMITS")
+    if not raw:
+        return out
+    try:
+        lim = json.loads(raw)
+        if not isinstance(lim, dict):
+            raise ValueError("not an object")
+    except ValueError as e:
+        out.update(extract=False, limits_error="LT_EVIDENCE_LIMITS unreadable: {}".format(e))
+        return out
+    ceilings: Dict[str, dict] = {}
+    for scope, name in _LIMIT_SCOPES.items():
+        for unit, kind in _LIMIT_UNITS.items():
+            v = (lim.get(scope) or {}).get(unit) if isinstance(lim.get(scope), dict) else None
+            if isinstance(v, (int, float)) and not isinstance(v, bool) and v >= 0:
+                ceilings.setdefault(kind, {})[name] = float(v)
+    if ceilings:
+        out["ceilings"] = ceilings
+    if "extract" in lim:
+        out["extract"] = lim["extract"] is not False      # only an explicit false turns AI reading off
+    if "local_overflow" in lim:
+        out["local_overflow"] = lim["local_overflow"] is True
+    if lim.get("topics") in ("eager", "lazy"):
+        out["topics"] = lim["topics"]
+    return out
 
 
 def state_path() -> Path:
@@ -204,8 +266,8 @@ def project_today(store: S.Store, route: str, kind: str) -> float:
     """Today's spend of this project on the route, summed over today's extract run rows."""
     day = _dt.datetime.now().astimezone().date()
     total = 0.0
-    for r in store.q("SELECT started_at, usd, pct_before, pct_after, seconds FROM run WHERE kind='extract' AND route=?",
-                     (route,)):
+    for r in store.q("SELECT started_at, route, usd, pct_before, pct_after, seconds FROM run WHERE kind='extract'"
+                     " AND (route=? OR fallback_from=?)", (route, route)):
         try:
             d = _dt.datetime.fromisoformat(str(r["started_at"]).replace("Z", "+00:00")).astimezone().date()
         except ValueError:
@@ -216,7 +278,7 @@ def project_today(store: S.Store, route: str, kind: str) -> float:
             total += float(r["usd"] or 0)
         elif kind == "pct":
             total += max(0.0, float(r["pct_after"] or 0) - float(r["pct_before"] or 0))
-        else:
+        elif r["route"] == route:       # minutes are local's own (a run that ended on local counts all its seconds)
             total += float(r["seconds"] or 0) / 60.0
     return total
 
@@ -298,7 +360,8 @@ class Pass:
     def __init__(self, store: S.Store, root: str, settings: Optional[dict] = None, transport=None,
                  rules: Optional[dict] = None, sleep: Callable[[float], None] = time.sleep):
         self.st, self.root = store, root
-        self.set = dict(settings or {})
+        self.set = dict(app_settings())             # the app's settings (env), then the caller's own win
+        self.set.update(settings or {})
         self.rules = rules or X.load_rules()
         self.ex = X.extractor_id(self.rules)
         self.prefix = X.prefix(self.rules)
@@ -307,15 +370,17 @@ class Pass:
         self.route = self.set.get("route") or os.environ.get("LT_AI_ROUTE") or ""   # neither set: no request (off)
         self.fallback_from: Optional[str] = None
         self.kind = ceiling_kind(self.route)
-        self.model = self.set.get("model") or models(self.route, self.set.get("ai_yaml"))["extract"]
+        self.model = pick_model(self.route, self.set)
         self.cap = int(self.rules.get("max_output_tokens", 2000))
         self.poll = float(self.set.get("poll_s", 1.0))
         self.labels = X.project_labels(root)
         self.project = store.meta("evidence_uid") or store.path.stem
         self.errors = 0
         self.t0 = time.monotonic()
+        self.t_local: Optional[float] = None      # minutes on local count from the switch to it
         self.totals = {"in": 0, "cached": 0, "out": 0, "usd": 0.0, "est_usd": 0.0, "requests": 0, "catalog_tokens": 0}
         self.run_id = 0
+        self.last_est = 0.0                       # the estimate of the request in flight (USD routes)
 
     # ---- settings
     def ceilings(self) -> dict:
@@ -326,10 +391,11 @@ class Pass:
 
     # ---- run rows
     def _run_start(self) -> None:
-        m = models(self.route, self.set.get("ai_yaml"))
-        self.model = self.set.get("model") or m["extract"]
+        self.model = pick_model(self.route, self.set)
         self.kind = ceiling_kind(self.route)
         self.pct_before = five_hour_pct(self.route) if self.kind == "pct" else None
+        self._pct_seen = self.pct_before        # the last reading of the account's 5-hour window
+        self.pct_spent = 0.0                    # percent of the window this pass spent (sections 9.1)
         with self.st.conn:
             self.st.conn.execute("UPDATE run SET status='failed', error='killed' WHERE status='running' AND kind='extract'")
             self.run_id = self.st.conn.execute(
@@ -342,14 +408,17 @@ class Pass:
     def _run_end(self, status: str, error: str = "") -> dict:
         IG.apply_pending(self.st)                     # at exit, whatever the status (section 13.1)
         secs = time.monotonic() - self.t0
-        pct_after = five_hour_pct(self.route) if self.kind == "pct" else None
+        # the plan's percent and the USD spent before a switch to local stay on the row (the day caps sum them)
+        pct_after = (self.pct_before or 0.0) + self.pct_spent \
+            if self.kind == "pct" or self.fallback_from in PCT_ROUTES else None
+        usd_run = self.kind == "usd" or self.fallback_from in USD_ROUTES
         with self.st.conn:
             self.st.conn.execute(
                 "UPDATE run SET status=?, ended_at=?, error=?, in_tokens=?, cached_tokens=?, out_tokens=?, est_usd=?,"
                 " usd=?, pct_after=?, seconds=?, route=?, model=?, fallback_from=? WHERE id=?",
                 (status, S.now_utc(), error or None, self.totals["in"], self.totals["cached"], self.totals["out"],
-                 round(self.totals["est_usd"], 6) if self.kind == "usd" else None,
-                 round(self.totals["usd"], 6) if self.kind == "usd" else None, pct_after, round(secs, 3),
+                 round(self.totals["est_usd"], 6) if usd_run else None,
+                 round(self.totals["usd"], 6) if usd_run else None, pct_after, round(secs, 3),
                  self.route, self.model, self.fallback_from, self.run_id))
         r = dict(self.st.one("SELECT * FROM run WHERE id=?", (self.run_id,)))
         r["requests"] = self.totals["requests"]
@@ -369,15 +438,8 @@ class Pass:
         if self.kind == "usd":
             return self.totals["usd"]
         if self.kind == "pct":
-            now = five_hour_pct(self.route)
-            if self.pct_before is None:
-                self.pct_before = now           # the first reading of this pass is its start
-            if now is None:
-                # the account reports no usage (Codex in --ephemeral mode prints none): bounded by a request count,
-                # an assumed percent per request (rules/evidence.yaml pct_per_request_assumed)
-                return self.totals["requests"] * float(self.rules.get("pct_per_request_assumed", 0.5))
-            return max(0.0, now - self.pct_before)
-        return (time.monotonic() - self.t0) / 60.0
+            return self.pct_spent           # summed per request in _spend (a reading, or the assumed percent)
+        return (time.monotonic() - (self.t_local or self.t0)) / 60.0
 
     def check_ceiling(self, next_cost: float) -> None:
         """Before every request: stop when this request, answering at the full cap, would cross the pass, the
@@ -394,11 +456,19 @@ class Pass:
             used = five_hour_pct(self.route)
             if used is not None and used >= float(c.get("stop_above", 80)):
                 raise Stop("ceiling", "plan window above {}%".format(c.get("stop_above", 80)))
-        for name, spent in (("pass", this), ("day", day), ("all_projects_day", glob)):
+        # the day caps first: at a day cap the pass ends even when the pass ceiling is crossed too and overflow is on
+        for name, spent in (("day", day), ("all_projects_day", glob), ("pass", this)):
             limit = c.get(name)
             if limit is None:
                 continue
             if spent + next_cost > float(limit) + 1e-12 or (next_cost == 0 and spent >= float(limit)):
+                if name == "pass" and self.route != "local" and self.set.get("local_overflow") \
+                        and not self.set.get("no_local"):
+                    # the PM's opt-in (off by default, spec sections 8.6 and 9.1): at the pass ceiling go on with the
+                    # model on this Mac, under its own minutes ceilings; never another cloud route. A day cap ends
+                    # the pass (9.1 "daily").
+                    self.switch_local()
+                    return self.check_ceiling(0.0)
                 raise Stop("ceiling", name)
 
     # ---- one request
@@ -436,19 +506,30 @@ class Pass:
             self.st.set_meta("cache_seen:" + self.route, "1")
             self.st.conn.commit()
         usd = None
+        model = ans.get("model") or self.model          # the model that answered (PB-103 review r1)
         if self.kind == "usd":
-            usd = COST.cost_usd(self.model, int(ans.get("in_tokens") or 0), int(ans.get("cache_write") or 0), 0,
-                                int(ans.get("cached") or 0), int(ans.get("out_tokens") or 0)) or 0.0
+            toks = (int(ans.get("in_tokens") or 0), int(ans.get("cache_write") or 0), 0, int(ans.get("cached") or 0),
+                    int(ans.get("out_tokens") or 0))
+            usd = COST.cost_usd(model, *toks)
+            if usd is None:                 # never 0: an unpriced answer is charged the estimate it was let through on
+                usd = self.last_est
             self.totals["usd"] += usd
         pct = None
         if ans.get("account_usage"):
             R.note_account_usage(self.route, ans["account_usage"], state_path())
         if self.kind == "pct":
-            before = getattr(self, "_pct_seen", self.pct_before)
-            now = five_hour_pct(self.route)
-            pct = max(0.0, (now or 0.0) - (before or 0.0)) if now is not None and before is not None else None
-            self._pct_seen = now if now is not None else before
-        ledger_row(self.route, self.model, ans, usd, pct, secs, self.project)
+            # A fresh reading moves the percent by what the account says; a request whose answer carries no usage
+            # (Codex in --ephemeral mode, a cancelled request, a stale reading in ai-accounts.json) counts the assumed
+            # percent (rules/evidence.yaml pct_per_request_assumed), so the pass and both day caps never see 0.
+            now = five_hour_pct(self.route) if ans.get("account_usage") else None
+            if now is not None and self._pct_seen is not None:
+                pct = max(0.0, now - self._pct_seen)
+            else:
+                pct = float(self.rules.get("pct_per_request_assumed", 0.5))
+            if now is not None:
+                self._pct_seen = now
+            self.pct_spent += pct
+        ledger_row(self.route, model, ans, usd, pct, secs, self.project)
 
     def estimate(self, user: str) -> float:
         """The cost of one request answering at the full cap, in the ceiling's unit (0 on plan routes and local,
@@ -461,13 +542,23 @@ class Pass:
         usd = price(self.model, fresh, pre, out_cap(self.route, self.model, self.cap), cached_ok)
         return usd or 0.0
 
+    def gate(self, user: str) -> None:
+        """The ceiling check before one request; the estimate is added only while the route is priced in USD (a
+        switch to local inside the check leaves it out). A USD route whose model has no price ends the pass before
+        the request: every estimate and spend would be 0 and the three USD caps would be off (PB-103 review r1)."""
+        if self.kind == "usd" and not COST.price_for(self.model or ""):
+            raise Stop("off", "the model {} has no price (livetips_m0/cost.py PRICES)".format(self.model))
+        est = self.estimate(user)
+        self.last_est = est
+        self.check_ceiling(est)
+        if self.kind == "usd":
+            self.totals["est_usd"] += est
+
     # ---- one segment (recursive split)
     def extract_view(self, view: dict, cat: List[dict], depth: int = 0) -> tuple:
         """The parsed answer for a view, splitting a cut answer down to one snippet. Returns (obj, tokens, note)."""
         user = X.request_text(view, cat, self.labels)
-        est = self.estimate(user)
-        self.check_ceiling(est)
-        self.totals["est_usd"] += est
+        self.gate(user)
         self.totals["catalog_tokens"] += tokens(json.dumps(cat, ensure_ascii=False, separators=(",", ":")), self.route)
         ans = self.send(user, self.cap, view)
         if ans.get("error") and not X.cut(ans):
@@ -482,9 +573,7 @@ class Pass:
             # one snippet still cut: the one repair retry asking for the items that fit, marked truncated
             user2 = user + "\n\nYour previous answer was cut at the output limit. Return only the most important items" \
                            " that fit, as complete JSON."
-            est = self.estimate(user2)
-            self.check_ceiling(est)
-            self.totals["est_usd"] += est
+            self.gate(user2)
             ans2 = self.send(user2, self.cap, view)
             obj, err = X.parse(ans2.get("text") or "", self.rules["schema"])
             toks = (toks[0] + int(ans2.get("in_tokens") or 0), toks[1] + int(ans2.get("out_tokens") or 0))
@@ -494,9 +583,7 @@ class Pass:
         obj, err = X.parse(ans.get("text") or "", self.rules["schema"])
         if obj is None:
             user2 = user + "\n\nYour previous answer was not valid: {}. Return the JSON only.".format(err)
-            est = self.estimate(user2)
-            self.check_ceiling(est)
-            self.totals["est_usd"] += est
+            self.gate(user2)
             ans2 = self.send(user2, self.cap, view)
             toks = (toks[0] + int(ans2.get("in_tokens") or 0), toks[1] + int(ans2.get("out_tokens") or 0))
             if ans2.get("error") and not X.cut(ans2):
@@ -546,9 +633,15 @@ class Pass:
     def run(self) -> dict:
         self._run_start()
         try:
-            if self.route in USD_ROUTES and not self.set.get("no_local"):
+            if self.set.get("limits_error"):         # the app's settings could not be read: no request at all
+                raise Stop("failed", self.set["limits_error"])
+            if self.set.get("extract") is False:     # "Use AI to read sources" off (the CLI skips the pass before)
+                raise Stop("off", "AI reading of sources is off in Settings")
+            if self.route in USD_ROUTES:
                 caps = COST.ProviderCaps.from_cfg(self.set.get("cfg") or {}, str(state_path()))
                 if caps is not None and caps.capped_route(self.route):
+                    if self.set.get("no_local"):     # the monthly limit is reached and local is off in the chain
+                        raise Stop("ceiling", "monthly limit of the provider")
                     self.switch_local()              # the monthly limit of this provider is reached
             if self.route not in R.ROUTES:
                 raise Stop("off", "no route chosen for the evidence job")
@@ -598,6 +691,7 @@ class Pass:
 
     def switch_local(self) -> None:
         self.fallback_from, self.route = self.route, "local"
+        self.t_local = time.monotonic()
         self.model = models("local", self.set.get("ai_yaml"))["extract"]
         self.kind = "minutes"
         self.errors = 0
@@ -607,7 +701,8 @@ class Pass:
                                                                   self.ceilings().get("pass"), self.run_id))
 
     def on_route_error(self, err: str) -> None:
-        if self.route == "local" and any(w in err for w in ("URLError", "Connection refused", "ConnectionRefused")):
+        if self.route == "local" and any(w in err for w in ("URLError", "Connection refused", "ConnectionRefused",
+                                                            "HTTP Error 404", "not found")):
             raise Stop("off", "the model on this Mac is not installed or not running")
         self.errors += 1
         if self.errors >= int(self.rules.get("errors_to_fail", 3)):
@@ -657,7 +752,7 @@ def estimate(store: S.Store, root: str, route: str, rules: Optional[dict] = None
     rules = rules or X.load_rules()
     settings = settings or {}
     ex, pre = X.extractor_id(rules), X.prefix(rules)
-    model = settings.get("model") or models(route, settings.get("ai_yaml"))["extract"]
+    model = pick_model(route, settings)
     cap = out_cap(route, model, int(rules.get("max_output_tokens", 2000)))
     typical = int(settings.get("typical_out") or store.meta("typical_out:" + route) or TYPICAL_OUT)
     catalog_t = int(settings.get("catalog_tokens") or store.meta("catalog_tokens:" + route) or CATALOG_TOKENS)
@@ -681,5 +776,7 @@ def estimate(store: S.Store, root: str, route: str, rules: Optional[dict] = None
     if route in USD_ROUTES:
         lo = price(model, fresh, segs * pre_t, segs * typical, cached_ok)
         hi = price(model, fresh, segs * pre_t, segs * cap, cached_ok)
-        out.update(usd_typical=round(lo or 0.0, 2), usd_cap=round(hi or 0.0, 2))
+        # an unpriced model has no estimate (None, never $0) and a pass on it ends before the first request
+        out.update(unpriced=lo is None, usd_typical=round(lo, 2) if lo is not None else None,
+                   usd_cap=round(hi, 2) if hi is not None else None)
     return out

@@ -142,7 +142,9 @@ class GeminiProvider(Provider):
             except Exception as err:  # noqa: BLE001  return a completion on transport/callback failure
                 c.error = "Gemini: " + type(err).__name__
                 break
-            if settle(c) and c.retried is None:
+            # PB-103 (evidence job, spec 8.6): extra single_request keeps one billed request (cut answers are split
+            # by the evidence worker); every other job asks once more with a larger limit
+            if settle(c) and c.retried is None and not (extra or {}).get("single_request"):
                 c.retried = "longer"
                 cfg = body["generationConfig"]
                 cfg["maxOutputTokens"] = min(LONGER_MAX, cfg["maxOutputTokens"] * LONGER)

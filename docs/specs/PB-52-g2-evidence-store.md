@@ -2017,6 +2017,60 @@ Implementation notes (S3, PB-86):
   here. The harness's hop step walks from the search's best match in its own
   order and returns the edges it walks; a quote is valid at any revision of its file holding it at that locator.
 
+Implementation notes (S3b, PB-103):
+- `routing.JOBS` has `evidence`; `chain_allowed(route, "evidence")` allows only `local`, so `chain_order` gives the
+  chosen route then the model on this Mac; the other jobs' orders are unchanged (a test pins them). The `chain` entry
+  of `rules/ai.yaml` says so; Swift `AIChain` follows in S5.
+- `rules/ai.yaml` `evidence: {extract: {<route>: model}, summary: {<route>: model}}` records owner decision 1 (section
+  15): api `claude-haiku-5-5` / `claude-sonnet-5-5`, openai `gpt-6-luna` / `gpt-6.1-sol`, gemini
+  `gemini-3.5-flash-lite` / `gemini-3.8-flash`, codex `codex/default` for both, code `haiku` / `sonnet`, local
+  `gemma4:26b` (`LT_LOCAL_MODEL` wins). Every USD name is priced in `cost.PRICES` (a test checks it). Review round 1:
+  a USD route whose model has no price (`--model`, `settings.model` or an edited map) ends the pass `off` ("the model
+  ... has no price") before its first request, local overflow or not, and `estimate` reports `unpriced: true` with
+  `usd_typical` and `usd_cap` null, never $0. The worker resolves the name the provider really sends
+  (`OpenAIProvider` and `GeminiProvider` send their default for a name without the `gpt-` or `gemini-` prefix, asked
+  through the class's own `describe`, whose default is the same `MODEL` the request child's `make_legs` uses) before it
+  prices, logs or records it. A request's spend is priced on the model its answer reports (the model asked for when
+  the answer names none); an answer naming an unpriced model is charged the request's estimate, never $0.
+- Providers: `OpenAIProvider` and `GeminiProvider` read `extra["single_request"]` and then skip the `LONGER` second
+  request, so a cut answer stays `incomplete = max_output_tokens` and the worker splits it; `settle` still keeps a whole
+  JSON object at the start for free. `OllamaProvider` takes `extra["num_predict"]` as the exact cap and, only then,
+  reports `done_reason` (`length` = cut). Without these options every class behaves as before (negative controls in
+  the tests). Tested on the real classes and the request child's code against a stubbed connection and a fake Ollama
+  on loopback; no request left the Mac.
+- Worker: local overflow (`settings.local_overflow`, off by default) switches to the model on this Mac at the pass
+  ceiling only (section 8.6), with its own minutes counted from the switch. The project-day and all-projects-day caps
+  are checked first and end the pass `ceiling` with that cap's name (9.1 "daily"), also when the pass ceiling is
+  crossed at the same request; the plan window's `stop_above` ends the pass too (review round 1). A run that started on a USD route
+  keeps its `usd` and `est_usd` after a switch, and the project-day sum counts it under the route it started on. A
+  missing local model (Ollama 404, "not found") ends the pass `off`.
+- Plan routes: the percent of a pass is summed per request. A request whose answer carries the account's usage moves
+  it by the change of the 5-hour reading; one without (Codex `--ephemeral`, a cancelled request, an old reading left
+  in `ai-accounts.json`) counts `pct_per_request_assumed`. That amount goes to the ledger row's `pct` (the
+  all-projects day cap) and to the run row (`pct_after = pct_before + spent`, the project day cap), also when the
+  pass switched to local.
+- `run.py --extract <route>` adds to the manifest's `calibration`: `precision` (items the validator kept / items the
+  model returned), `recall` (gold v2 facts found / facts over the rows C evaluates on the small set, replaying the
+  recorded fixture), hop and paraphrase answer rates, `seconds` and `pct_of_5h_window`, next to output tokens per
+  segment, catalog tokens per request, segments per document and USD. Tested by replaying the authored fixture
+  through the worker (hop 5 of 6 as before). **Not run on a real route in PB-103** (nothing new leaves the Mac): the
+  checked-in fixture stays authored, and the estimates keep the 500-token output and 2,000-token catalog until the
+  owner approves a real `--extract` run.
+- Review round 1 (2026-11-25): the worker reads the PM's settings as the app passes them since PB-88:
+  `LT_EVIDENCE_LIMITS` (`pass`, `day`, `all_day` x `usd`, `pct`, `min` map onto the `usd`, `pct` and `minutes`
+  ceilings; `stop_above` stays from `rules/evidence.yaml`), `extract: false` ("Use AI to read sources" off) skips
+  extraction in `evidence pass` like `--no-extract` (no run row, no request on any route), `local_overflow` turns
+  overflow on, and `LT_LOCAL_FALLBACK=0` (the model on this Mac off in the chain) means no step to local: a route
+  that is out or over its monthly provider cap then sends nothing. An unreadable `LT_EVIDENCE_LIMITS` sends nothing
+  and ends the pass `failed`. Explicit `--settings-json` keys win over the environment.
+- `--extract <route>` is all or nothing: answers go to a new folder next to the fixture, which replaces it only when
+  every pass ended `done` on the route asked for (no local, no overflow, no failed segment) and the folder replays the
+  small set with no miss and no unparsable answer; otherwise the fixture and manifest are untouched and the run exits
+  non-zero. `measured: true` is written only on that path. The recorder keeps only answers the worker keeps (a cut
+  answer before its split and an unparsable one before its repair are paid and counted, not replayed).
+- Open, not gated: the S3 line "paraphrase answer rate above B without vectors" is not met (C 0 of 3, B 0 of 3). G0
+  prints it under the gate ("Not gated, open") and it is a GraphRAG follow-up task.
+
 ### S4. Topic summaries and global questions (core)
 
 Scope: deterministic communities per client, summary requests on the `after` model inside the pass ceiling, summary
@@ -2253,3 +2307,9 @@ for k, lo, hi, per in (("codex %", 68, 84, 10),):
     вимірюють сховище і пошук, а не якість моделі: кілька переходів 5 з 6 (B 0), модальність 100%, похідне як
     підтверджене 0, гейт PASS. S3b (PB-103): шість справжніх маршрутів, мапа `evidence` у `rules/ai.yaml`, стелі й
     журнал витрат, пауза і переривання під час дзвінка, перезапис фікстури через `--extract` і калібрування.
+12. S3b (PB-103): задача `evidence` у `routing.JOBS` переходить лише на модель на цьому Mac; мапа моделей `evidence`
+    у `rules/ai.yaml` (найдешевша модель маршруту читає джерела, модель after пише підсумки); OpenAI і Gemini для
+    індексації не роблять другого запиту на обрізану відповідь, її ділить воркер; Ollama отримує рівно ліміт 2000 і
+    повідомляє про обрізання; локальний перехід на стелі (налаштування, вимкнене за замовчуванням); `--extract`
+    записує точність, повноту, частки відповідей на кілька кроків і перефразування, розмір і вартість. На
+    справжньому AI калібрування ще не запускалось, тож оцінки лишаються на припущеннях 500 і 2000 токенів.

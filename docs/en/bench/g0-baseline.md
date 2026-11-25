@@ -216,6 +216,36 @@ Results at this commit (`results/{A,B,C}-2026-11-24-s3a.json`, against the `-s2`
   not evaluated here, no bge-m3 model folder). Live p95 4.37 to 8.78 ms (small) and 22.44 to 26.36 ms (scale), against
   the 150 ms bar. S2+S3 gate: PASS.
 
+## G2 S3b: the evidence job, the model map, ceilings and `--extract` calibration (2026-11-24)
+
+PB-103 adds the `evidence` routing job (it steps only to the model on this Mac), the model map in `rules/ai.yaml`, one
+request per cut answer on the real OpenAI and Gemini classes, Ollama's exact cap, local overflow at a ceiling and the
+quality fields of `run.py --extract <route>`: precision (items the validator kept / items the model returned), recall
+(gold v2 facts found / facts asked over the rows C evaluates on the small set), the hop and paraphrase answer rates,
+seconds and percent of a plan window, next to output tokens per segment, catalog tokens, segments per document and
+USD. C's fixture replay also reports `items_kept` and `items_dropped`. **`--extract` was not run on a real route**
+(nothing new leaves the Mac in PB-103): the checked-in fixture stays authored, so C's numbers are the S3a numbers and
+the estimates keep the 500-token output and 2,000-token catalog assumptions until a real run is approved.
+
+Results at this commit (`results/{A,B,C}-2026-11-24-s3b.json`, against the `-s3a` results on main):
+
+- **A unchanged**: every column equal; lookup p50 1.59 to 1.63 ms, p95 2.39 to 2.42 ms.
+- **B unchanged**: every column equal; lookup p50 2.27 to 2.32 ms, p95 2.82 to 2.94 ms.
+- **C unchanged**: every existing column equal (rows 32/36, hop 5 of 6, modality 100%, derived as confirmed 0, fixture
+  64 hits and 0 misses on the small set, every leak 0); new: the replay keeps 320 of 352 authored items (32 dropped by
+  the validator, precision 90.9% on the authored fixture, not a model). Live p95 8.78 to 8.19 ms (small), 26.36 to
+  27.62 ms (scale). S2+S3 gate: PASS on its gated checks. **One section 17 S3 line is not met and not gated:** the
+  paraphrase answer rate of C above B without vectors (C 0 of 3, B 0 of 3). The run now prints it under the gate
+  ("Not gated, open: paraphrase above B not met") and it is a GraphRAG follow-up task, not covered by the PASS.
+
+Review round 1 fixes (2026-11-25): `--extract <route>` is all or nothing. It records into a new folder next to the
+fixture and replaces the fixture only when every pass ended `done` on the route asked for (never the model on this
+Mac, no local overflow, no failed segment) and the new folder replays the small set with no miss; otherwise the
+checked-in fixture and its manifest stay as they were and the run exits with an error. A pass stopped at a ceiling
+therefore never mixes real and authored answers under `measured: true`: a run stopped at a ceiling or by an error
+records nothing (tested with a stub, no real route). Only answers the worker keeps are recorded, not a cut answer
+before its split or an unparsable one before its repair.
+
 ## What is measured
 
 Each target call is replayed on a clean copy of the fixture project, with every file dated by the date in its name

@@ -6,7 +6,8 @@
     ingest    deterministic pass: --hidden-calls, --revoked, --web-dirs, --tracker, --valid-from (tests and the bench
               only), --quiet-seconds, --no-embed
     pass      ingest, then LLM extraction of the pending revisions on the evidence route (S3): --route, --model,
-              --settings-json (ceilings, poll_s), --no-extract (the switch "Use AI to read sources" off)
+              --settings-json (ceilings, poll_s, local_overflow: go on with the model on this Mac at a ceiling,
+              off by default), --no-extract (the switch "Use AI to read sources" off)
     estimate  the pending segments and the cost of extracting them on --route, typical to cap
     exclude   the state-only pass: --hidden-calls and/or --revoked (full current lists), --request-id
     override  one pm_override row: --target --key --field --value --at --via, --request-id (any field is stored;
@@ -121,7 +122,11 @@ def cmd_ingest(a) -> dict:
             ext = None
             if a.cmd == "pass" and not a.no_extract:
                 from . import worker as W
-                ext = W.extract_pass(st, a.root, _settings(a))
+                s = dict(W.app_settings(), **_settings(a))
+                # "Use AI to read sources" off in the app (LT_EVIDENCE_LIMITS extract: false): like --no-extract, no
+                # run row and no request; an unreadable setting still runs the worker, which ends the pass failed
+                if s.get("extract") is not False or s.get("limits_error"):
+                    ext = W.extract_pass(st, a.root, _settings(a))
             st.compact_log()                    # under both locks (section 13.1)
     out = {"ok": True, "status": "done", "report": rep}
     if ext is not None:

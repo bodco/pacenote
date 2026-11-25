@@ -83,9 +83,10 @@ READY = {"S2"}          # the sub-tasks whose code C has: S3 adds "S3" with the 
 MANIFEST = EXTRACT / "manifest.json"    # the recorded extraction fixture: gold sha256, route, model, calibration
 
 
-def ready_set() -> set:
+def ready_set(fixture_dir: Optional[Path] = None) -> set:
     """S3 counts as ready for C only with a recorded extraction fixture (raw model output, recorded by --extract)."""
-    return READY | ({"S3"} if MANIFEST.is_file() else set())
+    m = (fixture_dir / "manifest.json") if fixture_dir else MANIFEST
+    return READY | ({"S3"} if m.is_file() else set())
 SETS = ("small", "scale")
 SEED = 52               # the scale set's noise generator
 VARIANTS = ("A", "B", "C")
@@ -804,6 +805,7 @@ def replay_fixture(ctx: dict, fixture_dir: Path, small: bool) -> dict:
     rules = EX.load_rules()
     labels = EX.project_labels(str(ctx["root"]))
     hits = misses = tokens = 0
+    kept = dropped = 0
     extractors = set()
     for r in st.q("SELECT rv.id FROM revision rv JOIN source s ON s.id=rv.source_id WHERE rv.extract_state='pending'"
                   " ORDER BY rv.id"):
@@ -835,11 +837,13 @@ def replay_fixture(ctx: dict, fixture_dir: Path, small: bool) -> dict:
                     parts.append(obj1)
                 obj = W.rebase(EX.merge(parts) if len(parts) > 1 else parts[0], {"snippets": [{"lines": (shift, 0)}]}, +1)
                 cat = EX.catalog(st, view, str(ctx["root"]), labels, int(rules.get("catalog_max", 60)))
-                items, _c = EX.validate(st, view, obj, rules, cat, str(ctx["root"]), labels)
+                items, c = EX.validate(st, view, obj, rules, cat, str(ctx["root"]), labels)
+                kept, dropped = kept + int(c["kept"]), dropped + int(c["dropped"])
                 ES.apply_extraction(st, r["id"], items, mark_done=False)
             else:
                 ES.apply_extraction(st, r["id"], data.get("items") or {})
-    out = {"recorded": recorded, "hits": hits, "misses": misses, "tokens": tokens, "extractors": sorted(extractors)}
+    out = {"recorded": recorded, "hits": hits, "misses": misses, "tokens": tokens, "extractors": sorted(extractors),
+           "items_kept": kept, "items_dropped": dropped}       # PB-103: the validator's share kept (--extract precision)
     out["state"] = "not_recorded" if not recorded else ("stale" if misses else "ok")
     if recorded and misses and small:
         raise SystemExit("G0 C: fixture stale: {} segments of the small set have no fixture file for their seg_hash "
@@ -1081,15 +1085,16 @@ def derived_confirmed(ctx: dict, items: List[dict]) -> List[int]:
 
 # ---------------------------------------------------------------- gold v2: one set, one vector mode
 
-def evaluate_v2(v, ctx: dict, gold2: dict, set_name: str, embedder=None) -> dict:
-    fixture = replay_fixture(ctx, EXTRACT, set_name == "small") if v.name == "C" else None
+def evaluate_v2(v, ctx: dict, gold2: dict, set_name: str, embedder=None, fixture_dir: Optional[Path] = None) -> dict:
+    fixture = replay_fixture(ctx, fixture_dir or EXTRACT, set_name == "small") if v.name == "C" else None
+    ready = ready_set(fixture_dir)
     if embedder is not None and not ctx["store"].one("SELECT 1 FROM snippet WHERE vec IS NOT NULL"):
         raise SystemExit("G0 {}: the run with vectors stored no snippet vector (the embed server answered nothing)"
                          .format(v.name))
     rows = []
     top = int(gold2.get("top", 6))
     for row in gold2["rows"]:
-        if v.name == "C" and row["needs"] not in ready_set():
+        if v.name == "C" and row["needs"] not in ready:
             rows.append({"id": row["id"], "kind": row["kind"], "needs": row["needs"], "status": "not_evaluated",
                          "missing": "{} ({})".format(row["needs"], {"S3": "LLM extraction", "S4": "topic summaries"}[row["needs"]]),
                          "expected": row["expected"]["C"]})
@@ -1254,6 +1259,22 @@ def s2_gate(res: dict) -> Optional[dict]:
     return {"pass": all(x for x in checks.values() if x is not None), "checks": checks}
 
 
+def s3_open(res: dict, b_res: Optional[dict] = None) -> List[str]:
+    """Section 17 S3 lines that are not met and not gated (printed next to the gate so a PASS does not hide them):
+    the paraphrase answer rate of C above B on the small set without vectors (a GraphRAG follow-up task)."""
+    small = res["v2"]["sets"].get("small", {}).get("no_vectors")
+    if not small or "skipped" in small:
+        return []
+    c = small["paraphrase_answer_rate"]
+    try:
+        b = (b_res or newest("B"))["v2"]["sets"]["small"]["no_vectors"]["paraphrase_answer_rate"]
+    except (SystemExit, KeyError, TypeError):
+        return ["paraphrase above B: no B result"]
+    if c["n"] > b["n"]:
+        return []
+    return ["paraphrase above B not met ({} of {}, B {} of {}; follow-up)".format(c["n"], c["of"], b["n"], b["of"])]
+
+
 def s3_gate(res: dict, b_res: Optional[dict] = None) -> Optional[dict]:
     """The S3a G0 gate (spec section 17, S3) for C with a recorded extraction fixture whose gold hash is current (the
     replay stops on "gold changed" otherwise): on the small set hop answer rate at least 4 of 6 and at least 2 more
@@ -1337,6 +1358,7 @@ def run(variant_name: str = "A", gold_path: Path = GOLD, sets=SETS, gold2_path: 
             out["v2"]["gate"]["checks"].update(s3)
             out["v2"]["gate"]["pass"] = all(x for x in out["v2"]["gate"]["checks"].values() if x is not None)
             out["v2"]["gate"]["s3"] = True
+            out["v2"]["gate"]["open"] = s3_open(out)
     out["seconds"] = round(time.time() - t_all, 2)
     return out
 
@@ -1454,6 +1476,8 @@ def table_v2(res: dict) -> str:
         skipped = [k.split(" ")[0] for k, x in gate["checks"].items() if x is None]
         note = " ({} not evaluated)".format(", ".join(skipped)) if skipped else ""
         lines += ["", "{} gate: {}".format("S2+S3" if gate.get("s3") else "S2","PASS" + note if gate["pass"] else "FAIL: " + ", ".join(failed))]
+        if gate.get("open"):
+            lines.append("Not gated, open: " + "; ".join(gate["open"]))
     return "\n".join(lines)
 
 
@@ -1564,6 +1588,12 @@ class Recorder:
         self.answers: Dict[str, List[str]] = {}
         self.base: Dict[str, int] = {}
         self.tokens: Dict[str, List[int]] = {}
+        self._schema = None
+
+    def schema(self):
+        if self._schema is None:
+            self._schema = EX.load_rules()["schema"]
+        return self._schema
 
     def start(self, req: dict):
         h = self.inner.start(req)
@@ -1579,7 +1609,11 @@ class Recorder:
             def result(self):
                 a = h.result()
                 if not a.get("error") and req.get("seg_hash"):
-                    rec.answers.setdefault(req["seg_hash"], []).append(a.get("text") or "")
+                    # only answers the worker keeps: a cut answer (split next) or one that does not parse (repaired
+                    # next) is paid and counted but not replayed (PB-103 review r1)
+                    text = a.get("text") or ""
+                    if not EX.cut(a) and EX.parse(text, rec.schema())[0] is not None:
+                        rec.answers.setdefault(req["seg_hash"], []).append(text)
                     rec.base.setdefault(req["seg_hash"], int(req.get("base_line") or 0))
                     t = rec.tokens.setdefault(req["seg_hash"], [0, 0])
                     t[0] += int(a.get("in_tokens") or 0)
@@ -1589,20 +1623,62 @@ class Recorder:
 
 
 def record_extract(route: str, gold_path: Path = GOLD, gold2_path: Path = GOLD2, out_dir: Path = EXTRACT,
-                   transport=None) -> dict:
+                   transport=None, settings: Optional[dict] = None) -> dict:
     """--extract <route>: extract the gold v2 small set on a real route through the worker (this sends the invented
     fixture text to that route's provider; never run by the gate), write fixtures/extract/<seg_hash>.json (raw model
-    output, review by deletion only) and manifest.json (gold sha256, route, model, extractor, calibration)."""
+    output, review by deletion only) and manifest.json (gold sha256, route, model, extractor, calibration).
+
+    All or nothing (PB-103 review r1): the answers go to a new folder next to out_dir, which replaces out_dir only when
+    every pass ended `done` on the route asked for (no switch to local, no failed segment) and the new folder replays
+    the small set with no miss and no unparsable answer. Otherwise out_dir is left as it was and the run exits
+    non-zero, so a pass stopped at a ceiling never mixes real answers with the authored ones."""
     gold, gold2 = load_gold(gold_path), load_gold(gold2_path)
     rec = Recorder(transport or W.ChildTransport())
     runs: List[dict] = []
+    bad: List[str] = []
+    # never the model on this Mac in place of the route asked for, whatever the environment says
+    settings = dict(settings or {}, route=route, no_local=True, local_overflow=False, extract=True)
     with tempfile.TemporaryDirectory(prefix="g0-extract-") as tmp, store_env(Path(tmp)):
         def extract(ctx):
-            runs.append(W.extract_pass(ctx["store"], str(ctx["root"]), {"route": route, "record": True}, rec))
+            r = W.extract_pass(ctx["store"], str(ctx["root"]), settings, rec)
+            runs.append(r)
+            items = ctx["store"].q("SELECT status, COUNT(*) n FROM run_item WHERE run_id=? AND status NOT IN"
+                                   " ('done','cached') GROUP BY status", (r["id"],))
+            bad.extend("{} {}".format(i["n"], i["status"]) for i in items)
         ctx = build_v2(Path(tmp) / "rec", gold, gold2, False, None, after_pass=extract)
         cost = index_cost(ctx, None)
         ctx["store"].close()
-    out_dir.mkdir(parents=True, exist_ok=True)
+    why = ["pass {} ended {}{}".format(i + 1, r["status"], ": " + str(r.get("error")) if r.get("error") else "")
+           for i, r in enumerate(runs) if r["status"] != "done"]
+    why += ["a pass switched from {} to {}".format(r["fallback_from"], r["route"]) for r in runs
+            if r.get("fallback_from") or r.get("route") != route]
+    why += ["segments not answered: " + ", ".join(sorted(set(bad)))] if bad else []
+    why += ["no answer recorded"] if not rec.answers else []
+    if why:
+        raise SystemExit("G0 --extract {}: nothing recorded, {} left as it was ({})".format(
+            route, out_dir.name, "; ".join(why)))
+    out_dir.parent.mkdir(parents=True, exist_ok=True)
+    new = Path(tempfile.mkdtemp(prefix="." + out_dir.name + "-new-", dir=out_dir.parent))
+    old = None
+    try:
+        manifest = _write_recording(new, route, rec, runs, cost, gold, gold2, gold2_path)
+        if out_dir.exists():
+            old = Path(tempfile.mkdtemp(prefix="." + out_dir.name + "-old-", dir=out_dir.parent))
+            out_dir.rename(old / out_dir.name)
+        new.rename(out_dir)
+    finally:
+        if old is not None and not out_dir.exists():
+            (old / out_dir.name).rename(out_dir)          # the swap failed half way: the old fixture comes back
+        for d in (new, old):
+            if d is not None and d.exists():
+                shutil.rmtree(d)
+    return manifest
+
+
+def _write_recording(out_dir: Path, route: str, rec: "Recorder", runs: List[dict], cost: dict, gold: dict,
+                     gold2: dict, gold2_path: Path) -> dict:
+    """The answers and manifest of a complete --extract run into the new (empty) folder; replaying it must hit every
+    small-set segment and parse every answer (replay_fixture raises SystemExit otherwise)."""
     ex = runs[0]["extractor"] if runs else ""
     for h, answers in rec.answers.items():
         (out_dir / (h + ".json")).write_text(json.dumps(
@@ -1611,17 +1687,56 @@ def record_extract(route: str, gold_path: Path = GOLD, gold2_path: Path = GOLD2,
             encoding="utf-8")
     sent = sum(int(r.get("requests") or 0) for r in runs)
     outs = sum(int(r.get("out_tokens") or 0) for r in runs)
-    cal = {"segments_recorded": len(rec.answers), "requests": sent,
+    pcts = [max(0.0, float(r["pct_after"]) - float(r["pct_before"])) for r in runs
+            if r.get("pct_after") is not None and r.get("pct_before") is not None]
+    cal = {"measured": True, "segments_recorded": len(rec.answers), "requests": sent,
            "out_tokens_per_segment": round(outs / len(rec.answers), 1) if rec.answers else None,
            "catalog_tokens_per_request": round(sum(float(r.get("catalog_tokens") or 0) for r in runs) / sent, 1) if sent else None,
            "segments_per_document": cost["segments_per_document"],
            "usd": round(sum(float(r.get("usd") or 0) for r in runs), 4),
+           "pct_of_5h_window": round(sum(pcts), 2) if pcts else None,
+           "seconds": round(sum(float(r.get("seconds") or 0) for r in runs), 1),
            "statuses": sorted({r["status"] for r in runs})}
     manifest = {"gold_sha256": hashlib.sha256(Path(gold2_path).read_bytes()).hexdigest(), "route": route,
                 "model": runs[0]["model"] if runs else "", "extractor": ex, "recorded_at": dt.datetime.now().isoformat(
                     timespec="seconds"), "calibration": cal}
     (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=1) + "\n", encoding="utf-8")
+    cal.update(extract_quality(out_dir, gold, gold2, Path(gold2_path)))     # recorded, not gated (spec section 17 S3)
+    if cal.get("fixture_misses"):
+        raise SystemExit("G0 --extract {}: nothing recorded, {} small-set segments have no answer".format(
+            route, cal["fixture_misses"]))
+    (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=1) + "\n", encoding="utf-8")
     return manifest
+
+
+def extract_quality(fixture_dir: Path, gold: dict, gold2: dict, gold2_path: Path) -> dict:
+    """--extract calibration of quality: C on the small set (no vectors) replaying `fixture_dir`. precision = items the
+    validator kept / items the model returned (a quote that is not verbatim at its lines, an unknown enum, another
+    client's quote or a link without a word of both ends is dropped); recall = gold v2 facts found / gold facts over
+    the rows C evaluates; hop and paraphrase answer rates as in the results JSON. Recorded, not gated."""
+    EVIDENCE_ROWS.clear()
+    EVIDENCE_ROWS.update(r["id"] for r in gold2["rows"] if r.get("evidence"))
+    SHARED_ROWS.clear()
+    SHARED_ROWS.update(r["id"] for r in gold2["rows"] if r.get("shared"))
+    with tempfile.TemporaryDirectory(prefix="g0-extract-q-") as tmp, store_env(Path(tmp)):
+        ctx = build_v2(Path(tmp) / "q", gold, gold2, False, None)
+        ctx["gold_sha256"] = hashlib.sha256(gold2_path.read_bytes()).hexdigest()
+        try:
+            r = evaluate_v2(variant("C"), ctx, gold2, "small", None, fixture_dir=fixture_dir)
+        finally:
+            ctx["store"].close()
+    fx = r["fixture"] or {}
+    returned = int(fx.get("items_kept") or 0) + int(fx.get("items_dropped") or 0)
+    ev = [x for x in r["rows"] if x["status"] != "not_evaluated"]
+    found = sum(1 for x in ev for f in x.get("facts") or [] if f["found"])
+    facts = sum(len(x.get("facts") or []) for x in ev)
+    return {"precision": pct(int(fx.get("items_kept") or 0), returned), "items_returned": returned,
+            "recall": pct(found, facts), "facts_asked": facts,
+            "hop_answer_rate": r["hop_answer_rate"], "paraphrase_answer_rate": r["paraphrase_answer_rate"],
+            "rows_passed": r["rows_passed"], "rows_evaluated": r["rows_evaluated"],
+            "fixture_misses": int(fx.get("misses") or 0),
+            "definitions": {"precision": "items the validator kept / items the model returned (not against gold)",
+                            "recall": "gold v2 facts found / gold facts over the rows C evaluates, small set, no vectors"}}
 
 
 def main(argv=None) -> int:
