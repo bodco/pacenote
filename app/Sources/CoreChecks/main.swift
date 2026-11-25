@@ -5512,7 +5512,8 @@ func passwordFlowsPB110() {
     expect(S.MethodAction.change.needsCurrent && S.MethodAction.change.needsNew, "pb110: Change password asks for the current and a new one")
     expect(Set(obj(S.setPasswordBody(current: "the old password", new: "a long new password")).keys) == ["current_password", "new_password"],
            "pb110: change body")
-    expect(S.authMessage(S.AuthProblem(status: 403, type: "invalid_credentials"), context: .methods)?.key == "account.methods.wrongPassword",
+    expect(S.authMessage(S.AuthProblem(status: 403, type: "invalid_credentials"), context: .methods)?.key == "account.methods.wrongPassword"
+           && keys.contains("account.methods.wrongPassword"),
            "pb110: wrong current password reads as such, not as a failed sign-in")
     expect(keys.contains("account.methods.changed"), "pb110: change notice text")
 
@@ -5524,7 +5525,8 @@ func passwordFlowsPB110() {
     expect(Set(obj(S.setPasswordBody(current: nil, new: "a long new password")).keys) == ["new_password"]
            && Set(obj(S.setPasswordBody(current: "", new: "a long new password")).keys) == ["new_password"],
            "pb110: no current_password is sent when setting the first password")
-    expect(S.authMessage(S.AuthProblem(status: 409, type: "google_reauth"), context: .methods)?.key == "account.methods.confirmGoogle",
+    expect(S.authMessage(S.AuthProblem(status: 409, type: "google_reauth"), context: .methods)?.key == "account.methods.confirmGoogle"
+           && keys.contains("account.methods.confirmGoogle"),
            "pb110: the server asking for Google again says so")
     let both = auth(true, true)
     expect(both?.canRemovePassword == true && both?.canDisconnectGoogle == true && both?.passwordChangedAt != nil,
