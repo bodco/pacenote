@@ -89,8 +89,34 @@ def test_cap_slots_cover_queued_runs():
     assert set(slots) <= set(listed)
     assert "queued" in slots and "expired" not in slots and "not_eligible" not in slots
     sec6 = _section(s, 6)
-    assert "Cap slots" in sec6 and "Rules 10 to 16 are checked again when the judge starts" in sec6
+    assert "Cap slots" in sec6 and "Rules 1, 2 and 10 to 16 are checked again when the judge starts" in sec6
     assert Q["eligibility"]["slots_file"] in sec6
+
+
+
+def test_switches_and_route_are_checked_again_at_start():
+    """Review PB-90 r2: a waiting judge checks both switches again before its first request (a switch turned off
+    while it waits sends nothing), and the judge runs on the saved "after" route only: AIRoute.effective and canRun
+    may pick another AI, the model on this Mac included."""
+    s = SPEC.read_text(encoding="utf-8")
+    e, skip = Q["eligibility"], Q["new_enums"]["quality_skip"]
+    rows = re.findall(r"^\| (\d+) \|.*\| `([a-z_]+)` \|$", _section(s, 6), re.M)
+    by_n = {int(n): w for n, w in rows}
+    expected = [by_n[n] for n in (1, 2, *range(10, 17))]
+    assert e["recheck_at_start"] == expected
+    assert set(e["recheck_at_start"]) <= set(skip)
+    assert e["stop_on_switch_off"] is True
+    sec6, sec7 = _section(s, 6), _section(s, 7)
+    assert "A switch turned off during a run" in sec6 and "no `tip_scored` is sent for that call" in sec6
+    assert Q["judge"]["route_source"] == "saved" and Q["judge"]["chain"] is False
+    assert "(`AppConfig.ai.after`" in sec7 and "**not** from `AIRoute.effective`" in sec7
+    for v in ("LT_AI_AUTO=0", "LT_LOCAL_FALLBACK=0", "LT_GEMINI_FALLBACK=0", "`LT_AI_CHAIN` with that route"):
+        assert v in sec7, v
+    rule13 = next(ln for ln in sec6.splitlines() if ln.startswith("| 13 |"))
+    assert "Not `AIRoute.canRun`" in rule13 and "`AIRoute.available(route)`" in rule13 and "`AIRoute.due(route)`" in rule13
+    assert "`routing.provider_from_env(job=\"after\")`" in sec7 and "does not use the `ai` block of `sidecar-config.json`" in sec7
+    assert "the score\n  fields (`scored`, `useful_avg`" in sec6 or "score fields (`scored`, `useful_avg`" in sec6.replace("\n  ", " ")
+    assert "including a scoring that is waiting or under way" in s and "зокрема те, що чекає або вже йде" in s
 
 
 def test_open_questions_table_is_one_table():

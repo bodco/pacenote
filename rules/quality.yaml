@@ -45,11 +45,15 @@ eligibility:
   slot_states: [queued, running, done, partial, failed]  # quality.json judge.state values that hold a cap slot
   slots_file: state/quality-slots.jsonl  # next to spend-ledger.jsonl, on this Mac only, not synced
   expire_hours: 24                 # a queued judge not started within 24 h of the call's end is dropped (why: expired)
+  # checked again when the judge starts (spec 6): a switch turned off or a route changed while the call waited
+  recheck_at_start: ['off', analytics_off, day_cap, week_cap, local_route, no_route, economy, near_limit, budget]
+  stop_on_switch_off: true         # either switch off during a run: stop at once, no tip_scored for that call
 
 # --- the judge (CQ3) ---------------------------------------------------------------------------------------------------
 judge:
   job: after                       # the user's "After the call" route (AIRoute, Settings > AI); LT_AI_STAGE=judge
   chain: false                     # no fallback chain and LT_LOCAL_FALLBACK=0: a failed route ends the run (failed)
+  route_source: saved              # AppConfig.ai.after as saved; never AIRoute.effective or canRun (they may pick another AI)
   judged_kinds: [tip, fact, answer]  # the v1 filter judge.shown_tip; other shown kinds are counted, not judged
   when: after the after-call jobs of the call are done and no call is running (eligibility.expire_hours)
   max_tips: 20                     # sampled evenly over the call (judge.sample_even), retracted tips never

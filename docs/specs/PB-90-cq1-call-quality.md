@@ -168,8 +168,8 @@ their usefulness depends on the call plan more than on the transcript (open ques
 Rules:
 
 - `judge.state`: `not_eligible`, `queued`, `running`, `done`, `partial` (a budget cap or a second stop at call start
-  ended it with some tips scored, or a restarted run with scores failed rules 12 to 16), `failed`, `expired`. A call
-  holds a cap slot (section 6) in `queued`, `running`, `done`, `partial` and `failed`.
+  ended it with some tips scored, a restarted run with scores failed rules 1, 2 or 12 to 16, or a switch was turned
+  off during the run), `failed`, `expired`. A call holds a cap slot (section 6) in `queued`, `running`, `done`, `partial` and `failed`.
 - `lag_s` = shown time minus trigger line time (`at` minus `src` in the tips file), capped at `local.lag_cap_s`
   (600). `late` counts tips with `lag_s` above `local.late_lag_s` (20).
 - `asks_muted`: questions from a muted span (PB-104 `OpenAsks`) are counted apart and never as open.
@@ -183,7 +183,7 @@ Rules:
 ## 6. Selection: which calls are judged
 
 Defaults in `rules/quality.yaml > eligibility`. Decided right after the local metrics at the end of the call, and
-rules 10 to 16 again when the judge starts (below). The first failing rule is the skip reason (`why`):
+rules 1, 2 and 10 to 16 again when the judge starts (below). The first failing rule is the skip reason (`why`):
 
 | Order | Rule (proposed default) | `why` when it fails |
 |---|---|---|
@@ -198,8 +198,8 @@ rules 10 to 16 again when the judge starts (below). The first failing rule is th
 | 9 | Muted spans under 30% of the call (PB-104) | `muted` |
 | 10 | At most 1 judged call this local day | `day_cap` |
 | 11 | At most 3 judged calls in the last 7 days | `week_cap` |
-| 12 | The "after" route is not the model on this Mac | `local_route` |
-| 13 | The "after" route can run (`AIRoute.canRun(job: "after")`) | `no_route` |
+| 12 | The chosen "after" route (section 7, "Route") is not the model on this Mac | `local_route` |
+| 13 | That chosen route can run by itself: `AIRoute.available(route)` and `AIRoute.due(route)` (not out, or its reset time passed). Not `AIRoute.canRun`, which also passes when another AI of the chain could take the job | `no_route` |
 | 14 | Economy mode is off | `economy` |
 | 15 | Metered routes (api, openai, gemini): the provider is under its monthly alert share (`rules/ai.yaml > provider_limits`, providers with a key only). Plan routes (code, codex) have no limit source in the app, so this rule does not apply to them; rule 13 covers a route marked down | `near_limit` |
 | 16 | The budget estimate fits (section 7) | `budget` |
@@ -214,10 +214,18 @@ cannot pass the caps together:
 - A call takes a slot when it is queued, dated by its queue time. Rules 10 and 11 count every call that holds a slot:
   `queued`, `running`, `done`, `partial` and `failed`. A second call that ends while the first one still waits is
   skipped with `day_cap` or `week_cap`.
-- A slot is given back only when the judge never sent a request: the call is `expired`, or rules 12 to 16 fail when it
-  starts (then `why` is that rule's code). A run that sent at least one request keeps its slot whatever its end state.
-- Rules 10 to 16 are checked again when the judge starts (the route, the spend or the caps may have changed); for
-  rules 10 and 11 the call's own slot is not counted.
+- A slot is given back only when the judge never sent a request: the call is `expired`, or rules 1, 2 or 12 to 16
+  fail when it starts (then `why` is that rule's code). A run that sent at least one request keeps its slot whatever
+  its end state.
+- Rules 1, 2 and 10 to 16 are checked again when the judge starts (the switches, the route, the spend or the caps may
+  have changed while the call waited), so a switch turned off while a call waits means no request is ever sent for
+  it; for rules 10 and 11 the call's own slot is not counted.
+- **A switch turned off during a run.** "Rate tips on some calls" or "Help improve Pacenote" turned off while the
+  judge runs stops it at once (`CallEngine` terminates the judge `Process`, as at call start): no further request,
+  and no `tip_scored` is sent for that call, not even for the tips already scored. In `quality.json` the run ends
+  `partial` or `failed` and keeps its slot (requests were sent). Its `call_quality` follows section 8.3 with the
+  switch values at send time and is sent as not judged: `judged` false, `why` `off` or `analytics_off`, and the score
+  fields (`scored`, `useful_avg`, `timely_pct`, `correct_pct`, `concrete_pct`, `provider`, `model`, `judge_s`) left out.
 - A run stopped at call start (section 7) keeps its slot and goes back to the queue once. The requests it already sent
   stay in the ledger and count toward the month cap; the restarted run scores only the tips not scored yet, within the
   same `per_call_usd` minus what the stopped run spent. A second stop ends it `partial` (some tips scored) or `failed`
@@ -231,11 +239,24 @@ There is no maximum length: the cost grows with the tips judged (at most 20), no
 
 ## 7. Judge route and budget guard
 
-- **Route**: the route chosen for the "After the call" job in Settings > AI, through `AIRoute.env(job: "after")` with
-  `LT_AI_STAGE=judge`, **without the fallback chain**: the chain ends on the model on this Mac (rule 12) and may move
-  to another provider, which would break the budget and mix judges. The judge runs with the chain off and
-  `LT_LOCAL_FALLBACK=0` (as the evidence worker of PB-103); when that route fails, the run ends `failed` and is not
-  retried on another route. `quality.json` and the event record the route and model that actually answered (from the
+- **Route**: the route Settings > AI shows for the "After the call" job, read from the saved config
+  (`AppConfig.ai.after`; `AIRoute.autoAssign` keeps it on a connected AI and saves it), **not** from `AIRoute.effective`. `effective` swaps a route that cannot run for the first AI
+  that can (`AIDefaults.runtime`, which may be the model on this Mac) and applies `EconomyPlan`, and `canRun` passes
+  when any AI of the chain could take the job; both would move the judge to an AI other than the one Settings shows
+  for this work. So rules 12 and 13 test the saved route itself, and CQ3 builds the judge environment with a pinned variant of
+  `AIRoute.env` (for example `AIRoute.judgeEnv(route:config:)`) that skips `effective` and sets `LT_AI_STAGE=judge`,
+  `LT_AI_ROUTE` to the saved route, its saved OpenAI or Gemini model, `LT_AI_AUTO=0`, `LT_AI_CHAIN` with that route
+  only, `LT_LOCAL_FALLBACK=0` and `LT_GEMINI_FALLBACK=0` (as the evidence worker of PB-103). **No fallback chain**: the
+  chain ends on the model on this Mac (rule 12) and may move to another provider, which would break the budget and
+  mix judges. When that route fails, the run ends `failed` and is not retried on another route. If the completion
+  says another route or provider answered (a switch the pin missed), the run stops `failed` and its scores are not
+  sent.
+- **Provider in the engine**: judge v2 does not use the `ai` block of `sidecar-config.json`. That block is written by
+  `AIRoute.sidecarBlock` from `effective` and carries `auto` and the chain, and today's v1 path
+  (`providers.make_provider(cfg)` to `routing.provider_from_cfg`) takes `auto` and `chain` from it and ignores
+  `LT_AI_AUTO`. `judge.py --rubric v2` builds its provider with `routing.provider_from_env(job="after")`, which reads
+  `LT_AI_ROUTE`, `LT_AI_AUTO`, `LT_AI_CHAIN`, `LT_GEMINI_FALLBACK` and the job models from the pinned environment;
+  `LT_LOCAL_FALLBACK` is read from the environment by both paths. `quality.json` and the event record the route and model that actually answered (from the
   completion), not the planned ones. The key goes to the child process only, as today.
 - **Never during a call**: `CallEngine` keeps the judge `Process` (as `judgeRunning` today) and terminates it at call
   start; the call is re-queued once and keeps its cap slot (section 6, "Cap slots"). The PB-88 `call-active.json` is not used: it is written only with the
@@ -267,7 +288,7 @@ Every name and type below is checked against the current catalog by `spikes/m0/t
 
 | Parameter | Type | From |
 |---|---|---|
-| `judged` | bool | the judge ran (done or partial) |
+| `judged` | bool | the judge ran (done or partial) and no switch was turned off during the run |
 | `why` | `quality_skip` | `judged`, or the skip reason (section 6), or `failed`, `partial`, `expired` |
 | `type`, `brief` | `call_type`, `brief_kind` | the call |
 | `minutes` | minutes | the call |
@@ -356,7 +377,8 @@ EN:
 >   reason stays on your Mac. On every call Pacenote also counts, on your Mac, how many tips were shown, withdrawn and
 >   late, how late they were, how you rated them, and how many questions were asked and left open, and sends these
 >   numbers with product analytics. Only Pacenote staff see the scores; the owner and admins of your organization do
->   not. Turning off Settings > General > Privacy > Rate tips on some calls stops the scoring by the AI provider only.
+>   not. Turning off Settings > General > Privacy > Rate tips on some calls stops the scoring by the AI provider only,
+>   including a scoring that is waiting or under way.
 >   The counts are product analytics: they follow Help improve Pacenote, or your organization's analytics setting for
 >   calls in that organization. Turning off Help improve Pacenote also stops the scoring. The same retention and
 >   account deletion rules as product analytics apply.
@@ -375,7 +397,8 @@ UK:
 >   відкликано і показано із запізненням, наскільки пізно, як ви їх оцінили, скільки питань поставили і скільки
 >   лишилося без відповіді, і надсилає ці числа разом із продуктовою аналітикою. Оцінки бачить лише персонал Pacenote;
 >   власник і адміністратори вашої організації їх не бачать. Вимкнення «Оцінювати підказки на деяких дзвінках» у
->   Налаштування > Загальні > Приватність зупиняє лише оцінювання AI-провайдером. Лічильники належать до продуктової
+>   Налаштування > Загальні > Приватність зупиняє лише оцінювання AI-провайдером,
+>   зокрема те, що чекає або вже йде. Лічильники належать до продуктової
 >   аналітики: вони діють за перемикачем «Допомогти покращити Pacenote» або, для дзвінків в організації, за
 >   налаштуванням аналітики вашої організації. Вимкнення «Допомогти покращити Pacenote» зупиняє й оцінювання. Діють
 >   ті самі правила зберігання і видалення акаунта, що й для продуктової аналітики.
@@ -417,7 +440,7 @@ Each step is mergeable on its own and changes nothing the next step needs to und
 | Step | What | Files (repo) | Tests | Visible to users |
 |---|---|---|---|---|
 | CQ2 | Local metrics on every call and `quality.json` (`call`, `local`, `eligibility` with the decision only; nothing judged, nothing sent) | new `LiveTipsCore/CallQuality.swift` (pure: tips file, transcript, call sidecars to metrics; the eligibility decision from `rules/quality.yaml`), `CallEngine.swift` (end-of-call hook), `state/quality-slots.jsonl` (the cap slots of section 6), `rules/quality.yaml` (status to active for `sidecar`, `local`, `eligibility`), `rules/call_layout.yaml` and the three call-layout implementations if the sidecar list is named there, `CallReassign`/`CallMigration` (move the new sidecar), call sync (confirm it is not sent) (app) | CoreChecks: metrics from fixture calls (lag, late, retracted, muted asks), every eligibility rule and its `why`, the day and week caps counted as slots (two calls queued together: the second gets `day_cap`; an expired call gives its slot back), atomic write keeping other sections; a reassign test that moves `.quality.json` | no (a file on disk) |
-| CQ3 | Selective judge v2, budget guard, Privacy switch | `livetips_m0/judge.py` (`--rubric v2`, `--quality-json` merge, per-route models from `rules/quality.yaml`, no Anthropic-only extras), `livetips_m0/cost.py` if a judge stage is missing, `CallEngine.runJudge` (queue, after-call order, call-active stop), `LiveTipsCore/Settings.swift` (`shareQuality`), `SettingsView.swift` (Privacy row; the developer row of section 9), i18n `en.json` and `uk.json`, `rules/quality.yaml` (`judge`, `rubric` to active), docs EN/UK (app) | pytest: rubric v2 parse and validation with FakeProvider, per-route model choice, budget estimate and caps (per call, month, partial), unpriced model, merge into an existing `quality.json`; CoreChecks: switch defaults and the disabled state, queue order, expiry, rules 10 to 16 again at start, a run stopped at call start keeps its slot and scores only the rest within the remaining per-call budget; the replay of section 4.5 on 5 calls with the measured cost in the notes | yes (switch; spend in Settings > Usage) |
+| CQ3 | Selective judge v2, budget guard, Privacy switch | `livetips_m0/judge.py` (`--rubric v2`, `--quality-json` merge, per-route models from `rules/quality.yaml`, no Anthropic-only extras), `livetips_m0/cost.py` if a judge stage is missing, `CallEngine.runJudge` (queue, after-call order, call-active stop, the stop when a Privacy switch goes off), `AIRoute.swift` (the pinned judge environment of section 7), `judge.py` v2 provider from `provider_from_env`, `LiveTipsCore/Settings.swift` (`shareQuality`), `SettingsView.swift` (Privacy row; the developer row of section 9), i18n `en.json` and `uk.json`, `rules/quality.yaml` (`judge`, `rubric` to active), docs EN/UK (app) | pytest: rubric v2 parse and validation with FakeProvider, per-route model choice, budget estimate and caps (per call, month, partial), unpriced model, merge into an existing `quality.json`; CoreChecks: switch defaults and the disabled state, queue order, expiry, rules 1, 2 and 10 to 16 again at start (a switch turned off while queued: no request; turned off while running: stopped, no `tip_scored`), the judge environment pinned to the saved route, and pytest: the v2 provider has auto off and a one-route chain even with a sidecar-config chain and auto on (a saved route that cannot run gives `no_route`, never another AI or the model on this Mac; `effective` and `canRun` not used), a run stopped at call start keeps its slot and scores only the rest within the remaining per-call budget; the replay of section 4.5 on 5 calls with the measured cost in the notes | yes (switch; spend in Settings > Usage) |
 | CQ4 | Events, catalog, PRIVACY | `rules/analytics.yaml` (section 8.4), `AnalyticsCatalog.swift` regenerated by `tools/gen_analytics_catalog.py`, the sender in `CallEngine`/`AnalyticsTracker` (one `call_quality` per call, `tip_scored` per tip, `sent` section), `PRIVACY.md`, `PRIVACY.uk.md`, `telemetry.toggle.sub` if it names what is sent, docs EN/UK, CHANGELOG (app); `analytics_events.yaml` byte copy (server); `pacenote-usage-v2-2026-11-17.yaml` byte copy (research) | `test_quality_rules_pb90.py` stays green (the catalog must equal the draft in `rules/quality.yaml`, or both change); CoreChecks: catalog parity and every `code` with values; the events built from a fixture `quality.json` pass the catalog; nothing sent with the switches off; org switch sends `call_quality` but no judge; pytest (server): the two events accepted, a bad `reason` dropped | yes (PRIVACY, Show what is sent) |
 | CQ5 | Console Quality page and funnel | `console/aplatform.py` (`PAGES`, `quality()`, route), `templates/platform/analytics/quality.html`, `funnels.yaml`, `console/labels.py` (server) | pytest (server): page renders with fixture events, filters, CSV per table, fewer-than-3 rule, the funnel counts a fixture path, staff only (403 for an org admin) | staff only |
 
