@@ -1,0 +1,5 @@
+{
+ "request_sha256": "c82e6cfb9138e49a1bfdcffb918c1b38c7c8d756105e58c854365a0ef3525a07",
+ "route": "authored",
+ "answer": "{\"sentences\": [{\"text\": \"2026-11-06: \\\"Exports are PDF and spreadsheet.\\\"\", \"cites\": [\"f1\"]}, {\"text\": \"2026-11-06: \\\"The warehouse connector is due on December 1.\\\"\", \"cites\": [\"f2\"]}, {\"text\": \"2026-11-06: \\\"The reporting module needs the warehouse connector.\\\"\", \"cites\": [\"f3\"]}]}"
+}

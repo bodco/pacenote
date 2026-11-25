@@ -34,6 +34,7 @@ from . import extract as X
 from . import ingest as IG
 from . import segments as SG
 from . import store as S
+from . import topics as T
 
 USD_ROUTES = ("api", "openai", "gemini")
 PCT_ROUTES = ("codex", "code")
@@ -381,6 +382,7 @@ class Pass:
         self.totals = {"in": 0, "cached": 0, "out": 0, "usd": 0.0, "est_usd": 0.0, "requests": 0, "catalog_tokens": 0}
         self.run_id = 0
         self.last_est = 0.0                       # the estimate of the request in flight (USD routes)
+        self.topic_rep: Optional[dict] = None     # S4: what the topics step did (detect, summaries)
 
     # ---- settings
     def ceilings(self) -> dict:
@@ -423,6 +425,8 @@ class Pass:
         r = dict(self.st.one("SELECT * FROM run WHERE id=?", (self.run_id,)))
         r["requests"] = self.totals["requests"]
         r["catalog_tokens"] = self.totals["catalog_tokens"]
+        if self.topic_rep is not None:
+            r["topics"] = self.topic_rep
         return r
 
     def _item(self, rid: int, n: int, seg_hash: str, status: str, in_t=0, out_t=0, dropped=0, error=None) -> None:
@@ -472,10 +476,11 @@ class Pass:
                 raise Stop("ceiling", name)
 
     # ---- one request
-    def send(self, user: str, max_tokens: int, view: Optional[dict] = None) -> dict:
+    def send(self, user: str, max_tokens: int, view: Optional[dict] = None, system: Optional[str] = None,
+             model: Optional[str] = None) -> dict:
         if call_active():
             raise Stop("paused_call", "a call is in progress")
-        req = {"route": self.route, "model": self.model, "system": self.prefix, "user": user,
+        req = {"route": self.route, "model": model or self.model, "system": system or self.prefix, "user": user,
                "max_tokens": max_tokens, "cache": True}
         if view is not None:            # for the G0 recorder (bench --extract); the request child ignores them
             req.update(seg_hash=view["seg_hash"], base_line=view.get("base_line", 0))
@@ -487,17 +492,17 @@ class Pass:
                 last = time.monotonic()
                 if call_active():
                     h.cancel()
-                    est_in = tokens(self.prefix + user, self.route)
-                    self._spend({"in_tokens": est_in, "out_tokens": 0}, time.monotonic() - t, cancelled=True)
+                    est_in = tokens((system or self.prefix) + user, self.route)
+                    self._spend({"in_tokens": est_in, "out_tokens": 0}, time.monotonic() - t, cancelled=True, model=model)
                     raise Stop("paused_call", "a call started during a request")
             time.sleep(min(0.02, self.poll))
         ans = h.result()
         if ans.get("cancelled"):
             raise Stop("paused_call", "a call started during a request")
-        self._spend(ans, time.monotonic() - t)
+        self._spend(ans, time.monotonic() - t, model=model)
         return ans
 
-    def _spend(self, ans: dict, secs: float, cancelled: bool = False) -> None:
+    def _spend(self, ans: dict, secs: float, cancelled: bool = False, model: Optional[str] = None) -> None:
         self.totals["requests"] += 1
         self.totals["in"] += int(ans.get("in_tokens") or 0)
         self.totals["cached"] += int(ans.get("cached") or 0)
@@ -506,7 +511,7 @@ class Pass:
             self.st.set_meta("cache_seen:" + self.route, "1")
             self.st.conn.commit()
         usd = None
-        model = ans.get("model") or self.model          # the model that answered (PB-103 review r1)
+        model = ans.get("model") or model or self.model     # the model that answered (PB-103 review r1)
         if self.kind == "usd":
             toks = (int(ans.get("in_tokens") or 0), int(ans.get("cache_write") or 0), 0, int(ans.get("cached") or 0),
                     int(ans.get("out_tokens") or 0))
@@ -531,24 +536,28 @@ class Pass:
             self.pct_spent += pct
         ledger_row(self.route, model, ans, usd, pct, secs, self.project)
 
-    def estimate(self, user: str) -> float:
+    def estimate(self, user: str, system: Optional[str] = None, model: Optional[str] = None,
+                 cap: Optional[int] = None) -> float:
         """The cost of one request answering at the full cap, in the ceiling's unit (0 on plan routes and local,
-        which are read back after every request)."""
+        which are read back after every request). S4: a summary request passes its own prefix, model and cap."""
         if self.kind != "usd":
             return 0.0
-        pre = tokens(self.prefix, self.route)
+        model = model or self.model
+        pre = tokens(system or self.prefix, self.route)
         fresh = tokens(user, self.route)
         cached_ok = self.st.meta("cache_seen:" + self.route) == "1"
-        usd = price(self.model, fresh, pre, out_cap(self.route, self.model, self.cap), cached_ok)
+        usd = price(model, fresh, pre, out_cap(self.route, model, cap or self.cap), cached_ok)
         return usd or 0.0
 
-    def gate(self, user: str) -> None:
+    def gate(self, user: str, system: Optional[str] = None, model: Optional[str] = None,
+             cap: Optional[int] = None) -> None:
         """The ceiling check before one request; the estimate is added only while the route is priced in USD (a
         switch to local inside the check leaves it out). A USD route whose model has no price ends the pass before
         the request: every estimate and spend would be 0 and the three USD caps would be off (PB-103 review r1)."""
-        if self.kind == "usd" and not COST.price_for(self.model or ""):
-            raise Stop("off", "the model {} has no price (livetips_m0/cost.py PRICES)".format(self.model))
-        est = self.estimate(user)
+        model = model or self.model
+        if self.kind == "usd" and not COST.price_for(model or ""):
+            raise Stop("off", "the model {} has no price (livetips_m0/cost.py PRICES)".format(model))
+        est = self.estimate(user, system, model, cap)
         self.last_est = est
         self.check_ceiling(est)
         if self.kind == "usd":
@@ -629,8 +638,43 @@ class Pass:
         self._item(rid, n, seg["seg_hash"], "done", toks[0], toks[1], counts["dropped"], note)
         return "done"
 
+    # ---- topics (S4, spec section 8.7)
+    def summary_model(self) -> str:
+        """The route's summary model (rules/ai.yaml > evidence > summary; on local the PM's model), as sent."""
+        return sent_model(self.route, self.set.get("summary_model") or models(self.route, self.set.get("ai_yaml"))["summary"])
+
+    def topics_step(self, lazy_ok: bool = True) -> dict:
+        """Detect topics (free, deterministic), then, unless the PM chose "only when asked" (topics: lazy) and this is
+        a normal pass, one summary request per pending or stale topic on the summary model, through the same gate
+        (pass, day and all-projects caps, unpriced model, call pause) and the same run row as the extraction."""
+        rep = {"detect": T.detect(self.st)}
+        self.topic_rep = rep
+        if lazy_ok and self.set.get("topics") == "lazy":
+            rep["lazy"] = True
+            rep["due"] = len(T.due(self.st))
+            return rep
+        system = T.prefix(self.rules)
+
+        def ask(user: str, cap: int, again: bool = True) -> dict:
+            self.gate(user, system=system, model=self.summary_model(), cap=cap)
+            model = self.summary_model()        # after the gate: a ceiling may have switched the pass to local
+            ans = self.send(user, cap, system=system, model=model)
+            if ans.get("error") and not T._cut(ans):
+                err = str(ans["error"])
+                if again and self.to_local(err):
+                    return ask(user, cap, again=False)
+                self.on_route_error(err)            # backoff; three in a row end the pass (section 13.2)
+                raise T.Skip(err)
+            self.errors = 0
+            return ans
+
+        rep.update(T.summarise(self.st, ask, self.rules, at=self.set.get("summary_at"), run_id=self.run_id,
+                               tokens=lambda s: tokens(s, self.route),
+                               before_each=lambda: IG.apply_pending(self.st)))
+        return rep
+
     # ---- the whole pass
-    def run(self) -> dict:
+    def run(self, topics_only: bool = False) -> dict:
         self._run_start()
         try:
             if self.set.get("limits_error"):         # the app's settings could not be read: no request at all
@@ -647,7 +691,7 @@ class Pass:
                 raise Stop("off", "no route chosen for the evidence job")
             if call_active():
                 raise Stop("paused_call", "a call is in progress")
-            revs = pending_revisions(self.st, extractor=self.ex)
+            revs = [] if topics_only else pending_revisions(self.st, extractor=self.ex)
             plan = [(r, SG.of_revision(self.st, r["id"])) for r in revs]
             with self.st.conn:
                 self.st.conn.execute("UPDATE run SET segments_plan=? WHERE id=?", (sum(len(s) for _r, s in plan),
@@ -677,6 +721,8 @@ class Pass:
                     with self.st.conn:
                         self.st.conn.execute("UPDATE revision SET extract_state='done', extractor=? WHERE id=?",
                                              (self.ex, r["id"]))
+            IG.apply_pending(self.st)
+            self.topics_step(lazy_ok=not topics_only)    # at the end of the pass, inside its ceiling (section 8.7)
             return self._run_end("done")
         except Stop as s:
             return self._run_end(s.status, s.why)
@@ -738,6 +784,12 @@ def rebase(items: dict, view: dict, sign: int) -> dict:
 
 def extract_pass(store: S.Store, root: str, settings: Optional[dict] = None, transport=None, **kw) -> dict:
     return Pass(store, root, settings, transport, **kw).run()
+
+
+def topics_pass(store: S.Store, root: str, settings: Optional[dict] = None, transport=None, **kw) -> dict:
+    """S4 "only when asked": detect topics and summarise the pending and stale ones now, with no extraction, under
+    the same settings, ceilings and call pause as a pass (G3 preparation or the PM's global question calls it)."""
+    return Pass(store, root, settings, transport, **kw).run(topics_only=True)
 
 
 # ---------------------------------------------------------------- the estimate shown before a pass (sections 9 and 10)

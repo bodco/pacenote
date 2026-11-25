@@ -1,0 +1,5 @@
+{
+ "request_sha256": "9ff71c71ce71b37dd106db3c265da773aa09a1c4e25d80dc067c023e38de9dc9",
+ "route": "authored",
+ "answer": "{\"sentences\": [{\"text\": \"2026-10-01: \\\"Escalations go to Rachel Moore.\\\"\", \"cites\": [\"f1\"]}, {\"text\": \"2026-11-02: \\\"Weekend pager: the Northpoint on-call phone.\\\"\", \"cites\": [\"f2\"]}]}"
+}

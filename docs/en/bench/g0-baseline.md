@@ -246,6 +246,50 @@ therefore never mixes real and authored answers under `measured: true`: a run st
 records nothing (tested with a stub, no real route). Only answers the worker keeps are recorded, not a cut answer
 before its split or an unparsable one before its repair.
 
+## G2 S4: topic summaries and global questions (2026-11-25)
+
+PB-87 adds topics (deterministic communities per client), their summaries (one request per new, changed or stale
+topic on the route's summary model, each sentence citing the facts it states), the per-sentence access filter and
+`ask_global`. C now answers the global and S4 rows with `ask_global` as well: its passing summary sentences and the
+dated timeline of the topic's members. The summary fixture `fixtures/topics/` is **authored, not a model**
+(`run.py --record-topics`: one dated quote per fact, citing it; 22 requests over the small and scale sets), so the
+S4 numbers measure which sentences and facts `ask_global` returns and hides, not summary prose. C writes the summaries
+with every source active and then puts the deletions, the hide and the revoke back (spec 14.2 item 6: "the topic
+summary that cites the fact is built before the exclusion"). A global row is judged on `ask_global`'s answer alone.
+A control asks each S4 row before the state change and lists the excluded facts its sentences held then. On the
+small set x5's control holds "teal palette" (the hidden design review's decision, in a topic with the call since
+review round 2), so x5's 0 excluded leaks are the per-sentence filter's work, and the S4 gate fails if that control
+is ever empty. On the scale set the noise documents' topics outrank it for x5's question, so the control there is
+empty (not gated; ranking is a GraphRAG follow-up). t7 and g1 list no excluded fact. The filter is also proven by
+the unit tests.
+
+Two harness changes come with it, and neither moves a column. The authored extraction answer of
+`docs/acme/item-13-sso-user-mapping.md` named its claims' subject by an id that segment's catalog does not hold yet, so
+the validator dropped all 4; they now use the segment's own ref (`corrections` in the file). Review round 2 corrects
+the hidden design review's transcript answer the same way (its decision claim) and adds the call "Acme design review"
+with its own `decided` claim on that line, which puts the decision in a topic. The hop step then takes
+a neighbour's claims newest first instead of in row order, so the older document no longer pushes h1's latest fact out
+of the 6 slots. A fact is dated by claims and edges, never by a summary sentence, and the timeline order is that of
+the facts returned (at least two, each dated); A and B do not change.
+
+Results at this commit (`results/{A,B,C}-2026-11-25-s4.json`, against the `-r1chk` results on main):
+
+- **A unchanged**: every column equal; lookup p50 1.83 to 1.55 ms, p95 2.83 to 2.26 ms.
+- **B unchanged**: every column equal; lookup p50 2.24 to 2.28 ms, p95 2.77 to 2.84 ms.
+- **C**: every existing column equal (v1 columns, hop 5 of 6, modality 100%, derived as confirmed 0, quote validity
+  and evidence recall 100%, fixture 64 hits and 0 misses on the small set, every leak 0); the replay keeps 324 of 352
+  authored items (320 before: the 4 corrected claims). New: rows 32/36 to 34/39 with none `not_evaluated` on both
+  sets, timeline recall 75% (3 of 4) in order on `ask_global`'s answer alone (50% without the corrected item-13
+  claims), t7 and x5 pass (without reaching the filter, see above), 14 topics on the small set and 18 on the scale
+  set, topic fixture misses 0. g1 does not pass: "Okta" is said on the Nov 5 call with no word linking it to SSO, so no extracted edge
+  puts it in the SSO topic (a GraphRAG follow-up). Live p95 7.94 to 8.18 ms (small), 25.45 to 25.12 ms (scale).
+  S2+S3+S4 gate: PASS; the paraphrase line of S3 stays open as before.
+- **Review round 2** (`results/{A,B,C}-2026-11-25-s4r2.json`, against `-s4r1chk`): A, B and C keep every column. C's
+  replay keeps 327 of 354 authored items (the corrected decision claim and the call's claim and entity), 15 topics on
+  the small set and 20 on the scale set, topic fixture misses 0, x5's control "teal palette" on the small set. Against
+  the `-r1chk` results on main no column moves and no lookup time rises (C scale live p50/p95 20.14/25.45 to
+  18.68/24.6 ms). S2+S3+S4 gate: PASS.
+
 ## What is measured
 
 Each target call is replayed on a clean copy of the fixture project, with every file dated by the date in its name

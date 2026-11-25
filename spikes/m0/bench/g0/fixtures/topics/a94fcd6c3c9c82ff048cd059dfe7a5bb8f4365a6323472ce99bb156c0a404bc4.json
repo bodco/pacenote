@@ -1,0 +1,5 @@
+{
+ "request_sha256": "a94fcd6c3c9c82ff048cd059dfe7a5bb8f4365a6323472ce99bb156c0a404bc4",
+ "route": "authored",
+ "answer": "{\"sentences\": [{\"text\": \"2026-11-03: \\\"And the pilot user list, we will try to confirm it by next week, but legal still reviews it, so no promise.\\\"\", \"cites\": [\"f1\"]}, {\"text\": \"2026-11-03: \\\"Yes, by Friday.\\\"\", \"cites\": [\"f2\"]}, {\"text\": \"2026-11-03: \\\"Can you send me the updated rollout checklist?\\\"\", \"cites\": [\"f3\"]}, {\"text\": \"2026-11-03: \\\"Yes, by Friday.\\\"\", \"cites\": [\"f4\"]}, {\"text\": \"2026-11-03: \\\"**Mike**: try to confirm the pilot user list\\\"\", \"cites\": [\"f5\"]}, {\"text\": \"2026-11-03: \\\"send Mike the updated rollout checklist (due: Friday)\\\"\", \"cites\": [\"f6\"]}, {\"text\": \"2026-11-03: \\\"**David**: send Mike the updated rollout checklist\\\"\", \"cites\": [\"f7\"]}]}"
+}

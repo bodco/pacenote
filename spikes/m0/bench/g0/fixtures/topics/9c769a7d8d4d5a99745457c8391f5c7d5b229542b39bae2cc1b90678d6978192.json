@@ -1,0 +1,5 @@
+{
+ "request_sha256": "9c769a7d8d4d5a99745457c8391f5c7d5b229542b39bae2cc1b90678d6978192",
+ "route": "authored",
+ "answer": "{\"sentences\": [{\"text\": \"2026-11-05: \\\"Charts: monthly totals and overdue invoices.\\\"\", \"cites\": [\"f1\"]}, {\"text\": \"2026-11-05: \\\"The finance dashboard reads from the ledger feed.\\\"\", \"cites\": [\"f2\"]}, {\"text\": \"2026-11-09: \\\"The ledger feed is paused until the data agreement is signed.\\\"\", \"cites\": [\"f3\"]}, {\"text\": \"2026-11-09: \\\"until the data agreement is signed\\\"\", \"cites\": [\"f4\"]}, {\"text\": \"2026-11-09: \\\"The ledger feed is paused until the data agreement is signed.\\\"\", \"cites\": [\"f5\"]}]}"
+}

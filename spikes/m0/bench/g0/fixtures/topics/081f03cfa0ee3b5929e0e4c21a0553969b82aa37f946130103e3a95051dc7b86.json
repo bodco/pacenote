@@ -1,0 +1,5 @@
+{
+ "request_sha256": "081f03cfa0ee3b5929e0e4c21a0553969b82aa37f946130103e3a95051dc7b86",
+ "route": "authored",
+ "answer": "{\"sentences\": [{\"text\": \"2026-10-20: \\\"Acme has a change freeze from December 15, nothing goes to production after that until January 5.\\\"\", \"cites\": [\"f1\"]}, {\"text\": \"2026-10-20: \\\"Yes. And the pilot starts with 40 users from the support team.\\\"\", \"cites\": [\"f2\"]}, {\"text\": \"2026-10-20: \\\"Noted, so the go-live has to land before December 15.\\\"\", \"cites\": [\"f3\"]}, {\"text\": \"2026-10-20: \\\"Acme change freeze from December 15 to January 5: go-live must land before December 15.\\\"\", \"cites\": [\"f4\"]}, {\"text\": \"2026-10-20: \\\"The pilot starts with 40 users from the Acme support team.\\\"\", \"cites\": [\"f5\"]}, {\"text\": \"2026-11-12: \\\"go-live stays on December 8.\\\"\", \"cites\": [\"f6\"]}, {\"text\": \"2026-11-14: \\\"Go-live rehearsal: December 3, with Emily.\\\"\", \"cites\": [\"f7\"]}, {\"text\": \"2026-11-14: \\\"go-live December 8\\\"\", \"cites\": [\"f8\"]}, {\"text\": \"2026-11-14: \\\"Rollback window: 48 hours after go-live.\\\"\", \"cites\": [\"f9\"]}]}"
+}

@@ -1,0 +1,5 @@
+{
+ "request_sha256": "df499191aedd677e9308f725f5e28ef30a100ea9a84adb50e5c05ea605f6b89a",
+ "route": "authored",
+ "answer": "{\"sentences\": [{\"text\": \"2026-11-01: \\\"The willow parser batches requests for the maple ledger when the queue backs up (87 requests, Tyler)\\\"\", \"cites\": [\"f1\"]}, {\"text\": \"2026-11-01: \\\"The amber poller throttles the quartz indexer after the config review (6 tickets, Lauren)\\\"\", \"cites\": [\"f2\"]}]}"
+}

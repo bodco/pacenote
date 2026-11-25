@@ -66,6 +66,7 @@ from livetips_m0.evidence import worker as W  # noqa: E402
 from livetips_m0.evidence import search as SE  # noqa: E402
 from livetips_m0.evidence import segments as SG  # noqa: E402
 from livetips_m0.evidence import store as ES  # noqa: E402
+from livetips_m0.evidence import topics as TP  # noqa: E402
 from livetips_m0.sheet import build as B  # noqa: E402
 from livetips_m0.sheet import lookup as LK  # noqa: E402
 from livetips_m0.sheet import tracker as TR  # noqa: E402
@@ -78,15 +79,24 @@ GOLD2 = HERE / "gold_v2.yaml"
 OVERLAY = FIX / "v2"                    # gold v2 files over the northpoint copy, the register additions, the Tracker
 REVISIONS = FIX / "revisions"           # the revision states of section 14.1 and revisions.yaml
 EXTRACT = FIX / "extract"               # C's extraction fixture, <seg_hash>.json (recorded in S3)
-V2_DIRS = ("v2", "revisions", "extract")    # outside fixture_sha, so the v1 columns keep their hash
+V2_DIRS = ("v2", "revisions", "extract", "topics")   # outside fixture_sha, so the v1 columns keep their hash
 READY = {"S2"}          # the sub-tasks whose code C has: S3 adds "S3" with the extraction, S4 adds "S4" with topics
 MANIFEST = EXTRACT / "manifest.json"    # the recorded extraction fixture: gold sha256, route, model, calibration
+TOPICS = FIX / "topics"                 # S4: C's topic summaries, <sha256 of the request text>.json (--record-topics)
+SUMMARY_AT = "2026-11-22T00:00:00Z"     # S4: the bench writes summaries after the last revision state (Nov 21)
 
 
-def ready_set(fixture_dir: Optional[Path] = None) -> set:
-    """S3 counts as ready for C only with a recorded extraction fixture (raw model output, recorded by --extract)."""
+def ready_set(fixture_dir: Optional[Path] = None, topics_dir: Optional[Path] = None) -> set:
+    """S3 counts as ready for C only with a recorded extraction fixture (raw model output, recorded by --extract);
+    S4 only with S3 on the checked-in extraction fixture and a summary fixture recorded on it (--record-topics): an
+    --extract calibration replays its own new extraction, which no summary fixture was recorded against."""
     m = (fixture_dir / "manifest.json") if fixture_dir else MANIFEST
-    return READY | ({"S3"} if m.is_file() else set())
+    out = READY | ({"S3"} if m.is_file() else set())
+    tm = (topics_dir or TOPICS) / "manifest.json"
+    if "S3" in out and Path(fixture_dir or EXTRACT) == EXTRACT and tm.is_file() and \
+            json.loads(tm.read_text(encoding="utf-8")).get("extract_sha") == tree_sha(EXTRACT):
+        out.add("S4")       # a re-recorded extraction leaves S4 rows not_evaluated (the S4 gate fails) until re-recorded
+    return out
 SETS = ("small", "scale")
 SEED = 52               # the scale set's noise generator
 VARIANTS = ("A", "B", "C")
@@ -859,6 +869,151 @@ def replay_fixture(ctx: dict, fixture_dir: Path, small: bool) -> dict:
     return out
 
 
+# ---------------------------------------------------------------- S4: topic summaries before the state changes
+
+def topic_request_key(user: str) -> str:
+    return hashlib.sha256(user.encode("utf-8")).hexdigest()
+
+
+@contextlib.contextmanager
+def before_state(st):
+    """The store as it was before the bench's deletions, hide and revoke (spec 14.2 item 6: "the topic summary that
+    cites the fact is built before the exclusion"): every source that is not active is active inside the block, and
+    gets its exact state row back after it. Restoring goes through the store's source_state_topics trigger, the one
+    place every state change marks the topics that cite the source stale, so the per-sentence filter of section 8.7
+    is what the gold then tests (the bench does not re-summarise after the change)."""
+    saved = [dict(r) for r in st.q("SELECT id, state, state_reason, state_at FROM source WHERE state<>'active' ORDER BY id")]
+    with st.conn:
+        st.conn.execute("UPDATE source SET state='active' WHERE state<>'active'")
+    try:
+        yield saved
+    finally:
+        with st.conn:
+            st.conn.executemany("UPDATE source SET state=?, state_reason=?, state_at=? WHERE id=?",
+                                [(r["state"], r["state_reason"], r["state_at"], r["id"]) for r in saved])
+
+
+def topic_step(ctx: dict, topics_dir: Path, small: bool) -> dict:
+    """C's topics (S4): detect, then summarise every topic from topics_dir/<sha256 of the request text>.json through
+    topics.summarise (the worker's validator and writer), with the sources as they were before the state changes;
+    then the states come back and the cited topics turn stale. A request with no fixture file is a miss (the topic
+    stays unsummarised); any miss on the small set fails the run as "topic fixture stale", like the extraction."""
+    st = ctx["store"]
+    manifest = json.loads((topics_dir / "manifest.json").read_text(encoding="utf-8"))
+    if manifest.get("gold_sha256") != ctx.get("gold_sha256"):
+        raise SystemExit("G0 C: gold changed: the topic fixture was recorded against another gold v2; re-record it "
+                         "(run.py --record-topics)")
+    if manifest.get("extract_sha") != tree_sha(EXTRACT):
+        raise SystemExit("G0 C: topic fixture stale: it was recorded on another extraction fixture (fixtures/extract "
+                         "changed); re-record it (run.py --record-topics)")
+    hits, misses = [0], [0]
+
+    def ask(user: str, cap: int) -> dict:
+        p = topics_dir / (topic_request_key(user) + ".json")
+        if not p.is_file():
+            misses[0] += 1
+            raise TP.Skip("no fixture for this request")
+        hits[0] += 1
+        return {"text": json.loads(p.read_text(encoding="utf-8"))["answer"]}
+
+    rules = EX.load_rules()
+    with before_state(st):
+        det = TP.detect(st)
+        rep = TP.summarise(st, ask, rules, at=SUMMARY_AT, tokens=lambda s: W.tokens(s, "api"))
+        control = filter_control(ctx)
+    out = dict(rep, detect=det, hits=hits[0], misses=misses[0], route=manifest.get("route"), control=control,
+               stale_after_state=st.one("SELECT count(*) FROM topic WHERE state='stale'")[0],
+               topics=st.one("SELECT count(*) FROM topic")[0])
+    if misses[0] and small:
+        raise SystemExit("G0 C: topic fixture stale: {} topic requests of the small set have no fixture file (the "
+                         "extraction, the topic split or the request text changed); re-record it (--record-topics)"
+                         .format(misses[0]))
+    return out
+
+
+def filter_control(ctx: dict) -> Dict[str, List[str]]:
+    """The negative control of the per-sentence filter: while every source is still active, each global and S4 row's
+    question through ask_global, and the excluded facts (gold v2 excluded_facts and the row's own excluded leak
+    phrases) its summary sentences hold then. A row listed with phrases here and 0 excluded leaks in its result was
+    filtered at query time; a row with none never reached a sentence of a denied source (it passes without the
+    filter)."""
+    gold2 = load_gold(GOLD2)
+    out: Dict[str, List[str]] = {}
+    for row in gold2["rows"]:
+        if not (row["needs"] == "S4" or row["kind"] == "global"):
+            continue
+        g = SE.ask_global(ctx["store"], row["q"], scope=scope_of(ctx, row), exclude=ctx["pm_excluded"])
+        text = "\n".join(s["text"] for t in g["topics"] for s in t["sentences"])
+        phrases = list((row.get("leak") or {}).get("excluded") or []) + [p for x in gold2["excluded_facts"] for p in x["any"]]
+        out[row["id"]] = sorted({p for p in phrases if has_phrase(text, [p])})
+    return out
+
+
+FACT_LINE = re.compile(r"^(f\d+) \| ([^|]*) \| .*? \| [a-z]+ \| \"(.*)\"$")
+
+
+def authored_summary(user: str, most: int = TP.MAX_SENTENCES) -> str:
+    """The authored answer of one summary request (no model): one sentence per fact, its date and its quote, citing
+    it; above `most` facts, consecutive facts share a sentence. Mechanical on purpose: the G0 rows of S4 measure what
+    ask_global returns and hides (topics, the per-sentence filter, summary_at, the timeline), not summary prose."""
+    facts = [m.groups() for m in (FACT_LINE.match(ln) for ln in user.split("\n")) if m]
+    per = max(1, -(-len(facts) // most))
+    sents = []
+    for i in range(0, len(facts), per):
+        part = facts[i:i + per]
+        sents.append({"text": "; ".join('{}: "{}"'.format(d.strip(), q) for _r, d, q in part),
+                      "cites": [r for r, _d, _q in part]})
+    return json.dumps({"sentences": sents}, ensure_ascii=False)
+
+
+def record_topics(gold_path: Path = GOLD, gold2_path: Path = GOLD2, out_dir: Path = TOPICS) -> dict:
+    """--record-topics: build C's small-set and scale-set stores as the evaluation does (extraction fixture replayed,
+    sources as before the state changes), detect topics and write one fixtures/topics/<sha256 of the request
+    text>.json per summary request plus manifest.json (the scale set's noise documents change some topics' text).
+    Answers come from authored_summary only: no model, no network. Recording a real route's summaries needs its own
+    recorder (a pass with its run row and the sources' states as they are), a GraphRAG follow-up. The folder is
+    replaced as a whole."""
+    gold, gold2 = load_gold(gold_path), load_gold(gold2_path)
+    answers: Dict[str, str] = {}
+    for set_name in SETS:
+        _record_topics_set(gold, gold2, gold2_path, set_name == "scale", answers)
+    if not answers:
+        raise SystemExit("G0 --record-topics: no topic to summarise")
+    if out_dir.exists():
+        shutil.rmtree(out_dir)
+    out_dir.mkdir(parents=True)
+    for h, text in sorted(answers.items()):
+        (out_dir / (h + ".json")).write_text(json.dumps({"request_sha256": h, "route": "authored", "answer": text},
+                                                        ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    manifest = {"gold_sha256": hashlib.sha256(Path(gold2_path).read_bytes()).hexdigest(), "route": "authored",
+                "extract_sha": tree_sha(EXTRACT), "model": "none",
+                "summary_version": (EX.load_rules().get("summary") or {}).get("version"),
+                "requests": len(answers), "recorded_at": dt.datetime.now().isoformat(timespec="seconds"),
+                "note": "PB-87 S4: answers written by authored_summary in run.py (one dated quote per fact, citing it); "
+                        "no provider was called. Not a measurement of summary quality: the S4 rows measure what "
+                        "ask_global returns and hides."}
+    (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=1) + "\n", encoding="utf-8")
+    return manifest
+
+
+def _record_topics_set(gold: dict, gold2: dict, gold2_path: Path, scale: bool, answers: Dict[str, str]) -> None:
+    with tempfile.TemporaryDirectory(prefix="g0-topics-") as tmp, store_env(Path(tmp)):
+        ctx = build_v2(Path(tmp) / "rec", gold, gold2, scale, None)
+        ctx["gold_sha256"] = hashlib.sha256(Path(gold2_path).read_bytes()).hexdigest()
+        replay_fixture(ctx, EXTRACT, not scale)
+        st = ctx["store"]
+
+        def ask(user: str, cap: int) -> dict:
+            answers[topic_request_key(user)] = authored_summary(user)
+            return {"text": answers[topic_request_key(user)]}
+        try:
+            with before_state(st):
+                TP.detect(st)
+                TP.summarise(st, ask, EX.load_rules(), at=SUMMARY_AT, tokens=lambda s: W.tokens(s, "api"))
+        finally:
+            st.close()
+
+
 # ---------------------------------------------------------------- gold v2: one row through one variant
 
 def scope_of(ctx: dict, row: dict) -> Optional[dict]:
@@ -923,7 +1078,10 @@ def hop_items(st, ents: List[dict], scope, as_of, exclude, k: int, hops: int = 2
                         out.append(dict(e, hop=True))
             for eid in nxt:
                 card = SE.entity_card(st, eid, scope=scope, as_of=as_of, exclude=exclude) or {}
-                out += [dict(c, hop=True) for c in card.get("claims") or []]
+                # PB-87: newest first (recency, spec 11.2 step 5), not row order: an older file's claims read first
+                # must not push a neighbour's latest state out of the k slots
+                claims = sorted(card.get("claims") or [], key=lambda c: (c.get("said_at") or "", c["id"]), reverse=True)
+                out += [dict(c, hop=True) for c in claims]
             frontier = nxt[:6]
             if len(out) >= k:
                 return out[:k]
@@ -953,6 +1111,16 @@ def ask(v, ctx: dict, row: dict, k: int, qvec=None) -> dict:
         ents += [e for e in own_entities(st, items, as_of, fold) if e["id"] not in {x["id"] for x in ents}]
         ents = [dict(e, aliases=SE.visible_aliases(st, e["id"], fold)) for e in ents]
         items += hop_items(st, res["entities"], scope, as_of, ctx["pm_excluded"], k)
+        if "S4" in ctx.get("ready", ()) and (row["needs"] == "S4" or row["kind"] == "global"):
+            # S4: a global question goes to ask_global, as G3 preparation will send it (section 8.7): the passing
+            # summary sentences (kind topic, dated by their earliest cited fact) and the members' dated timeline.
+            # The timeline recall of section 14.3 counts what ask_global returns, so a global row is judged on its
+            # answer alone; the other S4 rows (time and exclusion) keep the search items too: more surface, stricter
+            g = SE.ask_global(st, row["q"], scope=scope, as_of=as_of, exclude=ctx["pm_excluded"])
+            got = [s for t in g["topics"] for s in t["sentences"]] + list(g["timeline"])
+            if row["kind"] == "global":
+                return {"items": got, "entities": []}
+            items += got
     return {"items": items, "entities": ents}
 
 
@@ -1018,8 +1186,9 @@ def judge(v, ctx: dict, gold2: dict, row: dict, res: dict) -> dict:
         if row.get("dated"):
             hit = [i for i in hit if (i.get("said_at") or "").startswith(str(row["dated"]))]
             ent_hit = []
+        dated = [i for i in hit if i.get("kind") != "topic"]     # S4: a summary sentence finds, a fact dates
         facts.append({"any": f["any"], "found": bool(hit or ent_hit),
-                      "said_at": min((i.get("said_at") or "" for i in hit), default="") or None})
+                      "said_at": min((i.get("said_at") or "" for i in dated), default="") or None})
     leak = row.get("leak") or {}
     leaks = {"future": [p for p in leak.get("future") or [] if has_phrase(blob, [p])],
              "stale": [p for p in leak.get("stale") or [] if has_phrase(blob, [p])],
@@ -1044,8 +1213,10 @@ def judge(v, ctx: dict, gold2: dict, row: dict, res: dict) -> dict:
     checks = [q for i in items for q in quote_valid(ctx, i)] if v.name != "A" else []
     order_ok = None
     if row.get("order"):
-        dates = [f["said_at"] for f in facts]
-        order_ok = all(dates) and dates == sorted(dates)
+        # S4: the order of the facts returned (at least two, each dated); a missing fact is counted by recall, and
+        # the row passes only with every fact found (spec 17 S4: recall at least 75% with correct order)
+        dates = [f["said_at"] for f in facts if f["found"]]
+        order_ok = len(dates) >= 2 and all(dates) and dates == sorted(dates)
     ok = all(f["found"] for f in facts) and state_ok is not False and order_ok is not False \
         and not any(leaks[k] for k in ("future", "stale", "excluded", "client"))
     facts_found = [i for i in items if i.get("kind") in ("claim", "edge") and any(
@@ -1088,6 +1259,9 @@ def derived_confirmed(ctx: dict, items: List[dict]) -> List[int]:
 def evaluate_v2(v, ctx: dict, gold2: dict, set_name: str, embedder=None, fixture_dir: Optional[Path] = None) -> dict:
     fixture = replay_fixture(ctx, fixture_dir or EXTRACT, set_name == "small") if v.name == "C" else None
     ready = ready_set(fixture_dir)
+    ctx["ready"] = ready
+    if v.name == "C" and "S4" in ready:
+        fixture = dict(fixture or {}, topics=topic_step(ctx, TOPICS, set_name == "small"))
     if embedder is not None and not ctx["store"].one("SELECT 1 FROM snippet WHERE vec IS NOT NULL"):
         raise SystemExit("G0 {}: the run with vectors stored no snippet vector (the embed server answered nothing)"
                          .format(v.name))
@@ -1275,6 +1449,31 @@ def s3_open(res: dict, b_res: Optional[dict] = None) -> List[str]:
     return ["paraphrase above B not met ({} of {}, B {} of {}; follow-up)".format(c["n"], c["of"], b["n"], b["of"])]
 
 
+def s4_gate(res: dict) -> Optional[dict]:
+    """The S4 G0 gate (spec section 17, S4) for C once S3 is ready: every gold v2 row evaluated (no not_evaluated
+    left, so a missing or stale topic fixture fails here), global timeline recall at least 75% with the returned facts
+    in order on the small set without vectors, topic fixture misses 0 there; future and excluded leaks 0 (topic
+    sentences included) are the S2 checks on the same runs, and the S3 checks stay (the caller merges all three).
+    Row x5 must reach the per-sentence filter on the small set: its negative control (the sentences before the hide)
+    holds the hidden fact, so "excluded leaks 0" there is the filter's work, not empty data. On the scale set the
+    noise documents' topics outrank it for that question (reported in the control, not gated)."""
+    if res["variant"] != "C" or "S3" not in res.get("v2", {}).get("ready", []):
+        return None
+    checks: Dict[str, Optional[bool]] = {}
+    for s, modes in res["v2"]["sets"].items():
+        for m, r in modes.items():
+            if "skipped" not in r:
+                checks["{}/{} rows_not_evaluated_0".format(s, m)] = r["rows_not_evaluated"] == 0
+    small = res["v2"]["sets"].get("small", {}).get("no_vectors")
+    if small and "skipped" not in small:
+        checks["small timeline_recall_ge_75"] = (small["timeline_recall"] or 0) >= 75.0
+        checks["small timeline_order"] = small["timeline_order"] is True
+        topics = (small.get("fixture") or {}).get("topics") or {}
+        checks["small topic_fixture_misses_0"] = topics.get("misses") == 0
+        checks["small x5_control_not_empty"] = bool((topics.get("control") or {}).get("x5-hidden-topic"))
+    return checks
+
+
 def s3_gate(res: dict, b_res: Optional[dict] = None) -> Optional[dict]:
     """The S3a G0 gate (spec section 17, S3) for C with a recorded extraction fixture whose gold hash is current (the
     replay stops on "gold changed" otherwise): on the small set hop answer rate at least 4 of 6 and at least 2 more
@@ -1356,8 +1555,10 @@ def run(variant_name: str = "A", gold_path: Path = GOLD, sets=SETS, gold2_path: 
         s3 = s3_gate(out)
         if s3 and out["v2"]["gate"]:          # S3a: one gate, the S2 zeros still 0 plus the S3 checks
             out["v2"]["gate"]["checks"].update(s3)
+            out["v2"]["gate"]["checks"].update(s4_gate(out) or {})      # S4 (PB-87): topics and global questions
             out["v2"]["gate"]["pass"] = all(x for x in out["v2"]["gate"]["checks"].values() if x is not None)
             out["v2"]["gate"]["s3"] = True
+            out["v2"]["gate"]["s4"] = s4_gate(out) is not None
             out["v2"]["gate"]["open"] = s3_open(out)
     out["seconds"] = round(time.time() - t_all, 2)
     return out
@@ -1475,7 +1676,7 @@ def table_v2(res: dict) -> str:
         failed = [k for k, x in gate["checks"].items() if x is False]
         skipped = [k.split(" ")[0] for k, x in gate["checks"].items() if x is None]
         note = " ({} not evaluated)".format(", ".join(skipped)) if skipped else ""
-        lines += ["", "{} gate: {}".format("S2+S3" if gate.get("s3") else "S2","PASS" + note if gate["pass"] else "FAIL: " + ", ".join(failed))]
+        lines += ["", "{} gate: {}".format("S2+S3+S4" if gate.get("s4") else "S2+S3" if gate.get("s3") else "S2","PASS" + note if gate["pass"] else "FAIL: " + ", ".join(failed))]
         if gate.get("open"):
             lines.append("Not gated, open: " + "; ".join(gate["open"]))
     return "\n".join(lines)
@@ -1637,7 +1838,8 @@ def record_extract(route: str, gold_path: Path = GOLD, gold2_path: Path = GOLD2,
     runs: List[dict] = []
     bad: List[str] = []
     # never the model on this Mac in place of the route asked for, whatever the environment says
-    settings = dict(settings or {}, route=route, no_local=True, local_overflow=False, extract=True)
+    # topics: lazy, the extraction recording sends no summary request (S4 records summaries with --record-topics)
+    settings = dict(settings or {}, route=route, no_local=True, local_overflow=False, extract=True, topics="lazy")
     with tempfile.TemporaryDirectory(prefix="g0-extract-") as tmp, store_env(Path(tmp)):
         def extract(ctx):
             r = W.extract_pass(ctx["store"], str(ctx["root"]), settings, rec)
@@ -1751,7 +1953,12 @@ def main(argv=None) -> int:
     ap.add_argument("--regen-register", action="store_true")
     ap.add_argument("--extract", metavar="ROUTE", choices=("api", "code", "local", "openai", "codex", "gemini"),
                     help="record C's extraction fixture on a real route (sends the invented fixture text to it)")
+    ap.add_argument("--record-topics", action="store_true",
+                    help="write C's topic summary fixture from authored answers (no model, no network)")
     a = ap.parse_args(argv)
+    if a.record_topics:
+        print(json.dumps(record_topics(), indent=1))
+        return 0
     if a.extract:
         m = record_extract(a.extract)
         print(json.dumps(m, indent=1))

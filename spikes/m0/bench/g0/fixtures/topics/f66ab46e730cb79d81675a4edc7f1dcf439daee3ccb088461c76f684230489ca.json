@@ -1,0 +1,5 @@
+{
+ "request_sha256": "f66ab46e730cb79d81675a4edc7f1dcf439daee3ccb088461c76f684230489ca",
+ "route": "authored",
+ "answer": "{\"sentences\": [{\"text\": \"2026-09-30: \\\"Pilot scope: invoice export and the finance dashboard.\\\"\", \"cites\": [\"f1\"]}, {\"text\": \"2026-09-30: \\\"Payment terms: net 30.\\\"\", \"cites\": [\"f2\"]}]}"
+}

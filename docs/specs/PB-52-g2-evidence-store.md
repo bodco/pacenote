@@ -1017,6 +1017,22 @@ All of this is pure code and runs the same for every route.
   can still be returned. So a summary written before a source was excluded, revoked or hidden, or
   one that cites a file in this request's `exclude`, never returns that source's facts. A topic with no passing
   sentence is not returned at all.
+- **Client before cites.** A sentence's text was written from all of its topic's facts, so passing cites are not
+  enough: a request with a client scope sees only shared topics and its own client's topics (`topic.client_set` empty
+  or the request's label), before any scoring, and a sentence of another client's topic never passes, even when it
+  cites only shared facts. A request whose scope is stale (the live reader cannot relabel, section 5.3) sees no topic
+  sentence. A request with no scope sees every topic, as before. This is the one access check that reads a stored
+  label: a topic's partition is fixed when it is detected. The stored label can miss a client the scope names (a
+  folder that is not a hinted label, or one a relabel just added), so a scoped request also gets no sentence of a
+  topic whose summary request held a fact (cited or not, `topic_input`) with an evidence row on another client's side
+  for that scope, by the same side rule as search (section 11.2 step 1). A summary with no recorded input passes no
+  sentence to a scoped request.
+- **Superseded.** A sentence citing a claim of an entity the PM superseded (at `as_of`) is not returned, as the
+  timeline leaves out that entity's claims: a superseded decision is never returned as current. A sentence citing
+  only an edge of that entity still passes (the timeline keeps such edges too).
+- **Relabel.** A relabel (section 5.2) drops, in the same transaction, the summary of every topic that read a
+  relabelled revision's source (`topic_source`, or an input or cited fact with a row there) and sets it `pending`:
+  none of its sentences is returned until it is detected and summarised again.
 - **Staleness on state change.** When a source changes state (excluded, hidden, deleted, revoked, or back to
   active), every topic with a sentence citing a claim or edge that has evidence on that source is marked `stale`
   (`topic_cite_target` index), and the next pass re-summarises it; until then the per-sentence filter above keeps it
@@ -2094,6 +2110,86 @@ G0 gate: every gold v2 row evaluated (no `not_evaluated` left); global timeline 
 order on the global gold, future leaks 0, excluded leaks 0 (including topic sentences), everything from S1, S2 and
 S3 unchanged.
 
+Implementation notes (S4, PB-87):
+- `livetips_m0/evidence/topics.py`: topics are built from accepted claims and edges (not rejected by the PM, no
+  `same_as`, no self loop) with a row on the current revision of an active source; a fact with any row on an
+  excluded or revoked source, or one a pending hide or revoke names, is left out (strict, like search), and so is a
+  fact whose rows sit on snippets of two client labels. Per client label the graph holds that label's facts and shared
+  ones (shared ones alone form the shared topics); a community keeps a label only with at least one fact of it.
+  Weights: accepted edge 1.0, two entities cited by one snippet 0.5. Label propagation with seed 52, nodes and labels
+  sorted, ties to the smallest label; a lone entity is not a topic; a community above 40 is cut by weighted degree.
+- `member_hash` covers the label, the entities and the keys (`nkey`, edge key) of the facts the summary reads, so a
+  new or lost fact on a member also counts as "members changed". A re-detected community with the same hash keeps its
+  row and summary; one sharing at least half its entities with a stored topic of the same label takes that row over
+  as `pending` (its old sentences stay, filtered per sentence, until the re-summarise). States: `pending`, `ready`,
+  `stale`, `invalid` (two unparsable answers: retried when the hash changes), `empty` (no valid sentence).
+- Summary request: the system prefix is `rules/evidence.yaml > summary` (own `version`, not part of the extraction
+  prefix, so the extractor id is unchanged) with `rules/evidence_summary_schema.json`; the user text lists the
+  topic's facts oldest first with ordinal refs `f1, f2, ...` (never row ids), date, modality and one quote from a
+  passing row, cut at 6,000 tokens. Validation: unknown refs are removed, a sentence left with none or with no text is
+  dropped, at most 12 sentences of at most 400 characters. A parse failure or a cut answer gets one repair retry.
+- `topic_source` (a schema addition next to `entity_source`) keeps the sources whose rows the summary was written
+  from. The access rule "ignored rows are strict for sentences" is applied to those sources: a sentence is hidden when
+  a cited claim or edge has a row on a deleted source or on one in the request's `exclude` that the summary read.
+  This is what makes the S4 acceptance line hold: after a file is deleted the sentence is hidden; the re-summarise no
+  longer reads that file, so its new sentence returns even though the claim keeps its (ignored) row there.
+- `topic_input` (review round 2) keeps every claim and edge of the summary request, cited or not. With a scope,
+  `prepare_topics` passes no sentence of a topic with an input row on another client's side for that scope (`_toth`:
+  the side rule of `prepare` evaluated on those rows only, so the search path's `_snip` is unchanged, and not the
+  `denied` class, so excluded, revoked and hidden sources stay per sentence). The
+  relabel calls `store.invalidate_topics` for each revision it re-marks or splits, before the old snippets go.
+- Staleness is one SQLite trigger, `source_state_topics`: any change of `source.state`, on every path (state-only
+  pass, deletion in a pass, the Tracker, vacuum, the bench), marks `ready` topics that cite the source or read it
+  `stale` in the same transaction. A source back to active is not cited by a summary written without it; that topic
+  comes back through `member_hash` instead (its facts return). Vacuum deletes a sentence citing a purged fact whole.
+- Worker: after the extraction loop (and `apply_pending`), `topics_step` detects and, unless the PM chose "only when
+  asked" (`topics: lazy`), summarises `pending` and `stale` topics on the route's summary model with
+  `summary_output_tokens` as the cap, through the same `gate` (pass, day and all-projects caps, the unpriced-model
+  stop) and `send` (call pause, kill in flight) on the same run row, so the day caps count it. A route error moves
+  to the model on this Mac once (as extraction), else counts toward the three-errors stop and leaves the topic as it
+  was. `topics_pass` (`evidence topics`) is the lazy path: detect and summarise now, no extraction. `evidence global`
+  runs `ask_global`; `evidence status` counts topics by state. `--extract` recordings run with `topics: lazy`.
+- `ask_global` (in `search.py`): after `prepare`, `prepare_topics` builds the topics the request may see (`_ttop`:
+  with a scope, `client_set` empty or the own label; none on a stale scope; all with no scope) and their passing
+  sentences (`summary_at <= as_of`, at least one cite, every cite in `_claim` or `_edge`, no ignored row on a
+  `topic_source` source). Topics are found by `topic_fts` over passing sentences only and by visible aliases contained
+  in the query, both only among `_ttop`, so another client's topic never takes a slot or counts in `pending_topics`;
+  up to 3 topics. A sentence citing a claim of a superseded entity is skipped. A
+  topic is returned only with a passing sentence; each sentence is dated by its earliest cited passing row. The
+  timeline is the members' passing claims and edges plus "changed later" claims, oldest first, at most 40; it is
+  returned also for topics with no passing sentence (a replay older than the summary gets claims, no summary).
+  `mode="live"` raises.
+- G0: S4 is ready for C with a summary fixture in `fixtures/topics/` (`<sha256 of the request text>.json` plus a
+  manifest pinned to the gold and to the extraction fixture's tree hash; a re-recorded extraction leaves the S4 rows
+  `not_evaluated`, which fails the S4 gate). The fixture is **authored, not a model**: `authored_summary` writes one
+  dated quote per fact, citing it (`--record-topics`; recording a real route's summaries is a follow-up).
+  C writes summaries "before the exclusion" (section 14.2 item 6): every non-active source is active while topics are
+  detected and summarised, then each state row comes back and the trigger marks the cited topics stale. A global row
+  is judged on `ask_global`'s answer alone (its passing sentences and timeline, the recall of section 14.3); the other
+  S4 rows add that answer to C's search items. A control (`fixture.topics.control` in the results) asks each of those
+  rows through `ask_global` before the state change and lists the excluded facts its sentences held then. Review
+  round 2 linked the hidden call's "teal palette" decision to a topic in the authored extraction fixture (the call
+  entity "Acme design review", alias "design review", with its own `decided` claim on the same transcript line), so
+  on the small set x5's control holds "teal palette" and its 0 excluded leaks are the per-sentence filter's work;
+  `s4_gate` fails when that control is empty. On the scale set the noise documents' topics outrank it for x5's
+  question (`review*` in many of their sentences), so the control there is empty and not gated (ranking: a GraphRAG
+  follow-up). t7 and g1 still list none. The filter is also proven by the unit tests (excluded, revoked, hidden,
+  request exclude, a pending hide, deleted then re-summarised). `judge`: a fact is dated by claims and edges, never by a summary sentence, and `order_ok` is the order of
+  the facts returned (at least two, each dated); a row still passes only with every fact found. A and B are
+  unchanged by both. `fixtures/topics` is outside `fixture_sha` like the other v2 folders.
+- Two corrections to S3's C, both kept because no S3 column moved: the authored extraction answer of
+  `docs/acme/item-13-sso-user-mapping.md` named its 4 claims' subject by the catalog id `e-caa1cfd0c1`, which that
+  segment's catalog does not hold yet, so the validator dropped them (a real model is asked for its own ref there);
+  they now use `n1` (noted in the file's `corrections`). That alone pushed h1's last fact out of the k slots, because
+  the bench's hop step took a neighbour's claims in row order; it now takes them newest first (recency, section 11.2
+  step 5). With both, hop stays 5 of 6 and every S3 row keeps its status.
+- Result (G0, small and scale without vectors): rows 34 of 39, none `not_evaluated`, timeline recall 75% (3 of 4) in
+  order on `ask_global`'s answer alone (it needs the corrected item-13 claims: without them recall is 50%), t7 and x5
+  pass (without reaching the filter, see above), every leak 0. g1 fails on
+  "okta": the Nov 5 transcript says "our identity provider for staging is Okta" with no word linking it to SSO, so the
+  authored extraction has no edge to the SSO topic and the summary prompt forbids adding it (open, a GraphRAG
+  follow-up: a real extraction or vectors may link it).
+
 ### S5. App integration: flag, project uid, scheduler, settings and cost text
 
 Scope: Swift: `evidence_uid` in `projects.json` with the slug passed on every pass (slug history), `LT_PROJECT_UID`,
@@ -2313,3 +2409,12 @@ for k, lo, hi, per in (("codex %", 68, 84, 10),):
     повідомляє про обрізання; локальний перехід на стелі (налаштування, вимкнене за замовчуванням); `--extract`
     записує точність, повноту, частки відповідей на кілька кроків і перефразування, розмір і вартість. На
     справжньому AI калібрування ще не запускалось, тож оцінки лишаються на припущеннях 500 і 2000 токенів.
+13. S4 (PB-87): теми будуються детерміновано (поширення міток з фіксованим зерном, не більше 40 сутностей, ніколи
+    два клієнти) з прийнятих тверджень і ребер активних джерел; підсумок теми пише модель summary маршруту в межах
+    тієї ж стелі проходу, кожне речення посилається на факти (f1, f2, ...), речення без посилання відкидається, і
+    підсумок ніколи не стає доказом. Речення повертається лише тоді, коли всі його факти проходять доступ і час, а
+    джерела, з яких його писали, не видалені й не виключені в запиті; зміна стану джерела позначає теми застарілими
+    (тригер SQLite), наступний прохід переписує лише змінені й застарілі теми. `ask_global` повертає підсумки й
+    датовану хронологію, ніколи в режимі live. G0: усі рядки оцінено, хронологія 75% у правильному порядку, витоків
+    0; фікстуру підсумків написано без моделі (`route: authored`); факт про Okta не знайдено (у тексті немає звʼязку
+    з SSO).

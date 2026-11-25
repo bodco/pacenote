@@ -14,6 +14,10 @@
               in S1 search applies only reject and supersede)
     search    --query, --as-of, --exclude, --mode, --k, scope from --scope-json or --title/--companies (decide)
     card      --entity
+    topics    S4: detect topics and summarise the pending and stale ones now (no extraction), on --route with the
+              pass's settings, ceilings and call pause: "Topic summaries: only when asked" (lazy) runs this
+    global    S4: ask_global --query: topics found by topic_fts and aliases, their passing summary sentences and the
+              dated timeline of their members (--as-of, --exclude, scope as search; never --mode live)
     rebuild   derived tables again from the files; pm_override rows and source states are kept
     vacuum    purge revoked sources and superseded snippets nobody cites, then facts left without evidence
     delete    the store file, its WAL, lock, log and snapshots
@@ -94,6 +98,7 @@ def cmd_status(a) -> dict:
         out["request"] = {"id": a.request_id, "applied": a.request_id in st.applied_ids()}
     if not st.fts:
         out["note"] = "FTS5 missing: search falls back to a word scan"
+    out["topics"] = {r[0]: r[1] for r in st.q("SELECT state, count(*) FROM topic GROUP BY state")}    # S4
     return out
 
 
@@ -199,6 +204,34 @@ def cmd_search(a) -> dict:
     return dict(res, ok=True)
 
 
+def cmd_topics(a) -> dict:
+    """S4: detect and summarise now under both locks (one pass at a time across projects, section 13.1)."""
+    from . import worker as W
+    st = _store(a, create=False)
+    wl = st.worker_lock(0.0)
+    if not wl:
+        return {"ok": False, "status": "busy", "why": "another pass is running"}
+    with S.held(wl):
+        pl = st.project_lock(2.0)
+        if not pl:
+            return {"ok": False, "status": "busy", "why": "the project is locked"}
+        with S.held(pl):
+            IG.apply_pending(st)
+            run = W.topics_pass(st, a.root or st.meta("root_hint"), _settings(a))
+            st.compact_log()
+    return {"ok": True, "status": run["status"], "run": run}
+
+
+def cmd_global(a) -> dict:
+    if a.mode == "live":
+        return {"ok": False, "error": "ask_global is not for the live path"}
+    st = _store(a, create=False)
+    root = a.root or st.meta("root_hint")
+    res = SE.ask_global(st, a.query or "", scope=_scope(a, root), as_of=a.as_of, exclude=_list(a.exclude), mode=a.mode,
+                        include_suggestions=a.include_suggestions)
+    return dict(res, ok=True)
+
+
 def cmd_card(a) -> dict:
     st = _store(a, create=False)
     root = a.root or st.meta("root_hint")
@@ -207,7 +240,7 @@ def cmd_card(a) -> dict:
 
 
 DERIVED = ("evidence", "alias_seen", "alias", "claim", "edge", "entity_mark", "entity_rev", "entity_source", "entity", "snippet_mark",
-           "snippet", "revision", "topic_cite", "topic_sentence", "topic_member", "topic", "run_item")
+           "snippet", "revision", "topic_cite", "topic_sentence", "topic_member", "topic_source", "topic", "run_item")
 
 
 def rebuild(st: S.Store, root: str, **kw) -> dict:
@@ -220,6 +253,7 @@ def rebuild(st: S.Store, root: str, **kw) -> dict:
         st.conn.execute("DELETE FROM pm_override WHERE via='register'")
         if st.fts:
             st.conn.execute("INSERT INTO snippet_fts(snippet_fts) VALUES ('rebuild')")
+            st.conn.execute("INSERT INTO topic_fts(topic_fts) VALUES ('rebuild')")
         st.set_meta("label_universe", "[]")
     return IG.ingest(st, root, **kw)
 
@@ -236,6 +270,14 @@ def vacuum(st: S.Store) -> dict:
                   " JOIN source s ON s.id=r.source_id WHERE s.state='revoked'")
         n_cl = c.execute("DELETE FROM claim WHERE id IN (SELECT target_id FROM _gone WHERE target='claim')").rowcount
         n_ed = c.execute("DELETE FROM edge WHERE id IN (SELECT target_id FROM _gone WHERE target='edge')").rowcount
+        # S4: a summary sentence citing a purged fact goes whole (never left with fewer cites), its topic re-summarised
+        gone_s = "SELECT tc.sentence_id FROM topic_cite tc JOIN _gone g ON g.target=tc.target AND g.target_id=tc.target_id"
+        c.execute("UPDATE topic SET state='stale' WHERE state='ready' AND id IN (SELECT topic_id FROM topic_sentence"
+                  " WHERE id IN ({}))".format(gone_s))
+        if st.fts:
+            for r in c.execute("SELECT id, text FROM topic_sentence WHERE id IN ({})".format(gone_s)).fetchall():
+                c.execute("INSERT INTO topic_fts(topic_fts, rowid, text) VALUES ('delete', ?, ?)", (r[0], r[1]))
+        c.execute("DELETE FROM topic_sentence WHERE id IN ({})".format(gone_s))
         for t in ("evidence", "topic_cite"):
             c.execute("DELETE FROM {} WHERE EXISTS (SELECT 1 FROM _gone g WHERE g.target={}.target AND"
                       " g.target_id={}.target_id)".format(t, t, t))
@@ -293,7 +335,8 @@ def cmd_delete(a) -> dict:
 
 COMMANDS = {"status": cmd_status, "ingest": cmd_ingest, "pass": cmd_ingest, "exclude": cmd_exclude,
             "override": cmd_override, "search": cmd_search, "card": cmd_card, "rebuild": cmd_rebuild,
-            "vacuum": cmd_vacuum, "delete": cmd_delete, "estimate": cmd_estimate}
+            "vacuum": cmd_vacuum, "delete": cmd_delete, "estimate": cmd_estimate, "topics": cmd_topics,
+            "global": cmd_global}
 
 
 def parser() -> argparse.ArgumentParser:

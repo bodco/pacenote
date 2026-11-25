@@ -112,6 +112,14 @@ CREATE TABLE IF NOT EXISTS topic_cite (
   sentence_id INTEGER NOT NULL REFERENCES topic_sentence(id) ON DELETE CASCADE, target TEXT NOT NULL,
   target_id INTEGER NOT NULL, PRIMARY KEY (sentence_id, target, target_id));
 CREATE INDEX IF NOT EXISTS topic_cite_target ON topic_cite(target, target_id);
+CREATE TABLE IF NOT EXISTS topic_source (
+  topic_id INTEGER NOT NULL REFERENCES topic(id) ON DELETE CASCADE, source_id INTEGER NOT NULL,
+  PRIMARY KEY (topic_id, source_id));
+CREATE INDEX IF NOT EXISTS topic_source_src ON topic_source(source_id);
+CREATE TABLE IF NOT EXISTS topic_input (
+  topic_id INTEGER NOT NULL REFERENCES topic(id) ON DELETE CASCADE, target TEXT NOT NULL, target_id INTEGER NOT NULL,
+  PRIMARY KEY (topic_id, target, target_id));
+CREATE INDEX IF NOT EXISTS topic_input_target ON topic_input(target, target_id);
 CREATE TABLE IF NOT EXISTS run (
   id INTEGER PRIMARY KEY, kind TEXT NOT NULL, route TEXT, model TEXT, fallback_from TEXT, extractor TEXT,
   started_at TEXT NOT NULL, ended_at TEXT, status TEXT NOT NULL, segments_plan INTEGER, segments_done INTEGER,
@@ -125,10 +133,52 @@ CREATE TABLE IF NOT EXISTS run_item (
 CREATE TABLE IF NOT EXISTS segment_cache (
   seg_hash TEXT NOT NULL, extractor TEXT NOT NULL, output TEXT NOT NULL, run_id INTEGER REFERENCES run(id),
   in_tokens INTEGER, out_tokens INTEGER, last_used TEXT NOT NULL, PRIMARY KEY (seg_hash, extractor));
+CREATE TRIGGER IF NOT EXISTS source_state_topics AFTER UPDATE OF state ON source WHEN NEW.state IS NOT OLD.state
+BEGIN
+  UPDATE topic SET state='stale' WHERE state='ready' AND (
+    id IN (SELECT topic_id FROM topic_source WHERE source_id=NEW.id)
+    OR id IN (SELECT ts.topic_id FROM topic_sentence ts JOIN topic_cite tc ON tc.sentence_id=ts.id
+              JOIN evidence ev ON ev.target=tc.target AND ev.target_id=tc.target_id
+              JOIN snippet sn ON sn.id=ev.snippet_id JOIN revision rv ON rv.id=sn.revision_id
+              WHERE rv.source_id=NEW.id));
+END;
 """
 # Two additions to the schema of spec section 6, both deterministic caches: source.ext_id (the Google <id16> or the
 # Notion page id a --revoked list names) and entity_source (the sources that back a deterministic entity, so its
 # visibility follows its sources' access class, spec section 11.2 step 1).
+# S4 adds topic_source (the sources whose evidence rows a topic's summary was written from: a sentence is hidden
+# when one of them is ignored for the request, deleted or in `exclude`, spec section 8.7) and the trigger
+# source_state_topics: every change of a source's state, on any path (state-only pass, deletion, Tracker, rebuild),
+# marks the summarised topics that cite it or read it `stale` in the same transaction (section 8.7 "staleness").
+# topic_input holds every claim and edge a topic's summary request was written from (cited or not): a scoped request
+# sees none of a topic's sentences when one of them has a row on another client's side for that scope, and a relabel
+# drops the summaries that read a relabelled revision (section 8.7, "client labels").
+
+
+def invalidate_topics(conn, source_ids) -> int:
+    """Drop the summary of every topic that read one of these sources (topic_source, or an input or cited fact with a
+    row on them) and set it `pending`: no sentence of it is returned until it is summarised again. Runs inside the
+    caller's transaction (the relabel). Returns the number of topics."""
+    ids = sorted({int(x) for x in source_ids})
+    if not ids or not conn.execute("SELECT 1 FROM sqlite_master WHERE name='topic_input'").fetchone():
+        return 0
+    marks = ",".join("?" * len(ids))
+    tids = [r[0] for r in conn.execute(
+        "SELECT topic_id FROM topic_source WHERE source_id IN ({m}) UNION"
+        " SELECT ti.topic_id FROM topic_input ti JOIN evidence ev ON ev.target=ti.target AND ev.target_id=ti.target_id"
+        " JOIN snippet sn ON sn.id=ev.snippet_id JOIN revision rv ON rv.id=sn.revision_id WHERE rv.source_id IN ({m})"
+        " UNION SELECT ts.topic_id FROM topic_sentence ts JOIN topic_cite tc ON tc.sentence_id=ts.id JOIN evidence ev"
+        " ON ev.target=tc.target AND ev.target_id=tc.target_id JOIN snippet sn ON sn.id=ev.snippet_id JOIN revision rv"
+        " ON rv.id=sn.revision_id WHERE rv.source_id IN ({m})".format(m=marks), ids * 3)]
+    fts = conn.execute("SELECT 1 FROM sqlite_master WHERE name='topic_fts'").fetchone()
+    for tid in sorted(set(tids)):
+        if fts:
+            for r in conn.execute("SELECT id, text FROM topic_sentence WHERE topic_id=?", (tid,)).fetchall():
+                conn.execute("INSERT INTO topic_fts(topic_fts, rowid, text) VALUES ('delete', ?, ?)", (r[0], r[1]))
+        for t in ("topic_sentence", "topic_source", "topic_input"):
+            conn.execute("DELETE FROM {} WHERE topic_id=?".format(t), (tid,))
+        conn.execute("UPDATE topic SET state='pending' WHERE id=?", (tid,))
+    return len(set(tids))
 
 FTS = """
 CREATE VIRTUAL TABLE IF NOT EXISTS snippet_fts USING fts5(text, heading, content='snippet', content_rowid='id',

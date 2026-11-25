@@ -40,6 +40,8 @@ def load_rules(rules_dir: Optional[Path] = None) -> dict:
     d = Path(rules_dir or RULES_DIR)
     r = yaml.safe_load((d / "evidence.yaml").read_text(encoding="utf-8"))
     r["schema"] = json.loads((d / "evidence_schema.json").read_text(encoding="utf-8"))
+    ss = d / "evidence_summary_schema.json"         # S4: topic summaries (not part of the extraction prefix)
+    r["summary_schema"] = json.loads(ss.read_text(encoding="utf-8")) if ss.is_file() else {}
     r["_hedge"] = [re.compile(p, re.I | re.U) for p in r.get("hedge_anywhere") or []]
     item_checks(r)
     return r

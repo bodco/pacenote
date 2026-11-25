@@ -473,6 +473,7 @@ Generated from `rules/evidence.yaml` and `rules/evidence_schema.json`; do not ed
 - A hedge word anywhere in a quote turns `confirmation` into `proposal`; notes, briefs and other derived sources never confirm (`statement`).
 - At most 40 entities, 60 claims and 60 relations per part; quotes at most 300 characters; confidence under 0.7 is a suggestion.
 - Output: JSON with `entities`, `claims` and `relations` (`rules/evidence_schema.json`).
+- Topic summaries (`g2-s4-1`) are written by the app, never by the skill: at most 12 sentences, each citing the facts it states (f1, f2, ...); a sentence without a valid cite is dropped (`rules/evidence_summary_schema.json`). A summary is derived: never evidence, never a confirmation.
 
 ### Tip diet and rates (wins over any rule that allows more)
 
