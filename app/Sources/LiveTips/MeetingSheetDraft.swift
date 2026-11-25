@@ -13,7 +13,25 @@ struct DraftBlock: Identifiable, Equatable {
     var visible = true
     var onlyIfData = false
     var method: String?
-    var id: String { type }
+    /// PB-102: a Verbatim block has its own id (several per call) and its settings: the source and the sections
+    var uid: String? = nil
+    var verbatim: SheetVerbatim? = nil
+    var id: String { uid ?? type }
+
+    static func newVerbatim(title: String) -> DraftBlock {
+        DraftBlock(type: BlockType.verbatim.rawValue, title: title, uid: "b-verbatim-" + String(UUID().uuidString.prefix(8)).lowercased(),
+                   verbatim: SheetVerbatim(source: nil))
+    }
+
+    /// The request's form of a Verbatim block's settings (sheet/verbatim.py settings_of).
+    var verbatimRequest: [String: Any] {
+        var src: [String: Any] = [:]
+        if let s = verbatim?.source {
+            src["kind"] = s.kind
+            if s.kind == "text" { src["text"] = s.text ?? "" } else if let p = s.path { src["path"] = p }
+        }
+        return ["source": src, "sections": (verbatim?.sections ?? "").trimmingCharacters(in: .whitespaces)]
+    }
 }
 
 struct DraftPerson: Identifiable, Equatable {
@@ -110,6 +128,7 @@ final class SheetDraft: ObservableObject {
         mode = mem.map { SheetMode(rawValue: $0.mode) } ?? SheetPrefs.shared.mode(for: model, preset: preset)
         if let r = mem?.route, !r.isEmpty { route = AppConfig.AIRoutes.migratedRoute(r) }
         applyPreset(presetID)
+        restoreVerbatim()
         goal = Self.goalLine(model.cleanContext)
         // 0.14.0 (D1 smoke): an internal call has no other side; a team member is found under any spelling
         // ("Olena S.", "O. Starodubtseva"), and one person written two ways is one chip.
@@ -180,13 +199,34 @@ final class SheetDraft: ObservableObject {
         let lib = SheetLibrary.shared
         presetID = id
         let p = lib.preset(id) ?? SheetLibrary.fallback.last!
+        let verbatim = blocks.filter { $0.type == BlockType.verbatim.rawValue }    // PB-102: kept when the preset changes
         blocks = p.blocks.map { t in
             DraftBlock(type: t, title: lib.title(t), visible: true, onlyIfData: ["signals", "tech_stack", "fit"].contains(t),
                        method: t == "qualification" ? (p.method ?? model.salesMethod.nilIfEmpty ?? "bant") : nil)
-        }
+        } + verbatim
     }
 
     var preset: SheetPresetInfo? { SheetLibrary.shared.preset(presetID) }
+
+    /// PB-102: the Verbatim blocks of the call's sheet come back into the wizard with their settings, at their place
+    /// (after the block that was before them), so preparing again keeps them.
+    func restoreVerbatim() {
+        guard let p = SheetFiles.path(for: model), let s = try? MeetingSheetIO.load(p) else { return }
+        let old = s.blocks.sorted { $0.order < $1.order }
+        for (i, b) in old.enumerated() where b.type == .verbatim && !blocks.contains(where: { $0.id == b.id }) {
+            var d = DraftBlock(type: b.type.rawValue, title: b.title, visible: b.visible, uid: b.id,
+                               verbatim: SheetVerbatim(source: b.verbatim?.source, sections: b.verbatim?.sections))
+            d.onlyIfData = false
+            let prev = old[..<i].reversed().first { p in blocks.contains { $0.id == p.id || (p.type != .verbatim && $0.type == p.type.rawValue) } }
+            let at = prev.flatMap { p in blocks.firstIndex { $0.id == p.id || (p.type != .verbatim && $0.type == p.type.rawValue) } }.map { $0 + 1 } ?? 0
+            blocks.insert(d, at: min(at, blocks.count))
+        }
+    }
+
+    /// PB-102: the call's sources that are files on this Mac (a Verbatim block can copy one of them).
+    var fileSources: [DraftSource] {
+        sources.filter { $0.checked && $0.path != nil && $0.type != SourceType.folder.rawValue && !StartCallModel.isDir($0.path ?? "") }
+    }
 
     // MARK: sources
 
@@ -353,6 +393,7 @@ final class SheetDraft: ObservableObject {
         let blockList: [[String: Any]] = blocks.enumerated().map { i, b -> [String: Any] in
             var d: [String: Any] = ["type": b.type, "title": b.title, "visible": b.visible, "only_if_data": b.onlyIfData, "order": i]
             if let m = b.method { d["method"] = m }
+            if b.type == BlockType.verbatim.rawValue { d["id"] = b.id; d["verbatim"] = b.verbatimRequest }   // PB-102
             return d
         }
         let people: [String: Any] = ["ours": ours.filter { !$0.name.isEmpty }.map(person), "theirs": theirs.filter { !$0.name.isEmpty }.map(person)]

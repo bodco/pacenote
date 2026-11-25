@@ -5,6 +5,16 @@ Pacenote. Earlier versions are described in the commit messages and in
 
 ## Unreleased
 
+- **Meeting Sheet: a Verbatim block for text that must stay word for word (PB-102).** + Add a block now offers
+  Verbatim, as often as you need it in one call. In its Settings you give it a title, a source (a file of the call,
+  any file, or pasted text) and, if you want only part of a Markdown file, sections such as 1-4 by heading. The
+  preparation copies the text unchanged, never through the AI, and checks the copy against the source after the sheet
+  is written: if they differ (or the file is gone, or the sections are not there) the block says "Not copied" with
+  the reason instead of showing text. The block moves like any other (for example first after My focus), keeps its
+  place and settings on Refresh and takes the new text when the file changed. During the call it sits at the top of
+  the Brief tab in the tips window, folded; Show text opens it as a large scrollable teleprompter that keeps its place
+  while tips arrive. Headings, lists and emphasis are kept on the sheet page, in the tips window and in the exports.
+  The block stays on this Mac: call sync does not send it.
 - **Project memory, step 4: topic summaries and questions over all time (GraphRAG G2 S4, PB-87).** Still behind the
   flag `evidence_store` (off by default); with the flag off nothing changes and nothing new is sent. With it on and
   AI reading on, a pass ends by grouping what it read into topics (one client per topic, the same topics every time

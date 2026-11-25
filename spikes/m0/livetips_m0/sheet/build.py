@@ -44,6 +44,7 @@ from . import schema as S
 from . import size as Z
 from . import sources as SRC
 from . import standup as SU
+from . import verbatim as V
 
 PACKED = ("local", "codex", "openai", "gemini", "fake")
 CLAUDE = ("code", "api")
@@ -1005,10 +1006,21 @@ def build(req: dict, refresh: bool = False, emit=say, responder: Optional[Callab
         lib = rules.get("blocks") or {}
         keep = {b["type"]: b for b in sheet["blocks"]}
         bl = []
+        seen_ids = set()
         for i, t in enumerate(req["blocks"]):
             d = t if isinstance(t, dict) else {"type": t}
             t = d.get("type")
             if t not in lib:
+                continue
+            if t == V.TYPE:
+                # PB-102: several Verbatim blocks per call, each with its own id and settings (never one per type)
+                vid = re.sub(r"[^a-zA-Z0-9_-]", "-", str(d.get("id") or ""))[:60] or "b-verbatim"
+                while vid in seen_ids:
+                    vid += "-%d" % i
+                seen_ids.add(vid)
+                bl.append({"id": vid, "type": t, "title": str(d.get("title") or lib[t].get("title", t)), "order": i,
+                           "visible": bool(d.get("visible", True)), "only_if_data": False, "facts": [],
+                           "edited_by_user": False, "verbatim": V.settings_of(d)})
                 continue
             b = keep.get(t) or {"id": f"b-{t}", "type": t, "title": lib[t].get("title", t), "visible": True,
                                 "only_if_data": bool(lib[t].get("only_if_data")), "facts": [], "edited_by_user": False}
@@ -1024,6 +1036,9 @@ def build(req: dict, refresh: bool = False, emit=say, responder: Optional[Callab
                 b["method"] = str(d["method"])
             bl.append(b)
         sheet["blocks"] = bl
+    elif old:
+        # PB-102: a Refresh without the wizard's block list keeps the Verbatim blocks of the sheet at their place
+        sheet["blocks"] = V.carry_over(old, sheet["blocks"])
     for b in sheet["blocks"]:
         if b["type"] == "qualification" and req.get("method"):
             b["method"] = req["method"]
@@ -1420,6 +1435,10 @@ def build(req: dict, refresh: bool = False, emit=say, responder: Optional[Callab
             b["facts"] = header_facts(req, "s-meeting", checked, sheet.get("goal"), web)
         elif t == "gaps":
             b["facts"] = []
+        elif t == V.TYPE:
+            V.fill(b, checked)            # PB-102: copied from its source unchanged, never through the model
+            if (b.get("verbatim") or {}).get("status") == "failed":
+                notes.append(f"Verbatim block \"{b.get('title')}\" failed: {b['verbatim'].get('error')}.")
         elif b in ask_blocks:
             b["facts"] = facts.get(t, [])
         else:
@@ -1481,6 +1500,16 @@ def build(req: dict, refresh: bool = False, emit=say, responder: Optional[Callab
     rep = report(sheet, failures, notes, asker, meta, time.time() - t0)
     _write_json(str(CL.sidecar(base, f".sheet.v{n}.json")), sheet)
     _write_json(str(CL.sidecar(base, ".sheet.json")), sheet)
+    if any(V.is_verbatim(b) for b in sheet["blocks"]):
+        # PB-102: each Verbatim copy, as written, is compared with its source once more; a difference fails the block
+        written_sheet = json.loads(CL.sidecar(base, ".sheet.json").read_text(encoding="utf-8"))
+        bad = V.check_written(written_sheet, checked)
+        if bad:
+            sheet = written_sheet
+            notes.extend(f"Verbatim block \"{t}\" failed: the copy does not match the source." for t in bad)
+            rep = report(sheet, failures, notes, asker, meta, time.time() - t0)
+            _write_json(str(CL.sidecar(base, f".sheet.v{n}.json")), sheet)
+            _write_json(str(CL.sidecar(base, ".sheet.json")), sheet)
     _write_json(str(CL.sidecar(base, ".sheet.sources.json")), rep)
     _write_json(str(CL.sidecar(base, ".sheet.request.json")), {k: v for k, v in req.items() if k not in ("fake_answers", "_previous_labels")})
     from . import derive as D

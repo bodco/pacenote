@@ -2679,6 +2679,50 @@ func meetingSheet0100() {
     expect((try? MeetingSheetIO.decode(Data("{\"schema\":\"pacenote.sheet/1\"}".utf8))) == nil, "sheet: required fields")
 }
 
+// PB-102 (Meeting Sheet, owner 24.11): the Verbatim block in the app's models: a known block type offered by Add a
+// block, its copy read and written back character for character (also through a save patch), kept on this Mac by call
+// sync, exported as it is, and a failed copy shown with its reason and no text.
+func verbatimPB102() {
+    let text = "## 2. Export\r\n\r\nExports run **every** night.\r\n- CSV  and PDF\r\n"
+    let enc = String(data: (try? JSONSerialization.data(withJSONObject: [text], options: [.fragmentsAllowed])) ?? Data(), encoding: .utf8) ?? "[]"
+    let quoted = String(enc.dropFirst().dropLast())
+    let json = """
+    {"schema":"pacenote.sheet/1","id":"x","title":"Meeting Sheet: Orbit","meeting_ref":{"start":"2026-11-26T10:00:00Z"},
+     "mode":"quick","preset":"blank","language":"en","sources":[],
+     "blocks":[{"id":"b-my_focus","type":"my_focus","title":"My focus","visible":true,"only_if_data":false,"order":0,"edited_by_user":false,"facts":[]},
+       {"id":"b-verbatim-aa11","type":"verbatim","title":"Demo script","visible":true,"only_if_data":false,"order":1,"edited_by_user":false,"facts":[],
+        "verbatim":{"source":{"kind":"file","path":"/p/orbit/demo-script.md"},"sections":"2-3","text":\(quoted),"status":"ok","sha256":"abc","checked_at":"2026-11-25T10:00:00Z"}},
+       {"id":"b-verbatim-bb22","type":"verbatim","title":"Broken","visible":true,"only_if_data":false,"order":2,"edited_by_user":false,"facts":[],
+        "verbatim":{"source":{"kind":"text","text":"PASTED-SECRET-7731"},"text":"","status":"failed","error":"file not found: gone.md"}}]}
+    """
+    expect(BlockType.known.contains(.verbatim) && BlockType.verbatim.rawValue == "verbatim" && SheetEdit.blockTitle(.verbatim) == "Verbatim",
+           "verbatim: a known block type with its title")
+    guard let s = try? MeetingSheetIO.decode(Data(json.utf8)) else { expect(false, "verbatim: decodes"); return }
+    let a = s.blocks[1], b = s.blocks[2]
+    expect(a.verbatim?.text == text && a.verbatim?.ok == true && a.verbatim?.sections == "2-3" && a.verbatim?.source?.path == "/p/orbit/demo-script.md",
+           "verbatim: the copy decodes exactly (line ends, spaces, emphasis)")
+    expect(b.verbatim?.ok == false && b.verbatim?.error == "file not found: gone.md" && b.verbatim?.source?.kind == "text", "verbatim: a failed copy")
+    expect(s.blocks.filter { $0.type == .verbatim }.map(\.id) == ["b-verbatim-aa11", "b-verbatim-bb22"], "verbatim: several per sheet, each its own id")
+    if let data = try? MeetingSheetIO.encode(s), let back = try? MeetingSheetIO.decode(data) {
+        expect(back == s && back.blocks[1].verbatim?.text == text, "verbatim: round trip keeps the copy")
+        if let merged = try? MeetingSheetIO.patched(original: Data(json.utf8), new: data), let m = try? MeetingSheetIO.decode(merged) {
+            expect(m.blocks[1].verbatim?.text == text && m.blocks[1].verbatim?.sha256 == "abc", "verbatim: a save patch keeps the copy")
+        } else { expect(false, "verbatim: patch") }
+    } else { expect(false, "verbatim: encode") }
+    // call sync: a Verbatim block is not sent at all (no copy, pasted text, file path, not even the block); others go
+    let synced = String(data: CallSync.json(CallSync.sheetBody(Data(json.utf8)) ?? [:]), encoding: .utf8) ?? ""
+    expect(synced.contains("b-my_focus") && !synced.contains("Demo script") && !synced.contains("Exports run")
+           && !synced.contains("PASTED-SECRET-7731") && !synced.contains("demo-script.md") && !synced.contains("\"verbatim\""),
+           "verbatim: the block stays on this Mac")
+    let md = SheetExport.markdown(s)
+    expect(md.contains("## Demo script\n\n## 2. Export\r\n\r\nExports run **every** night.\r\n- CSV  and PDF\n\n") && md.contains("> Not copied: file not found: gone.md")
+           && !md.contains("## Broken\n\n- Not found") && !md.contains("## Demo script\n\n- Not found"), "verbatim: Markdown export holds the copy as it is")
+    let html = SheetExport.html(s)
+    expect(html.contains("Exports run **every** night.") && html.contains("Not copied: file not found: gone.md"), "verbatim: HTML export")
+    let empty = SheetVerbatim(source: .init(kind: "text", text: "x"))
+    expect(!empty.ok, "verbatim: not ok before a build")
+}
+
 // 0.10.0 (Meeting Sheet, phase 6): the Pacenote browser's pure logic: page kinds, the capture plan, the pause, the
 // file names under <project>/live/sources, and the contact scrubber (emails and phones are never collected).
 func browserCapture0100() {
@@ -4167,6 +4211,7 @@ func prepSecuritySEC01() {
 
 deckCapacity097()
 meetingSheet0100()
+verbatimPB102()
 meetingSheetUI0100()
 browserCapture0100()
 sheetPipeline0100()

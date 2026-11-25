@@ -2490,6 +2490,26 @@ to reorder, the eye hides a block for this meeting, hidden ones are listed cross
 and the right column shows what **Ready means** for the preset and **Save as my preset** with its name, right on the
 page. It keeps your own set (Settings > Meeting Sheet renames, duplicates and deletes them).
 
+**Verbatim block (PB-102).** **+ Add a block** always offers **Verbatim**, also when the call already has one: a call
+can have several. A new one opens its **Settings**: the title, the source (a file of this call, any file on this Mac,
+or pasted text) and, optionally, **Sections**: a number or a range such as `1-4`, counted by the Markdown headings of
+the file (the heading level used more than once, so one `# Title` over several `## ` parts counts the `## ` parts; a
+`#` line inside a code block is not a heading; empty takes the whole text). The build copies the text unchanged:
+Markdown and plain text byte for byte (line ends included), other formats as the text read from them. The build
+never gives the block to the AI, so nothing rewrites or shortens it, and a file that is not a source of the call is
+not sent to the AI either. After the sheet
+is written, each copy is compared with its source once more (the same sections, character for character); if they
+differ, the file is gone, it is not UTF-8 text or the sections are not there, the block says "Not copied" with the
+reason and shows no text. Drag it like any block (for example first after My focus); the eye hides it for this
+meeting, Remove block in its Settings takes it out. Refresh keeps every Verbatim block with its place and settings
+and reads the file again, so a changed file gives the new text (its block menu has no Regenerate: Refresh of the
+sheet does it). On the sheet page the block shows where it is copied from and the text with its headings, lists and
+emphasis; the Markdown and PDF exports hold it as it is. During the
+call the **Brief** tab of the tips window lists the Verbatim blocks on top, each folded: **Show text** opens it in a
+large, scrollable reading box (a teleprompter) that keeps its place while tips arrive, **Hide text** folds it again.
+A Verbatim block is never saved into a preset, and call sync does not send it at all (not its text, pasted text,
+file path or title); the other blocks go as before.
+
 **Quick or Expert.** **Get ready** opens one of two ways into the same sheet; the switch is in the header.
 
 | | Quick | Expert |

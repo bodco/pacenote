@@ -185,6 +185,12 @@ blocks:
     fields: Steps both sides agreed on the way to a decision (pilot, security review, legal, sign-off), each with an owner and a date; from earlier calls of the series
     only_if_data: true
     live: sales
+  # PB-102 (owner 24.11): a text copied unchanged from one source; several per call, each with its own settings
+  verbatim:
+    title: Verbatim
+    fields: A text copied word for word from a file or pasted text, optionally only some sections (e.g. 1-4); never rewritten or shortened
+    only_if_data: false
+    live: verbatim             # the tips window shows it folded, Show text opens it to read like a teleprompter
 
 # Readiness: each rule is a check kind with params, a gap text, a quick action and a severity.
 # A blocker gap makes the sheet "not_ready", warnings only make it "almost", no gaps = "ready".

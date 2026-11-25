@@ -821,5 +821,43 @@ test('0.27.2: the call is ending from End call until the recorder stops', () => 
   assert.strictEqual(c.ending, false); assert.strictEqual(c.state, 'ended');
 });
 
+// PB-102: the Meeting Sheet's Verbatim blocks reach the window as one list, the text exactly as copied
+test('PB-102: verbatim blocks replace the earlier list, keep the text exactly and never become cards', () => {
+  const { f, get } = make();
+  const text = '## 2. Export\r\n\r\nExports run   every night.\r\n\r\n- CSV  and PDF\r\n';
+  f.addItems([{ kind: 'verbatim', sheet: true, items: [{ id: 'b-verbatim-aa11', title: '\u{1F3AF} Demo script', ok: true, text },
+    { id: 'v-bad', title: 'Broken', ok: false, text: 'stale', error: 'file not found: gone.md' }] }]);
+  const v = get().verbatim;
+  assert.strictEqual(v.length, 2);
+  assert.strictEqual(v[0].text, text);                                     // no clean(): spaces and line ends kept
+  assert.strictEqual(v[0].title, 'Demo script');
+  assert.deepStrictEqual([v[1].ok, v[1].text, v[1].error], [false, '', 'file not found: gone.md']);   // no old text
+  assert.strictEqual(get().cards.length, 0);
+  f.addItems([{ kind: 'verbatim', sheet: true, items: [] }]);              // a Refresh removed them
+  assert.deepStrictEqual(get().verbatim, []);
+  const { f: f2, get: g2 } = make();
+  f2.addItems([{ kind: 'verbatim', items: [{ id: 'x', title: 'T', ok: true, text: '   ' }] }]);
+  assert.strictEqual(g2().verbatim[0].ok, false);                          // nothing to show is not ok
+});
+
+test('PB-102: verbatimHtml keeps headings, lists and emphasis, escapes everything, changes no word', () => {
+  const { verbatimHtml } = require(path.join(__dirname, '../Resources/tips/feed.js'));
+  const md = '# Title\n\nThanks, **Emily**. We show *three* _things_ and `code`.\nSecond line.\n\n- one\n  - nested\n- two\n\n1. first\n2. second\n\n> Ask for the date.\n\n```\n<b>## not a heading</b>\n```\n\n<script>alert(1)</script> [docs](https://example.com) ~~old~~';
+  const h = verbatimHtml(md);
+  assert.ok(h.includes('<h3 class="vb-h">Title</h3>'), h);
+  assert.ok(h.includes('Thanks, <strong>Emily</strong>. We show <em>three</em> <em>things</em> and <code>code</code>.<br>Second line.'), h);
+  assert.ok(h.includes('<ul><li>one</li><li class="vb-d1">nested</li><li>two</li></ul>'), h);
+  assert.ok(h.includes('<ol><li>first</li><li>second</li></ol>'), h);
+  assert.ok(h.includes('<blockquote>Ask for the date.</blockquote>'), h);
+  assert.ok(h.includes('<pre><code>&lt;b&gt;## not a heading&lt;/b&gt;</code></pre>'), h);
+  assert.ok(h.includes('&lt;script&gt;alert(1)&lt;/script&gt; docs <del>old</del>'), h);
+  assert.ok(!/<script|<b>|href=/.test(h), h);
+  const words = (s) => s.replace(/<[^>]+>/g, ' ').replace(/&lt;/g, '<').replace(/&gt;/g, '>').match(/[A-Za-z0-9]+/g);
+  for (const w of ['Thanks', 'Emily', 'three', 'things', 'Second', 'nested', 'first', 'Ask', 'date', 'alert', 'docs', 'old']) {
+    assert.ok(words(h).includes(w), w);
+  }
+  assert.strictEqual(verbatimHtml('a\r\nb'), '<p>a<br>b</p>');
+});
+
 console.log(`feed tests: ${passed} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);

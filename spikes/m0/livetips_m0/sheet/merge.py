@@ -27,6 +27,14 @@ def protect_edits(old_sheet: dict, new_sheet: dict) -> dict:
     for b in blocks:
         by_type.setdefault(b.get("type", ""), b)
     for ob in old_sheet.get("blocks") or []:
+        if ob.get("type") == "verbatim":
+            # PB-102: a Verbatim block is never put back from the old sheet (its copy is read again on every build);
+            # a move or hide the user made on the sheet page stays
+            nb = by_id.get(_key(ob))
+            if nb is not None and ob.get("edited_by_user"):
+                nb.update({"order": ob.get("order", nb.get("order")), "visible": ob.get("visible", nb.get("visible")),
+                           "edited_by_user": True})
+            continue
         nb = by_id.get(_key(ob)) or by_type.get(ob.get("type", ""))
         if ob.get("edited_by_user"):
             keep = copy.deepcopy(ob)

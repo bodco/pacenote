@@ -827,6 +827,8 @@ struct SheetBlocksStep: View {
     @State private var saveNote = ""
     @State private var saved = ""
     @State private var adding = false
+    /// PB-102: the Verbatim block whose settings are open
+    @State private var editingVerbatim: String?
     /// 0.26.0 (owner 19.11): a row with the block's title and what the preparation puts in it (rules/meeting-sheet.yaml fields)
     private static let rowH: CGFloat = 60
 
@@ -914,20 +916,38 @@ struct SheetBlocksStep: View {
             Image(systemName: "line.3.horizontal").font(PN.sys(11)).foregroundStyle(PN.C.text3).accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
                 Text(b.wrappedValue.title).font(th.homeText(15, .semibold)).foregroundStyle(PN.C.text).lineLimit(1)
-                if let f = lib.blockFields[b.wrappedValue.type], !f.isEmpty {
+                if b.wrappedValue.type == BlockType.verbatim.rawValue {
+                    let line = Self.verbatimLine(b.wrappedValue)
+                    Text(line).font(th.homeText(12)).foregroundStyle(b.wrappedValue.verbatim?.source == nil ? PN.C.pending : PN.C.text3)
+                        .lineLimit(1).truncationMode(.middle).help(line)
+                } else if let f = lib.blockFields[b.wrappedValue.type], !f.isEmpty {
                     Text(f).font(th.homeText(12)).foregroundStyle(PN.C.text3).lineLimit(2).help(f)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             Spacer(minLength: 8)
+            if b.wrappedValue.type == BlockType.verbatim.rawValue {
+                // PB-102: title, source and sections of this Verbatim block
+                let id = b.wrappedValue.id
+                Button(L("sheet.ui.verbatim.settings")) { editingVerbatim = id }
+                    .buttonStyle(.pnSecondary)
+                    .popover(isPresented: Binding(get: { editingVerbatim == id }, set: { if !$0 { editingVerbatim = nil } }), arrowEdge: .bottom) {
+                        SheetVerbatimSettings(draft: draft, block: b, remove: {
+                            editingVerbatim = nil
+                            draft.blocks.removeAll { $0.id == id }
+                        })
+                    }
+            }
             if b.wrappedValue.type == "qualification" {
                 PrepMenuField(value: SalesMethods.shared.label(b.wrappedValue.method ?? "bant")) {
                     ForEach(lib.methods, id: \.self) { k in Button(SalesMethods.shared.label(k)) { b.wrappedValue.method = k } }   // S1: names, not keys
                 }
                 .onAppear { SalesMethods.shared.load() }
             }
-            Toggle(L("sheet.ui.s2.onlyIfData"), isOn: b.onlyIfData).toggleStyle(.pnCheckbox).font(th.homeText(13)).foregroundStyle(PN.C.text2)
-                .fixedSize().help(L("sheet.ui.s2.onlyIfDataHelp"))
+            if b.wrappedValue.type != BlockType.verbatim.rawValue {     // PB-102: a copy is never "only if there is data"
+                Toggle(L("sheet.ui.s2.onlyIfData"), isOn: b.onlyIfData).toggleStyle(.pnCheckbox).font(th.homeText(13)).foregroundStyle(PN.C.text2)
+                    .fixedSize().help(L("sheet.ui.s2.onlyIfDataHelp"))
+            }
             Button { b.wrappedValue.visible = false } label: {
                 Image(systemName: "eye").foregroundStyle(PN.C.text2).frame(width: 22, height: 22)
             }
@@ -935,6 +955,14 @@ struct SheetBlocksStep: View {
         }
         .frame(height: Self.rowH)
         .overlay(alignment: .top) { Rectangle().fill(PN.C.rule).frame(height: 1) }
+    }
+
+    /// PB-102: the row's line under a Verbatim block's title: where it copies from and which sections.
+    static func verbatimLine(_ b: DraftBlock) -> String {
+        guard let s = b.verbatim?.source else { return L("sheet.ui.verbatim.noSource") }
+        let src = s.kind == "text" ? L("sheet.ui.verbatim.pasted") : ((s.path ?? "") as NSString).lastPathComponent
+        let sec = (b.verbatim?.sections ?? "").trimmingCharacters(in: .whitespaces)
+        return L("sheet.ui.verbatim.from", ["src": src]) + (sec.isEmpty ? "" : " · " + L("sheet.ui.verbatim.sectionsShort", ["s": sec]))
     }
 
     private var hiddenList: some View {
@@ -963,7 +991,10 @@ struct SheetBlocksStep: View {
 
     /// 0.26.0 (owner 19.11): Add a block lists every free block with what it holds (a menu showed titles only).
     private var addBlock: some View {
-        let free = BlockType.known.map(\.rawValue).filter { t in !Self.fixed.contains(t) && !draft.blocks.contains { $0.type == t } }
+        // PB-102: Verbatim is always offered (several per call); the other blocks once
+        let free = BlockType.known.map(\.rawValue).filter { t in
+            !Self.fixed.contains(t) && (t == BlockType.verbatim.rawValue || !draft.blocks.contains { $0.type == t })
+        }
         return Button { adding = true } label: {
             Text("+ " + L("sheet.ui.s2.add")).font(th.homeText(13, .semibold)).underline().foregroundStyle(PN.C.text)
         }
@@ -977,6 +1008,14 @@ struct SheetBlocksStep: View {
                     VStack(alignment: .leading, spacing: 0) {
                         ForEach(free, id: \.self) { t in
                             Button {
+                                if t == BlockType.verbatim.rawValue {
+                                    // PB-102: a new Verbatim block opens its settings at once
+                                    let b = DraftBlock.newVerbatim(title: lib.title(t))
+                                    draft.blocks.append(b)
+                                    adding = false
+                                    DispatchQueue.main.async { editingVerbatim = b.id }
+                                    return
+                                }
                                 draft.blocks.append(DraftBlock(type: t, title: lib.title(t), method: t == "qualification" ? "bant" : nil))
                                 adding = false
                             } label: {
@@ -1043,8 +1082,10 @@ struct SheetBlocksStep: View {
 
     private func savePreset() {
         let name = presetName.trimmingCharacters(in: .whitespaces)
-        let req: [String: Any] = ["action": "save", "name": name, "blocks": draft.blocks.map(\.type),
-                                  "hidden": draft.blocks.filter { !$0.visible }.map(\.type),
+        // PB-102: a Verbatim block belongs to this call (its source and text), never to a preset
+        let kept = draft.blocks.filter { $0.type != BlockType.verbatim.rawValue }
+        let req: [String: Any] = ["action": "save", "name": name, "blocks": kept.map(\.type),
+                                  "hidden": kept.filter { !$0.visible }.map(\.type),
                                   "only_if_data": draft.blocks.filter(\.onlyIfData).map(\.type),
                                   "mode": draft.mode.rawValue, "readiness": draft.preset?.readiness ?? [], "base": draft.presetID,
                                   "method": draft.blocks.first { $0.type == "qualification" }?.method ?? "bant",
@@ -1053,6 +1094,98 @@ struct SheetBlocksStep: View {
         lib.change(req) { e in
             if let e { saveNote = e } else { saved = L("ea.s2.saved", ["name": name]); presetName = "" }
         }
+    }
+}
+
+// MARK: PB-102 Verbatim settings
+
+/// PB-102 (owner 24.11): the settings of one Verbatim block: its title, where the text comes from (a file of this call,
+/// any file, or pasted text) and, optionally, which sections ("3" or "1-4", counted by the Markdown headings).
+struct SheetVerbatimSettings: View {
+    @ObservedObject var draft: SheetDraft
+    @Binding var block: DraftBlock
+    var remove: () -> Void
+    @Environment(\.pnTheme) private var th
+    @Environment(\.dismiss) private var dismiss
+
+    init(draft: SheetDraft, block: Binding<DraftBlock>, remove: @escaping () -> Void) {
+        self.draft = draft; self._block = block; self.remove = remove
+    }
+
+    private var kind: String { block.verbatim?.source?.kind ?? "" }
+    private var path: String { block.verbatim?.source?.path ?? "" }
+
+    private func setSource(_ s: SheetVerbatim.Source?) {
+        var v = block.verbatim ?? SheetVerbatim(source: nil)
+        v.source = s
+        block.verbatim = v
+    }
+
+    private var pasted: Binding<String> {
+        Binding(get: { block.verbatim?.source?.kind == "text" ? (block.verbatim?.source?.text ?? "") : "" },
+                set: { setSource(.init(kind: "text", text: $0)) })
+    }
+
+    private var sections: Binding<String> {
+        Binding(get: { block.verbatim?.sections ?? "" },
+                set: { var v = block.verbatim ?? SheetVerbatim(source: nil); v.sections = $0; block.verbatim = v })
+    }
+
+    private var sourceLabel: String {
+        if kind == "text" { return L("sheet.ui.verbatim.pasted") }
+        if !path.isEmpty { return (path as NSString).lastPathComponent }
+        return L("sheet.ui.verbatim.noSource")
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(L("sheet.ui.verbatim.head")).font(th.homeText(15, .semibold)).foregroundStyle(PN.C.text).accessibilityAddTraits(.isHeader)
+            Text(L("sheet.ui.verbatim.how")).font(th.homeText(12)).foregroundStyle(PN.C.text3).fixedSize(horizontal: false, vertical: true)
+            PrepFieldLabel(text: L("sheet.ui.verbatim.title"))
+            TextField(L("sheet.ui.verbatim.title"), text: $block.title).textFieldStyle(.plain).font(th.homeText(14)).prepField(height: 30)
+                .accessibilityLabel(L("sheet.ui.verbatim.title"))
+            PrepFieldLabel(text: L("sheet.ui.verbatim.source"))
+            PrepMenuField(value: sourceLabel) {
+                if !draft.fileSources.isEmpty {
+                    Section(L("sheet.ui.verbatim.callFiles")) {
+                        ForEach(draft.fileSources) { s in
+                            Button(s.title) { setSource(.init(kind: "file", path: s.path)) }
+                        }
+                    }
+                }
+                Button(L("sheet.ui.verbatim.anyFile")) { chooseFile() }
+                Button(L("sheet.ui.verbatim.paste")) { setSource(.init(kind: "text", text: block.verbatim?.source?.kind == "text" ? block.verbatim?.source?.text : "")) }
+            }
+            .accessibilityLabel(L("sheet.ui.verbatim.source") + ": " + sourceLabel)
+            if kind == "file", !path.isEmpty {
+                Text(path).font(th.homeMono(11)).foregroundStyle(PN.C.text3).lineLimit(1).truncationMode(.middle).help(path)
+            }
+            if kind == "text" {
+                TextEditor(text: pasted).font(th.homeText(13)).frame(height: 140).prepField()
+                    .accessibilityLabel(L("sheet.ui.verbatim.paste"))
+            }
+            PrepFieldLabel(text: L("sheet.ui.verbatim.sections"))
+            TextField(L("sheet.ui.verbatim.sectionsPh"), text: sections).textFieldStyle(.plain).font(th.homeText(14)).prepField(height: 30)
+                .accessibilityLabel(L("sheet.ui.verbatim.sections"))
+            Text(L("sheet.ui.verbatim.sectionsHint")).font(th.homeText(12)).foregroundStyle(PN.C.text3).fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Button(L("sheet.ui.verbatim.remove"), role: .destructive, action: remove).buttonStyle(.pnTertiary)
+                Spacer()
+                Button(L("sheet.ui.verbatim.done")) { dismiss() }.buttonStyle(.pnSecondary).keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(16)
+        .frame(width: 420)
+        .background(PN.C.bg)
+    }
+
+    private func chooseFile() {
+        let p = NSOpenPanel()
+        p.canChooseDirectories = false; p.canChooseFiles = true; p.allowsMultipleSelection = false
+        p.message = L("sheet.ui.verbatim.pick")
+        if let r = draft.model.root { p.directoryURL = URL(fileURLWithPath: r) }
+        guard p.runModal() == .OK, let u = p.url else { return }
+        setSource(.init(kind: "file", path: u.path))
     }
 }
 

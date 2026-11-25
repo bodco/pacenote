@@ -356,7 +356,7 @@ public enum CallSync {
     static func syncedSheet(_ raw: [String: Any]) -> [String: Any] {
         func only(_ o: [String: Any], _ keys: Set<String>) -> [String: Any] { o.filter { keys.contains($0.key) } }
         let topKeys = Set(MeetingSheet.CodingKeys.allCases.map(\.rawValue))
-        let blockKeys = Set(SheetBlock.CodingKeys.allCases.map(\.rawValue))
+        let blockKeys = Set(SheetBlock.CodingKeys.allCases.map(\.rawValue)).subtracting(["verbatim"])
         let factKeys = Set(SheetFact.CodingKeys.allCases.map(\.rawValue)).subtracting(["from_web"])
         let sourceKeys = Set(SheetSource.CodingKeys.allCases.map(\.rawValue))
         let webSourceKeys: Set<String> = ["id", "n", "type", "parent", "access", "used"]
@@ -384,7 +384,9 @@ public enum CallSync {
             }
         }
         let known = Set(sources.compactMap { $0["id"] as? String })
-        var blocks = ((o["blocks"] as? [[String: Any]]) ?? []).map { only($0, blockKeys) }
+        // PB-102: a Verbatim block (its copy, pasted text and file path) stays on this Mac: it is not sent at all
+        var blocks = ((o["blocks"] as? [[String: Any]]) ?? []).filter { ($0["type"] as? String) != BlockType.verbatim.rawValue }
+            .map { only($0, blockKeys) }
         let allFacts = blocks.flatMap { ($0["facts"] as? [[String: Any]]) ?? [] }
         func researched(_ f: [String: Any]) -> Bool {
             (f["from_web"] as? Bool) == true

@@ -20,7 +20,9 @@ def lang_name(code: str) -> str:
     return LANGS.get(code) or CL.NAMES.get(CL.normalize(code) or "", code)
 
 
-SKIP_BLOCKS = ("header", "gaps")      # header: from the invitation (built by Pacenote); gaps: from conflicts and readiness
+# header: from the invitation (built by Pacenote); gaps: from conflicts and readiness; verbatim (PB-102): copied from
+# its source unchanged, the model never sees or writes it
+SKIP_BLOCKS = ("header", "gaps", "verbatim")
 
 CONTRACT = """You build a Meeting Sheet: short, checkable facts for a person going into a meeting. Use ONLY the
 sources given. Every fact names the sources it comes from by their ids (source_ids, e.g. ["s3"]) and a locator: a

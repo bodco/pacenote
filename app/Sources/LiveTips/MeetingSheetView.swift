@@ -272,7 +272,9 @@ struct SheetBlockCard: View {
                 }
             }
             .padding(.bottom, 4)
-            if block.facts.isEmpty {
+            if block.type == .verbatim {
+                SheetVerbatimBody(block: block)       // PB-102: the copy as it is, or why it failed
+            } else if block.facts.isEmpty {
                 Label(L("sheet.ui.block.empty"), systemImage: "questionmark.circle").font(PN.Font.caption).foregroundStyle(PN.C.pending)
             }
             // 0.10.0 (Meeting Sheet, round 2): a value replaced by a newer one shows as "was X" under the newer fact
@@ -314,8 +316,10 @@ struct SheetBlockCard: View {
 
     private var menu: some View {
         Menu {
-            Button(L("sheet.ui.fact.add")) { adding = true }
-            Button(L("sheet.ui.block.regenerate")) { SheetActions.refresh(doc: doc, blocks: [block.id]); onRefresh() }
+            if block.type != .verbatim {   // PB-102: a copy is never edited here; Refresh of the sheet reads it again
+                Button(L("sheet.ui.fact.add")) { adding = true }
+                Button(L("sheet.ui.block.regenerate")) { SheetActions.refresh(doc: doc, blocks: [block.id]); onRefresh() }
+            }
             Button(L("sheet.ui.block.hide")) { doc.change { SheetEdit.block(&$0, id: block.id, .hide) } }
             Button(L("sheet.ui.block.up")) { doc.change { SheetEdit.block(&$0, id: block.id, .moveUp) } }
             Button(L("sheet.ui.block.down")) { doc.change { SheetEdit.block(&$0, id: block.id, .moveDown) } }
@@ -323,6 +327,68 @@ struct SheetBlockCard: View {
             Button(L("sheet.ui.block.delete"), role: .destructive) { confirmDelete = true }
         } label: { Image(systemName: "ellipsis") }
             .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().accessibilityLabel(L("sheet.ui.block.menu"))
+    }
+}
+
+/// PB-102: a Verbatim block on the sheet page: where it is copied from and the text as Markdown (headings, lists and
+/// emphasis kept, every word as in the source), or, when the copy check failed, the reason and no text.
+struct SheetVerbatimBody: View {
+    let block: SheetBlock
+
+    var body: some View {
+        let v = block.verbatim
+        VStack(alignment: .leading, spacing: 6) {
+            Text(SheetVerbatimText.from(v)).font(PN.Font.caption).foregroundStyle(PN.C.text3).lineLimit(1).truncationMode(.middle)
+            if let v, v.ok {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(Array(SheetVerbatimText.lines(v.text ?? "").enumerated()), id: \.offset) { _, l in
+                        Text(l.text).font(l.heading > 0 ? PN.Font.body.weight(.semibold) : PN.Font.body)
+                            .foregroundStyle(PN.C.text).padding(.leading, CGFloat(l.indent) * 14)
+                            .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+                    }
+                }
+            } else {
+                Label(L("sheet.ui.verbatim.failed", ["why": v?.error ?? ""]), systemImage: "exclamationmark.triangle")
+                    .font(PN.Font.caption.weight(.semibold)).foregroundStyle(PN.C.pending).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+}
+
+/// PB-102: the Verbatim text as lines for SwiftUI: Markdown inline marks (bold, italic, code) rendered, a heading line
+/// bold, list items indented by their depth. The words are never changed.
+enum SheetVerbatimText {
+    struct Line { var text: AttributedString; var heading: Int; var indent: Int }
+
+    static func from(_ v: SheetVerbatim?) -> String {
+        let src: String
+        if v?.source?.kind == "text" { src = L("sheet.ui.verbatim.pasted") }
+        else { src = ((v?.source?.path ?? "") as NSString).lastPathComponent }
+        let sec = (v?.sections ?? "").isEmpty ? "" : " · " + L("sheet.ui.verbatim.sectionsShort", ["s": v?.sections ?? ""])
+        return L("sheet.ui.verbatim.from", ["src": src]) + sec
+    }
+
+    static func lines(_ text: String) -> [Line] {
+        var out: [Line] = []
+        var fence = false
+        for raw in text.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n") {
+            let t = raw.trimmingCharacters(in: .whitespaces)
+            if t.hasPrefix("```") || t.hasPrefix("~~~") { fence.toggle(); continue }
+            if fence { out.append(Line(text: AttributedString(raw), heading: 0, indent: 1)); continue }
+            if t.isEmpty { continue }
+            var heading = 0
+            var body = raw
+            if let r = t.range(of: "^#{1,6}[ \\t]+", options: .regularExpression) {
+                heading = t[r].filter { $0 == "#" }.count
+                body = String(t[r.upperBound...])
+            }
+            let indent = heading > 0 ? 0 : (raw.prefix { $0 == " " }.count / 2) + (t.range(of: "^([-*+]|\\d{1,9}[.)])[ \\t]", options: .regularExpression) != nil ? 1 : 0)
+            if heading == 0, t.range(of: "^([-*+])[ \\t]", options: .regularExpression) != nil { body = "• " + String(t.dropFirst(2)) }
+            else if heading == 0 { body = t }
+            let a = (try? AttributedString(markdown: body, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(body)
+            out.append(Line(text: a, heading: heading, indent: indent))
+        }
+        return out
     }
 }
 
