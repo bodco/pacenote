@@ -2706,7 +2706,8 @@ on an AI that is out stops with the reason, as before.
 only a Claude API key, the preparation, the tips and the work after the call all run on it. When you connect an
 account later (Claude or ChatGPT), it becomes the AI for the preparation and the work after the call; the tips stay on
 an API key while you have one. A choice you make in Settings > AI stays as long as its AI is connected. An account
-counts once Pacenote has checked that you are signed in.
+counts once Pacenote has checked that you are signed in. Until that check answers (at launch), the jobs on an account
+stay where they are, so a launch never moves them away and back.
 
 - Tips during a call never go to the model on this Mac (19-59 seconds an answer). When every cloud AI is out, the instant cards and facts keep working.
 - For the preparation (the Meeting Sheet build), the work after the call and typed questions, the model on this Mac
@@ -2715,8 +2716,11 @@ counts once Pacenote has checked that you are signed in.
 **What switches.** A real outage while the job runs, not only a check before it: "usage limit reached" (ChatGPT
 account), a plan limit, out of credits, a quota error, a key that is not valid, signed out, not installed. A plain short
 rate limit or a timeout does not switch. When the message names when the limit resets ("try again at 12:48 PM",
-"resets 9am"), that AI is left alone until then; otherwise it is tried again every 15 minutes. The job goes back to
-the AI you chose as soon as it answers. A Meeting Sheet build moves a failed pass to the next AI and goes on; when
+"resets 9am"), that AI is left alone until then; otherwise it is tried again every 15 minutes. Get ready shows "is
+out right now" only until that time. Signing in to the Claude account again (in the app or in Terminal) ends a
+signed-out mark at the next sign-in check: when Get ready opens, at its Check step, or when you come back to Pacenote
+while Get ready is open.
+A limit or credit mark stays until its time. The job goes back to the AI you chose as soon as it answers. A Meeting Sheet build moves a failed pass to the next AI and goes on; when
 the Claude account is out before the first pass, the build goes on with the next AI reading the sources itself (a web
 page only Claude would have opened is named as skipped).
 

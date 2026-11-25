@@ -37,18 +37,27 @@ public enum AIDefaults {
     /// The routes after a change of what is connected. `seen` is what was connected the last time (nil: never looked,
     /// e.g. the first launch after the update: nothing is adopted then, only routes whose AI is not connected move).
     /// An account connected since the last look becomes the preparation and after-the-call AI.
-    public static func apply(_ r: AppConfig.AIRoutes, connected: Set<String>) -> AppConfig.AIRoutes {
+    /// PB-96: `unchecked` are the accounts whose sign-in check has not finished (at launch): a job on one stays on it
+    /// and it keeps its place in `seen`, so the check that follows moves nothing back and forth. An unchecked account
+    /// is never picked or adopted.
+    public static func apply(_ r: AppConfig.AIRoutes, connected: Set<String>, unchecked: Set<String> = []) -> AppConfig.AIRoutes {
         var out = r
+        let wait = unchecked.subtracting(connected)
         if let seen = r.seen.map(Set.init) {
             if let acc = accounts.first(where: { connected.contains($0) && !seen.contains($0) }) {
                 out.prep = acc
                 out.after = acc
             }
         }
-        out.prep = pick(job: "prep", chosen: out.prep, connected: connected)
-        out.after = pick(job: "after", chosen: out.after, connected: connected)
-        out.tips = pick(job: "tips", chosen: out.tips, connected: connected)
-        out.seen = AIChain.defaultOrder.filter { connected.contains($0) }
+        func keep(_ job: String, _ chosen: String) -> String {
+            wait.contains(chosen) && AIChain.allowed(chosen, job: job) ? chosen : pick(job: job, chosen: chosen, connected: connected)
+        }
+        out.prep = keep("prep", out.prep)
+        out.after = keep("after", out.after)
+        out.tips = keep("tips", out.tips)
+        // an unchecked account stays seen when it was (or on the first look, which adopts nothing)
+        let was = r.seen.map(Set.init)
+        out.seen = AIChain.defaultOrder.filter { connected.contains($0) || (wait.contains($0) && (was?.contains($0) ?? true)) }
         return out
     }
 }

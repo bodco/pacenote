@@ -122,6 +122,9 @@ public enum AIOut {
         return now >= n
     }
 
+    /// PB-96: a sign-in that is on again ends an out for a sign-in problem; a limit or a credit out stays.
+    public static func clearedBySignIn(_ s: State?) -> Bool { s?.down == true && s?.reason == "auth" }
+
     /// The reset time in an error text: "try again at 12:48 PM", "resets 3pm", "resets at 15:30", "reset at 3:05 pm
     /// (Europe/Kyiv)", "try again in 2 hours 5 minutes", "in 37 minutes", "resets_at": 1793731185. The next such clock
     /// time after `now` in `calendar`'s time zone; nil when the text names none.

@@ -76,17 +76,25 @@ enum AIRoute {
     /// 0.24.1 (F3, owner 18.11): the AI of every job follows what is connected (AIDefaults.apply) and is saved, so
     /// Settings > AI shows the AI that really runs. Called at launch, when an account's sign-in changes and when a
     /// key is saved or removed.
+    /// PB-96: the accounts whose sign-in check has not answered yet (installed, state unknown, as at launch).
+    @MainActor static func unchecked() -> Set<String> {
+        var out = Set<String>()
+        if PrepRunner.claudePath != nil && PrepRunner.shared.loggedIn == nil { out.insert(code) }
+        if CodexAccount.cliPath != nil && CodexAccount.shared.signedIn == nil { out.insert(codex) }
+        return out
+    }
+
     @MainActor static func autoAssign() {
-        let conn = confirmed()
+        let conn = confirmed(), wait = unchecked()
         if let m = SettingsModel.live {
-            var n = AIDefaults.apply(m.config.ai, connected: conn)
+            var n = AIDefaults.apply(m.config.ai, connected: conn, unchecked: wait)
             // PB-52 G2 (S5, spec 8.6): indexing stays on the AI it used when after moves to another AI
             if EvidenceFlag.on(m.config) { n = n.keepingIndexing(from: m.config.ai) }
             if n != m.config.ai { logSwitch(m.config.ai, n); m.config.ai = n }        // the model saves the file
             return
         }
         var c = AppConfig.load(from: AppPaths.config)
-        var n = AIDefaults.apply(c.ai, connected: conn)
+        var n = AIDefaults.apply(c.ai, connected: conn, unchecked: wait)
         if EvidenceFlag.on(c) { n = n.keepingIndexing(from: c.ai) }
         guard n != c.ai else { return }
         logSwitch(c.ai, n)
@@ -160,6 +168,11 @@ enum AIRoute {
         guard ((o[r] as? [String: Any])?["down"] as? Bool) == true else { return }
         o[r] = ["down": false, "back_at": Date().timeIntervalSince1970]
         write(o)
+    }
+
+    /// PB-96: the sign-in check says the account is on: an out for a sign-in problem ends now (a limit stays).
+    static func signedInAgain(_ r: String) {
+        if AIOut.clearedBySignIn(outStates()[r]) { markUp(r) }
     }
 
     /// Why a way is out (worth switching), from an error text; nil for a passing error. Same rules as

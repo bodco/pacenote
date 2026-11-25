@@ -63,7 +63,16 @@ struct SheetPrepView: View {
         }
         .background(PN.C.bg)
         .frame(minWidth: 720, minHeight: 600)
-        .onAppear { draft.checkSources() }
+        // PB-96: the sign-in is checked again when Get ready opens and when the app comes back (a sign-in in Terminal),
+        // and the route lines redraw on its answer and on the out state's next check time
+        .onAppear { draft.checkSources(); PrepRunner.shared.refreshAuth() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            PrepRunner.shared.refreshAuth(); draft.objectWillChange.send()
+        }
+        .onReceive(PrepRunner.shared.$loggedIn) { _ in draft.objectWillChange.send() }
+        .onReceive(Timer.publish(every: 30, on: .main, in: .common).autoconnect()) { _ in
+            if SheetRoutes.problem(draft.route) != nil { draft.objectWillChange.send() }     // the out line ends at its time
+        }
         .onChange(of: lib.loaded) { if draft.presetSuggested { draft.applyPreset(draft.presetID) } }
     }
 }
@@ -1474,7 +1483,7 @@ struct SheetSizeStep: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .onAppear { if draft.size == nil { draft.checkSize() } }
+        .onAppear { if draft.size == nil { draft.checkSize() }; PrepRunner.shared.refreshAuth() }     // PB-96: every Check rechecks the sign-in
     }
 
     /// "236K": the count without the unit, for the big number and the mark.

@@ -158,7 +158,8 @@ final class PrepRunner: ObservableObject {
     }
 
     /// Checks the Claude Code sign-in in the background (it can expire: the window shows it and offers Log in).
-    func refreshAuth() {
+    /// PB-96: `clearOut` false keeps the out mark (the check right after a run failed on its sign-in).
+    func refreshAuth(clearOut: Bool = true) {
         guard !checking, let claude = Self.claudePath else { return }
         checking = true
         DispatchQueue.global().async {
@@ -183,6 +184,7 @@ final class PrepRunner: ObservableObject {
                     info = [who, plan].filter { !$0.isEmpty && $0 != "none" }.joined(separator: ", ")
                 }
             }
+            if ok == true && clearOut { AIRoute.signedInAgain(AIRoute.code) }      // PB-96: before loggedIn, so the views redraw on the new state
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     self.loggedIn = ok
@@ -846,7 +848,7 @@ final class PrepRunner: ObservableObject {
                     CodexAccount.shared.refresh()
                 } else if !ok && (tail.contains("authenticate") || tail.contains("OAuth") || tail.contains("log in") || tail.contains("/login")) {
                     self.result = L("prep.err.notSigned")
-                    self.refreshAuth()
+                    self.refreshAuth(clearOut: false)
                 } else if !ok && (tail.lowercased().contains("usage limit") || tail.lowercased().contains("rate limit")) {
                     self.result = L("prep.err.limit")
                 } else {

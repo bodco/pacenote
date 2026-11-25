@@ -5654,6 +5654,48 @@ func hotfixF1() {
 }
 
 aiDefaultsF3()
+
+/// PB-96: the Claude account stays usable after signing in again; the out line ends at its next check; a launch does
+/// not move the jobs away from an account and back before its sign-in check answers.
+func pb96SignInAgain() {
+    // a sign-in that is on again ends an out for a sign-in problem, never a limit or a credit out
+    let st = AIOut.parse(["code": ["down": true, "reason": "auth", "since": 100.0, "checked": 100.0],
+                          "codex": ["down": true, "reason": "limit", "since": 100.0, "until": 5000.0],
+                          "api": ["down": true, "reason": "credit", "since": 100.0], "gemini": ["down": false]])
+    expect(AIOut.clearedBySignIn(st["code"]), "pb96: signed in again ends an auth out")
+    expect(!AIOut.clearedBySignIn(st["codex"]) && !AIOut.clearedBySignIn(st["api"]), "pb96: a limit or a credit out stays")
+    expect(!AIOut.clearedBySignIn(st["gemini"]) && !AIOut.clearedBySignIn(nil), "pb96: nothing to end when not out")
+    // the out line (SheetRoutes.problem = !due) is gone once the recheck time has passed
+    expect(!AIOut.due(st["code"], now: 999) && AIOut.due(st["code"], now: 1000), "pb96: out 15 minutes, then due")
+    expect(!AIOut.due(st["codex"], now: 4999) && AIOut.due(st["codex"], now: 5000), "pb96: out until the reset time, then due")
+
+    // launch: Claude is the preparation and after-call AI, its sign-in check has not answered yet
+    var r = AppConfig.AIRoutes(); r.prep = "code"; r.after = "code"; r.tips = "api"; r.seen = ["code", "api"]
+    let atLaunch = AIDefaults.apply(r, connected: ["api"], unchecked: ["code"])
+    expect(atLaunch.prep == "code" && atLaunch.after == "code" && atLaunch.tips == "api", "pb96: an unchecked account keeps its jobs")
+    expect(atLaunch.seen == ["code", "api"], "pb96: an unchecked account stays seen")
+    let checked = AIDefaults.apply(atLaunch, connected: ["api", "code"])
+    expect(checked == atLaunch, "pb96: the check that says signed in moves nothing")
+    // the PM's own choice survives the same launch (no re-adoption of Claude over ChatGPT)
+    var pm = r; pm.prep = "codex"; pm.seen = ["code", "codex", "api"]
+    let pmLaunch = AIDefaults.apply(pm, connected: ["api"], unchecked: ["code", "codex"])
+    expect(pmLaunch.prep == "codex" && pmLaunch.after == "code", "pb96: unchecked accounts keep the PM's choice")
+    let pmChecked = AIDefaults.apply(pmLaunch, connected: ["api", "code", "codex"])
+    expect(pmChecked.prep == "codex" && pmChecked.after == "code", "pb96: the PM's choice stays after the check")
+    // the check says signed out: the jobs move once
+    let out = AIDefaults.apply(atLaunch, connected: ["api"])
+    expect(out.prep == "api" && out.after == "api" && out.seen == ["api"], "pb96: signed out moves the jobs")
+    // an unchecked account is never picked for a job whose AI is gone
+    var g = r; g.prep = "gemini"
+    expect(AIDefaults.apply(g, connected: ["api"], unchecked: ["code"]).prep == "api", "pb96: an unchecked account is not picked")
+    // the first look (no seen) with an unchecked account adopts nothing when the check answers
+    var first = AppConfig.AIRoutes(); first.prep = "api"; first.after = "code"
+    let f1 = AIDefaults.apply(first, connected: ["api"], unchecked: ["code"])
+    let f2 = AIDefaults.apply(f1, connected: ["api", "code"])
+    expect(f2.prep == "api" && f2.after == "code", "pb96: the first look adopts nothing after the check")
+}
+pb96SignInAgain()
+
 /// 0.24.1 (F2, F6, F7): an unfinished onboarding comes back; one readiness answer for every start; error codes.
 func hotfixF2F6() {
     expect(OnboardingResume.shouldShow(done: false, legacyShown: false, baseLikelyReady: false), "f2: a new person sees the onboarding")
