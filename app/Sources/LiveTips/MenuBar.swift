@@ -17,6 +17,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var lastStatus = EngineStatus()
     var floatingControls: FloatingCallController?
     var launchedWindows = false     // 0.22.0 (D50): onboarding or Home opened once since launch
+    var homeReady = false           // PB-117: the first screen is up (Home after the saved keys were read)
+    var pendingCallLink: String?    // PB-117: a pacenote://call/<id> link waiting for sign-in and Home ("" = not a call link)
+    var pendingCallLinkAt = Date.distantPast
     var aiRouteWatch: AnyCancellable?     // 0.24.1 (F3): the AI of every job follows the accounts' sign-in
 
     var config: AppConfig { AppConfig.load(from: AppPaths.config) }
@@ -140,16 +143,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                        baseLikelyReady: CallEngine.shared.baseLikelyReady) {
             AppLog.app("onboarding: shown (not finished, step \(d.integer(forKey: OnboardingModel.stepKey)))")
             MainActor.assumeIsolated { OnboardingWindow.show(resume: true) }
-        } else if !CallEngine.shared.problems().isEmpty { MainActor.assumeIsolated { SetupWindow.show() } }
+            homeReady = true
+        } else if !CallEngine.shared.problems().isEmpty { MainActor.assumeIsolated { SetupWindow.show() }; homeReady = true }
         else if !callIsLive {
             // 0.8.7.1: Home opens once the saved keys are read off the main thread (an "allow access" prompt after an
             // update froze the whole app while Home read them); the menu bar item works meanwhile.
             SecretStore.warm(service: Bundle.main.bundleIdentifier ?? "io.github.example.livetips") { [weak self] in
                 self?.openHome()
+                self?.homeReady = true
+                MainActor.assumeIsolated { self?.takePendingCallLink() }      // PB-117: a link that started the app
                 // 0.16.0 (D3): What's new after an update, once, never during a call
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { MainActor.assumeIsolated { WhatsNewWindow.showIfNeeded(callIsLive: CallEngine.shared.isRunning) } }
             }
-        }       // 2026-10-27 (owner): Home is the app's main window
+        } else { homeReady = true }      // 2026-10-27 (owner): Home is the app's main window
     }
 
     /// 0.22.0 (D50): where the app is: still reading the Keychain, the sign-in screen, or in (onboarding or Home).
@@ -168,7 +174,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .onboarding, .home:
             let fromSignIn = SignInWindow.isVisible
             if fromSignIn { SignInWindow.close() }
-            guard !launchedWindows || fromSignIn else { return }
+            guard !launchedWindows || fromSignIn else { takePendingCallLink(); return }
             launchedWindows = true
             launchWindows()
         }
@@ -204,8 +210,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// 0.8.6 (B): an audio or video file dropped on the Dock icon (or opened with Pacenote) opens Transcribe a recording.
     func application(_ application: NSApplication, open urls: [URL]) {
+        // PB-117: a pacenote://call/<id> link opens that call page (never a recording to transcribe)
+        if let link = urls.first(where: { CallLink.isPacenote($0) }) {
+            pendingCallLink = CallLink.id(of: link) ?? ""
+            pendingCallLinkAt = Date()
+            AppLog.app("call link: received (\(pendingCallLink?.isEmpty == true ? "not a call link" : "call"))")
+            MainActor.assumeIsolated { if !gatedToSignIn() { takePendingCallLink() } }
+            return
+        }
         guard let u = urls.first(where: { TranscribeWindow.accepts($0) }) else { return }
         MainActor.assumeIsolated { TranscribeWindow.show(file: u) }
+    }
+
+    /// PB-117: opens the call page of a waiting link once the app is in (signed in, onboarded, first screen up).
+    /// A call this Mac does not have (unknown id, removed file, a colleague's call) gets a notice on Home, no alert.
+    @MainActor func takePendingCallLink() {
+        guard let id = pendingCallLink else { return }
+        guard CallLink.stillWanted(receivedAt: pendingCallLinkAt, now: Date()) else {
+            pendingCallLink = nil; AppLog.app("call link: dropped (waited too long for sign-in or Home)"); return
+        }
+        guard homeReady else { return }
+        let a = PacenoteAccount.shared
+        let onboarded = UserDefaults.standard.bool(forKey: "onboardingDone") || UserDefaults.standard.bool(forKey: "onboarded")
+        guard PacenoteServer.gate(sessionKnown: a.sessionKnown, signedIn: a.signedIn, onboarded: onboarded, callLive: callIsLive) == .home else { return }
+        pendingCallLink = nil
+        let exists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }
+        let calls: () -> [(file: String, start: Date)] = { CallHistory.shared.records.map { ($0.file, $0.start) } }
+        var file = id.isEmpty ? nil : CallLink.resolve(id, calls: calls(), exists: exists)
+        if file == nil, !id.isEmpty { CallHistory.shared.scan(); file = CallLink.resolve(id, calls: calls(), exists: exists) }
+        if let f = file {
+            AppLog.app("call link: opened call=\(AppLog.stem(f))")
+            CallPageWindow.show(file: f)
+        } else {
+            AppLog.app("call link: no such call on this Mac")
+            openHome()
+            NoticeCenter.shared.post(L(id.isEmpty ? "callLink.notACall" : "callLink.notFound"), level: .warning)
+        }
     }
     @objc func openTranscribe() { MainActor.assumeIsolated { TranscribeWindow.show() } }
 

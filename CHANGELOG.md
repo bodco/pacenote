@@ -5,6 +5,13 @@ Pacenote. Earlier versions are described in the commit messages and in
 
 ## Unreleased
 
+- **A link to a call page (PB-117).** The "..." menu of a past call page has Copy link, next to Open in Notion: it
+  copies `pacenote://call/<id>` (the id is the transcript's name, so the link survives moving the call to another
+  project). Paste it in Notion, Slack or a task; opening it on a Mac with Pacenote brings Pacenote forward on that call
+  page, after sign-in if the app was closed (within 3 minutes of the click). A call this Mac does not have (removed, or held on another Mac) opens Home
+  with the notice "This call is not on this Mac", never a system alert. New Notion pages of calls (and a page written
+  again) get the same link as the last line of their Pacenote section, as text to copy. A web link for people without
+  the app comes later.
 - **Meeting Sheet: a Verbatim block for text that must stay word for word (PB-102).** + Add a block now offers
   Verbatim, as often as you need it in one call. In its Settings you give it a title, a source (a file of the call,
   any file, or pasted text) and, if you want only part of a Markdown file, sections such as 1-4 by heading. The

@@ -117,6 +117,10 @@ $SPARKLE_KEYS
 <key>LSHandlerRank</key><string>Alternate</string>
 <key>LSItemContentTypes</key><array><string>public.audio</string><string>public.movie</string><string>org.webmproject.webm</string><string>org.matroska.mkv</string></array>
 </dict></array>
+<key>CFBundleURLTypes</key><array><dict>
+<key>CFBundleURLName</key><string>$BUNDLE_ID.call-link</string>
+<key>CFBundleURLSchemes</key><array><string>pacenote</string></array>
+</dict></array>
 </dict></plist>
 PLIST
 # Sparkle's helpers first (inside out), then the framework, then the app
