@@ -743,7 +743,8 @@ final class PrepRunner: ObservableObject {
                 }
                 if claudeOut || packedOut, routes.geminiFallback, let b = planB, !self.geminiTried,
                    (packedOut || self.switchedOnce || !usable(AIRoute.other(route)) || !routes.autoSwitch) {
-                    AIRoute.markDown(route, AIRoute.outReason(route, packedOut ? errText : logText) ?? "out")
+                    let bText = packedOut ? errText : logText       // PB-97: the text names a rejected key's status
+                    AIRoute.markDown(route, AIRoute.outReason(route, bText) ?? "out", text: bText)
                     self.geminiTried = true
                     self.running = false
                     self.process = nil
@@ -753,7 +754,7 @@ final class PrepRunner: ObservableObject {
                     }
                 }
                 if claudeOut, routes.localFallback, (self.switchedOnce || !usable(AIRoute.other(route)) || !routes.autoSwitch), !self.localTried {
-                    AIRoute.markDown(route, AIRoute.outReason(route, logText) ?? "out")
+                    AIRoute.markDown(route, AIRoute.outReason(route, logText) ?? "out", text: logText)
                     self.localTried = true
                     self.running = false
                     self.process = nil
@@ -763,9 +764,9 @@ final class PrepRunner: ObservableObject {
                     }
                 }
                 if ok { AIRoute.markUp(route) } else if isGemini, let why = AIRoute.outReason(route, errText) {
-                    AIRoute.markDown(route, why)      // 0.9.3: a chosen Gemini has no automatic switch
+                    AIRoute.markDown(route, why, text: errText)      // 0.9.3: a chosen Gemini has no automatic switch
                 } else if !isCodex && !isOpenAI && !isGemini, let why = AIRoute.outReason(route, logText) {
-                    AIRoute.markDown(route, why)
+                    AIRoute.markDown(route, why, text: logText)
                     let alt = AIRoute.other(route)
                     if routes.autoSwitch && !self.switchedOnce && usable(alt) {
                         self.switchedOnce = true

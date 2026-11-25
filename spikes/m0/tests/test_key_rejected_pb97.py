@@ -51,6 +51,17 @@ def test_real_run_401_marks_the_key_and_switches(tmp_path):
     assert s["down"] and s["reason"] == "auth" and s["rejected"] == 401
 
 
+def test_real_run_403_marks_the_gemini_key_and_switches(tmp_path):
+    st = RouteState(str(tmp_path / "s.json"))
+    gemini = Failing("Gemini: HTTP 403 PERMISSION_DENIED")
+    rp = RoutedProvider("tips", "gemini", {"gemini": gemini, "openai": ok('{"gist":"x"}')}, auto=True, state=st,
+                        probe_every=3600, chain=chain_from(["gemini", "openai"]))
+    c = run(rp)
+    assert not c.error and c.route == "openai"
+    s = st.read()["gemini"]
+    assert s["down"] and s["reason"] == "auth" and s["rejected"] == 403
+
+
 def test_mark_survives_a_timeout_on_recheck_and_clears_when_the_key_answers(tmp_path):
     st = RouteState(str(tmp_path / "s.json"))
     st.mark_down("openai", "auth", error="HTTP 403")
