@@ -399,6 +399,9 @@ def methods_json(rules, lang: str = "en") -> dict:
     for key, m in (s.get("methods") or {}).items():
         kind = m.get("kind") or "qualification"
         out.append({"key": key, "name": pick(m.get("name")), "desc": pick(m.get("desc")), "chip": bool(m.get("chip")),
+                    # PB-111 (SX4): core methods first in the picker, the rest under More; the "when to use" line; badge
+                    "tier": "core" if m.get("tier") == "core" else "more", "when": pick(m.get("when")),
+                    "recommended": bool(m.get("recommended")),
                     "kind": kind, "kind_name": pick((s.get("kinds") or {}).get(kind)) or kind,
                     "judge": "seller" if m.get("judge") == "seller" else "client",
                     "criteria": [{"key": c["key"], "name": pick(c.get("name")), "explain": pick(c.get("explain"))}

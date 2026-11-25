@@ -46,7 +46,8 @@ struct MeetingSheetTab: View {
     var onRefresh: () -> Void
     var onEditBlocks: () -> Void
     var onCompare: (Int) -> Void = { _ in }
-    @State private var width: CGFloat = 0        // 0.10.0 (Meeting Sheet, polish): the right column only on a wide page
+    var onMethod: ((String) -> Void)? = nil      // PB-111: set where the call is known
+    @State private var width: CGFloat = 0       // 0.10.0 (Meeting Sheet, polish): the right column only on a wide page
 
     var body: some View {
         if let s = doc.sheet {
@@ -61,7 +62,7 @@ struct MeetingSheetTab: View {
                         if !doc.note.isEmpty { Text(doc.note).font(PN.Font.caption).foregroundStyle(PN.C.pending) }
                         myFocus(s).id("sheet-block-" + (s.block(.myFocus)?.id ?? "my_focus"))
                         ForEach(s.shownBlocks.filter { $0.type != .myFocus }) { b in
-                            SheetBlockCard(doc: doc, block: b, onRefresh: onRefresh).id("sheet-block-" + b.id)
+                            SheetBlockCard(doc: doc, block: b, onRefresh: onRefresh, onMethod: onMethod).id("sheet-block-" + b.id)
                         }
                         hiddenLine(s)
                     }
@@ -249,6 +250,7 @@ struct SheetBlockCard: View {
     @ObservedObject var doc: SheetDoc
     let block: SheetBlock
     var onRefresh: () -> Void
+    var onMethod: ((String) -> Void)? = nil      // PB-111: the call's method follows a pick in the header
     @ObservedObject var lib = SheetLibrary.shared
     @State private var confirmDelete = false
     @State private var adding = false
@@ -259,13 +261,22 @@ struct SheetBlockCard: View {
             PageLabel(text: block.title) {
                 HStack(spacing: 8) {
                     if block.type == .qualification {
-                        Menu(L("sheet.ui.method", ["m": SalesMethods.shared.label(block.method ?? "bant")])) {   // S1: names, not keys
-                            ForEach(lib.methods, id: \.self) { m in
-                                Button(SalesMethods.shared.label(m)) { doc.change { SheetEdit.setMethod(&$0, blockID: block.id, method: m) } }
+                        // PB-111 (SX4): with the call known, a pick changes the sheet and the call's method (Sales
+                        // on), so prep, tips and summary agree; without it (an old version) the method is only shown
+                        if let onMethod {
+                            Menu(L("sheet.ui.method", ["m": SalesMethods.shared.label(block.method ?? SalesMethod.defaultKey)])) {   // S1: names, not keys
+                                ForEach(lib.methods, id: \.self) { m in
+                                    Button(SalesMethods.shared.label(m)) { doc.change { SheetEdit.setMethod(&$0, blockID: block.id, method: m) }; onMethod(m) }
+                                }
                             }
+                            .onAppear { SalesMethods.shared.load() }
+                            .menuStyle(.borderlessButton).fixedSize().font(PN.Font.caption)
+                            .help(L("sheet.ui.method.help"))
+                        } else {
+                            Text(L("sheet.ui.method", ["m": SalesMethods.shared.label(block.method ?? SalesMethod.defaultKey)]))
+                                .onAppear { SalesMethods.shared.load() }
+                                .fixedSize().font(PN.Font.caption).foregroundStyle(PN.C.text2)
                         }
-                        .onAppear { SalesMethods.shared.load() }
-                        .menuStyle(.borderlessButton).fixedSize().font(PN.Font.caption)
                     }
                     if block.editedByUser { Label(L("sheet.ui.status.edited"), systemImage: "pencil").font(PN.Font.caption).foregroundStyle(PN.C.docs) }
                     menu
@@ -876,7 +887,8 @@ private struct SheetWindowBody: View {
     var body: some View {
         Group {
         ScrollView {
-            MeetingSheetTab(doc: doc, onRefresh: {}, onEditBlocks: { SheetPrepWindow.show(model, mode: .expert, step: 2) })
+            MeetingSheetTab(doc: doc, onRefresh: {}, onEditBlocks: { SheetPrepWindow.show(model, mode: .expert, step: 2) },
+                            onMethod: { model.adoptSheetMethod($0) })
                 .padding(20)
         }
         .background(PN.C.bg)

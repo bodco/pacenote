@@ -3,7 +3,11 @@
 # method is added here as data, without code.
 schema_version: 1
 default_method: general
-# S1: picker groups (kind of a method); a method without kind is a qualification method.
+# S1: kind of a method; a method without kind is a qualification method.
+# PB-111 (SX4): the picker lists the methods with tier core (Essentials, SPICED, BANT, MEDDPICC) and puts the rest
+# under More; when = the one line "when to use" under the picker; recommended = the "Recommended" badge (SPICED, for
+# discovery calls). The key general stays (saved series and projects use it), its name is Essentials. default_method
+# is also rules/meeting-sheet.yaml > qualification.default_method: one default for the call, the sheet and the tips.
 kinds:
   general: {en: General, uk: Загальне}
   qualification: {en: Qualification, uk: Кваліфікація}
@@ -11,7 +15,11 @@ kinds:
   approach: {en: Approach, uk: Підхід}
 methods:
   general:
-    name: {en: General sales, uk: Загальний продаж}
+    name: {en: Essentials, uk: Основне}
+    tier: core
+    when:
+      en: "Any call: pain, value, objections and a next step with a date. Good for upsells, partners and repeat calls."
+      uk: "Будь-який дзвінок: біль, цінність, заперечення і наступний крок з датою. Для апселу, партнерів і повторних дзвінків."
     kind: general
     desc:
       en: No formal qualification. Pacenote follows the client's pain, the value for them, objections, and whether there is a next step with a date.
@@ -34,32 +42,13 @@ methods:
         name: {en: Next step, uk: Наступний крок}
         explain: {en: An agreed next step with a date and an owner., uk: Узгоджений наступний крок з датою і відповідальним.}
         ask: {en: ["Shall we put the next call in the calendar now?"], uk: ["Поставимо наступну зустріч у календар зараз?"]}
-  bant:
-    name: {en: BANT, uk: BANT}
-    kind: qualification
-    desc:
-      en: "Budget, Authority, Need, Timeline: is there money, the person who decides, a real need and a time frame."
-      uk: "Budget, Authority, Need, Timeline: чи є гроші, людина, що вирішує, реальна потреба і терміни."
-    chip: true
-    criteria:
-      - key: budget
-        name: {en: Budget, uk: Бюджет}
-        explain: {en: Money is set aside or can be found, and roughly how much., uk: Гроші виділені або їх можна знайти, і приблизно скільки.}
-        ask: {en: ["Is there a budget for this already?"], uk: ["Чи є вже бюджет на це?"]}
-      - key: authority
-        name: {en: Authority, uk: Повноваження}
-        explain: {en: Who decides and who else takes part in the decision., uk: Хто вирішує і хто ще бере участь у рішенні.}
-        ask: {en: ["Who else will be part of this decision?"], uk: ["Хто ще братиме участь у рішенні?"]}
-      - key: need
-        name: {en: Need, uk: Потреба}
-        explain: {en: The problem is real and important for them., uk: Проблема реальна і важлива для них.}
-        ask: {en: ["Why is this a priority now?"], uk: ["Чому це пріоритет саме зараз?"]}
-      - key: timeline
-        name: {en: Timeline, uk: Терміни}
-        explain: {en: When they want to decide and to start., uk: Коли вони хочуть вирішити і почати.}
-        ask: {en: ["When would you like this to be live?"], uk: ["Коли ви хочете це запустити?"]}
   spiced:
     name: {en: SPICED, uk: SPICED}
+    tier: core
+    recommended: true
+    when:
+      en: "First calls about a service: the context, the pain, its cost, the deadline and how they decide."
+      uk: "Перші дзвінки про послугу: контекст, біль, його ціна, дедлайн і як вони вирішують."
     kind: qualification
     desc:
       en: "Situation, Pain, Impact, Critical event, Decision: the client's context, what hurts, what it costs, the deadline that forces a decision and how they decide."
@@ -86,8 +75,40 @@ methods:
         name: {en: Decision, uk: Рішення}
         explain: {en: Who decides, how, and on what criteria., uk: Хто вирішує, як і за якими критеріями.}
         ask: {en: ["How do you usually make decisions like this?"], uk: ["Як ви зазвичай ухвалюєте такі рішення?"]}
+  bant:
+    name: {en: BANT, uk: BANT}
+    tier: core
+    when:
+      en: "A quick lead filter (15-20 min): money, the person who decides, need and timing."
+      uk: "Швидкий фільтр ліда (15-20 хв): гроші, хто вирішує, потреба і терміни."
+    kind: qualification
+    desc:
+      en: "Budget, Authority, Need, Timeline: is there money, the person who decides, a real need and a time frame."
+      uk: "Budget, Authority, Need, Timeline: чи є гроші, людина, що вирішує, реальна потреба і терміни."
+    chip: true
+    criteria:
+      - key: budget
+        name: {en: Budget, uk: Бюджет}
+        explain: {en: Money is set aside or can be found, and roughly how much., uk: Гроші виділені або їх можна знайти, і приблизно скільки.}
+        ask: {en: ["Is there a budget for this already?"], uk: ["Чи є вже бюджет на це?"]}
+      - key: authority
+        name: {en: Authority, uk: Повноваження}
+        explain: {en: Who decides and who else takes part in the decision., uk: Хто вирішує і хто ще бере участь у рішенні.}
+        ask: {en: ["Who else will be part of this decision?"], uk: ["Хто ще братиме участь у рішенні?"]}
+      - key: need
+        name: {en: Need, uk: Потреба}
+        explain: {en: The problem is real and important for them., uk: Проблема реальна і важлива для них.}
+        ask: {en: ["Why is this a priority now?"], uk: ["Чому це пріоритет саме зараз?"]}
+      - key: timeline
+        name: {en: Timeline, uk: Терміни}
+        explain: {en: When they want to decide and to start., uk: Коли вони хочуть вирішити і почати.}
+        ask: {en: ["When would you like this to be live?"], uk: ["Коли ви хочете це запустити?"]}
   meddic:
     name: {en: MEDDIC, uk: MEDDIC}
+    tier: more
+    when:
+      en: "Larger deals with several people in the decision; MEDDPICC adds the paperwork and rivals."
+      uk: "Більші угоди, де вирішує кілька людей; MEDDPICC додає оформлення і конкурентів."
     kind: qualification
     desc:
       en: "Metrics, Economic buyer, Decision criteria, Decision process, Identify pain, Champion: for larger deals with several people involved."
@@ -124,6 +145,10 @@ methods:
   # reacted). Method names belong to their authors; the descriptions here are our own.
   meddpicc:
     name: {en: MEDDPICC, uk: MEDDPICC}
+    tier: core
+    when:
+      en: "Big or enterprise deals with procurement, legal review and rival vendors."
+      uk: "Великі або корпоративні угоди із закупівлями, юристами і конкурентами."
     kind: qualification
     desc:
       en: "MEDDIC plus Paper process and Competition: for complex deals with procurement, legal review and rival vendors."
@@ -164,6 +189,10 @@ methods:
         ask: {en: ["What other options are you looking at?"], uk: ["Які ще варіанти ви розглядаєте?"]}
   gpctba:
     name: {en: GPCTBA/C&I, uk: GPCTBA/C&I}
+    tier: more
+    when:
+      en: "When you want to start from the client's goals and plans rather than from money."
+      uk: "Коли хочете почати з цілей і планів клієнта, а не з грошей."
     kind: qualification
     desc:
       en: "Goals, Plans, Challenges, Timeline, Budget, Authority, Negative consequences, Positive implications: starts from the client's goals rather than from money."
@@ -204,6 +233,10 @@ methods:
         ask: {en: ["What would reaching it mean for you?"], uk: ["Що означатиме для вас досягти цього?"]}
   spin:
     name: {en: SPIN, uk: SPIN}
+    tier: more
+    when:
+      en: "A style of questions that lets the client say the value in their own words."
+      uk: "Стиль питань, після яких клієнт сам формулює цінність своїми словами."
     kind: questioning
     desc:
       en: "Situation, Problem, Implication, Need-payoff: a sequence of questions that lets the client say the value in their own words."
@@ -228,6 +261,10 @@ methods:
         ask: {en: ["If that were solved, what would it change for you?"], uk: ["Якби це було вирішено, що б це змінило для вас?"]}
   sandler:
     name: {en: Sandler pain funnel, uk: Воронка болю Sandler}
+    tier: more
+    when:
+      en: "When the pain is vague: dig from the surface problem down to its cost."
+      uk: "Коли біль розмитий: від поверхневої проблеми до її ціни."
     kind: questioning
     desc:
       en: "Goes from the surface problem down to its cost and what it means to the person, then checks they want to fix it now."
@@ -260,6 +297,10 @@ methods:
         ask: {en: ["Is this something you want to fix now, or can it wait?"], uk: ["Ви хочете вирішити це зараз чи це може почекати?"]}
   challenger:
     name: {en: Challenger, uk: Challenger}
+    tier: more
+    when:
+      en: "When you bring an insight and lead the talk; it follows what you do, not the client."
+      uk: "Коли ви приносите інсайт і ведете розмову; стежить за вами, а не за клієнтом."
     kind: approach
     judge: seller
     desc:

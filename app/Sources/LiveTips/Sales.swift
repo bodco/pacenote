@@ -13,20 +13,21 @@ final class SalesMethods: ObservableObject {
     struct Method: Identifiable, Hashable {
         let key: String; let name: String; let desc: String; let chip: Bool; let criteria: [Criterion]
         var kind = "qualification"; var kindName = ""; var judge = "client"
+        var tier = "more"; var when = ""; var recommended = false      // PB-111 (SX4): the picker's main list, line, badge
         var id: String { key }
     }
     @Published var methods: [Method] = [
-        Method(key: "general", name: "General sales", desc: "", chip: false, criteria: [], kind: "general"),
-        Method(key: "bant", name: "BANT", desc: "", chip: true, criteria: []),
-        Method(key: "spiced", name: "SPICED", desc: "", chip: true, criteria: []),
+        Method(key: "general", name: "Essentials", desc: "", chip: false, criteria: [], kind: "general", tier: "core"),
+        Method(key: "spiced", name: "SPICED", desc: "", chip: true, criteria: [], tier: "core", recommended: true),
+        Method(key: "bant", name: "BANT", desc: "", chip: true, criteria: [], tier: "core"),
         Method(key: "meddic", name: "MEDDIC", desc: "", chip: true, criteria: []),
-        Method(key: "meddpicc", name: "MEDDPICC", desc: "", chip: true, criteria: []),
+        Method(key: "meddpicc", name: "MEDDPICC", desc: "", chip: true, criteria: [], tier: "core"),
         Method(key: "gpctba", name: "GPCTBA/C&I", desc: "", chip: true, criteria: []),
         Method(key: "spin", name: "SPIN", desc: "", chip: true, criteria: [], kind: "questioning"),
         Method(key: "sandler", name: "Sandler pain funnel", desc: "", chip: true, criteria: [], kind: "questioning"),
         Method(key: "challenger", name: "Challenger", desc: "", chip: true, criteria: [], kind: "approach", judge: "seller"),
     ]
-    @Published var defaultKey = "general"
+    @Published var defaultKey = SalesMethod.defaultKey
     private var loadedLang = ""
 
     func load() {
@@ -35,17 +36,23 @@ final class SalesMethods: ObservableObject {
         loadedLang = lang
         PyTool.run("sales", ["--methods", "--lang", lang], needsAI: false) { [weak self] r in
             guard let self, let ms = r["methods"] as? [[String: Any]], !ms.isEmpty else { return }
-            self.defaultKey = r["default"] as? String ?? "general"
+            self.defaultKey = r["default"] as? String ?? SalesMethod.defaultKey
             self.methods = ms.map { m in
                 Method(key: m["key"] as? String ?? "", name: m["name"] as? String ?? "", desc: m["desc"] as? String ?? "",
                        chip: m["chip"] as? Bool ?? false,
                        criteria: ((m["criteria"] as? [[String: Any]]) ?? []).map {
                            Criterion(key: $0["key"] as? String ?? "", name: $0["name"] as? String ?? "", explain: $0["explain"] as? String ?? "") },
                        kind: m["kind"] as? String ?? "qualification", kindName: m["kind_name"] as? String ?? "",
-                       judge: m["judge"] as? String ?? "client")
+                       judge: m["judge"] as? String ?? "client",
+                       tier: m["tier"] as? String ?? "more", when: m["when"] as? String ?? "",
+                       recommended: m["recommended"] as? Bool ?? false)
             }
         }
     }
+
+    /// PB-111 (SX4): the main list of the picker (Essentials, SPICED, BANT, MEDDPICC) and the rest under More.
+    var core: [Method] { methods.filter { $0.tier == "core" } }
+    var more: [Method] { methods.filter { $0.tier != "core" } }
 
     func name(_ key: String) -> String { methods.first { $0.key == key }?.name ?? methods.first { $0.key == defaultKey }?.name ?? key }
 
@@ -63,18 +70,67 @@ final class SalesMethods: ObservableObject {
     }
 }
 
-/// The method picker with a short description of each (Start call popover and Settings > Projects).
+/// The method picker (Get ready, both layouts, and Settings > Projects). PB-111 (SX4): the four main methods, the
+/// rest under More, each with its "when to use" line; SPICED carries the Recommended badge; the chosen method's line
+/// sits under the picker.
 struct SalesMethodPicker: View {
     @Binding var selection: String
+    var showWhen = true
     @ObservedObject var sm = SalesMethods.shared
     var body: some View {
-        Picker(L("sales.method"), selection: $selection) {
-            ForEach(sm.groups, id: \.kind) { g in      // S1: grouped by kind
-                Section(g.name) { ForEach(g.methods) { m in Text(m.name).tag(m.key) } }
+        let cur = sm.methods.first { $0.key == selection } ?? sm.methods.first { $0.key == sm.defaultKey }
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                Text(L("sales.method")).font(PN.Font.caption.weight(.semibold)).foregroundStyle(PN.C.text2)
+                    .accessibilityHidden(true)
+                Menu {
+                    ForEach(sm.core) { m in item(m) }
+                    if !sm.more.isEmpty {
+                        Divider()
+                        Menu(L("sales.more")) { ForEach(sm.more) { m in item(m) } }
+                    }
+                } label: { Text(cur?.name ?? selection) }
+                .fixedSize()
+                .accessibilityLabel(L("sales.method"))
+                .accessibilityValue(cur?.name ?? selection)
+                if cur?.recommended == true { SalesRecommendedBadge() }
+            }
+            if showWhen, let w = cur?.when, !w.isEmpty {
+                Text(w).font(PN.Font.caption).foregroundStyle(PN.C.text2).fixedSize(horizontal: false, vertical: true)
             }
         }
-        .help(sm.methods.first { $0.key == selection }?.desc ?? "")
+        .help(cur?.desc ?? "")
         .onAppear { sm.load(); if selection.isEmpty { selection = sm.defaultKey } }
+    }
+
+    /// One method in the menu: a tick on the chosen one, its name (with "recommended") and the "when to use" line.
+    private func item(_ m: SalesMethods.Method) -> some View {
+        Toggle(isOn: Binding(get: { selection == m.key }, set: { if $0 { selection = m.key } })) {
+            Text(m.recommended ? L("sales.method.recommendedItem", ["m": m.name]) : m.name)
+            if !m.when.isEmpty { Text(m.when) }
+        }
+    }
+}
+
+extension StartCallModel {
+    /// PB-111 (SX4): a method picked in the Qualification header of a prepared sheet is the call's method while Sales
+    /// is on (one value for prep, tips and summary); a call in Up next keeps it. Sales off: the call does not change.
+    func adoptSheetMethod(_ m: String) {
+        guard salesActive else { return }
+        salesMethod = m
+        salesTouched = true
+        if UpNext.shared.items.contains(where: { $0 === self }) { UpNext.shared.save(self) }
+    }
+}
+
+/// PB-111 (SX4): the "Recommended" badge next to a method (SPICED, rules/sales.yaml > recommended).
+struct SalesRecommendedBadge: View {
+    var body: some View {
+        Text(L("sales.recommended")).font(PN.Font.caption.weight(.semibold)).foregroundStyle(PN.C.readyText)
+            .padding(.horizontal, 6).padding(.vertical, 1)
+            .background(Capsule().fill(PN.C.ready.opacity(0.15)))
+            .help(L("sales.recommended.help"))
+            .accessibilityLabel(L("sales.recommended.help"))
     }
 }
 

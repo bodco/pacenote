@@ -441,7 +441,7 @@ public extension SheetEdit {
         types.enumerated().map { i, t in
             let bt = BlockType(rawValue: t)
             return SheetBlock(id: "b-" + t, type: bt, title: titles[t] ?? blockTitle(bt), visible: true, onlyIfData: onlyIfData.contains(t),
-                              order: i, method: bt == .qualification ? "bant" : nil, facts: [], editedByUser: false)
+                              order: i, method: bt == .qualification ? SalesMethod.defaultKey : nil, facts: [], editedByUser: false)
         }
     }
 }

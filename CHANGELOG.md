@@ -5,6 +5,17 @@ Pacenote. Earlier versions are described in the commit messages and in
 
 ## Unreleased
 
+- **Sales: one method for the whole call and a clear Sales switch (PB-111).** A call set to General sales was prepared
+  with BANT, while the live tips and the after-call summary followed General sales, so the plan and the result never
+  matched. Now the method you pick is the one value of the call: the preparation (the Meeting Sheet Qualification
+  block), the live tips and the after-call summary all use it unchanged. Get ready shows a Sales call switch instead of
+  a small checkbox, on the page and in the compact setup, with the method picker right below it. The main list has
+  four methods: Essentials (the new name of General sales, still the default), SPICED (marked Recommended, for
+  discovery calls), BANT and MEDDPICC; MEDDIC, GPCTBA/C&I, SPIN, Sandler and Challenger are under More methods. Each
+  method has a one-line "when to use" in the menu and under the picker. Picking a method in the Qualification block
+  header (while you get ready or on the prepared sheet) changes the call's method too. One default
+  for the call and the sheet (Essentials, was BANT for the sheet). With the switch off nothing changes for the call.
+  Settings > Projects uses the same picker.
 - **Meeting Sheet: a Verbatim block for text that must stay word for word (PB-102).** + Add a block now offers
   Verbatim, as often as you need it in one call. In its Settings you give it a title, a source (a file of the call,
   any file, or pasted text) and, if you want only part of a Markdown file, sections such as 1-4 by heading. The

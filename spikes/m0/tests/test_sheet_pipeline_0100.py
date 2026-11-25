@@ -287,7 +287,8 @@ def _req(root, a, b, **kw):
          "participants": {"ours": [{"name": "Mike Carter"}], "theirs": [{"name": "Emily Parker", "company": "Lumenfield"}]},
          "project": {"slug": "lumenfield", "root": str(root)}, "today": "2026-11-12",
          "sources": [{"id": "s1", "path": str(a)}, {"id": "s2", "path": str(b)}],
-         "base": str(root / "live" / "prep-2026-11-13-1600-lumenfield-intro")}
+         "base": str(root / "live" / "prep-2026-11-13-1600-lumenfield-intro"),
+         "method": "bant"}      # PB-111: the call's method is said (the sheet default is Essentials, without budget)
     r.update(kw)
     return r
 

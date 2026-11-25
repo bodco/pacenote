@@ -296,23 +296,34 @@ struct CallSetupView: View {
         default:
             Text(L("start.regularHint")).font(t.homeText(14)).foregroundStyle(PN.C.text2).fixedSize(horizontal: false, vertical: true)
         }
-        if model.callType != "transcript" { salesRow }
+        // PB-111: the page has its own Sales row (setupRow below), so the type section does not repeat it there
+        if model.callType != "transcript" && mode != .page { salesRow(14) }
     }
 
     /// 0.25 (R3b, board SU): Sales mode sits with the call type it changes, not under Options (0.8.7 H2: any type).
-    @ViewBuilder private var salesRow: some View {
-        Toggle(isOn: Binding(get: { model.salesEnabled }, set: { model.salesEnabled = $0; model.salesTouched = true })) {
-            Text(L("su.sales")).font(t.homeText(14)).foregroundStyle(PN.C.text)
-        }
-        .toggleStyle(.pnCheckbox)
-        if model.salesEnabled {
-            HStack {
-                SalesMethodPicker(selection: $model.salesMethod)
-                Button { showMethod.toggle() } label: { Image(systemName: "info.circle") }.buttonStyle(.borderless)
-                    .accessibilityLabel(L("sales.method.about"))
-                    .popover(isPresented: $showMethod, arrowEdge: .trailing) { SalesMethodInfo(key: model.salesMethod) }
+    /// PB-111 (SX4): a clear switch (not a small checkbox) in both layouts; when on, the method picker right below
+    /// with the method's "when to use" line and the Recommended badge. The method is the one value of the call.
+    @ViewBuilder private func salesRow(_ size: CGFloat) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Toggle("", isOn: Binding(get: { model.salesEnabled }, set: { model.salesEnabled = $0; model.salesTouched = true }))
+                    .labelsHidden().toggleStyle(.pnSwitch)
+                    .accessibilityLabel(L("sales.switch"))
+                    .accessibilityHint(L("su.sales"))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(L("sales.switch")).font(t.homeText(size, .semibold)).foregroundStyle(PN.C.text)
+                    Text(L("su.sales")).font(t.homeText(size - 2)).foregroundStyle(PN.C.text2).fixedSize(horizontal: false, vertical: true)
+                }
+                .accessibilityHidden(true)
             }
-            .padding(.leading, 24)
+            if model.salesEnabled {
+                HStack(alignment: .top, spacing: 6) {
+                    SalesMethodPicker(selection: $model.salesMethod)
+                    Button { showMethod.toggle() } label: { Image(systemName: "info.circle") }.buttonStyle(.borderless)
+                        .accessibilityLabel(L("sales.method.about"))
+                        .popover(isPresented: $showMethod, arrowEdge: .trailing) { SalesMethodInfo(key: model.salesMethod) }
+                }
+            }
         }
     }
 
@@ -664,12 +675,7 @@ struct CallSetupView: View {
                             Text(opensIn).font(t.homeText(15)).foregroundStyle(opensIn == L("page.opensIn.none") ? PN.C.text3 : PN.C.text)
                                 .lineLimit(1)
                         }
-                        setupRow(L("page.row.sales")) {
-                            Toggle(isOn: Binding(get: { model.salesEnabled }, set: { model.salesEnabled = $0; model.salesTouched = true })) {
-                                Text(L("page.salesMode")).font(t.homeText(15))
-                            }
-                            .toggleStyle(.pnCheckbox)
-                        }
+                        setupRow(L("page.row.sales")) { salesRow(15) }      // PB-111: switch and method, as in the compact setup
                         if model.callType != "auto" { typeSection.pageRow(12) }
                     }
                     VStack(alignment: .leading, spacing: 0) {

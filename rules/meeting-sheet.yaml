@@ -33,9 +33,10 @@ settings:
       label: Budget
 
 # Qualification methods offered in the header of the qualification block. The names and criteria are the methods of
-# rules/sales.yaml; bant is the default of the block.
+# rules/sales.yaml. PB-111 (SX4): one default, the same as rules/sales.yaml > default_method (general = Essentials);
+# with Sales on, the block always takes the call's method.
 qualification:
-  default_method: bant
+  default_method: general
   methods: [bant, spiced, meddic, meddpicc, gpctba, spin, sandler, challenger, general]
   levels: [green, yellow, red, unknown]
 

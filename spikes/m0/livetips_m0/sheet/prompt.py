@@ -63,9 +63,9 @@ def block_lines(blocks: List[dict], lib: dict, criteria: Optional[Dict[str, List
         fields = (lib.get(t) or {}).get("fields", "")
         line = f'- {t} ("{b.get("title", t)}"): {fields}'
         if t == "qualification":
-            crit = (criteria or {}).get(b.get("method") or "bant") or []
+            crit = (criteria or {}).get(b.get("method") or "general") or []     # PB-111: the one default
             names = ", ".join(f'{c["key"]} ({(c.get("name") or {}).get("en", c["key"])})' for c in crit)
-            line += (f'. Method {b.get("method") or "bant"}: exactly one fact per criterion, its latest state ({names}), with value.key = the '
+            line += (f'. Method {b.get("method") or "general"}: exactly one fact per criterion, its latest state ({names}), with value.key = the '
                      f'criterion key and value.level; a criterion the sources say nothing about: status not_found, '
                      f'level unknown')
         if t == "my_focus" and focus:

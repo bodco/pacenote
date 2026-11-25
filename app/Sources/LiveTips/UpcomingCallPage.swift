@@ -293,7 +293,8 @@ struct UpcomingCallPage: View {
                     }
                 }
             }
-            MeetingSheetTab(doc: d, onRefresh: {}, onEditBlocks: { getReady(.expert, step: 2) }, onCompare: { compareN = $0; tab = "versions" })
+            MeetingSheetTab(doc: d, onRefresh: {}, onEditBlocks: { getReady(.expert, step: 2) }, onCompare: { compareN = $0; tab = "versions" },
+                            onMethod: { model.adoptSheetMethod($0) })     // PB-111
                 .environment(\.pageFlat, false)       // 0.25 (R2): the built sheet keeps its look (board MS, a later block)
         } else if briefPath != nil {
             VStack(alignment: .leading, spacing: 8) {

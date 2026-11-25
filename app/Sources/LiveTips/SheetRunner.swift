@@ -294,7 +294,6 @@ final class SheetRunner: ObservableObject {
                                                  otherRoots: PrepRunner.otherRoots(r)),
             "min_claude": PrepSecurity.minClaude
         ]
-        if let m = r.salesMethod { req["method"] = m == "general" ? "bant" : m }
         if j.route == AIRoute.api, let pa = PrepAgent.plan(c.prepAgent, route: j.route, economy: SpendWatch.economyOn), let b = pa.budgetUSD {
             req["max_budget_usd"] = b
         }
@@ -312,6 +311,8 @@ final class SheetRunner: ObservableObject {
             req["sources"] = mine + sources.filter { !paths.contains(($0["path"] as? String) ?? "\u{0}") }
             req["auto_pick"] = nil
         }
+        // PB-111 (SX4): the call's method as chosen (no general -> bant), also over an older wizard choice
+        req["method"] = SalesMethod.forPrep(call: r.salesMethod, wizard: req["method"] as? String)
         return req
     }
 

@@ -203,8 +203,21 @@ final class SheetDraft: ObservableObject {
         let verbatim = blocks.filter { $0.type == BlockType.verbatim.rawValue }    // PB-102: kept when the preset changes
         blocks = p.blocks.map { t in
             DraftBlock(type: t, title: lib.title(t), visible: true, onlyIfData: ["signals", "tech_stack", "fit"].contains(t),
-                       method: t == "qualification" ? (p.method ?? model.salesMethod.nilIfEmpty ?? "bant") : nil)
+                       method: t == "qualification" ? qualificationMethod(preset: p.method) : nil)
         } + verbatim
+    }
+
+    /// PB-111 (SX4): with Sales on the Qualification block shows the call's method (a preset does not beat it);
+    /// with Sales off the preset's method, else the project's saved method (as before), else the one default.
+    func qualificationMethod(preset: String? = nil) -> String {
+        SalesMethod.forBlock(call: SalesMethod.forCall(enabled: model.salesActive, chosen: model.salesMethod),
+                             preset: preset ?? model.salesMethod.nilIfEmpty)
+    }
+
+    /// PB-111: a method picked in the Qualification block header is the call's method too while Sales is on.
+    func setQualificationMethod(_ m: String, block id: String) {
+        if let i = blocks.firstIndex(where: { $0.id == id }) { blocks[i].method = m }
+        if model.salesActive { model.salesMethod = m; model.salesTouched = true }
     }
 
     var preset: SheetPresetInfo? { SheetLibrary.shared.preset(presetID) }

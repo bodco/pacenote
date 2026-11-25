@@ -206,7 +206,7 @@ def new_sheet(rules: dict, preset_id: str, meeting: dict, participants: Optional
     participants.setdefault("ours", [])
     participants.setdefault("theirs", [])
     theirs = participants["theirs"]
-    method = preset.get("method") or (rules.get("qualification") or {}).get("default_method", "bant")
+    method = preset.get("method") or (rules.get("qualification") or {}).get("default_method", "general")
     blocks = []
     for i, t in enumerate(preset.get("blocks") or []):
         b = {"id": f"b-{t}", "type": t, "title": (lib.get(t) or {}).get("title", t), "visible": True,

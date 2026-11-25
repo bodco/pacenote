@@ -942,8 +942,9 @@ struct SheetBlocksStep: View {
                     }
             }
             if b.wrappedValue.type == "qualification" {
-                PrepMenuField(value: SalesMethods.shared.label(b.wrappedValue.method ?? "bant")) {
-                    ForEach(lib.methods, id: \.self) { k in Button(SalesMethods.shared.label(k)) { b.wrappedValue.method = k } }   // S1: names, not keys
+                // PB-111: the call's method while Sales is on; a pick here changes it for the whole call
+                PrepMenuField(value: SalesMethods.shared.label(b.wrappedValue.method ?? draft.qualificationMethod())) {
+                    ForEach(lib.methods, id: \.self) { k in Button(SalesMethods.shared.label(k)) { draft.setQualificationMethod(k, block: b.wrappedValue.id) } }   // S1: names, not keys
                 }
                 .onAppear { SalesMethods.shared.load() }
             }
@@ -1019,7 +1020,7 @@ struct SheetBlocksStep: View {
                                     DispatchQueue.main.async { editingVerbatim = b.id }
                                     return
                                 }
-                                draft.blocks.append(DraftBlock(type: t, title: lib.title(t), method: t == "qualification" ? "bant" : nil))
+                                draft.blocks.append(DraftBlock(type: t, title: lib.title(t), method: t == "qualification" ? draft.qualificationMethod() : nil))   // PB-111
                                 adding = false
                             } label: {
                                 VStack(alignment: .leading, spacing: 3) {
@@ -1091,7 +1092,7 @@ struct SheetBlocksStep: View {
                                   "hidden": kept.filter { !$0.visible }.map(\.type),
                                   "only_if_data": draft.blocks.filter(\.onlyIfData).map(\.type),
                                   "mode": draft.mode.rawValue, "readiness": draft.preset?.readiness ?? [], "base": draft.presetID,
-                                  "method": draft.blocks.first { $0.type == "qualification" }?.method ?? "bant",
+                                  "method": draft.blocks.first { $0.type == "qualification" }?.method ?? draft.qualificationMethod(),   // PB-111
                                   "suggest_new_domains": suggestNew]
         saveNote = ""; saved = ""
         lib.change(req) { e in

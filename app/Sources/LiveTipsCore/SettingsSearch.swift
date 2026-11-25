@@ -129,7 +129,7 @@ public enum SettingsSearch {
         .init("pr.scan", "projects", adv("projects"), title: "set.scanWorkFolder", words: "scan add project folder workspace сканувати додати проєкт"),
         .init("pr.import", "projects", title: "set.importControlTowerConfigs", words: "control tower import configs імпорт"),
         .init("pr.notion", "projects", projectPage: true, title: "proj.inNotion", words: "notion name project property назва в notion"),
-        .init("pr.sales", "projects", projectPage: true, title: "proj.sales", words: "sales bant spiced meddic продажі"),
+        .init("pr.sales", "projects", projectPage: true, title: "proj.sales", words: "sales bant spiced meddic meddpicc essentials основне продажі"),   // PB-111
         .init("pr.cards", "projects", projectPage: true, title: "search.cards", words: "answer cards картки відповідей"),
         .init("pr.ai", "projects", projectPage: true, title: "set.useClaudeForTips", words: "ai tips api allowed підказки"),
         .init("pr.index", "projects", projectPage: true, title: "set.searchThisFolder", words: "index search folder reindex індекс пошук"),
