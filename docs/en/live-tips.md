@@ -3134,6 +3134,10 @@ teams, organization projects and invites are managed in the Pacenote console, no
   same place then names it ("Acme: usage is shared with your organization"). **Show what is sent** shows the batches
   waiting to go, as they will go. For now the weekly count of earlier versions goes too, next to it. When you join an
   organization, the join window says it in one line: the organization can see your usage totals, not your calls.
+  A call's start says whether a preparation was chosen for it, its Meeting Sheet mode (quick, expert or none) and
+  where Start was pressed; its end says which preparation the call had: none, the chosen one, one Pacenote picked up
+  by itself, or one that finished during the call. Never its name or text. Up to version 0.27.2 "has a brief" was
+  always "no" (fixed in PB-89), so earlier numbers of it say nothing.
 
 ### 14.1z11 First run and readiness of a call (0.24.1, beta)
 

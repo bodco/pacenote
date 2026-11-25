@@ -17,6 +17,19 @@ Pacenote. Earlier versions are described in the commit messages and in
   while tips arrive. Headings, lists and emphasis are kept on the sheet page, in the tips window and in the exports.
   The block stays on this Mac: call sync does not send it, and when the next call of the series (or project memory)
   reads this sheet again (also the search during that call), it reads it without the Verbatim text.
+- **Product analytics: a real preparation signal on calls (PB-89).** `call_started.has_brief` was always false in
+  every version up to 0.27.2 (it read a field no call ever had), so analytics before this release say nothing about
+  preparations. Now `has_brief` is true when a preparation was chosen at the start (Pacenote's own pick by title and
+  time counts too), and `call_started` also sends `sheet` (quick, expert or none, the chosen preparation's Meeting
+  Sheet mode) and `from` (home, menu_bar, upcoming_page, notification or sheet). The Start call form sends the place
+  that opened it when that is known; a start from the tips window, or from a form opened by hand, sends no `from`
+  (the list has no value for them). `call_ended` gets `brief`: none, chosen, auto (picked up by the
+  engine itself) or late (a preparation that finished during the call), read from the call's own files at its end.
+  The local usage log's `has_brief` is fixed the same way. Catalog `rules/analytics.yaml`: new list `brief_kind`.
+  **Deploy order:** copy the catalog byte for byte to the server's `analytics_events.yaml` and deploy the server
+  before this app version; an older server drops `call_ended.brief` as an unknown parameter. Copy it in the same
+  step as the merge: CoreChecks and the server's pytest compare the two files.
+
 - **Project memory, step 4: topic summaries and questions over all time (GraphRAG G2 S4, PB-87).** Still behind the
   flag `evidence_store` (off by default); with the flag off nothing changes and nothing new is sent. With it on and
   AI reading on, a pass ends by grouping what it read into topics (one client per topic, the same topics every time

@@ -250,6 +250,7 @@ struct UpcomingCallPage: View {
         guard let app = app else { return }
         if dirty { save() }
         model.useDefaultTargetIfEmpty()
+        model.startFrom = "upcoming_page"     // PB-89: call_started.from
         if app.callIsLive { upnext.save(model); app.confirmSwitch(to: model, on: HomeWindow.window); return }
         if let e = app.launch(model) { note = e } else { HomeNav.shared.path = [] }
     }

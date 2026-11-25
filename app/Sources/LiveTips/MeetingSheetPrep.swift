@@ -385,6 +385,7 @@ struct SheetQuickView: View {
     private func startCall() {
         guard let app = NSApp.delegate as? AppDelegate else { return }
         m.useDefaultTargetIfEmpty()
+        m.startFrom = "sheet"           // PB-89: call_started.from
         if let e = app.launch(m) { draft.note = e } else { SheetPrepWindow.close(m) }
     }
 }
@@ -455,6 +456,7 @@ struct SheetQuickDone: View {
                 }.buttonStyle(.pnSecondary)
                 Spacer()
                 Button {
+                    draft.model.startFrom = "sheet"      // PB-89: call_started.from
                     if let app = NSApp.delegate as? AppDelegate, app.launch(draft.model) == nil { SheetPrepWindow.close(draft.model) }
                 } label: {
                     HStack(spacing: 8) {
@@ -497,6 +499,7 @@ struct SheetQuickDone: View {
                 Spacer()
                 Button(L("sheet.ui.startWithout")) {
                     if switchTo != nil { runner.declineSwitch() }
+                    draft.model.startFrom = "sheet"      // PB-89: call_started.from
                     if let app = NSApp.delegate as? AppDelegate, app.launch(draft.model) == nil { SheetPrepWindow.close(draft.model) }
                 }.buttonStyle(.pnSecondary)
                 if let to = switchTo {

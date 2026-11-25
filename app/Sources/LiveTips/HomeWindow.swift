@@ -1290,6 +1290,7 @@ struct HomeView: View {
     private func start(_ r: Ahead) {
         let m = model(for: r)
         m.useDefaultTargetIfEmpty()     // 0.9.0 (owner): no project chosen: the app's own live folder
+        m.startFrom = "home"            // PB-89: call_started.from
         if live {
             upnext.save(m)
             app.confirmSwitch(to: m, on: HomeWindow.window)

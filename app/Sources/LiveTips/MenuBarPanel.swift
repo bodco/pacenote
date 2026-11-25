@@ -386,6 +386,7 @@ struct MenuBarPanel: View {
     private func start(_ c: MenuBarModel.Call) {
         model.run { app in
             let m = c.ahead.setup()
+            m.startFrom = "menu_bar"        // PB-89: call_started.from
             if let e = app.launch(m) { CallEngine.shared.notify(e, level: .error) }
         }
     }

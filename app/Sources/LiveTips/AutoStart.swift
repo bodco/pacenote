@@ -94,6 +94,7 @@ final class AutoStart: NSObject, ObservableObject, UNUserNotificationCenterDeleg
         guard let e = suggestion, let app = NSApp.delegate as? AppDelegate else { return }
         suggestion = nil
         let m = model(for: e)
+        m.startFrom = "home"            // PB-89: the Home banner is the only caller
         if m.target.isEmpty { StartCallWindow.show(delegate: app, prepared: m); return }
         // the meeting is already on (that is why it asked): tips only, the meeting is not opened again
         if let err = app.launch(m, openMeeting: false) { StartCallWindow.show(delegate: app, prepared: m); m.note = err }
@@ -120,7 +121,9 @@ final class AutoStart: NSObject, ObservableObject, UNUserNotificationCenterDeleg
                 let eid = String(id.dropFirst(AutoStart.idPrefix.count))
                 if let e = CalendarService.shared.upcoming().first(where: { $0.id == eid }) {
                     AutoStart.shared.suggestion = nil
-                    StartCallWindow.show(delegate: app, prepared: AutoStart.shared.model(for: e))
+                    let m = AutoStart.shared.model(for: e)
+                    m.startFrom = "notification"      // PB-89: call_started.from
+                    StartCallWindow.show(delegate: app, prepared: m)
                 }
             }
         }
