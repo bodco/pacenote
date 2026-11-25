@@ -189,6 +189,11 @@ Pacenote. Earlier versions are described in the commit messages and in
   commitments register, offline and without a model, and prints one table: preparation coverage and scope leaks,
   live answer rate and lookup latency, duplicates, cross-client items and "we will try" items kept as agreed. The
   baseline of the current code and how to rerun it: [docs/en/bench/g0-baseline.md](docs/en/bench/g0-baseline.md).
+- **Team/quality: two engine tests no longer fail on a busy Mac (PB-43).** No change for users. The streamed gist
+  test and the orange rate test replayed the demo call at 40 times wall time, so a loaded machine (a parallel
+  `swift build`) aged the lines past the 20 s freshness limit or spread two tips past the rate window. They now run on a call clock
+  the test moves line by line, as the golden replay does (PB-5); the rate test is back on the normal 45 s window,
+  and a new test checks that a slow machine gives the same tips and timings.
 - **Research this website (2026-11-22, G6):** a link to a company's site now has a Research this website button in
   Sources, in Expert and in Quick. It shows a plan first (pages ordered by the call goal and type, 15 pages
   by default and up to 30, a cost line for your AI route, and the reason for every page left out), then reads the

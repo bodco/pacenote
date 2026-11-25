@@ -3,7 +3,6 @@ import time
 
 from conftest import FIX
 from livetips_m0.providers import FakeProvider, gist_closed
-from livetips_m0.replay import replay
 
 CFG = {"variant": "test", "models": {"classify": "fake-haiku", "tip": "fake-sonnet"}, "cache_ttl": "1h",
        "me_label": "Me", "them_label": "Other", "name_aliases": ["Alex"], "langs": ["en"], "tips_lang": "en",
@@ -25,10 +24,40 @@ def responder(model, user):
     return json.dumps({"skip": True, "reason": "nothing"})
 
 
+SPEED = 40       # call seconds per second of the fake model's latency (the old replay ran 40x wall time)
+
+
 def run(tmp_path, cfg=CFG, prov=None):
-    cfg = dict(cfg, budget=dict(cfg["budget"], ledger=str(tmp_path / "spend.json")))
+    """The demo call through the engine on an injected call clock (PB-43, like PB-5's golden harness): each line
+    arrives at its `written` time, the fake model's latency moves the call clock instead of sleeping, and the work a
+    line starts runs in order before the next line. A loaded machine no longer ages lines or spreads the tips."""
+    from types import SimpleNamespace
+    from unittest.mock import patch
+    import livetips_m0.engine as engine_mod
+    import livetips_m0.providers as providers_mod
+    from golden_harness import DeferredPool, _deferred_threading
+    from livetips_m0.replay import build_engine, select_lines
+    from livetips_m0.transcript import load_call
+    # hedging waits on wall time for a second request; it is not what these tests check
+    cfg = dict(cfg, hedge={"enabled": False}, budget=dict(cfg["budget"], ledger=str(tmp_path / "spend.json")))
     prov = prov or FakeProvider(responder, ttft=0.01, total=0.02)
-    eng = replay(cfg, FIX / "demo-call.md", tmp_path / "out", speed=40, provider=prov, verbose=False)
+    lines, t0 = select_lines(load_call(FIX / "demo-call.md", cfg["me_label"]))
+    clock = {"t": t0}
+
+    def wait(s):
+        clock["t"] += s * SPEED
+    pool = DeferredPool()
+    with patch.object(providers_mod, "time", SimpleNamespace(monotonic=lambda: clock["t"], sleep=wait)), \
+            patch.object(engine_mod, "threading", _deferred_threading(pool)):
+        eng, _ = build_engine(cfg, FIX / "demo-call.md", tmp_path / "out", lambda: clock["t"], prov)
+        eng.pool.shutdown(wait=False)
+        eng.pool = pool
+        pool.run_all()
+        for ln in lines:
+            clock["t"] = max(clock["t"], ln.written)
+            eng.on_line(ln)
+            pool.run_all()
+        eng.drain(1)
     tf = tmp_path / "out" / "demo-call.app.timing.jsonl"
     timing = [json.loads(l) for l in tf.read_text().splitlines()] if tf.exists() else []
     tips = [json.loads(l) for l in (tmp_path / "out" / "demo-call.app.tips.jsonl").read_text().splitlines()] \
@@ -82,8 +111,9 @@ def test_diet_rate_blocks_second_orange(tmp_path):
         if "ROLE classify" in user:
             return json.dumps({"need_tip": True, "level": "orange", "trigger": "add_fact", "topic": "x"})
         return json.dumps({"gist": "🟠 Add a fact " + str(time.monotonic()), "level": "orange", "topic": "topic " + str(time.monotonic())})
-    # PB-37: the replay clock runs 40x wall time, so under load 45 s passed between two oranges; an hour holds
-    cfg = dict(CFG, direct_route=False, periodic_classify_s=0, active_rate_seconds=3600)
+    # PB-43: on the injected call clock the oranges are seconds apart, so the usual 45 s rate window holds
+    # (PB-37 had raised it to an hour while the replay clock ran 40x wall time)
+    cfg = dict(CFG, direct_route=False, periodic_classify_s=0)
     eng, timing, tips, prov = run(tmp_path, cfg, FakeProvider(resp, 0.0, 0.0))
     assert len([t for t in tips if t.get("level") == "orange" and not t.get("partial")]) == 1
     assert any(s.get("outcome") in ("diet_rate", "diet_pm_speaking") for s in timing)
@@ -174,6 +204,26 @@ def test_streamed_gist_then_full_tip_with_same_uid(tmp_path):
             assert full[0]["gist"] == p["gist"]
     span = next(s for s in timing if s["src"] == "10:00:12")
     assert span.get("e2e_shown_s") is not None and span["e2e_shown_s"] <= span["e2e_s"]
+
+
+def test_replay_helper_ignores_a_slow_machine(tmp_path, monkeypatch):
+    """PB-43: a loaded machine (here 0.3 s of wall time per line, 12 s of call time at the old 40x replay) aged the
+    lines past stale_after_s and the streamed gist and the diet tests failed. On the call clock nothing changes."""
+    from livetips_m0.engine import Engine
+
+    def seen(timing, tips):
+        return ([(s.get("src"), s.get("outcome"), s.get("e2e_s"), s.get("e2e_shown_s")) for s in timing],
+                [(t.get("src"), t.get("level"), t.get("partial"), t.get("kind")) for t in tips])
+    _, timing, tips, _ = run(tmp_path / "fast")
+    on_line = Engine.on_line
+
+    def slow(self, line):
+        time.sleep(0.3)
+        return on_line(self, line)
+    monkeypatch.setattr(Engine, "on_line", slow)
+    _, timing2, tips2, _ = run(tmp_path / "slow")
+    assert any(t.get("partial") for t in tips2)
+    assert seen(timing2, tips2) == seen(timing, tips)
 
 
 def test_partial_head_needs_gist_level_and_topic():
