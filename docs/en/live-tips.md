@@ -1412,7 +1412,11 @@ The skill and the app follow the same rules, in `rules/agenda.yaml`, `rules/comm
   email, the transcript, the series and, in the menu, Notion and Finder. The tips window shows the same two actions
   when the call has ended.
 - **Output language.** A call with two or three languages (each at least 10% of the call) shows an Output language
-  menu and **Regenerate** under the status lines. The default is the dominant language of the call. Choosing another
+  menu and **Regenerate** under the status lines. The default is the dominant language of the call. It is measured:
+  the recorder counts seconds of speech per language over the whole call (a language switch in the tips window keeps
+  the count) and saves them in `<stem>.recording.json` when the call ends and again after lines deleted in the
+  transcript pane; a call shorter than a minute has no dominant language, then the language with the most seconds is
+  used. Choosing another
   only remembers it for this call; nothing is rewritten until you press Regenerate, which writes the notes, Summary,
   Recap and an existing follow-up draft again in that language and rewrites the Summary, Recap and meeting notes on the
   Notion page in place (blocks outside the Pacenote section and the transcript page stay; the transcript is not uploaded again); a step that fails is named so you can press Regenerate again; it asks first for a call over one hour. A line shows the language each text was written in and marks the ones out of date; a follow-up chosen in the

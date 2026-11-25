@@ -5,6 +5,13 @@ Pacenote. Earlier versions are described in the commit messages and in
 
 ## Unreleased
 
+- **Call language: the output language now follows the speech that was measured (PB-72).** The recorder counts the
+  seconds of speech per language over the whole call and saves them, with the dominant language, in the call's
+  `<stem>.recording.json` when the call ends and again after lines deleted in the transcript pane (deleted lines no
+  longer count). The notes, Summary, Recap and follow-up default to that language instead of a guess from the language
+  tags of the lines, so a call whose lines were tagged wrong still gets the right language. A switch of languages in
+  the tips window keeps the seconds counted before it. A call shorter than a minute saves no dominant language; the
+  language with the most seconds is used then. Older calls keep the line tags.
 - **Meeting Sheet: a Verbatim block for text that must stay word for word (PB-102).** + Add a block now offers
   Verbatim, as often as you need it in one call. In its Settings you give it a title, a source (a file of the call,
   any file, or pasted text) and, if you want only part of a Markdown file, sections such as 1-4 by heading. The

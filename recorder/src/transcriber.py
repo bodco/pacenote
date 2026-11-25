@@ -299,6 +299,8 @@ class LangShare:
 
     def __init__(self, langs: list[str], warmup_s: float = 60.0):
         self.warmup_s = warmup_s
+        self.total: dict[str, float] = {}       # PB-72: seconds per language of the whole call, a switch keeps them
+        self.call_t0: float | None = None       # PB-72: the first segment of the call, a switch keeps it
         self.reset(langs)
 
     def reset(self, langs: list[str]) -> None:
@@ -306,11 +308,32 @@ class LangShare:
         self.secs: dict[str, float] = {}
         self.t0: float | None = None
 
-    def add(self, lang: str | None, secs: float) -> None:
-        if lang in self.langs:
-            self.secs[lang] = self.secs.get(lang, 0.0) + max(0.0, secs)
+    def add(self, lang: str | None, secs: float) -> float:
+        """Credit the seconds to `lang` when it is in the set; returns the seconds credited (0.0 when not)."""
+        if lang not in self.langs:
+            return 0.0
+        s = max(0.0, secs)
+        self.secs[lang] = self.secs.get(lang, 0.0) + s
+        self.total[lang] = self.total.get(lang, 0.0) + s
+        return s
+
+    def uncount(self, lang: str | None, secs: float) -> None:
+        """PB-72: a line deleted at the end of the call no longer counts in the call totals."""
+        if lang in self.total:
+            self.total[lang] = max(0.0, self.total[lang] - max(0.0, secs))
+
+    def spoken(self, t: float) -> tuple[dict[str, float], str | None]:
+        """PB-72: (seconds per language of the whole call, the language spoken most). The language is None when no
+        speech was counted or the call is still inside the warm-up: a short call is not labelled by the set's first
+        language."""
+        secs = {k: v for k, v in self.total.items() if v > 0}
+        if not secs or self.call_t0 is None or t - self.call_t0 < self.warmup_s:
+            return secs, None
+        return secs, max(secs, key=lambda l: (secs[l], l))
 
     def dominant(self, t: float) -> str:
+        if self.call_t0 is None:
+            self.call_t0 = t
         if self.t0 is None:
             self.t0 = t
         if len(self.langs) == 1 or t - self.t0 < self.warmup_s or not any(self.secs.values()):
@@ -346,6 +369,7 @@ class Decoded(tuple):
     """PB-30: a decode result (text, language tag, translated_from) that also says whether a kept segment was unsure
     (`low_conf`). It compares equal to the plain tuple."""
     low_conf = False
+    credit = (None, 0.0)      # PB-72: (language, seconds) this segment added to the call's language totals
 
     def __new__(cls, items, low_conf: bool = False):
         self = super().__new__(cls, items)
@@ -383,8 +407,10 @@ def asr_segment(whisper, seg: "Segment", cfg: dict, lang_share: LangShare, last_
         return None
     if drop_silence_stop(seg, text, cfg):
         return None                                 # "Дякую за перегляд!", "Bye." on near-silence
-    lang_share.add(None if translated_from else (heard or (lang if auto else None)), seg.speech_s)
-    return Decoded((text, lang, translated_from), low_conf)
+    credit_lang = None if translated_from else (heard or (lang if auto else None))
+    res = Decoded((text, lang, translated_from), low_conf)
+    res.credit = (credit_lang, lang_share.add(credit_lang, seg.speech_s))    # PB-72: undone if the line is deleted
+    return res
 
 
 def needs_translation(text: str, lang: str, translated_from: str | None, low_conf: bool = False) -> bool:
@@ -4048,9 +4074,10 @@ def speaker_display(sid: str | None, name: str | None) -> str | None:
 LINE_EDITS: dict = {"del": set(), "who": {}}
 
 
-def apply_line_edits(path: Path) -> int:
+def apply_line_edits(path: Path, dropped: list | None = None) -> int:
     """After the stop: drop the lines deleted in the window and rename the speaker of reassigned lines.
-    A line is matched by its time and the first words of its text."""
+    A line is matched by its time and the first words of its text. `dropped` (PB-72) gets (time, text) of each
+    deleted row."""
     if not LINE_EDITS["del"] and not LINE_EDITS["who"]:
         return 0
     text = path.read_text(encoding="utf-8")
@@ -4066,6 +4093,8 @@ def apply_line_edits(path: Path) -> int:
                     break
             if key in LINE_EDITS["del"]:
                 n += 1
+                if dropped is not None:
+                    dropped.append((m.group(1), body))
                 continue
             if key in LINE_EDITS["who"]:
                 lang = m.group(4) if m.re is TAGGED_LINE else m.group(3)
@@ -4077,6 +4106,38 @@ def apply_line_edits(path: Path) -> int:
         tmp.write_text("".join(out), encoding="utf-8")
         os.replace(tmp, path)
     return n
+
+
+def uncount_dropped(share: LangShare, credits: list, dropped: list) -> int:
+    """PB-72: take the seconds of the deleted rows out of the call's language totals. `credits` holds
+    (time, text, language, seconds) per written line; a deleted row (time, text) matches a line of the same second,
+    by its first words when several share it (a translated row has other words: then the first of that second)."""
+    n = 0
+    for hms, body in dropped:
+        same = [c for c in credits if c[0] == hms]
+        if not same:
+            continue
+        c = next((c for c in same if body.startswith(c[1].strip()[:30]) or c[1].startswith(body.strip()[:30])), same[0])
+        credits.remove(c)
+        share.uncount(c[2], c[3])
+        n += 1
+    return n
+
+
+def save_call_languages(transcript: Path, share: LangShare, t: float) -> bool:
+    """PB-72: the call's measured languages into its recording metadata (call_layout.save_spoken): seconds of speech
+    per language for the whole call and the dominant one (None in the first minute or with no speech). Called when the
+    recording ends and again after the end-of-call edits; a failed write is logged and never stops the shutdown."""
+    secs, dominant = share.spoken(t)
+    try:
+        if not secs and not call_layout.recording_meta(transcript).exists():
+            return False                            # no speech and no recording: no file just for empty counts
+        call_layout.save_spoken(transcript, secs, dominant)
+    except Exception as e:  # noqa: BLE001
+        log(f"call languages: save failed ({e!r})")
+        return False
+    log(f"call languages: {secs} dominant={dominant}")
+    return True
 
 
 def apply_speaker_names(text: str, them_label: str, label_for) -> str:
@@ -5411,6 +5472,7 @@ def main() -> int:
     last_lang = {"me": cfg["me_lang"] if cfg["me_lang"] != "auto" else cfg["langs"][0],
                  "them": cfg["langs"][0]}
     lang_share = LangShare(cfg["langs"], float(cfg.get("lang_warmup_s", 60.0)))
+    lang_credits: list = []                 # PB-72: (time, text, language, seconds) per written line
     prompt = cfg.get("prompt")
     prompt_words = set(re.findall(r"\w+", (prompt or "").lower()))
     global PROMPT_HEAD
@@ -5541,6 +5603,7 @@ def main() -> int:
                     sid = tracker.observe(hhmmss(seg.t_start), seg.t_start, seg.t_end, emb, seg.duration, text)
             except Exception as e:  # noqa: BLE001
                 log(f"speakers: {e!r}")
+        lang_credits.append((hhmmss(seg.t_start), text, *getattr(res, "credit", (None, 0.0))))
         line_obj = Line(seg.channel, seg.t_start, lang, text, sid=sid, translated_from=translated_from,
                         seq=next(line_seq))
         writer.add(line_obj)
@@ -6116,6 +6179,7 @@ def main() -> int:
         # PB-104: a call that ends muted closes its muted span, so the transcript and the notes show where it ends
         writer.marker(L("мікрофон вимкнено до кінця дзвінка", "microphone muted until the end of the call"))
     writer.close(f"\n--- {L('кінець запису', 'end of recording')} {hhmmss(now())} ---\n")
+    save_call_languages(out, lang_share, now())     # PB-72: the measured languages, for the output language
     sheet_live.save_state(out)               # 0.10.0 (Meeting Sheet, phase 7): for the after-call check
     if spk["worker"] is not None:
         spk["worker"].stop()
@@ -6127,9 +6191,13 @@ def main() -> int:
         except Exception as e:  # noqa: BLE001
             log(f"semantic: summary failed ({e!r})")
     try:
-        n_edits = apply_line_edits(out)
+        dropped: list = []
+        n_edits = apply_line_edits(out, dropped)
         if n_edits:
             log(f"transcript edits applied: {n_edits}")
+        if n_edits:
+            uncount_dropped(lang_share, lang_credits, dropped)
+            save_call_languages(out, lang_share, now())     # PB-72: deleted lines no longer count
     except Exception as e:  # noqa: BLE001
         log(f"transcript edits failed ({e!r})")
     if tracker is not None and spk["ready"]:

@@ -189,16 +189,23 @@ recording parts, and is atomic. The format is locked by `Fixtures/recording_meta
 (`tests/test_recording_meta_languages.py`) produces it with the recorder's copy and compares; CoreChecks reads that same
 file with the Swift reader and saves it through `RecordingMeta` without dropping the fields.
 
-Still needed from PB-30 (its branch, not this one: `LangShare` exists only on `team/PB-30-fb1-transcript-language`), two
-call sites in `transcriber.py`:
+What was still needed from PB-30 when round 6 closed (done in PB-72, below), two call sites in `transcriber.py`:
 1. When the recording ends: `call_layout.save_spoken(md, lang_share.secs, dominant)`.
 2. After the end-of-call transcript correction (and after a reassign that changes the transcript): the same call with
    the corrected counts.
 
 `dominant` is `None` when no speech was counted or the call is still inside the warm-up: `LangShare.dominant()` returns
 the first language of the set then, which would mislabel a short call; with `None` the readers take the largest value of
-`languages`. Until PB-30 makes these calls, a call with wrong line tags still resolves from the tags (the open part of
-review round 6, finding 1).
+`languages`. Before PB-72, a call with wrong line tags still resolved from the tags (the open part of review round 6,
+finding 1).
+
+Done in PB-72: `transcriber.save_call_languages` calls `save_spoken` after `writer.close` and again after
+`apply_line_edits` when any edit was applied. The counts are `LangShare.total` (seconds of the whole call; `reset()` on a
+language switch clears only the live share `secs`), the dominant is `LangShare.spoken(t)`: `None` with no speech or
+under `warmup_s` from the call's first segment. Each written line keeps the seconds it credited, and a line deleted in
+the transcript pane is taken out of the totals (`uncount_dropped`). No file is made for a call with no speech counted
+and no recording. A reassign by `CallReassignService` in the app does
+not re-save the counts (out of PB-72).
 
 ## Plan
 
