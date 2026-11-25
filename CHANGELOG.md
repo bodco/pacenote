@@ -42,6 +42,15 @@ Pacenote. Earlier versions are described in the commit messages and in
   follow-up draft (which calls it not heard) and the project assistant's call facts; editing the open questions on the
   call page keeps it as it was. The notes model and the Meeting Sheet check are told which spans were muted, so a
   question from them is not called open or "Not answered" only because your words are missing.
+- **Claude account usable again after signing in (PB-96).** Get ready no longer blocks the build with "Claude account
+  is out right now" after you sign in again: the sign-in check (when Get ready opens, at its Check step, when you come
+  back to Pacenote with Get ready open, and after Connect in the app) ends a signed-out mark on its own, no state file
+  to edit. A limit or credit mark stays until its time. Get ready, its Check step and the Start call hint now show an
+  AI as out only until its next check (its reset time, or 15 minutes), the same rule the preparation already used; the
+  line goes away on its own within about 10 seconds of that time, with the window left open. At
+  launch the jobs on the Claude or ChatGPT account stay where they are until the sign-in check answers, so Settings >
+  AI no longer moves them to another AI and back (and a choice you made is kept).
+
 - **Project memory, step 4: topic summaries and questions over all time (GraphRAG G2 S4, PB-87).** Still behind the
   flag `evidence_store` (off by default); with the flag off nothing changes and nothing new is sent. With it on and
   AI reading on, a pass ends by grouping what it read into topics (one client per topic, the same topics every time

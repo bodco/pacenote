@@ -45,6 +45,9 @@ enum SheetPrepWindow {
 struct SheetPrepView: View {
     @ObservedObject var draft: SheetDraft
     @ObservedObject var lib = SheetLibrary.shared
+    /// PB-96: whether the out line of the route was shown at the last tick; the tick redraws when that changes.
+    @State private var outShown = false
+    private let outTick = Timer.publish(every: 10, on: .main, in: .common).autoconnect()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -63,7 +66,16 @@ struct SheetPrepView: View {
         }
         .background(PN.C.bg)
         .frame(minWidth: 720, minHeight: 600)
-        .onAppear { draft.checkSources() }
+        // PB-96: the sign-in is checked again when Get ready opens and when the app comes back (a sign-in in Terminal),
+        // and the route lines redraw on its answer and on the out state's next check time
+        .onAppear { draft.checkSources(); PrepRunner.shared.refreshAuth() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            PrepRunner.shared.refreshAuth(); draft.objectWillChange.send()
+        }
+        .onReceive(PrepRunner.shared.$loggedIn) { _ in draft.objectWillChange.send() }
+        .onReceive(outTick) { _ in     // the out line ends at its time (a redraw on the change, also when it ends)
+            if AIRoute.outLineChanged(draft.route, shown: outShown) { outShown.toggle(); draft.objectWillChange.send() }
+        }
         .onChange(of: lib.loaded) { if draft.presetSuggested { draft.applyPreset(draft.presetID) } }
     }
 }
@@ -1610,7 +1622,7 @@ struct SheetSizeStep: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .onAppear { if draft.size == nil { draft.checkSize() } }
+        .onAppear { if draft.size == nil { draft.checkSize() }; PrepRunner.shared.refreshAuth() }     // PB-96: every Check rechecks the sign-in
     }
 
     /// "236K": the count without the unit, for the big number and the mark.

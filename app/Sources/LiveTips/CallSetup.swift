@@ -35,6 +35,8 @@ struct CallSetupView: View {
     @State private var datePop = false
     @State private var confirmAgain = false
     @State private var rehearseInfo = false
+    /// PB-96: the out line of the preparation AI as last shown; the tick redraws the hint when it ends or starts.
+    @State private var routeOut = false
     @FocusState private var titleFocus: Bool
     @Environment(\.pnTheme) private var t
 
@@ -47,7 +49,7 @@ struct CallSetupView: View {
             pageForm
                 .onAppear { model.refreshTemplate(); model.scanPrep(); model.loadMicInputs(); PrepRunner.shared.refreshAuth() }
                 .onChange(of: model.target) { model.applyProjectDefaults(); model.scanPrep(); copied = false; if !model.target.isEmpty { model.note = "" } }
-                .onReceive(Timer.publish(every: 5, on: .main, in: .common).autoconnect()) { _ in model.scanPrep() }
+                .onReceive(Timer.publish(every: 5, on: .main, in: .common).autoconnect()) { _ in model.scanPrep(); routeTick() }
         } else {
         VStack(spacing: 0) {
             ScrollView {
@@ -84,7 +86,7 @@ struct CallSetupView: View {
         .frame(minWidth: 600, idealWidth: 640, maxWidth: .infinity, minHeight: 480, idealHeight: 820, maxHeight: .infinity)
         .onAppear { model.refreshTemplate(); model.scanPrep(); model.loadMicInputs(); PrepRunner.shared.refreshAuth() }
         .onChange(of: model.target) { model.applyProjectDefaults(); model.scanPrep(); copied = false; if !model.target.isEmpty { model.note = "" } }
-        .onReceive(Timer.publish(every: 5, on: .main, in: .common).autoconnect()) { _ in model.scanPrep() }
+        .onReceive(Timer.publish(every: 5, on: .main, in: .common).autoconnect()) { _ in model.scanPrep(); routeTick() }
         }
     }
         .trackScreen("get_ready", sub: "\(mode)", on: mode != .page)
@@ -464,8 +466,11 @@ struct CallSetupView: View {
         UpcomingPages.open(model)
     }
 
+    private func routeTick() { if AIRoute.outLineChanged(SheetRoutes.preferred, shown: routeOut) { routeOut.toggle() } }
+
     /// Only where something is wrong (spec 5: no cryptic status line).
     private var problemHint: String? {
+        _ = routeOut     // PB-96: read here, so the tick's change of it redraws the hint
         if !model.note.isEmpty { return model.note }
         // 0.10.0 (Meeting Sheet, phase 4): the route of Settings > AI > Preparation, whichever it is
         if let p = SheetRoutes.problem(SheetRoutes.preferred) {
