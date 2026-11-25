@@ -12,9 +12,11 @@ Pacenote. Earlier versions are described in the commit messages and in
   confirmed) and Turn off each ask for a current code or a recovery code. Signing in with email and password asks for
   the code after the password (or a recovery code); wrong codes lock like wrong passwords; Google sign-in is not asked.
   The code prompt and the settings say what to do without the phone (a recovery code, or desk@bodco.pm for a support
-  reset). After a support reset, or when an organization requires it, Pacenote opens Settings > Account with the setup
-  (required: it cannot be turned off). Optional: Touch ID or the Mac password when Pacenote starts with a saved sign-in
-  (switch in the Keychain, never sent). **Needs the server part:** the routes in DEVELOPMENT.md "Two-factor sign-in";
+  reset). After a support reset Pacenote opens Settings > Account with the setup once. When an organization requires
+  it, the sign-in window shows the setup (with Sign out) and nothing else opens until it is on; a live call is never
+  cut, the setup comes after it; it cannot be turned off. Optional: Touch ID or the Mac password when Pacenote starts
+  with a saved sign-in (switch in the Keychain, never sent; a screen lock, the saved sign-in itself is not
+  re-encrypted). **Needs the server part:** the routes in DEVELOPMENT.md "Two-factor sign-in";
   with a server that does not have them nothing changes except the new Touch ID switch. The staff Reset 2FA, the
   organization policy, the email notice and the console sign-in are server and console work.
 

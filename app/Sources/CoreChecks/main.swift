@@ -6593,6 +6593,7 @@ mutedMicNoticePB104()
 // MARK: PB-12 (owner 25.11): two-factor sign-in, the app part (the server checks the codes)
 func twoFactorPB12() {
     typealias T = TwoFactor
+    typealias S0 = PacenoteServer
     func obj(_ d: Data) -> [String: Any] { ((try? JSONSerialization.jsonObject(with: d)) as? [String: Any]) ?? [:] }
     func pj(_ o: [String: Any]) -> Data { (try? JSONSerialization.data(withJSONObject: o)) ?? Data() }
     // acceptance 1, 6, 8: the state in /v1/me and what the app offers
@@ -6609,6 +6610,35 @@ func twoFactorPB12() {
     expect(T.prompt(T.State(enabled: false)) == .none, "PB-12: off and not asked: no prompt (no behaviour change)")
     expect(T.prompt(T.State(enabled: false, offer: true)) == .offer, "PB-12 a6: after a support reset the app offers enrolment")
     expect(T.prompt(T.State(enabled: false, required: true, offer: true)) == .required, "PB-12 a6/a8: an organization that requires it forces enrolment")
+    // round 2: the requirement holds the app on the setup gate (the sign-in window), never during a call
+    expect(S0.gate(sessionKnown: true, signedIn: true, onboarded: true, callLive: false, twoFactorSetup: true) == .twoFactorSetup
+           && S0.gate(sessionKnown: true, signedIn: true, onboarded: false, callLive: false, twoFactorSetup: true) == .twoFactorSetup,
+           "PB-12 a6/a8: required and off: the setup gate before Home and onboarding")
+    expect(S0.gate(sessionKnown: true, signedIn: true, onboarded: true, callLive: true, twoFactorSetup: true) == .home,
+           "PB-12 a6/a8: never during a call (the gate comes after it)")
+    expect(S0.gate(sessionKnown: true, signedIn: false, onboarded: true, callLive: false, twoFactorSetup: true) == .signIn
+           && S0.gate(sessionKnown: false, signedIn: true, onboarded: true, callLive: false, twoFactorSetup: true) == .loading
+           && S0.gate(sessionKnown: true, signedIn: true, onboarded: true, callLive: false) == .home,
+           "PB-12: signed out or still loading goes first; no requirement, no gate")
+    let req = T.State(enabled: false, required: true), onReq = T.State(enabled: true, required: true)
+    expect(T.gateHeld(false, prompt: T.prompt(req)) && !T.gateHeld(false, prompt: T.prompt(nil)) && !T.gateHeld(false, prompt: .offer),
+           "PB-12 a8: the gate goes on for a requirement only (offline, unknown state: no gate)")
+    expect(T.gateHeld(true, prompt: T.prompt(onReq)), "PB-12 a8: confirmed (/v1/me says on): the gate stays until the recovery codes are closed")
+    expect(T.gateRelease(onReq) && T.gateRelease(T.State(enabled: false)) && !T.gateRelease(req),
+           "PB-12 a8: closing the setup lets the person in only when it is on (or no longer required)")
+    expect(T.enrollmentRequired(pj(["type": "two_factor_enrollment_required"]), status: 403)
+           && T.enrollmentRequired(pj(["type": "https://pacenote/problems/two_factor_enrollment_required"]), status: 403)
+           && !T.enrollmentRequired(pj(["type": "two_factor_enrollment_required"]), status: 401)
+           && !T.enrollmentRequired(pj(["type": "plan"]), status: 403) && !T.enrollmentRequired(Data(), status: 403),
+           "PB-12 a8: the server's 403 two_factor_enrollment_required turns the gate on")
+    expect(T.opensSettings(.offer, alreadyAsked: false, callLive: false) && !T.opensSettings(.offer, alreadyAsked: true, callLive: false)
+           && !T.opensSettings(.offer, alreadyAsked: false, callLive: true) && !T.opensSettings(.required, alreadyAsked: false, callLive: false)
+           && !T.opensSettings(.none, alreadyAsked: false, callLive: false),
+           "PB-12 a6: the offer after a support reset opens Settings once, never during a call; a requirement uses the gate")
+    // acceptance 9: the lock switch read at start fails closed
+    expect(T.lockOn(present: true, value: "1") && T.lockOn(present: true, value: nil) && T.lockOn(present: true, value: "")
+           && !T.lockOn(present: false, value: nil) && !T.lockOn(present: true, value: "0"),
+           "PB-12 a9: a lock item that cannot be read keeps the lock on")
     // acceptance 5: the challenge after a right password
     let now = Date(timeIntervalSince1970: 1_800_000_000)
     let c = T.challenge(pj(["type": "two_factor_required", "challenge_id": "ch1", "expires_in": 300]), status: 401, email: " Mike@Example.com ", now: now)
@@ -6665,6 +6695,20 @@ func twoFactorPB12() {
     expect(T.messageKey(S.authProblem(pj(["type": "invalid_code", "attempts_left": 2]), status: 400)) == "auth.2fa.err.code"
            && T.messageKey(S.authProblem(pj(["type": "invalid_code", "attempts_left": 0]), status: 400)) == "auth.2fa.err.spent",
            "PB-12 a5: a wrong code, then no attempts left")
+    expect(T.messageKey(S.authProblem(pj(["type": "invalid_code"]), status: 400)) == "auth.2fa.err.codeNoCount",
+           "PB-12 a5: no attempts_left: no count (never \"0 attempts left\")")
+    expect(T.messageKey(S.authProblem(pj(["type": "invalid_code"]), status: 403), settings: true) == "account.2fa.err.code"
+           && T.messageKey(S.authProblem(pj(["type": "invalid_code", "attempts_left": 0]), status: 403), settings: true) == "account.2fa.err.code",
+           "PB-12 a3/a4: a wrong code in Settings: its own text, no count, no \"sign in again\"")
+    // the code step on the sign-in screen: which failures send the person back to the password
+    expect(T.backToPassword(S.AuthProblem(status: 410, type: "challenge_expired")) && T.backToPassword(S.AuthProblem(status: 400, type: "code_expired"))
+           && T.backToPassword(S.authProblem(pj(["type": "invalid_code", "attempts_left": 0]), status: 400))
+           && T.backToPassword(S.AuthProblem(status: 410, type: "gone")),
+           "PB-12 a5: an expired challenge or spent attempts: back to the password")
+    expect(!T.backToPassword(S.authProblem(pj(["type": "invalid_code", "attempts_left": 2]), status: 400))
+           && !T.backToPassword(S.authProblem(pj(["type": "invalid_code"]), status: 400))
+           && !T.backToPassword(S.AuthProblem(status: 429, type: "locked", retryAfter: 30)),
+           "PB-12 a5: a wrong code with attempts left, or the lockout (countdown on the code step): stay on the code step")
     expect(T.messageKey(S.AuthProblem(status: 410, type: "challenge_expired")) == "auth.2fa.err.expired"
            && T.messageKey(S.AuthProblem(status: 403, type: "two_factor_required_by_org")) == "account.2fa.err.required",
            "PB-12 a5/a8: expired challenge, turning off a required one")

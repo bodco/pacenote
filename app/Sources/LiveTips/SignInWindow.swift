@@ -197,6 +197,9 @@ struct SignInView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: PN.Space.x4) {
+            if acct.signedIn && acct.twoFactorGate {
+                enrollStep       // PB-12: signed in, the organization requires two-factor sign-in
+            } else {
             switch m.step {
             case .choose: choose
             case .email: emailForm
@@ -205,6 +208,7 @@ struct SignInView: View {
             case .resetCode: resetCode
             case .link: linkStep
             case .twoFactor: twoFactorStep
+            }
             }
         }
         .padding(28)
@@ -238,7 +242,7 @@ struct SignInView: View {
                 Text(L("auth.lock.sub")).font(PN.Font.caption).foregroundStyle(PN.C.text3).fixedSize(horizontal: false, vertical: true)
                 if let e = acct.unlockProblem, !e.isEmpty { errorLine(e) }
             }
-            .onAppear { acct.unlock() }
+            .onAppear { acct.unlockOnce() }      // asks by itself once; coming back to this screen does not ask again
         }
         VStack(alignment: .leading, spacing: PN.Space.x2) {
             Button(action: m.google) { Text(L("account.signIn")).frame(maxWidth: .infinity) }
@@ -378,6 +382,17 @@ struct SignInView: View {
             Button(L("auth.link.submit"), action: m.submitLink).buttonStyle(.pnPrimary).keyboardShortcut(.defaultAction).disabled(m.locked)
         }
         .onAppear { focus = .linkPassword }
+    }
+
+    /// PB-12 (acceptance 6, 8): the organization requires two-factor sign-in and it is off: the setup, with Sign out in
+    /// place of Cancel. Closing it (after the recovery codes) opens the app; a failed setup starts again.
+    @ViewBuilder private var enrollStep: some View {
+        Text(L("auth.2fa.gate.title")).pnTitle()
+        Text(L("account.2fa.required")).foregroundStyle(PN.C.text2).fixedSize(horizontal: false, vertical: true)
+        TwoFactorSheet(kind: .enable, email: acct.session?.email ?? "",
+                       cancel: (L("account.signOut"), { Task { await acct.signOut(everywhere: false) } }),
+                       close: { Task { await acct.leaveTwoFactorGate() } }, embedded: true)
+            .id(acct.twoFactorGateRound)
     }
 
     /// PB-12: the code from the authenticator app after the password, or a recovery code; what to do without the phone.

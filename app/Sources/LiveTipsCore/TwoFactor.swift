@@ -56,6 +56,37 @@ public enum TwoFactor {
         return s.offer ? .offer : .none
     }
 
+    /// The offer after a support reset opens Settings > Account by itself once per launch, never during a call (a
+    /// requirement does not: it holds the app on the setup screen, `gateHeld`).
+    public static func opensSettings(_ p: Prompt, alreadyAsked: Bool, callLive: Bool) -> Bool {
+        p == .offer && !alreadyAsked && !callLive
+    }
+
+    /// The setup gate (an organization requires it): on as soon as a /v1/me read or a server answer says required,
+    /// and it stays on until the person closes the setup (so the recovery codes are shown before the gate goes, even
+    /// though /v1/me already says enabled). `gateRelease` says whether closing it lets them in.
+    public static func gateHeld(_ held: Bool, prompt: Prompt) -> Bool { held || prompt == .required }
+    public static func gateRelease(_ s: State?) -> Bool { prompt(s) != .required }
+
+    /// 403 `two_factor_enrollment_required` on any other route: the server enforces the organization's requirement;
+    /// the app treats it like `required` in /v1/me (the setup gate).
+    public static func enrollmentRequired(_ data: Data, status: Int) -> Bool {
+        guard status == 403, let o = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return false }
+        var t = (o["type"] as? String) ?? ""
+        if t.contains("/") { t = String(t.split(separator: "/").last ?? "") }
+        return t == "two_factor_enrollment_required"
+    }
+
+    /// The Touch ID or Mac password switch read at start: an item that is there but cannot be read counts as on
+    /// (fail closed). Off removes the item.
+    public static func lockOn(present: Bool, value: String?) -> Bool { present && value != "0" }
+
+    /// A failed code step that needs the password again: the challenge ran out or its attempts are spent.
+    public static func backToPassword(_ p: PacenoteServer.AuthProblem) -> Bool {
+        ["code_expired", "challenge_expired"].contains(p.type) || p.status == 410
+            || (p.type == "invalid_code" && (p.attemptsLeft ?? 1) <= 0)
+    }
+
     // MARK: the sign-in challenge
 
     /// 401 `two_factor_required` from a password sign-in (login, password reset, Google link): the password was right,
@@ -194,10 +225,14 @@ public enum TwoFactor {
 
     // MARK: problems
 
-    /// The interface key for a two-factor problem, or nil to use the general sign-in texts.
-    public static func messageKey(_ p: PacenoteServer.AuthProblem) -> String? {
+    /// The interface key for a two-factor problem, or nil to use the general sign-in texts. In Settings (`settings`)
+    /// a wrong code has its own text: no attempts count and no "sign in again".
+    public static func messageKey(_ p: PacenoteServer.AuthProblem, settings: Bool = false) -> String? {
         switch p.type {
-        case "invalid_code": return p.attemptsLeft.map { $0 <= 0 } == true ? "auth.2fa.err.spent" : "auth.2fa.err.code"
+        case "invalid_code":
+            if settings { return "account.2fa.err.code" }
+            guard let n = p.attemptsLeft else { return "auth.2fa.err.codeNoCount" }
+            return n <= 0 ? "auth.2fa.err.spent" : "auth.2fa.err.code"
         case "code_expired", "challenge_expired": return "auth.2fa.err.expired"
         case "two_factor_required_by_org": return "account.2fa.err.required"
         case "two_factor_off": return "account.2fa.err.off"

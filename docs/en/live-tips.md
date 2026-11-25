@@ -2900,13 +2900,16 @@ to Pacenote server on (below). Audio and transcripts stay on your Mac.
   for the code after the password (or **Use a recovery code**); wrong codes count like wrong passwords and lock the
   same way. Continue with Google never asks for the code. **Lost your phone?** Sign in with a recovery code, or write
   to desk@bodco.pm: support can reset two-factor sign-in, you get an email about it, and you sign in with your password
-  only and are asked to turn it on again. An organization can require two-factor sign-in: Pacenote then asks you to
-  turn it on and it cannot be turned off. The secret and the recovery codes are kept on the server (the codes only as
-  hashes); this Mac keeps neither.
+  only and are asked to turn it on again. An organization can require two-factor sign-in: Pacenote then shows the
+  setup on the sign-in screen and opens nothing else until it is on (never during a call: it waits for the call to
+  end; **Sign out** is there too), and it cannot be turned off. The secret and the recovery codes are kept on the
+  server (the codes only as hashes); this Mac keeps neither. The two-factor rows appear once your Pacenote server
+  supports two-factor sign-in; the code checks, the lockout, the support reset and its email are done by the server.
 - **Touch ID or your Mac password** (optional, PB-12): with **Ask for Touch ID or your Mac password when Pacenote opens
   your account** on, Pacenote asks for it when it starts with your saved sign-in, before anything reaches the server;
   **Unlock** on the sign-in screen, or sign in again. Only at that moment, never during work. The switch is kept in
-  this Mac's Keychain and is never sent.
+  this Mac's Keychain and is never sent. It guards the Pacenote screen; the saved sign-in itself stays in the
+  Keychain as before.
 - After signing in the page shows your workspace (the first sign-in makes a personal one, you are its owner) and the
   Macs signed in to your account. **Sign out** next to another Mac ends its session; **Sign out everywhere** ends all
   of them, this one too. Nothing on any Mac is deleted; a signed-out Mac shows the sign-in screen.

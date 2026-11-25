@@ -23,13 +23,13 @@ struct TwoFactorSection: View {
                 if let st { twoFactorRows(st) }
                 lockRow
             } header: { Text(L("account.2fa.head")).settingsAnchor("acc.2fa") }
-            .sheet(item: $sheet) { k in TwoFactorSheet(kind: k, email: acct.session?.email ?? "") { sheet = nil } }
+            .sheet(item: $sheet) { k in TwoFactorSheet(kind: k, email: acct.session?.email ?? "", close: { sheet = nil }) }
             .onAppear { openAsked() }
             .onChange(of: acct.twoFactorAsk) { _, _ in openAsked() }
         }
     }
 
-    /// The offer after a support reset, or the organization's requirement: the setup opens by itself.
+    /// The offer after a support reset: the setup opens by itself (a requirement holds the app on the setup gate).
     private func openAsked() {
         guard acct.twoFactorAsk != .none, sheet == nil, acct.me?.auth?.twoFactor?.enabled == false else { return }
         acct.twoFactorAsk = .none
@@ -103,7 +103,11 @@ struct TwoFactorSheet: View {
     enum Phase: Equatable { case proof, loading, scan(TwoFactor.Setup), codes([String]), done, failed }
     let kind: Kind
     let email: String
+    /// PB-12: the setup gate puts Sign out in place of Cancel (the setup cannot be skipped there).
+    var cancel: (title: String, action: () -> Void)? = nil
     let close: () -> Void
+    /// Inside the sign-in window (the gate): no own width or padding.
+    var embedded = false
     @ObservedObject private var acct = PacenoteAccount.shared
     @State private var phase: Phase = .proof
     @State private var input = ""
@@ -123,7 +127,7 @@ struct TwoFactorSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: PN.Space.x3) {
-            Text(title).pnSection()
+            if !embedded { Text(title).pnSection() }      // the gate has its own title
             switch phase {
             case .proof: proofStep
             case .loading: HStack { PNSpinner(size: 16); Spacer() }
@@ -136,11 +140,19 @@ struct TwoFactorSheet: View {
                 Label { Text(e).fixedSize(horizontal: false, vertical: true) } icon: { Image(systemName: "exclamationmark.circle.fill") }
                     .font(PN.Font.caption).foregroundStyle(PN.C.danger)
             }
-            if phase == .failed { HStack { Spacer(); Button(L("common.close"), action: close).buttonStyle(.pnPrimary).keyboardShortcut(.defaultAction) } }
+            if phase == .failed {
+                HStack {
+                    Spacer()
+                    if let c = cancel { Button(c.title, action: c.action).buttonStyle(.pnTertiary) }
+                    // on the gate closing a failed setup starts it again
+                    Button(L(cancel == nil ? "common.close" : "account.2fa.retry"), action: close).buttonStyle(.pnPrimary).keyboardShortcut(.defaultAction)
+                }
+            }
         }
-        .padding(PN.Space.x6)
-        .frame(width: 460)
-        .onAppear { if kind == .enable { startSetup(nil) } }
+        .padding(embedded ? 0 : PN.Space.x6)
+        .frame(width: embedded ? nil : 460)
+        // only from the first phase: a window shown again must not replace the QR or the recovery codes
+        .onAppear { if kind == .enable && phase == .proof { startSetup(nil) } }
         .onDisappear { input = "" }
         .interactiveDismissDisabled(isCodes)
     }
@@ -170,9 +182,7 @@ struct TwoFactorSheet: View {
                 Text(L("account.2fa.key")).font(PN.Font.caption).foregroundStyle(PN.C.text2)
                 Text(TwoFactor.groupedKey(s.secret)).font(PN.sys(13, .medium, mono: true)).textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
-                Button(L("account.2fa.key.copy")) {
-                    NSPasteboard.general.clearContents(); NSPasteboard.general.setString(s.secret, forType: .string)
-                }.buttonStyle(.pnTertiary)
+                Button(L("account.2fa.key.copy")) { Self.copySecret(s.secret) }.buttonStyle(.pnTertiary)
                 Text(L("account.2fa.key.type")).font(PN.Font.caption).foregroundStyle(PN.C.text3).fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -192,9 +202,7 @@ struct TwoFactorSheet: View {
         .padding(PN.Space.x3).background(PN.C.surface2).clipShape(RoundedRectangle(cornerRadius: PN.r(6)))
         HStack {
             Button(L("account.2fa.codes.download")) { download(codes) }.buttonStyle(.pnSecondary)
-            Button(L("account.2fa.codes.copy")) {
-                NSPasteboard.general.clearContents(); NSPasteboard.general.setString(codes.joined(separator: "\n"), forType: .string); saved = true
-            }.buttonStyle(.pnTertiary)
+            Button(L("account.2fa.codes.copy")) { Self.copySecret(codes.joined(separator: "\n")); saved = true }.buttonStyle(.pnTertiary)
             Spacer()
         }
         Toggle(L("account.2fa.codes.saved"), isOn: $saved).toggleStyle(.pnCheckbox).font(PN.Font.caption)
@@ -205,7 +213,9 @@ struct TwoFactorSheet: View {
     }
 
     @ViewBuilder private var doneStep: some View {
-        Text(L(kind == .disable ? "account.2fa.done.off" : "account.2fa.done.replace")).fixedSize(horizontal: false, vertical: true)
+        // turning on and new recovery codes always bring codes; without them say so (not "use the new phone")
+        Text(L(kind == .disable ? "account.2fa.done.off" : kind == .replace ? "account.2fa.done.replace" : "account.2fa.done.noCodes"))
+            .fixedSize(horizontal: false, vertical: true)
         HStack { Spacer(); Button(L("common.close"), action: close).buttonStyle(.pnPrimary).keyboardShortcut(.defaultAction) }
     }
 
@@ -224,7 +234,8 @@ struct TwoFactorSheet: View {
         HStack {
             Spacer()
             if busy { PNSpinner(size: 16) }
-            Button(L("common.cancel"), action: close).buttonStyle(.pnTertiary).keyboardShortcut(.cancelAction)
+            if let c = cancel { Button(c.title, action: c.action).buttonStyle(.pnTertiary) }
+            else { Button(L("common.cancel"), action: close).buttonStyle(.pnTertiary).keyboardShortcut(.cancelAction) }
             Button(primary, role: destructive ? .destructive : nil, action: action)
                 .buttonStyle(.pnPrimary).keyboardShortcut(.defaultAction).disabled(busy)
         }
@@ -273,6 +284,17 @@ struct TwoFactorSheet: View {
         guard p.runModal() == .OK, let url = p.url else { return }
         let text = TwoFactor.recoveryFile(codes: codes, heading: [L("account.2fa.file.head", ["email": email]), L("account.2fa.file.note")])
         do { try Data(text.utf8).write(to: url, options: .atomic); saved = true } catch { self.error = error.localizedDescription }
+    }
+
+    /// The key or the recovery codes on the clipboard, marked concealed (nspasteboard.org) so clipboard managers and
+    /// history do not keep them.
+    static func copySecret(_ s: String) {
+        let pb = NSPasteboard.general
+        let concealed = NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType")
+        pb.clearContents()
+        pb.declareTypes([.string, concealed], owner: nil)
+        pb.setString(s, forType: .string)
+        pb.setString("", forType: concealed)
     }
 
     /// The QR of the otpauth URI, drawn here (CoreImage); nothing leaves the Mac for it.

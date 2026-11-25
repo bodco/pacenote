@@ -258,10 +258,15 @@ extension PacenoteServer {
         case afterCall
         case onboarding
         case home
+        /// PB-12: signed in, but an organization requires two-factor sign-in and it is off: the setup on the sign-in
+        /// screen, before onboarding and Home (never during a call).
+        case twoFactorSetup
     }
-    public static func gate(sessionKnown: Bool, signedIn: Bool, onboarded: Bool, callLive: Bool) -> Gate {
+    public static func gate(sessionKnown: Bool, signedIn: Bool, onboarded: Bool, callLive: Bool,
+                            twoFactorSetup: Bool = false) -> Gate {
         guard sessionKnown else { return .loading }
         guard signedIn else { return callLive ? .afterCall : .signIn }
+        if twoFactorSetup && !callLive { return .twoFactorSetup }
         return onboarded ? .home : .onboarding
     }
 }

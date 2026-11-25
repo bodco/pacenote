@@ -363,14 +363,23 @@ what the app expects (`LiveTipsCore/TwoFactor.swift`); the server PR must match 
 | Replace | `setup` with `{code}` or `{recovery_code}` while on; the old secret stays valid until `confirm`, which swaps them (no new recovery codes) |
 | Recovery codes | `POST /v1/me/two-factor/recovery-codes` with `{code}` or `{recovery_code}`: a new set of 10, the old set stops working. Recovery codes hold a letter; the app sends them lowercased, letters and digits only |
 | Turn off | `DELETE /v1/me/two-factor` with `{code}` or `{recovery_code}`; 403 `two_factor_required_by_org` while required |
+| Wrong code in Settings | confirm, setup with proof, recovery-codes and turn off answer a wrong code with 403 `invalid_code` (`attempts_left` optional), never 401: the app reads a 401 as an expired token, refreshes it and sends the same request again, which would spend a second attempt |
+| Required, not set up | The server may refuse any other route of that account with 403 `two_factor_enrollment_required`; `/v1/me`, the two-factor routes, token refresh and sign-out must stay open. The app treats it like `required` in `/v1/me`. The server sets `required` only for accounts with a password (two-factor sign-in guards email and password; a Google-only account is never held on the gate) |
 
-The app: `SignInWindow.swift` (step `twoFactor`, analytics sub `code` so the catalog stays as it is),
-`PacenoteAccount.swift` (`pendingTwoFactor`, `verifyTwoFactor`, the settings calls, `askTwoFactorIfNeeded`: an offer or
-a requirement opens Settings > Account once per launch, a requirement again after each `/v1/me` read, never during a
-call), `TwoFactorSettings.swift` (the section and the sheet; the QR is drawn with CoreImage on the Mac). Touch ID or
-the Mac password (`SecretStore.Key.signInLock`, LocalAuthentication `.deviceOwnerAuthentication`): with it on, the
-saved session read at start waits in `lockedSession` and the sign-in screen offers Unlock; nothing reaches the server
-before that. CoreChecks `twoFactorPB12`.
+The app: `SignInWindow.swift` (step `twoFactor`, analytics sub `code` so the catalog stays as it is; `enrollStep`, the
+setup gate), `PacenoteAccount.swift` (`pendingTwoFactor`, `verifyTwoFactor`, the settings calls; a reset or a Google link
+that ends with the code records its events after the code; `askTwoFactorIfNeeded`: an offer opens Settings > Account
+once per launch, never during a call (`UpdateService.callIsLive`); a requirement turns on `twoFactorGate`). The gate
+(`PacenoteServer.gate` case `twoFactorSetup`, `gatedToSignIn`): while an organization requires two-factor sign-in and it
+is off, the sign-in window shows the setup with Sign out in place of Cancel, and Home, onboarding, Settings and a new
+call wait; a live call is never cut (the gate comes after it). It stays until the person closes the setup, so the
+recovery codes are shown first; closing it while still off starts the setup again. `TwoFactorSettings.swift` (the
+section and the sheet; the QR is drawn with CoreImage on the Mac; Copy marks the clipboard
+`org.nspasteboard.ConcealedType`). Touch ID or the Mac password (`SecretStore.Key.signInLock`, LocalAuthentication
+`.deviceOwnerAuthentication`): with it on, the saved session read at start waits in `lockedSession` and the sign-in
+screen offers Unlock (asked by itself once per start); nothing reaches the server before that. An item that is there
+but cannot be read counts as on. It is a screen lock: the session item in the Keychain has no Touch ID access control
+(the combined secrets item would then ask for every key); a follow-up if that is wanted. CoreChecks `twoFactorPB12`.
 
 ## Plans and entitlements (0.19.0, B3; server 0.9.0, D41, D42)
 
