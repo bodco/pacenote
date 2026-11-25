@@ -1439,7 +1439,8 @@ The skill and the app follow the same rules, in `rules/agenda.yaml`, `rules/comm
   call to another project takes it out of its series. A series you put together works like a regular one: the
   Series page lists the open commitments of all its calls (a call you add brings its items at once, a call you take
   out takes them along), and the next call with the series' title gets its last settings, the agenda points not
-  raised last time, the people of its calls and, in the preparation, its calls and open commitments first. The series
+  raised last time, the people of its calls and, in the preparation on every route, its calls and open commitments
+  first. A call you took out is not read by the preparation as a previous call and does not bring its people. The series
   are kept in `call-series.json` in the app folder and never leave the Mac; commitments keep their series key, so old
   series work as before.
 - **Statistics.** Home > This week > Details adds "How the calls went": how much you spoke, questions to you left

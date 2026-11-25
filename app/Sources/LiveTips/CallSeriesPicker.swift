@@ -14,8 +14,24 @@ final class CallSeriesStore: ObservableObject {
     private var path: URL { AppPaths.support.appendingPathComponent("call-series.json") }
 
     private init() {
-        if let d = try? Data(contentsOf: path), let b = try? JSONDecoder().decode(CallSeriesBook.self, from: d) { book = b }
+        guard let d = try? Data(contentsOf: path) else { return }
+        if let b = try? JSONDecoder().decode(CallSeriesBook.self, from: d) { book = b; return }
+        // a file that does not read is kept aside, so the next change never overwrites the series the PM built
+        let aside = AppPaths.support.appendingPathComponent("call-series.unreadable-" + String(Int(Date().timeIntervalSince1970)) + ".json")
+        try? FileManager.default.moveItem(at: path, to: aside)
     }
+
+    /// The other people of a call: the names in its speakers.json (roster and clusters), without the PM's own names.
+    static func people(_ file: String, me: Set<String>? = nil) -> [String] {
+        let stem = file.hasSuffix(".md") ? String(file.dropLast(3)) : file
+        guard let d = FileManager.default.contents(atPath: CallLayout.sidecar(stem, ".speakers.json")),
+              let o = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any] else { return [] }
+        let me = me ?? myNames()
+        return CallSpeakers.names(json: o).filter { !me.contains($0.lowercased()) }
+    }
+
+    /// The PM's own names (Settings), lower case.
+    static func myNames() -> Set<String> { Set(AppConfig.load(from: AppPaths.config).nameAliases.map { $0.lowercased() }) }
 
     func update(_ change: (inout CallSeriesBook) -> Void) {
         change(&book)
@@ -111,9 +127,10 @@ struct SeriesPickerView: View {
 
     /// Speaker names per call, read once per call while the picker is open (suggestions by people).
     @State private var peopleCache: [String: [String]] = [:]
+    @State private var myNames = CallSeriesStore.myNames()      // read once per picker
     private func people(_ c: CallSeriesBook.Call) -> [String] {
         if let p = peopleCache[c.key] { return p }
-        let p = AfterCall.people(c.file)
+        let p = CallSeriesStore.people(c.file, me: myNames)
         DispatchQueue.main.async { peopleCache[c.key] = p }
         return p
     }

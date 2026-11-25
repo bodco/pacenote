@@ -102,9 +102,10 @@ func callSeriesPB109() {
     expect(sug.map(\.title) == ["Weekly sync notes"], "PB-109 6: a similar title is suggested (\(sug.map(\.title)))")
     let byPeople = B.suggested([demo, kick], project: "Orbit", titles: ["Budget review"], people: ["Sarah Lee"], peopleOf: { people[$0.key] ?? [] })
     expect(byPeople.map(\.key) == [demo.key], "PB-109 6: a call with the same people is suggested")
-    let before = b
-    _ = B.suggested(pool, project: "Orbit", titles: ["Weekly sync"], people: [], peopleOf: { _ in [] })
-    expect(b == before, "PB-109 6: a suggestion changes nothing until the PM clicks Add")
+    let sugKeys = Set(sug.map(\.key))
+    expect(!sugKeys.isEmpty && !b.members(a, in: all + sug).contains { sugKeys.contains($0.key) }
+           && !b.members(title: "Weekly sync", project: "Orbit", in: all + sug).contains { sugKeys.contains($0.key) },
+           "PB-109 6: a suggested call is not in the series until the PM clicks Add")
     expect(B.suggested([other], project: "Orbit", titles: ["Weekly sync"], people: ["Mike Turner"], peopleOf: { _ in ["Mike Turner"] }).isEmpty,
            "PB-109 7: another project's call is never suggested, even with the same title and people")
 
@@ -119,6 +120,49 @@ func callSeriesPB109() {
     expect(moved.manual(file: kickMoved.file, title: kickMoved.title, project: "Northpoint") == nil
            && !moved.members(a, in: [s1, s2, kickMoved, demo]).contains { $0.key == kick.key }, "PB-109 8: a moved call leaves its series")
     expect(b.manual(file: kickMoved.file, title: kickMoved.title, project: "Northpoint") == nil, "PB-109 8: even before cleanup another project's call is no member")
+
+    // r2 B1/B2: one decision for the preparation on every route (PrepRunner.seriesPrep, localprep.series_previous)
+    let s0 = call("weekly-sync", "Weekly sync", 0)
+    var w = B()
+    expect(w.previous(title: "Weekly sync", projects: ["Orbit", "orbit"]) == nil, "PB-109 9: an empty book keeps the old pick by title")
+    w.takeOut(s1.file, project: "Orbit")
+    let folderCopy = "/w/Orbit/live/" + (s1.file as NSString).lastPathComponent.replacingOccurrences(of: ".app.md", with: ".md")
+    if case .title(let ex)? = w.previous(title: "Weekly sync", projects: ["Orbit", "orbit"]) {
+        expect(ex == [s1.key] && ex.contains(CommitmentRegister.callKey(folderCopy)) && !ex.contains(s0.key) && !ex.contains(s2.key),
+               "PB-109 3/5: a call taken out is skipped by the title pick of the brief, the others stay (\(ex))")
+    } else { expect(false, "PB-109 3/5: a call taken out gives the brief an exclusion") }
+    expect(w.previous(title: "Weekly sync", projects: ["Northpoint"]) == nil, "PB-109 7: another project's take-out does not touch this project's brief")
+    var wm = w
+    let wa = wm.create(project: "Orbit", name: "Orbit weekly", title: "Weekly sync", id: "s-w")
+    wm.add(kick.file, to: wa.id)
+    if case .manual(let s)? = wm.previous(title: "Weekly sync", projects: ["orbit", "Orbit"]) {
+        expect(s.id == "s-w" && Set(wm.members(s, in: all + [s0]).map(\.key)) == [s0.key, s2.key, kick.key],
+               "PB-109 4: a manual series gives the brief its own calls (picked, any title; not the taken-out one)")
+    } else { expect(false, "PB-109 4: a manual series reaches the brief on every route") }
+    if case .title(let ex)? = wm.previous(title: "Kickoff with Mike", projects: ["Orbit"]) {
+        expect(ex.contains(kick.key), "PB-109 2: a call picked into a series is not a previous call of its old title")
+    } else { expect(false, "PB-109 2: a picked call leaves its old title's brief") }
+
+    // r2 B1: the request of the packed ways carries the keys localprep reads (tests/test_series_prep_pb109.py)
+    let manReq = B.prepRequest(name: "Orbit weekly", calls: [], open: ["- me: share the deck [x]"], exclude: [s1.key])
+    expect(manReq["series_name"] as? String == "Orbit weekly" && (manReq["series_calls"] as? [String]) == []
+           && (manReq["series_open"] as? [String]) == ["- me: share the deck [x]"] && manReq["series_exclude"] == nil,
+           "PB-109 4: a manual series sends its name, calls (even none, no title fallback) and open commitments")
+    let titleReq = B.prepRequest(name: nil, calls: [], open: [], exclude: [s2.key, s1.key])
+    expect((titleReq["series_exclude"] as? [String]) == [s1.key, s2.key] && titleReq["series_calls"] == nil && titleReq["series_name"] == nil,
+           "PB-109 3/5: the title pick sends the call keys taken out, sorted, and no series calls")
+
+    // r2 B3: the people of a call come from its speakers.json as the engine writes it (clusters, roster)
+    let speakers: [String: Any] = [
+        "clusters": ["S2": ["name": "Emily Clark", "seconds": 40.0, "side": "them", "named_by": "voice"],
+                     "S0": ["name": "David Miller", "seconds": 300.0, "side": "me"],
+                     "S1": ["name": "", "seconds": 12.0]],
+        "merged": ["S3": "S2"], "overrides": ["00:01:02": "S2"],
+        "roster": [["name": "Sarah Lee", "email": "sarah@example.com"], ["name": "emily clark"]],
+    ]
+    expect(CallSpeakers.names(json: speakers) == ["Sarah Lee", "emily clark", "David Miller"],
+           "PB-109 4/6: speaker names are read from roster and clusters, no empties or repeats (\(CallSpeakers.names(json: speakers)))")
+    expect(CallSpeakers.names(json: ["S0": ["name": "Mike Turner"]]).isEmpty, "PB-109 6: top-level entries are not the speakers.json shape")
 }
 
 private extension CallSeriesBook.Call {

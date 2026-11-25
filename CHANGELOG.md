@@ -13,7 +13,9 @@ Pacenote. Earlier versions are described in the commit messages and in
   without your click. A series you put together carries its own context like a regular one: its open commitments
   (added calls bring theirs at once, a call taken out takes its items along), the agenda points not raised, the
   standing goal and last settings, and the people of its calls; the preparation reads its calls and lists its open
-  commitments first. Old series and the series of existing commitments keep working unchanged.
+  commitments first, on every preparation route (Claude, Codex, OpenAI, Gemini, local, API). A call you took out is
+  no longer read by the preparation as a previous call of the meeting and its people are no longer offered. Old series
+  and the series of existing commitments keep working unchanged.
 - **Meeting Sheet: a Verbatim block for text that must stay word for word (PB-102).** + Add a block now offers
   Verbatim, as often as you need it in one call. In its Settings you give it a title, a source (a file of the call,
   any file, or pasted text) and, if you want only part of a Markdown file, sections such as 1-4 by heading. The

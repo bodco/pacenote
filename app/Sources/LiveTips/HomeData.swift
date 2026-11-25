@@ -242,19 +242,23 @@ extension StartCallModel {
         let names = Set([project?.name, workspace?.name].compactMap { $0 })
         if names.contains(where: { CallSeriesStore.shared.book.manual(title: effectiveTitle, project: $0) != nil }) {
             for r in CallSeriesStore.shared.earlier(title: effectiveTitle, projects: names, before: Date()).prefix(3) {
-                for f in AfterCall.people(r.file) where !out.contains(where: { $0.caseInsensitiveCompare(f) == .orderedSame }) { out.append(f) }
+                for f in CallSeriesStore.people(r.file, me: []) where !out.contains(where: { $0.caseInsensitiveCompare(f) == .orderedSame }) { out.append(f) }
             }
         }
         guard let root = root else { return out }
         let live = (root as NSString).appendingPathComponent("live")
         let fm = FileManager.default
         let want = Self.slugify(effectiveTitle).replacingOccurrences(of: "-", with: "")
+        // PB-109: a call taken out of the series (or picked into another one) does not bring its people
+        let projects = Set([project?.name, project?.slug, workspace?.name, (root as NSString).lastPathComponent].compactMap { $0 })
+        let skip = CallSeriesStore.shared.book.excluded(projects: projects)
         var seen = 0
         for sp in CallLayout.files(live: live, includeWork: true).sorted(by: { ($0 as NSString).lastPathComponent > ($1 as NSString).lastPathComponent }) {
             let n = (sp as NSString).lastPathComponent
             guard n.hasSuffix(".speakers.json"), n.range(of: "^\\d{4}-\\d\\d-\\d\\d-\\d{4}-", options: .regularExpression) != nil else { continue }
             let core = String(n.dropFirst(16)).replacingOccurrences(of: ".app.speakers.json", with: "").replacingOccurrences(of: ".speakers.json", with: "").replacingOccurrences(of: "-", with: "")
             guard !want.isEmpty, core == want else { continue }
+            if !skip.isEmpty, skip.contains(CommitmentRegister.callKey(String(n.dropLast(".speakers.json".count)))) { continue }
             guard let d = fm.contents(atPath: sp),
                   let o = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any] else { continue }
             var found: [String] = ((o["roster"] as? [[String: Any]]) ?? []).compactMap { $0["name"] as? String }

@@ -387,6 +387,9 @@ final class PrepRunner: ObservableObject {
         let appRoot = c.effectiveAppRoot(appSupport: AppPaths.support.path)
         let lt = (appRoot as NSString).appendingPathComponent("bin/lt")
         let live = (r.root as NSString).appendingPathComponent("live")
+        // PB-109: the series book (picked calls, calls taken out) for every route; nil keeps the old pick by title
+        let seriesPrep = Self.seriesPrep(title: r.title, projects: [r.projectName, (r.root as NSString).lastPathComponent], live: live,
+                                        useProjectFolder: r.useProjectFolder)
         try? FileManager.default.createDirectory(atPath: live, withIntermediateDirectories: true)
         let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd-HHmm"
         let h = DateFormatter(); h.dateFormat = "yyyy-MM-dd HH:mm"
@@ -453,7 +456,7 @@ final class PrepRunner: ObservableObject {
         brief that the project folder was excluded on purpose.
         """)
 
-        \((r.useProjectFolder ? Self.manualSeriesBlock(title: r.title, projects: [r.projectName, (r.root as NSString).lastPathComponent], live: live) : nil) ?? Self.previousCallsBlock(live: live, title: r.title))
+        \(Self.seriesBlock(seriesPrep, live: live, title: r.title))
         \(EditLog.promptBlock(title: r.title, project: (r.root as NSString).lastPathComponent))
         Previous meetings (2026-10-28, owner): read the previous calls of this meeting in depth, as the skill's sweep.md \
         step 3b says: what was discussed, every question and whether it was answered fully, partly or not, open items, \
@@ -615,6 +618,7 @@ final class PrepRunner: ObservableObject {
             "live": live, "notion": notion, "skill": skill, "base": base, "lt": [c.engine.python, lt], "model": runModel,
             "url": Self.ollamaURL, "use_project_folder": r.useProjectFolder, "brief_lang": Self.outputLanguage(r.languages),
             "openai_model": c.ai.openaiPrep, "gemini_model": c.ai.geminiPrep]
+        if isPacked, let sp = seriesPrep { req.merge(sp.request) { a, _ in a } }      // PB-109: the packed ways read the same series
         if r.deck?.info != nil, FileManager.default.fileExists(atPath: CallLayout.sidecar(base, ".deck.json")) {
             req["deck"] = CallLayout.sidecar(base, ".deck.json")
             req["deck_lines"] = deckLines
@@ -923,34 +927,64 @@ final class PrepRunner: ObservableObject {
             "primary document does not resolve. The project context, recent calls and threads still give facts as usual."
     }
 
-    /// PB-109: a series the PM put together by hand (calls of any title of this project): its last 3 calls instead of
-    /// the same-title ones, and its open commitments first. Nil when the call's title is in no such series.
-    static func manualSeriesBlock(title: String, projects: Set<String>, live: String) -> String? {
+    /// PB-109: what the series book changes in a preparation, one decision for the Claude prompt and for the request of
+    /// the packed ways (Codex, OpenAI, Gemini, local, API: localprep.series_previous). Nil when the book has nothing for
+    /// this project: then the preparation is exactly as before.
+    struct SeriesPrep {
+        var name: String?               // a series the PM put together by hand
+        var calls: [String] = []        // its last 3 calls, newest first (the named transcript when there is one)
+        var open: [String] = []         // its open commitments, one line each
+        var exclude: Set<String> = []   // the pick by title skips these call keys (taken out, or in a manual series)
+
+        /// The keys localprep reads (series_name, series_calls, series_open, series_exclude).
+        var request: [String: Any] { CallSeriesBook.prepRequest(name: name, calls: calls, open: open, exclude: exclude) }
+    }
+
+    /// `useProjectFolder` false (the PM excluded the project folder): no series calls or commitments are read, only the
+    /// calls taken out stay out of the pick by title.
+    static func seriesPrep(title: String, projects: Set<String>, live: String, useProjectFolder: Bool) -> SeriesPrep? {
         let store = CallSeriesStore.shared
-        guard let p = projects.first(where: { store.book.manual(title: title, project: $0) != nil }),
-              let s = store.book.manual(title: title, project: p) else { return nil }
+        switch store.book.previous(title: title, projects: projects) {
+        case nil: return nil
+        case .title(let ex)?: return SeriesPrep(exclude: ex)
+        case .manual(let s)?:
+            if !useProjectFolder { return SeriesPrep(exclude: store.book.excluded(projects: projects)) }
+            let fm = FileManager.default
+            let calls = store.earlier(title: title, projects: [s.project], before: Date()).prefix(3).map { r -> String in
+                let named = CallLayout.sidecar(r.file.hasSuffix(".md") ? String(r.file.dropLast(3)) : r.file, ".named.md")
+                return fm.fileExists(atPath: named) ? named : r.file
+            }
+            let open = CommitmentRegister.sorted(store.items(CommitmentRegister.load(folder: live).filter { $0.status == "open" }, title: title, projects: [s.project]))
+            let items = open.prefix(15).map { c in
+                "- " + (c.mine ? "me" : c.owner) + ": " + c.text + (c.due.isEmpty ? "" : " (due " + c.due + ")") + " [" + CommitmentRegister.callKey(c.call) + "]"
+            }
+            return SeriesPrep(name: s.name, calls: Array(calls), open: items)
+        }
+    }
+
+    /// PB-109: the previous-calls part of the Claude prompt: a series the PM put together by hand (calls of any title of
+    /// this project, its open commitments first), else the pick by title without the calls taken out.
+    static func seriesBlock(_ sp: SeriesPrep?, live: String, title: String) -> String {
+        guard let sp = sp, let name = sp.name else { return previousCallsBlock(live: live, title: title, exclude: sp?.exclude ?? []) }
         let fm = FileManager.default
-        let calls = store.earlier(title: title, projects: [p], before: Date())
-        let list = calls.prefix(3).enumerated().map { (i, r) -> String in
-            let stem = r.file.hasSuffix(".md") ? String(r.file.dropLast(3)) : r.file
-            if i == 0 { let named = CallLayout.sidecar(stem, ".named.md"); return fm.fileExists(atPath: named) ? named : r.file }
+        let list = sp.calls.enumerated().map { (i, path) -> String in
+            guard i > 0 else { return path }
+            var stem = path.hasSuffix(".md") ? String(path.dropLast(3)) : path
+            if stem.hasSuffix(".named") { stem = String(stem.dropLast(6)) }
             let notes = CallLayout.sidecar(stem, ".notes.md")
-            return fm.fileExists(atPath: notes) ? notes + " (its full notes, they keep every detail)" : r.file
+            return fm.fileExists(atPath: notes) ? notes + " (its full notes, they keep every detail)" : path
         }
-        let open = CommitmentRegister.sorted(store.items(CommitmentRegister.load(folder: live).filter { $0.status == "open" }, title: title, projects: [p]))
-        let items = open.prefix(15).map { c in
-            "- " + (c.mine ? "me" : c.owner) + ": " + c.text + (c.due.isEmpty ? "" : " (due " + c.due + ")") + " [" + CommitmentRegister.callKey(c.call) + "]"
-        }
-        var out = "This call is in the series \"\(s.name)\" that the PM put together by hand: its calls can have other titles. "
+        var out = "This call is in the series \"\(name)\" that the PM put together by hand: its calls can have other titles. "
         out += list.isEmpty ? "No earlier call of this series found in \(live)." : "Previous calls of this series (read each fully, newest first; the newest is its transcript): " + list.joined(separator: "; ")
-        if !items.isEmpty {
-            out += "\nOpen commitments of this series (list them first in the brief's \"Previous meetings\" section, before anything else; check each against newer sources):\n" + items.joined(separator: "\n")
+        if !sp.open.isEmpty {
+            out += "\nOpen commitments of this series (list them first in the brief's \"Previous meetings\" section, before anything else; check each against newer sources):\n" + sp.open.joined(separator: "\n")
         }
         return out
     }
 
     /// The transcripts of the last 3 calls of the same meeting (same title) in the project's live folder, newest first.
-    static func previousCallsBlock(live: String, title: String) -> String {
+    /// PB-109: `exclude` (call keys) are skipped without taking a slot.
+    static func previousCallsBlock(live: String, title: String, exclude: Set<String> = []) -> String {
         let fm = FileManager.default
         let want = StartCallModel.slugify(title).replacingOccurrences(of: "-", with: "")
         var picked: [String] = []
@@ -961,6 +995,7 @@ final class PrepRunner: ObservableObject {
             guard !want.isEmpty, core == want || (min(core.count, want.count) >= 4 && (core.contains(want) || want.contains(core))) else { continue }
             let stem = String(n.prefix(16 + max(0, n.count - 16 - (n.hasSuffix(".app.md") ? 7 : 3))))
             if picked.contains(where: { ($0 as NSString).lastPathComponent.hasPrefix(stem) }) { continue }   // app and skill copies of one call
+            if !exclude.isEmpty, exclude.contains(CommitmentRegister.callKey(full)) { continue }
             let named = CallLayout.sidecar(String(full.dropLast(3)), ".named.md")
             picked.append(fm.fileExists(atPath: named) ? named : full)
             if picked.count == 3 { break }

@@ -98,6 +98,39 @@ public struct CallSeriesBook: Codable, Equatable {
         return automatic(title: title, project: project, in: all)
     }
 
+    /// How the preparation (every route) and the people of a call still to come pick its earlier calls.
+    public enum Previous: Equatable {
+        /// A manual series has this title: its calls, whatever their titles.
+        case manual(Series)
+        /// The old pick by title, skipping these call keys (taken out, or picked into a manual series).
+        case title(exclude: Set<String>)
+    }
+
+    /// Nil when the book has nothing for these projects: then everything works exactly as before PB-109.
+    public func previous(title: String, projects: Set<String>) -> Previous? {
+        for p in projects.sorted() { if let s = manual(title: title, project: p) { return .manual(s) } }
+        let exclude = excluded(projects: projects)
+        return exclude.isEmpty ? nil : .title(exclude: exclude)
+    }
+
+    /// The keys of the preparation request the packed ways read (localprep.series_previous, series_open_text): a manual
+    /// series sends its name, calls (an empty list means none, no fallback to the title) and open commitments; the pick
+    /// by title sends the call keys to skip.
+    public static func prepRequest(name: String?, calls: [String], open: [String], exclude: Set<String>) -> [String: Any] {
+        if let n = name { return ["series_name": n, "series_calls": calls, "series_open": open] }
+        return ["series_exclude": exclude.sorted()]
+    }
+
+    /// The call keys of these projects that the pick by title skips: taken out, or picked into a manual series.
+    public func excluded(projects: Set<String>) -> Set<String> {
+        let claimed = series.filter { projects.contains($0.project) }.flatMap(\.calls)
+        let out = alone.compactMap { a -> String? in
+            guard let i = a.firstIndex(of: "|"), projects.contains(String(a[..<i])) else { return nil }
+            return String(a[a.index(after: i)...])
+        }
+        return Set(claimed + out)
+    }
+
     /// The title keys that bring a call into this series: the manual series' titles, else the title's own key.
     public func titles(file: String? = nil, title: String, project: String) -> [String] {
         if let f = file, isAlone(f, project: project), manual(file: f, title: title, project: project) == nil { return [] }
