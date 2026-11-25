@@ -542,6 +542,34 @@ final class SheetLibrary: ObservableObject {
     }
 }
 
+/// PB-101 (owner 24.11): the PM's personal library of custom blocks, reusable in any call (one JSON file in the app's
+/// support folder, never synced). A block added to a call is a copy; Save to library writes the call's version back.
+@MainActor
+final class CustomBlockStore: ObservableObject {
+    static let shared = CustomBlockStore()
+    @Published private(set) var library: CustomBlockLibrary
+    private static var url: URL { AppPaths.support.appendingPathComponent("meeting-sheet-custom-blocks.json") }
+
+    private init() { library = CustomBlockLibrary.load(Self.url) }
+
+    /// Adds the block, or updates the library block with this id. Returns the library id.
+    @discardableResult
+    func save(title: String, settings: SheetCustom, id: String?) -> String {
+        var l = library
+        let nid = l.save(title: title, settings: settings, id: id)
+        commit(l)
+        return nid
+    }
+
+    func duplicate(_ id: String) { var l = library; l.duplicate(id, suffix: L("sheet.ui.custom.copySuffix")); commit(l) }
+    func delete(_ id: String) { var l = library; l.delete(id); commit(l) }
+
+    private func commit(_ l: CustomBlockLibrary) {
+        library = l
+        try? l.save(to: Self.url)
+    }
+}
+
 // MARK: - Quick prep remembers the series (the S1a "Next time Pacenote remembers this setup")
 
 @MainActor

@@ -209,21 +209,33 @@ def check_written(sheet: dict, checked_at: str) -> List[str]:
 
 
 def carry_over(old: dict, blocks: List[dict]) -> List[dict]:
-    """Refresh without the wizard's block list: the old sheet's Verbatim blocks (id, title, settings, visibility) come
-    back at their old place, right after the block that was before them."""
+    """Refresh without the wizard's block list: the old sheet's Verbatim and custom blocks (id, title, settings,
+    visibility) come back at their old place, right after the block that was before them."""
+    from . import custom as C       # PB-101: the PM's custom blocks come back the same way
+
+    def own(b: dict) -> bool:
+        return is_verbatim(b) or C.is_custom(b)
+
     olds = sorted([b for b in (old or {}).get("blocks") or [] if isinstance(b, dict)], key=lambda b: b.get("order", 0))
     out = list(blocks)
     have = {b.get("id") for b in out}
     for i, ob in enumerate(olds):
-        if not is_verbatim(ob) or ob.get("id") in have:
+        if not own(ob) or ob.get("id") in have:
             continue
-        nb = {"id": ob.get("id") or "b-verbatim", "type": TYPE, "title": ob.get("title") or "Verbatim",
-              "visible": bool(ob.get("visible", True)), "only_if_data": False, "facts": [], "edited_by_user": False,
-              "verbatim": settings_of(ob)}
+        if C.is_custom(ob):
+            nb = {"id": ob.get("id") or "b-custom", "type": C.TYPE, "title": ob.get("title") or "Custom block",
+                  "visible": bool(ob.get("visible", True)), "only_if_data": False, "facts": [], "edited_by_user": False,
+                  "custom": C.settings_of(ob)}
+        else:
+            nb = {"id": ob.get("id") or "b-verbatim", "type": TYPE, "title": ob.get("title") or "Verbatim",
+                  "visible": bool(ob.get("visible", True)), "only_if_data": False, "facts": [], "edited_by_user": False,
+                  "verbatim": settings_of(ob)}
+            if isinstance(ob.get("custom"), dict):
+                nb["custom"] = C.settings_of(ob)          # PB-101: a custom block in format verbatim
         at = 0
         for prev in reversed(olds[:i]):
             j = next((k for k, x in enumerate(out) if x.get("id") == prev.get("id")
-                      or (not is_verbatim(prev) and x.get("type") == prev.get("type"))), None)
+                      or (not own(prev) and x.get("type") == prev.get("type"))), None)
             if j is not None:
                 at = j + 1
                 break
@@ -234,10 +246,16 @@ def carry_over(old: dict, blocks: List[dict]) -> List[dict]:
     return out
 
 
+def _copy_block(v) -> bool:
+    """A Verbatim block, or (PB-101) a custom block in format verbatim as a saved request holds it."""
+    return is_verbatim(v) or (isinstance(v, dict) and v.get("type") == "custom" and isinstance(v.get("custom"), dict)
+                              and v["custom"].get("format") == TYPE)
+
+
 def _drop(x):
     """x without any Verbatim block, in any list at any depth (a sheet, a sheet version, a saved request)."""
     if isinstance(x, list):
-        return [_drop(v) for v in x if not is_verbatim(v)]
+        return [_drop(v) for v in x if not _copy_block(v)]
     if isinstance(x, dict):
         return {k: _drop(v) for k, v in x.items()}
     return x
@@ -245,7 +263,7 @@ def _drop(x):
 
 def _has(x) -> bool:
     if isinstance(x, list):
-        return any(is_verbatim(v) or _has(v) for v in x)
+        return any(_copy_block(v) or _has(v) for v in x)
     if isinstance(x, dict):
         return any(_has(v) for v in x.values())
     return False

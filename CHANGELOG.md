@@ -5,6 +5,17 @@ Pacenote. Earlier versions are described in the commit messages and in
 
 ## Unreleased
 
+- **Meeting Sheet: your own custom blocks (PB-101).** In Get ready, + Add a block now starts with New custom block and
+  your library of custom blocks. A custom block has a title, an instruction (what it does on this call), its own
+  sources (a file or folder, a source of the call, the transcript of a past call, a link or free text; a Markdown file
+  can give only some sections, such as 1-4 by heading), an output format (Summary, Bullets, Table, Q&A, Checklist or
+  Verbatim) and a length (up to 3, 6 or 12 points). The AI writes it from its own sources only; Verbatim is the
+  Verbatim block itself, copied word for word and checked against the source. Save to library keeps a block for any
+  call; added to a call it is that call's copy, so changes stay in the call until Update in library, and the library
+  has Duplicate and Delete. Custom blocks move like any block, several fit one call, and Refresh keeps them in place
+  with their settings. During the call each one sits folded on top of the Brief tab in the tips window, next to the
+  Verbatim blocks; Show text opens it in the scrollable reading box. Call sync never sends a custom block's settings
+  (instruction, file paths, links, pasted text).
 - **Meeting Sheet: a Verbatim block for text that must stay word for word (PB-102).** + Add a block now offers
   Verbatim, as often as you need it in one call. In its Settings you give it a title, a source (a file of the call,
   any file, or pasted text) and, if you want only part of a Markdown file, sections such as 1-4 by heading. The

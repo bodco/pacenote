@@ -2523,6 +2523,28 @@ large, scrollable reading box (a teleprompter) that keeps its place while tips a
 A Verbatim block is never saved into a preset, and call sync does not send it at all (not its text, pasted text,
 file path or title); the other blocks go as before.
 
+**Custom blocks (PB-101).** **+ Add a block** starts with **New custom block** and then **Your custom blocks**, your
+personal library (one file on this Mac, never synced). A custom block has a title, an **Instruction** (what it does on
+this call), its own **Sources**, an **Output format** and a **Length**. Sources: **File or folder…** (a folder gives
+its recent files, like a folder source), one of the **Sources of this call**, the **Transcript of a past call** (the
+latest calls of Home), a **Link** or **Free text**; a file reads as a file (Markdown keeps its headings and lists) and
+can take only some **Sections**, counted by its headings like the Verbatim block (`2`, `1-4`). A block with no source
+of its own reads the meeting and the call's sources. Formats: Summary, Bullets, Table (one row per point), Q&A,
+Checklist and **Verbatim**. Lengths: Short (up to 3 points), Medium (up to 6), Long (up to 12); the sheet keeps no
+more than that even when the AI writes more. Every format but Verbatim is written by the AI from the block's own
+sources only (shared with the call when it is the same file or link). **Verbatim** is the Verbatim block above, not a
+second one: it copies the first file or text of the block word for word, checks the copy against the source and
+says "Not copied" with the reason when they differ (a block with only a link or a folder says why). Several custom
+blocks fit one call. A library block added to a call is the call's own copy: changes in its **Settings** stay in this
+call (a per-call override) until **Update in library** (or **Save to library** for a new one) writes them back. In
+the library each block has **Duplicate** and **Delete from library** (it asks first; the calls that use it keep their copy); to
+edit a library block, add it, change it and press Update in library. Custom blocks move and hide like any block, are
+never saved into a preset, and Refresh keeps them with their place and settings and reads their sources again. During
+the call the **Brief** tab of the tips window lists every custom block on top with the Verbatim blocks, each folded:
+**Show text** opens it in the same scrollable reading box (a checklist as boxes, Q&A as question and answer). Call
+sync sends a custom block's points like any block's, never its settings (instruction, file paths, links or pasted
+text); a Verbatim one not at all.
+
 **Quick or Expert.** **Get ready** opens one of two ways into the same sheet; the switch is in the header.
 
 | | Quick | Expert |

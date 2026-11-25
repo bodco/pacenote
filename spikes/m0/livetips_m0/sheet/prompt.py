@@ -58,6 +58,10 @@ def block_lines(blocks: List[dict], lib: dict, criteria: Optional[Dict[str, List
     out = []
     for b in blocks:
         t = b["type"]
+        if t == "custom":
+            from .custom import block_line
+            out.append(block_line(b))   # PB-101: the PM's own block, answered under its id
+            continue
         if t in SKIP_BLOCKS or (t == "my_focus" and not focus):
             continue                   # my_focus without the user's fields (Settings > Meeting Sheet) stays empty
         fields = (lib.get(t) or {}).get("fields", "")
@@ -125,7 +129,7 @@ def previous_labels(old: Optional[dict]) -> str:
     for b in old.get("blocks") or []:
         labs = [f.get("label") for f in b.get("facts") or [] if f.get("label") and f.get("origin") == "model"]
         if labs and b.get("type") not in SKIP_BLOCKS:
-            lines.append(f"- {b['type']}: " + "; ".join(dict.fromkeys(labs)))
+            lines.append(f"- {b['id'] if b.get('type') == 'custom' else b['type']}: " + "; ".join(dict.fromkeys(labs)))
     if not lines:
         return ""
     return ("## Labels of the previous version of this sheet\nThis is a refresh. For a fact that is still true use the "

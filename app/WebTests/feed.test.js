@@ -859,5 +859,18 @@ test('PB-102: verbatimHtml keeps headings, lists and emphasis, escapes everythin
   assert.strictEqual(verbatimHtml('a\r\nb'), '<p>a<br>b</p>');
 });
 
+// PB-101: custom blocks come through the same list, marked custom, a checklist renders as boxes
+test('PB-101: custom blocks travel with the verbatim ones and keep their custom mark', () => {
+  const { f, get } = make();
+  f.addItems([{ kind: 'verbatim', sheet: true, items: [{ id: 'b-verbatim-1', title: 'Script', ok: true, text: 'Hi' },
+    { id: 'b-custom-c', title: 'SSO checks', ok: true, text: '- [ ] SSO: Confirm Okta', custom: true },
+    { id: 'b-custom-n', title: 'Budget', ok: false, text: '', error: 'No source says the budget', custom: true }] }]);
+  const v = get().verbatim;
+  assert.deepStrictEqual(v.map((x) => [x.id, x.custom]), [['b-verbatim-1', false], ['b-custom-c', true], ['b-custom-n', true]]);
+  assert.strictEqual(v[2].ok, false); assert.strictEqual(v[2].error, 'No source says the budget');
+  const { verbatimHtml } = require(path.join(__dirname, '../Resources/tips/feed.js'));
+  assert.ok(verbatimHtml(v[1].text).includes('☐ SSO: Confirm Okta'));
+});
+
 console.log(`feed tests: ${passed} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);

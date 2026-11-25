@@ -333,7 +333,8 @@
         // PB-102: the sheet's Verbatim blocks replace the earlier list; the text is kept exactly (never clean())
         this.verbatim = (it.items || []).filter((x) => x && typeof x === 'object').map((x, i) => {
           const ok = !!x.ok && typeof x.text === 'string' && x.text.trim() !== '';     // a failed copy shows no text
-          return { id: String(x.id || 'v' + i), title: clean(x.title || '') || 'Verbatim', ok, text: ok ? x.text : '', error: clean(x.error || '') };
+          // PB-101: custom = a custom block the AI wrote (nothing found is not "not copied")
+          return { id: String(x.id || 'v' + i), title: clean(x.title || '') || 'Verbatim', ok, text: ok ? x.text : '', error: clean(x.error || ''), custom: !!x.custom };
         });
         return true;
       case 'outline': this.outline = it.sections || []; return true;

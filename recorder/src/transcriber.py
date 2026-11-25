@@ -2402,13 +2402,41 @@ def sheet_standup(sheet: dict, live_dir: Path | None = None) -> dict | None:
     return {"since": since, "today": today, "blockers": blockers, "ask": ask, "on_me": onme}
 
 
+def custom_text(b: dict) -> tuple[str, str]:
+    """PB-101: a custom block's facts as Markdown for the tips window, in the block's format: (text, why empty)."""
+    fmt = ((b.get("custom") if isinstance(b.get("custom"), dict) else {}) or {}).get("format") or "bullets"
+    facts = [f for f in b.get("facts") or [] if isinstance(f, dict) and _s(f.get("text"))
+             and not f.get("superseded_by") and f.get("diff") != "gone"]
+    found = [f for f in facts if f.get("status") != "not_found"]
+    if not found:
+        return "", (_s(facts[0].get("text")) if facts else "nothing found in its sources")
+    parts = []
+    for f in found:
+        lab, txt = _s(f.get("label")), _s(f.get("text"))
+        if fmt == "summary":
+            parts.append(txt)
+        elif fmt == "qa":
+            parts.append((f"**{lab}**\n" if lab else "") + txt)
+        elif fmt == "checklist":
+            parts.append("- [ ] " + (f"{lab}: " if lab else "") + txt)
+        else:                                  # bullets and table: one line per point or row
+            parts.append("- " + (f"**{lab}:** " if lab else "") + txt)
+    return ("\n\n" if fmt in ("summary", "qa") else "\n").join(parts), ""
+
+
 def sheet_verbatim(sheet: dict) -> list[dict]:
     """PB-102: the sheet's shown Verbatim blocks in order, the text exactly as copied (no cleaning, no cut); a block
-    that failed its copy check comes with its reason and no text."""
+    that failed its copy check comes with its reason and no text. PB-101: the custom blocks too, each as its facts in
+    the block's format (or why it has none)."""
     out = []
-    blocks = [b for b in sheet.get("blocks") or [] if isinstance(b, dict) and b.get("type") == "verbatim"
+    blocks = [b for b in sheet.get("blocks") or [] if isinstance(b, dict) and b.get("type") in ("verbatim", "custom")
               and b.get("visible", True)]
     for b in sorted(blocks, key=lambda b: b.get("order", 0) if isinstance(b.get("order"), int) else 0):
+        if b.get("type") == "custom":
+            text, why = custom_text(b)
+            out.append({"id": _s(b.get("id")), "title": _s(b.get("title")) or "Custom block", "ok": bool(text),
+                        "text": text, "error": why, "custom": True})
+            continue
         v = b.get("verbatim") if isinstance(b.get("verbatim"), dict) else {}
         ok = v.get("status") == "ok" and isinstance(v.get("text"), str) and v["text"].strip() != ""
         out.append({"id": _s(b.get("id")), "title": _s(b.get("title")) or "Verbatim", "ok": ok,

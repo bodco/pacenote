@@ -16,7 +16,18 @@ struct DraftBlock: Identifiable, Equatable {
     /// PB-102: a Verbatim block has its own id (several per call) and its settings: the source and the sections
     var uid: String? = nil
     var verbatim: SheetVerbatim? = nil
+    /// PB-101: a custom block's settings (instruction, sources, format, length); its own id like a Verbatim block
+    var custom: SheetCustom? = nil
     var id: String { uid ?? type }
+
+    /// PB-101: the call's copy of a library block (or a new one): per-call changes stay in the call until Save to library.
+    static func newCustom(_ def: CustomBlockDef?, title: String) -> DraftBlock {
+        DraftBlock(type: BlockType.custom.rawValue, title: def?.title ?? title,
+                   uid: "b-custom-" + String(UUID().uuidString.prefix(8)).lowercased(), custom: def?.settings ?? SheetCustom())
+    }
+
+    /// PB-102 and PB-101: a block that belongs to this call (its own id and settings), never to a preset
+    var isOwn: Bool { type == BlockType.verbatim.rawValue || type == BlockType.custom.rawValue }
 
     static func newVerbatim(title: String) -> DraftBlock {
         DraftBlock(type: BlockType.verbatim.rawValue, title: title, uid: "b-verbatim-" + String(UUID().uuidString.prefix(8)).lowercased(),
@@ -200,7 +211,7 @@ final class SheetDraft: ObservableObject {
         let lib = SheetLibrary.shared
         presetID = id
         let p = lib.preset(id) ?? SheetLibrary.fallback.last!
-        let verbatim = blocks.filter { $0.type == BlockType.verbatim.rawValue }    // PB-102: kept when the preset changes
+        let verbatim = blocks.filter(\.isOwn)    // PB-102, PB-101: Verbatim and custom blocks kept when the preset changes
         blocks = p.blocks.map { t in
             DraftBlock(type: t, title: lib.title(t), visible: true, onlyIfData: ["signals", "tech_stack", "fit"].contains(t),
                        method: t == "qualification" ? (p.method ?? model.salesMethod.nilIfEmpty ?? "bant") : nil)
@@ -210,16 +221,23 @@ final class SheetDraft: ObservableObject {
     var preset: SheetPresetInfo? { SheetLibrary.shared.preset(presetID) }
 
     /// PB-102: the Verbatim blocks of the call's sheet come back into the wizard with their settings, at their place
-    /// (after the block that was before them), so preparing again keeps them.
+    /// (after the block that was before them), so preparing again keeps them. PB-101: the custom blocks too (a
+    /// Verbatim block made from a custom block comes back as that custom block).
     func restoreVerbatim() {
         guard let p = SheetFiles.path(for: model), let s = try? MeetingSheetIO.load(p) else { return }
         let old = s.blocks.sorted { $0.order < $1.order }
-        for (i, b) in old.enumerated() where b.type == .verbatim && !blocks.contains(where: { $0.id == b.id }) {
+        let own: (SheetBlock) -> Bool = { $0.type == .verbatim || $0.type == .custom }
+        for (i, b) in old.enumerated() where own(b) && !blocks.contains(where: { $0.id == b.id }) {
             var d = DraftBlock(type: b.type.rawValue, title: b.title, visible: b.visible, uid: b.id,
                                verbatim: SheetVerbatim(source: b.verbatim?.source, sections: b.verbatim?.sections))
+            if let c = b.custom {
+                var cs = c
+                cs.sourceIDs = nil
+                d = DraftBlock(type: BlockType.custom.rawValue, title: b.title, visible: b.visible, uid: b.id, custom: cs)
+            }
             d.onlyIfData = false
-            let prev = old[..<i].reversed().first { p in blocks.contains { $0.id == p.id || (p.type != .verbatim && $0.type == p.type.rawValue) } }
-            let at = prev.flatMap { p in blocks.firstIndex { $0.id == p.id || (p.type != .verbatim && $0.type == p.type.rawValue) } }.map { $0 + 1 } ?? 0
+            let prev = old[..<i].reversed().first { p in blocks.contains { $0.id == p.id || (!own(p) && $0.type == p.type.rawValue) } }
+            let at = prev.flatMap { p in blocks.firstIndex { $0.id == p.id || (!own(p) && $0.type == p.type.rawValue) } }.map { $0 + 1 } ?? 0
             blocks.insert(d, at: min(at, blocks.count))
         }
     }
@@ -395,6 +413,7 @@ final class SheetDraft: ObservableObject {
             var d: [String: Any] = ["type": b.type, "title": b.title, "visible": b.visible, "only_if_data": b.onlyIfData, "order": i]
             if let m = b.method { d["method"] = m }
             if b.type == BlockType.verbatim.rawValue { d["id"] = b.id; d["verbatim"] = b.verbatimRequest }   // PB-102
+            if b.type == BlockType.custom.rawValue { d["id"] = b.id; d["custom"] = (b.custom ?? SheetCustom()).request }   // PB-101
             return d
         }
         let people: [String: Any] = ["ours": ours.filter { !$0.name.isEmpty }.map(person), "theirs": theirs.filter { !$0.name.isEmpty }.map(person)]

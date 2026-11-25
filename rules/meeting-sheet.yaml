@@ -191,6 +191,13 @@ blocks:
     fields: A text copied word for word from a file or pasted text, optionally only some sections (e.g. 1-4); never rewritten or shortened
     only_if_data: false
     live: verbatim             # the tips window shows it folded, Show text opens it to read like a teleprompter
+  # PB-101 (owner 24.11): the PM's own block from the personal library; several per call, each with its instruction,
+  # sources, output format and length (spikes/m0/livetips_m0/sheet/custom.py); format verbatim builds a Verbatim block
+  custom:
+    title: Custom block
+    fields: What the PM's instruction asks for, from the block's own sources, in the chosen format and length
+    only_if_data: false
+    live: verbatim             # shown in the tips window like a Verbatim block: folded, Show text opens it
 
 # Readiness: each rule is a check kind with params, a gap text, a quick action and a severity.
 # A blocker gap makes the sheet "not_ready", warnings only make it "almost", no gaps = "ready".

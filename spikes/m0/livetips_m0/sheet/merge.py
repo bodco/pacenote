@@ -35,7 +35,8 @@ def protect_edits(old_sheet: dict, new_sheet: dict) -> dict:
                 nb.update({"order": ob.get("order", nb.get("order")), "visible": ob.get("visible", nb.get("visible")),
                            "edited_by_user": True})
             continue
-        nb = by_id.get(_key(ob)) or by_type.get(ob.get("type", ""))
+        # PB-101: a custom block is matched by its id only (several per call share the type)
+        nb = by_id.get(_key(ob)) or (None if ob.get("type") == "custom" else by_type.get(ob.get("type", "")))
         if ob.get("edited_by_user"):
             keep = copy.deepcopy(ob)
             if nb is None:

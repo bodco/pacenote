@@ -356,7 +356,9 @@ public enum CallSync {
     static func syncedSheet(_ raw: [String: Any]) -> [String: Any] {
         func only(_ o: [String: Any], _ keys: Set<String>) -> [String: Any] { o.filter { keys.contains($0.key) } }
         let topKeys = Set(MeetingSheet.CodingKeys.allCases.map(\.rawValue))
-        let blockKeys = Set(SheetBlock.CodingKeys.allCases.map(\.rawValue)).subtracting(["verbatim"])
+        // PB-101: a custom block's settings (its instruction, file paths, links and pasted text) stay on this Mac too;
+        // its facts go like any block's
+        let blockKeys = Set(SheetBlock.CodingKeys.allCases.map(\.rawValue)).subtracting(["verbatim", "custom"])
         let factKeys = Set(SheetFact.CodingKeys.allCases.map(\.rawValue)).subtracting(["from_web"])
         let sourceKeys = Set(SheetSource.CodingKeys.allCases.map(\.rawValue))
         let webSourceKeys: Set<String> = ["id", "n", "type", "parent", "access", "used"]

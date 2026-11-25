@@ -43,7 +43,8 @@
       ask: 'Ask about this project', help: 'Help',
       card: { rec: 'Recording', help: 'Help now', expand: 'Expand to the tips window', prev: '‹ Previous tip', latest: 'Latest tip ›', of: (p) => `Tip ${p.i} of ${p.n}`, fresh: 'new', problem: 'Recording problem', open: 'Open the window' },
       tabs: { transcript: 'Transcript', onme: (n) => `On me · ${n}`, brief: 'Brief' },
-      vb: { show: 'Show text', hide: 'Hide text', failed: (w) => `Not copied: ${w}`, aria: (t) => `${t}, verbatim text` },   // PB-102
+      vb: { show: 'Show text', hide: 'Hide text', failed: (w) => `Not copied: ${w}`, aria: (t) => `${t}, verbatim text`,   // PB-102
+            empty: (w) => `Nothing found: ${w}`, ariaCustom: (t) => `${t}, custom block` },   // PB-101
       newVoice: 'New voice:', name: 'Name', client: 'Client', team: 'Team', speakersH: 'Speakers', spkCount: (o) => o.u ? `${o.n}, ${o.u} to name` : `${o.n}`, spkShow: 'Show the speakers', spkHide: 'Hide the speakers', namedOf: (o) => `${o.n} of ${o.m} named`, notNamed: 'not named yet',
       toName: 'to name', mins: (o) => o.m < 1 ? '<1 min' : `${o.m} min`, secsSpoken: (o) => `${o.s} s of speech`, noClip: 'No clip to play: Pacenote never keeps the call audio. The last line helps tell who it is.', soundsLike: (o) => `${o.name} · sounds like ${o.p}%`,
       whoGroups: { voice: 'Sounds like', call: 'On this call', invited: 'Invited to this call', project: 'Project people', library: 'Voice library' }, whoMore: (o) => `${o.n} more from your voice library`, whoWhy: 'Why these names: the voice match, who is on this call, the invitation, then the project and your voice library.',
@@ -136,7 +137,8 @@
       ask: 'Запитай про проєкт', help: 'Допоможи',
       card: { rec: 'Запис', help: 'Допоможи', expand: 'Розгорнути у вікно підказок', prev: '‹ Попередня', latest: 'Остання ›', of: (p) => `Підказка ${p.i} з ${p.n}`, fresh: 'нова', problem: 'Проблема із записом', open: 'Відкрити вікно' },
       tabs: { transcript: 'Транскрипт', onme: (n) => `На мені · ${n}`, brief: 'Бриф' },
-      vb: { show: 'Показати текст', hide: 'Сховати текст', failed: (w) => `Не скопійовано: ${w}`, aria: (t) => `${t}, дослівний текст` },   // PB-102
+      vb: { show: 'Показати текст', hide: 'Сховати текст', failed: (w) => `Не скопійовано: ${w}`, aria: (t) => `${t}, дослівний текст`,   // PB-102
+            empty: (w) => `Нічого не знайдено: ${w}`, ariaCustom: (t) => `${t}, власний блок` },   // PB-101
       newVoice: 'Новий голос:', name: 'Назвати', client: 'Клієнт', team: 'Команда', speakersH: 'Спікери', spkCount: (o) => o.u ? `${o.n}, ${o.u} без імені` : `${o.n}`, spkShow: 'Показати спікерів', spkHide: 'Сховати спікерів', namedOf: (o) => `названо ${o.n} з ${o.m}`, notNamed: 'ще без імені',
       toName: 'назвати', mins: (o) => o.m < 1 ? '<1 хв' : `${o.m} хв`, secsSpoken: (o) => `${o.s} с мовлення`, noClip: 'Кліпу немає: Pacenote не зберігає звук дзвінка. Остання фраза допомагає зрозуміти, хто це.', soundsLike: (o) => `${o.name} · схоже на ${o.p}%`,
       whoGroups: { voice: 'Схожий голос', call: 'Уже на цьому дзвінку', invited: 'Запрошені на дзвінок', project: 'Люди проєкту', library: 'Бібліотека голосів' }, whoMore: (o) => `Ще ${o.n} з бібліотеки голосів`, whoWhy: 'Звідки ці імена: схожість голосу, хто вже на дзвінку, запрошення, потім проєкт і ваша бібліотека голосів.',
@@ -1373,10 +1375,10 @@
     if (!list.length) return '';
     const md = window.PacenoteVerbatimHtml || ((x) => `<p>${esc(x)}</p>`);
     return `<div class="vb-list">${list.map((v) => {
-      if (!v.ok) return `<div class="vb failed"><div class="vb-head"><span class="vb-title">${esc(v.title)}</span></div><p class="meta vb-err">${esc(t.vb.failed(v.error || ''))}</p></div>`;
+      if (!v.ok) return `<div class="vb failed"><div class="vb-head"><span class="vb-title">${esc(v.title)}</span></div><p class="meta vb-err">${esc(v.custom ? t.vb.empty(v.error || '') : t.vb.failed(v.error || ''))}</p></div>`;
       const open = !!S.ui.vbOpen[v.id];
       return `<div class="vb"><div class="vb-head"><span class="vb-title">${esc(v.title)}</span><button class="link" type="button" data-act="vb-toggle" data-id="${esc(v.id)}" aria-expanded="${open}">${esc(open ? t.vb.hide : t.vb.show)}</button></div>`
-        + (open ? `<div class="vb-text" data-vb="${esc(v.id)}" tabindex="0" role="region" aria-label="${esc(t.vb.aria(v.title))}">${md(v.text)}</div>` : '') + '</div>';
+        + (open ? `<div class="vb-text" data-vb="${esc(v.id)}" tabindex="0" role="region" aria-label="${esc(v.custom ? t.vb.ariaCustom(v.title) : t.vb.aria(v.title))}">${md(v.text)}</div>` : '') + '</div>';
     }).join('')}</div>`;
   }
 

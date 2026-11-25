@@ -45,6 +45,7 @@ from . import size as Z
 from . import sources as SRC
 from . import standup as SU
 from . import verbatim as V
+from . import custom as C
 
 PACKED = ("local", "codex", "openai", "gemini", "fake")
 CLAUDE = ("code", "api")
@@ -317,7 +318,7 @@ def facts_from(answer: dict, blocks: List[dict], source_ids: set, checked_at: st
     """The model's facts per block type, cleaned: unknown blocks and source ids dropped, a "found" fact without a
     known source becomes needs_check (never shown as sourced when it is not). PB-37: from_web marks every fact of a
     model call that was given a researched page, whatever it cites, so call sync keeps it local."""
-    want = {b["type"] for b in blocks if b["type"] not in PR.SKIP_BLOCKS}
+    want = {C.key(b) for b in blocks if b["type"] not in PR.SKIP_BLOCKS}     # PB-101: a custom block by its id
     out: Dict[str, List[dict]] = {}
     for t, facts in ((answer or {}).get("blocks") or {}).items():
         if t not in want or not isinstance(facts, list):
@@ -637,7 +638,9 @@ def tidy(blocks: List[dict], only: Optional[List[dict]] = None) -> int:
     for b in sorted(blocks, key=lambda b: b.get("order", 0)):
         if b.get("type") in ("header", "gaps") or not b.get("visible", True):
             continue
-        change = (only is None or b in only) and b.get("type") not in NO_DEDUP and not b.get("edited_by_user")
+        if C.is_custom(b):
+            continue        # PB-101: the PM asked for these points here; they neither lose nor take others' facts
+        change =(only is None or b in only) and b.get("type") not in NO_DEDUP and not b.get("edited_by_user")
         keep = []
         for f in b.get("facts") or []:
             t = (f.get("label") or "") + " " + (f.get("text") or "")
@@ -655,7 +658,7 @@ def tidy(blocks: List[dict], only: Optional[List[dict]] = None) -> int:
 
 
 def gap_facts(facts: Dict[str, List[dict]], blocks: List[dict], checked_at: str) -> List[dict]:
-    title = {b["type"]: b.get("title", b["type"]) for b in blocks}
+    title = {C.key(b): b.get("title", b["type"]) for b in blocks}
     out = []
     for t, lst in facts.items():
         for f in lst:
@@ -689,7 +692,9 @@ def claude_files(sources: List[dict], texts: Dict[str, str], cache_dir: str) -> 
         p = os.path.expanduser(p)
         # PB-102 (review round 1): a sheet file with Verbatim copies goes as the cleaned text, never the original
         from .verbatim import sheet_file_text
-        if p.lower().endswith((".md", ".txt", ".csv", ".pdf", ".json", ".yaml", ".yml")) and sheet_file_text(p) is None:
+        # PB-101: a custom block's file with a section pick goes as the picked text, never the whole file
+        if p.lower().endswith((".md", ".txt", ".csv", ".pdf", ".json", ".yaml", ".yml")) and sheet_file_text(p) is None \
+                and not s.get("sections"):
             files[s["id"]] = p
         else:
             os.makedirs(cache_dir, exist_ok=True)
@@ -1014,12 +1019,15 @@ def build(req: dict, refresh: bool = False, emit=say, responder: Optional[Callab
             t = d.get("type")
             if t not in lib:
                 continue
+            if t == C.TYPE:
+                # PB-101: a custom block, several per call, each with its own id and settings (format verbatim = a
+                # Verbatim block with the custom settings along)
+                bl.append(C.block(d, C.uid(d.get("id"), seen_ids, i, "b-custom"),
+                                  str(d.get("title") or lib[t].get("title", t)), i))
+                continue
             if t == V.TYPE:
                 # PB-102: several Verbatim blocks per call, each with its own id and settings (never one per type)
-                vid = re.sub(r"[^a-zA-Z0-9_-]", "-", str(d.get("id") or ""))[:60] or "b-verbatim"
-                while vid in seen_ids:
-                    vid += "-%d" % i
-                seen_ids.add(vid)
+                vid = C.uid(d.get("id"), seen_ids, i, "b-verbatim")
                 bl.append({"id": vid, "type": t, "title": str(d.get("title") or lib[t].get("title", t)), "order": i,
                            "visible": bool(d.get("visible", True)), "only_if_data": False, "facts": [],
                            "edited_by_user": False, "verbatim": V.settings_of(d)})
@@ -1085,6 +1093,8 @@ def build(req: dict, refresh: bool = False, emit=say, responder: Optional[Callab
     ctx = (req.get("context") or "").strip()
     if ctx and not any(s.get("role") == "context" for s in raw):
         raw.append({"id": "s-context", "type": "text", "title": "Call context", "text": ctx, "role": "context"})
+    # PB-101: the custom blocks' own sources (a file or folder, a call source, a past call, a link, free text)
+    raw = C.add_sources(sheet["blocks"], raw)
     for s in raw:
         if s.get("type") == "digest" and not s.get("text") and not s.get("path"):
             s["text"] = digest_text(req)
@@ -1093,7 +1103,8 @@ def build(req: dict, refresh: bool = False, emit=say, responder: Optional[Callab
     # request already carries is replaced by today's. auto_sources: false in the request turns this off (tests).
     tracker, auto_n = None, {}
     if req.get("auto_sources", True):
-        have = {os.path.realpath(os.path.expanduser(s.get("path") or "")) for s in raw if s.get("path")}
+        # PB-101: a custom block's file read by sections only does not stand in for the whole file
+        have = {os.path.realpath(os.path.expanduser(s.get("path") or "")) for s in raw if s.get("path") and not s.get("sections")}
         try:
             autos = SRC.auto_sources(req)
         except Exception as e:  # noqa: BLE001
@@ -1219,6 +1230,8 @@ def build(req: dict, refresh: bool = False, emit=say, responder: Optional[Callab
     # size budget; the folder itself has no text and is never "skipped" for it
     srcs = SRC.expand_folders(srcs, texts, req, route, windows)
     by_sid.update({s["id"]: s for s in srcs})
+    C.with_folder_files(sheet["blocks"], srcs)
+    notes += C.pick_sections(srcs, texts, lambda t: Z.estimate(t, route, windows))   # PB-101: a file's sections only
     sc = req.get("_client_scope")
     if sc:
         n_files = sum(int((s.get("folder") or {}).get("other_client") or 0) for s in srcs)
@@ -1439,10 +1452,15 @@ def build(req: dict, refresh: bool = False, emit=say, responder: Optional[Callab
             b["facts"] = []
         elif t == V.TYPE:
             V.fill(b, checked)            # PB-102: copied from its source unchanged, never through the model
+            if b.get("custom", {}).get("sources") and b["verbatim"].get("error") == "no source chosen":
+                b["verbatim"]["error"] = C.VERBATIM_NO_SOURCE      # PB-101: a custom block's link or folder
             if (b.get("verbatim") or {}).get("status") == "failed":
                 notes.append(f"Verbatim block \"{b.get('title')}\" failed: {b['verbatim'].get('error')}.")
         elif b in ask_blocks:
-            b["facts"] = facts.get(t, [])
+            b["facts"] = facts.get(C.key(b), [])
+            if C.is_custom(b):
+                # PB-101: only the block's own sources count, and the chosen length
+                b["facts"] = C.cap(C.own_sources(b, b["facts"]), (b.get("custom") or {}).get("length"))
         else:
             # 0.10.0 (round 2): a block not rebuilt (options.blocks) or hidden keeps what it had
             ob = old_blocks.get(b.get("id")) or old_blocks.get(t)
@@ -1453,7 +1471,7 @@ def build(req: dict, refresh: bool = False, emit=say, responder: Optional[Callab
     n_rep = tidy(sheet["blocks"], ask_blocks)
     if n_rep:
         notes.append(f"Clean-up: {n_rep} fact(s) that repeated another block were dropped.")
-    allf = {b["type"]: b["facts"] for b in sheet["blocks"] if b["type"] not in ("header", "gaps")}
+    allf = {C.key(b): b["facts"] for b in sheet["blocks"] if b["type"] not in ("header", "gaps")}
     gb = next((b for b in sheet["blocks"] if b["type"] == "gaps"), None)
     if gb is not None:
         gb["facts"] = gap_facts(allf, sheet["blocks"], checked)

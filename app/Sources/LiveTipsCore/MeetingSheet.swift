@@ -37,7 +37,10 @@ public struct BlockType: SheetValue {
         objections = Self(rawValue: "objections"), competitors = Self(rawValue: "competitors"),
         stakeholders = Self(rawValue: "stakeholders"), mutualPlan = Self(rawValue: "mutual_plan"),
         // PB-102: a text copied unchanged from one source (sheet/verbatim.py); several per sheet, each with its own id
-        verbatim = Self(rawValue: "verbatim")
+        verbatim = Self(rawValue: "verbatim"),
+        // PB-101: the PM's own block from the personal library (sheet/custom.py); offered by + Add a block as
+        // "New custom block" and the library, never in the list of built-in blocks (not in `known`)
+        custom = Self(rawValue: "custom")
     public static let known: [Self] = [header, myFocus, company, signals, techStack, fit, contact, qualification, history,
         projectContext, agenda, actionItems, questions, bestOutcome, redLines, structureRoles, overview, gaps, standupSince,
         standupToday, standupBlockers, standupWaiting, interviewCandidate, interviewRole, objections, competitors,
@@ -224,8 +227,10 @@ public struct SheetBlock: Codable, Equatable, Identifiable {
     public var editedByUser: Bool
     /// PB-102: a Verbatim block's settings and its copy (verbatim blocks only)
     public var verbatim: SheetVerbatim? = nil
+    /// PB-101: a custom block's settings (custom blocks, and Verbatim blocks made from a custom block)
+    public var custom: SheetCustom? = nil
     enum CodingKeys: String, CodingKey, CaseIterable {
-        case id, type, title, visible, order, method, facts, verbatim
+        case id, type, title, visible, order, method, facts, verbatim, custom
         case onlyIfData = "only_if_data", editedByUser = "edited_by_user"
     }
 }
