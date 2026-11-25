@@ -2497,7 +2497,8 @@ the file (the heading level used more than once, so one `# Title` over several `
 `#` line inside a code block is not a heading; empty takes the whole text). The build copies the text unchanged:
 Markdown and plain text byte for byte (line ends included), other formats as the text read from them. The build
 never gives the block to the AI, so nothing rewrites or shortens it, and a file that is not a source of the call is
-not sent to the AI either. After the sheet
+not sent to the AI either. When this sheet is read again later (as the previous sheet of the next call in the series,
+as a file you add to another call, or by project memory), it is read without its Verbatim blocks. After the sheet
 is written, each copy is compared with its source once more (the same sections, character for character); if they
 differ, the file is gone, it is not UTF-8 text or the sections are not there, the block says "Not copied" with the
 reason and shows no text. Drag it like any block (for example first after My focus); the eye hides it for this

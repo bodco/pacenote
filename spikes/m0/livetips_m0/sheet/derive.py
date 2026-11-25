@@ -131,12 +131,15 @@ def render_md(sheet: dict, for_brief: bool = False) -> str:
             # PB-102: the copy as it is (the human copy only; the brief is parsed into sections and the PM may edit
             # it, so the tips window gets the text from the sheet instead)
             if not for_brief:
+                from .verbatim import MD_CLOSE, MD_OPEN
                 v = b.get("verbatim") or {}
-                lines += ["", f"## {b.get('title') or 'Verbatim'}", ""]
+                # review round 1: marked, so a reader of this file alone can cut the copy (verbatim.sheet_file_text)
+                lines += ["", MD_OPEN, f"## {b.get('title') or 'Verbatim'}", ""]
                 if v.get("status") == "ok" and v.get("text"):
                     lines.append(str(v["text"]).rstrip("\n"))
                 else:
                     lines.append("> " + _w("verbatimFailed") + ": " + str(v.get("error") or ""))
+                lines.append(MD_CLOSE)
             continue
         facts = b.get("facts") or []
         shown = [f for f in facts if _live(f) or f.get("status") == "not_found"]

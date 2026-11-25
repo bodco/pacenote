@@ -687,7 +687,9 @@ def claude_files(sources: List[dict], texts: Dict[str, str], cache_dir: str) -> 
         if not p:
             continue
         p = os.path.expanduser(p)
-        if p.lower().endswith((".md", ".txt", ".csv", ".pdf", ".json", ".yaml", ".yml")):
+        # PB-102 (review round 1): a sheet file with Verbatim copies goes as the cleaned text, never the original
+        from .verbatim import sheet_file_text
+        if p.lower().endswith((".md", ".txt", ".csv", ".pdf", ".json", ".yaml", ".yml")) and sheet_file_text(p) is None:
             files[s["id"]] = p
         else:
             os.makedirs(cache_dir, exist_ok=True)
