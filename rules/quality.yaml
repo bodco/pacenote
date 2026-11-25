@@ -1,0 +1,94 @@
+# Call and tip quality (CQ, owner request 24.11, task PB-90). Spec: docs/specs/PB-90-cq1-call-quality.md.
+# STATUS: CQ1 draft. Nothing reads this file yet: CQ2 reads `local` and `sidecar`, CQ3 reads `eligibility`, `judge`
+# and `rubric`, CQ4 copies `events` into rules/analytics.yaml. Every number below is a PROPOSED default (spec section
+# 13 lists the ones that need the owner or a measurement); none of them has been measured.
+#
+# Rule (the same as rules/analytics.yaml): what leaves the Mac is only event names, fixed codes and numbers. The judge
+# sends transcript excerpts and tip text to the user's own AI route (the provider they already use for after-call
+# work), never to Pacenote. The judge's reason text stays in quality.json on this Mac.
+schema_version: 1
+status: draft
+
+# --- the file next to the call (CQ2) -----------------------------------------------------------------------------------
+sidecar:
+  suffix: .quality.json            # CallLayout.sidecar(<call stem>, ".quality.json"), in the call folder's .work/
+  moves_with_call: true            # call reassign and the call-folder migration move it like the other sidecars
+  synced: false                    # call sync does not send it (it may hold the judge's reason text)
+  format_version: 1
+
+# --- local metrics, every call, no AI, no cost (CQ2) -------------------------------------------------------------------
+local:
+  every_call: true                 # computed at the end of every live call, whatever the switches say
+  lag_cap_s: 600                   # a shown tip's lag (shown time minus trigger line time) is capped here
+  late_lag_s: 20                   # a tip shown more than 20 s after its trigger line counts as late
+  # every shown kind counts (tips_shown equals call_ended.tips); by_kind and lags come from <stem>.app.tips.jsonl
+
+# --- which calls are judged (CQ3) --------------------------------------------------------------------------------------
+# A call is judged only when every rule passes and the caps leave room. The first failing rule is the skip reason
+# (call_quality.why). Owner 24.11: only calls worth scoring, by preparation, brief and duration.
+eligibility:
+  needs_switch: true               # Settings > General > Privacy > Rate tips on some calls (default on)
+  needs_analytics: true            # and Help improve Pacenote on (the scores would have nowhere to go otherwise)
+  min_minutes: 10                  # no maximum: the cost grows with the tips judged (max_tips), not the call length
+  min_tips_shown: 3
+  brief_kinds: [chosen, auto, late]  # call_ended.brief: a call with no preparation is not judged
+  skip_call_types: [rehearsal, transcript]
+  min_lines: 60                    # transcript lines in total
+  min_other_lines: 20              # lines of the other side (a call where only the PM spoke is not judged)
+  max_muted_share: 0.3             # PB-104 muted spans: more than 30% of the call muted, the PM's side is missing
+  per_day: 1                       # judged calls per Mac per local day
+  per_week: 3                      # judged calls per Mac per rolling 7 days
+  skip_routes: [local]             # the model on this Mac scores about 60% of Sonnet (docs 14.1g): not comparable
+  skip_economy: true               # economy mode on: no judge
+  skip_near_limit: true            # metered routes only: a provider over its alert share (rules/ai.yaml > provider_limits)
+  expire_hours: 24                 # a queued judge not started within 24 h of the call's end is dropped (why: expired)
+
+# --- the judge (CQ3) ---------------------------------------------------------------------------------------------------
+judge:
+  job: after                       # the user's "After the call" route (AIRoute, Settings > AI); LT_AI_STAGE=judge
+  chain: false                     # no fallback chain and LT_LOCAL_FALLBACK=0: a failed route ends the run (failed)
+  judged_kinds: [tip, fact, answer]  # the v1 filter judge.shown_tip; other shown kinds are counted, not judged
+  when: after the after-call jobs of the call are done and no call is running (eligibility.expire_hours)
+  max_tips: 20                     # sampled evenly over the call (judge.sample_even), retracted tips never
+  window_before_s: 90              # transcript from 90 s before the trigger line
+  window_after_s: 20               # to 20 s after the tip was shown
+  max_output_tokens: 300
+  # The model per route. Claude ids are mapped by the route (cc_model for code); OpenAI and Gemini take their own.
+  # Analytics sends the model only when it matches the `model` type of rules/analytics.yaml; codex sends none.
+  models:
+    api: claude-sonnet-5-5
+    code: sonnet
+    openai: gpt-6.1-sol
+    gemini: gemini-3.8-flash
+    codex: codex/default
+  send_model: [api, code, openai, gemini]
+  budget:
+    estimate_first: true           # livetips_m0.cost PRICES on the planned tokens before the first request
+    per_call_usd: 0.15             # metered routes (api, openai, gemini): an estimate above this samples fewer tips
+    per_month_usd: 1.00            # metered routes: judge spend of the month from spend-ledger.jsonl (job judge)
+    stop_on_cap: true              # the cap is reached mid-call: stop, keep the scored tips, state partial
+
+# --- rubric v2 (CQ3) ---------------------------------------------------------------------------------------------------
+rubric:
+  version: v2
+  useful: {min: 1, max: 5}         # 5 exactly what was needed ... 1 wrong or noise (spec 4.2)
+  correct: ['yes', 'no', unknown]  # quoted: YAML 1.1 (safe_load) reads bare yes, no, off as booleans; against the transcript; unknown when the transcript cannot tell
+  reasons: [good, generic, redundant, off_topic, late, wrong_fact, too_long, noise, unclear]
+
+# --- events (CQ4 copies these into rules/analytics.yaml) ---------------------------------------------------------------
+# Types are names from rules/analytics.yaml (types or enums) or the new enums below.
+new_enums:
+  quality_skip: [judged, 'off', analytics_off, short, few_tips, no_brief, call_type, few_lines, one_sided, muted,
+                 day_cap, week_cap, local_route, no_route, economy, near_limit, budget, expired, failed, partial]
+  quality_correct: ['yes', 'no', unknown]
+  quality_reason: [good, generic, redundant, off_topic, late, wrong_fact, too_long, noise, unclear]
+  quality_rated: [none, used, partly, not_useful]
+  quality_tip_kind: [tip, fact, answer]
+events:
+  call_quality: {judged: bool, why: quality_skip, type: call_type, brief: brief_kind, minutes: minutes, tips: count,
+                 late: count, lag_p50: seconds, lag_p90: seconds, retracted: count, rated: count, used: count,
+                 not_useful: count, asks: count, asks_open: count, scored: count, useful_avg: score, timely_pct: score,
+                 correct_pct: score, concrete_pct: score, provider: provider, model: model, judge_s: seconds}
+  tip_scored: {kind: quality_tip_kind, type: call_type, brief: brief_kind, useful: small, timely: bool,
+               correct: quality_correct, concrete: bool, redundant: bool, reason: quality_reason, lag: seconds,
+               rated: quality_rated, provider: provider}
