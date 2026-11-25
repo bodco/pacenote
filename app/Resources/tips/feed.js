@@ -329,6 +329,13 @@
         // 0.10.0 (Meeting Sheet, phase 7): the sheet's "Questions for the call" as a checklist; "asked" when the PM asked
         this.sheetQs = (it.items || []).map((x, i) => ({ id: String((x && x.id) || 'q' + i), text: clean(itemText(x)), asked: !!(x && x.state === 'asked') })).filter((x) => x.text);
         return true;
+      case 'verbatim':
+        // PB-102: the sheet's Verbatim blocks replace the earlier list; the text is kept exactly (never clean())
+        this.verbatim = (it.items || []).filter((x) => x && typeof x === 'object').map((x, i) => {
+          const ok = !!x.ok && typeof x.text === 'string' && x.text.trim() !== '';     // a failed copy shows no text
+          return { id: String(x.id || 'v' + i), title: clean(x.title || '') || 'Verbatim', ok, text: ok ? x.text : '', error: clean(x.error || '') };
+        });
+        return true;
       case 'outline': this.outline = it.sections || []; return true;
       case 'outline_pos':
         this.outlinePos = it.cur;
@@ -741,6 +748,7 @@
       rosterSide: this.rosterSide || {}, roster: this.roster || [], knownNames: this.known || [], knownSrc: this.knownSrc || {},
       transcript: this.transcript.slice(-400),
       brief: this.brief, briefText: this.briefText,
+      verbatim: (this.verbatim || []).map((v) => Object.assign({}, v)),
       steps,
       deckMeta: { talkMin: this.slides && +this.slides.talk_min || 0, qaMin: this.slides && +this.slides.qa_min || 0 },
       toast: this.toast || null
@@ -767,6 +775,62 @@
     return { card: tips[i], index: total - i, total, latest, fresh, prevId: i + 1 < total ? tips[i + 1].id : null, latestId: newest.id };
   }
 
-  if (typeof module !== 'undefined' && module.exports) module.exports = { Feed, clean, hmsToMs, cardPage };
-  else { root.PacenoteFeed = Feed; root.PacenoteCardPage = cardPage; }
+  /** PB-102: a Verbatim block's Markdown as HTML for the tips window: headings, lists, quotes, code, bold, italic,
+   *  strike and inline code. Every word stays as written (a link shows its text); everything is escaped first, so the
+   *  file can never add HTML of its own. */
+  function verbatimHtml(md) {
+    const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    const inline = (s) => {
+      const codes = [];
+      let h = esc(s).replace(/`([^`]+)`/g, (_, c) => { codes.push(c); return '\u0000' + (codes.length - 1) + '\u0000'; });
+      h = h.replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
+        .replace(/(\*\*|__)(?=\S)([\s\S]*?\S)\1/g, '<strong>$2</strong>')
+        .replace(/(^|[^*\w])\*(?=\S)([^*]*?\S)\*(?!\*)/g, '$1<em>$2</em>')
+        .replace(/(^|[^_\w])_(?=\S)([^_]*?\S)_(?![_\w])/g, '$1<em>$2</em>')
+        .replace(/~~(?=\S)([\s\S]*?\S)~~/g, '<del>$1</del>');
+      return h.replace(/\u0000(\d+)\u0000/g, (_, i) => '<code>' + codes[+i] + '</code>');
+    };
+    const out = [];
+    let para = [], list = null, fence = null, code = [];
+    const flushPara = () => { if (para.length) out.push('<p>' + para.map(inline).join('<br>') + '</p>'); para = []; };
+    const flushList = () => { if (list) out.push('<' + list.tag + '>' + list.items.join('') + '</' + list.tag + '>'); list = null; };
+    const lines = String(md == null ? '' : md).replace(/\r\n?/g, '\n').split('\n');
+    for (const line of lines) {
+      const f = /^ {0,3}(```|~~~)/.exec(line);
+      if (fence) {
+        if (f && f[1] === fence) { out.push('<pre><code>' + esc(code.join('\n')) + '</code></pre>'); fence = null; code = []; } else code.push(line);
+        continue;
+      }
+      if (f) { flushPara(); flushList(); fence = f[1]; continue; }
+      let m;
+      if (!line.trim()) { flushPara(); flushList(); continue; }
+      if ((m = /^ {0,3}(#{1,6})[ \t]+(.*?)[ \t#]*$/.exec(line))) {
+        flushPara(); flushList();
+        const n = Math.min(6, m[1].length + 2);
+        out.push('<h' + n + ' class="vb-h">' + inline(m[2]) + '</h' + n + '>');
+        continue;
+      }
+      if ((m = /^ {0,3}([-*_])( *\1){2,} *$/.exec(line))) { flushPara(); flushList(); out.push('<hr>'); continue; }
+      if ((m = /^( *)([-*+]|\d{1,9}[.)])[ \t]+(.*)$/.exec(line))) {
+        flushPara();
+        const tag = /\d/.test(m[2]) ? 'ol' : 'ul';
+        if (!list || list.tag !== tag) { flushList(); list = { tag, items: [] }; }
+        const depth = Math.min(4, Math.floor(m[1].length / 2));
+        const task = /^\[([ xX])\][ \t]+(.*)$/.exec(m[3]);
+        const body = task ? (task[1] === ' ' ? '☐ ' : '☑ ') + inline(task[2]) : inline(m[3]);
+        list.items.push('<li' + (depth ? ' class="vb-d' + depth + '"' : '') + '>' + body + '</li>');
+        continue;
+      }
+      if ((m = /^ {0,3}>[ \t]?(.*)$/.exec(line))) { flushPara(); flushList(); out.push('<blockquote>' + inline(m[1]) + '</blockquote>'); continue; }
+      if (list && /^\s+\S/.test(line)) { list.items[list.items.length - 1] = list.items[list.items.length - 1].replace(/<\/li>$/, '<br>' + inline(line.trim()) + '</li>'); continue; }
+      flushList();
+      para.push(line);
+    }
+    if (fence) out.push('<pre><code>' + esc(code.join('\n')) + '</code></pre>');
+    flushPara(); flushList();
+    return out.join('');
+  }
+
+  if (typeof module !== 'undefined' && module.exports) module.exports = { Feed, clean, hmsToMs, cardPage, verbatimHtml };
+  else { root.PacenoteFeed = Feed; root.PacenoteCardPage = cardPage; root.PacenoteVerbatimHtml = verbatimHtml; }
 })(this);

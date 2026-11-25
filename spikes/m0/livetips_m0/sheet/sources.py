@@ -198,6 +198,12 @@ def check(s: dict, req: dict, texts: Dict[str, str], route: str, windows: dict) 
         elif t in ("file", "folder_file", "prev_call", "project_state", "tracker", "digest", "crm", "transcript") and s.get("path"):
             r = readers.read(s["path"])
             text = r.get("text", "")
+            if not r.get("error"):
+                # PB-102 (review round 1): an earlier Meeting Sheet as a source never carries its Verbatim copies
+                from . import verbatim as V
+                clean = V.sheet_file_text(s["path"])
+                if clean is not None:
+                    text = clean
             s["modified_at"] = s.get("modified_at") or _mtime(os.path.expanduser(s["path"]))
             if r.get("slides"):
                 s["slides"] = len(r["slides"])

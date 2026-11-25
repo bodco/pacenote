@@ -2402,6 +2402,20 @@ def sheet_standup(sheet: dict, live_dir: Path | None = None) -> dict | None:
     return {"since": since, "today": today, "blockers": blockers, "ask": ask, "on_me": onme}
 
 
+def sheet_verbatim(sheet: dict) -> list[dict]:
+    """PB-102: the sheet's shown Verbatim blocks in order, the text exactly as copied (no cleaning, no cut); a block
+    that failed its copy check comes with its reason and no text."""
+    out = []
+    blocks = [b for b in sheet.get("blocks") or [] if isinstance(b, dict) and b.get("type") == "verbatim"
+              and b.get("visible", True)]
+    for b in sorted(blocks, key=lambda b: b.get("order", 0) if isinstance(b.get("order"), int) else 0):
+        v = b.get("verbatim") if isinstance(b.get("verbatim"), dict) else {}
+        ok = v.get("status") == "ok" and isinstance(v.get("text"), str) and v["text"].strip() != ""
+        out.append({"id": _s(b.get("id")), "title": _s(b.get("title")) or "Verbatim", "ok": ok,
+                    "text": v["text"] if ok else "", "error": "" if ok else _s(v.get("error"))})
+    return out
+
+
 def drop_derived(items: list[dict], sheet_ids: set) -> list[dict]:
     """Cards or facts from cards.json / facts.json without the ones derive.py made from the same sheet."""
     out = []
@@ -2447,6 +2461,7 @@ class SheetLive:
         self.lock = threading.Lock()
         self.me_names: list[str] = []
         self.has_slides_file = None      # set by main(): a callable, True when <stem>.slides.json exists
+        self.sent_verbatim: list[dict] = []     # PB-102: the Verbatim blocks the window holds from this sheet
 
     def refresh(self) -> bool:
         """True when the sheet changed (loaded, replaced or removed)."""
@@ -2484,6 +2499,11 @@ class SheetLive:
         if not sheet:
             return
         t = hhmmss(now())
+        # PB-102: the Verbatim blocks; an empty list only after a sheet that had some (it clears them in the window)
+        vb = sheet_verbatim(sheet)
+        if vb != self.sent_verbatim and (vb or self.sent_verbatim):      # the same list is never written twice
+            _append_json(self.tips, {"kind": "verbatim", "at": t, "sheet": True, "items": vb})
+            self.sent_verbatim = vb
         ag = sheet_agenda(sheet)
         if ag:
             # the brief's checklist channel: the engine's agenda (from the brief derive.py writes) still wins

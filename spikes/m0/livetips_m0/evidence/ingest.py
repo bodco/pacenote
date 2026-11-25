@@ -50,6 +50,10 @@ def normalise(text: str) -> str:
 def read_text(path: str) -> str:
     from ..sheet import readers
     p = str(path)
+    from ..sheet import verbatim as V
+    clean = V.sheet_file_text(p)          # PB-102 (review round 1): a sheet file is stored without its Verbatim copies
+    if clean is not None:
+        return normalise(LK._jsonl_text(clean) if p.endswith(".json") else clean)
     if p.endswith((".json", ".jsonl")):
         try:
             return normalise(LK._jsonl_text(Path(p).read_text(encoding="utf-8", errors="replace")))

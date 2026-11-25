@@ -68,10 +68,10 @@ def _when(sheet: dict) -> str:
 
 WORDS = {"en": {"conflict": "sources disagree", "stale": "old", "needs_check": "check", "not_found": "Not found",
                 "goal": "Goal", "sources": "Sources", "owner": "owner", "lead": "lead", "none": "Not found yet.", "was": "was",
-                "questions": "Questions to ask"},
+                "questions": "Questions to ask", "verbatimFailed": "Not copied"},
          "uk": {"conflict": "джерела розходяться", "stale": "застаріло", "needs_check": "перевірити", "not_found": "Не знайдено",
                 "goal": "Мета", "sources": "Джерела", "owner": "відповідальний", "lead": "веде", "none": "Поки нічого не знайдено.", "was": "було",
-                "questions": "Питання"}}
+                "questions": "Питання", "verbatimFailed": "Не скопійовано"}}
 _LANG = ["en"]
 
 
@@ -127,6 +127,20 @@ def render_md(sheet: dict, for_brief: bool = False) -> str:
             # 0.10.0 (round 2): a plain list, not checkboxes: the window ticks them in the questions checklist only
             lines += ["", "## " + _w("questions")] + [f"- {f['text']}" for f in qs]
     for b in blocks:
+        if b.get("type") == "verbatim":
+            # PB-102: the copy as it is (the human copy only; the brief is parsed into sections and the PM may edit
+            # it, so the tips window gets the text from the sheet instead)
+            if not for_brief:
+                from .verbatim import MD_CLOSE, MD_OPEN
+                v = b.get("verbatim") or {}
+                # review round 1: marked, so a reader of this file alone can cut the copy (verbatim.sheet_file_text)
+                lines += ["", MD_OPEN, f"## {b.get('title') or 'Verbatim'}", ""]
+                if v.get("status") == "ok" and v.get("text"):
+                    lines.append(str(v["text"]).rstrip("\n"))
+                else:
+                    lines.append("> " + _w("verbatimFailed") + ": " + str(v.get("error") or ""))
+                lines.append(MD_CLOSE)
+            continue
         facts = b.get("facts") or []
         shown = [f for f in facts if _live(f) or f.get("status") == "not_found"]
         if not shown and b.get("only_if_data"):

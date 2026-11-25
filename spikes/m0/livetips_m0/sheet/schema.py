@@ -11,7 +11,9 @@ MODES = ("quick", "expert")
 BLOCK_TYPES = ("header", "my_focus", "company", "signals", "tech_stack", "fit", "contact", "qualification", "history",
                "project_context", "agenda", "action_items", "questions", "best_outcome", "red_lines", "structure_roles",
                "overview", "gaps", "standup_since", "standup_today", "standup_blockers", "standup_waiting",
-               "interview_candidate", "interview_role", "objections", "competitors", "stakeholders", "mutual_plan")
+               "interview_candidate", "interview_role", "objections", "competitors", "stakeholders", "mutual_plan",
+               "verbatim")      # PB-102: a text copied unchanged from one source (sheet/verbatim.py)
+VERBATIM_STATUS = ("ok", "failed")
 FACT_STATUS = ("found", "not_found", "needs_check", "conflict", "stale", "edited")
 ORIGINS = ("model", "user", "readiness")
 LEVELS = ("green", "yellow", "red", "unknown")
@@ -153,6 +155,10 @@ def validate(sheet: Any, methods: Optional[Iterable[str]] = None) -> List[str]:
             if bid in block_ids:
                 v.err(f"{bp}.id", f"duplicate id {bid!r}")
             block_ids.add(bid)
+        vb = b.get("verbatim")
+        if vb is not None and v.obj(vb, f"{bp}.verbatim"):
+            v.typ(vb, "text", str, f"{bp}.verbatim")
+            v.enum(vb, "status", VERBATIM_STATUS, f"{bp}.verbatim")
         facts = b.get("facts")
         if facts is None:
             continue

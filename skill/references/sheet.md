@@ -40,7 +40,9 @@ for the same sheet fact get `"sheet_fact": "<fact id>"`, so the recorder shows t
   presets`). Use the block types of `rules/meeting-sheet.yaml > blocks` only (header, my_focus, company, signals,
   tech_stack, fit, contact, qualification with `method` bant by default, history, project_context, agenda,
   action_items, questions, best_outcome, red_lines, structure_roles, overview, gaps, the standup_* and interview_*
-  blocks). A block with `only_if_data: true` and nothing found is left out.
+  blocks). A block with `only_if_data: true` and nothing found is left out. A `verbatim` block (PB-102) is the app's
+  word for word copy of a file or pasted text: never write, shorten or rewrite its `verbatim.text`; keep such a block
+  as it is, the app copies and checks it on every build.
 - **Agenda and questions are separate blocks.** `agenda` is the checklist of topics; `questions` are the questions
   for the call (each fact one question). Both reach the live window.
 - **Every fact** has `source_ids` (the source ids, never inside the text), a `locator` (a short exact `quote`, and

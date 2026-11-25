@@ -330,6 +330,11 @@ public enum SheetExport {
         if let g = s.goal, !g.isEmpty { out += "**Goal:** " + g + "\n\n" }
         for b in bl {
             out += "## " + b.title + "\n\n"
+            if b.type == .verbatim {          // PB-102: the copy as it is
+                if let v = b.verbatim, v.ok { out += (v.text ?? "").trimmingCharacters(in: .newlines) + "\n\n" }
+                else { out += "> Not copied: " + (b.verbatim?.error ?? "") + "\n\n" }
+                continue
+            }
             if b.facts.isEmpty { out += "- Not found\n\n"; continue }
             for f in b.facts where f.diff != .gone {
                 var line = "- " + (f.label.map { "**\($0):** " } ?? "") + f.text + statusNote(f)
@@ -369,6 +374,12 @@ public enum SheetExport {
         out += "<h1>\(esc(s.title))</h1>"
         if let g = s.goal, !g.isEmpty { out += "<p><b>Goal:</b> \(esc(g))</p>" }
         for b in bl {
+            if b.type == .verbatim {          // PB-102: the copy as it is, line by line
+                out += "<h2>\(esc(b.title))</h2>"
+                if let v = b.verbatim, v.ok { out += "<div style=\"white-space:pre-wrap\">\(esc(v.text ?? ""))</div>" }
+                else { out += "<p class=\"st\">Not copied: \(esc(b.verbatim?.error ?? ""))</p>" }
+                continue
+            }
             out += "<h2>\(esc(b.title))</h2><ul>"
             if b.facts.isEmpty { out += "<li class=\"st\">Not found</li>" }
             for f in b.facts where f.diff != .gone {

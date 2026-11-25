@@ -35,11 +35,13 @@ public struct BlockType: SheetValue {
         interviewCandidate = Self(rawValue: "interview_candidate"), interviewRole = Self(rawValue: "interview_role"),
         // S1: the deal blocks of a sales call (rules/meeting-sheet.yaml, live: sales)
         objections = Self(rawValue: "objections"), competitors = Self(rawValue: "competitors"),
-        stakeholders = Self(rawValue: "stakeholders"), mutualPlan = Self(rawValue: "mutual_plan")
+        stakeholders = Self(rawValue: "stakeholders"), mutualPlan = Self(rawValue: "mutual_plan"),
+        // PB-102: a text copied unchanged from one source (sheet/verbatim.py); several per sheet, each with its own id
+        verbatim = Self(rawValue: "verbatim")
     public static let known: [Self] = [header, myFocus, company, signals, techStack, fit, contact, qualification, history,
         projectContext, agenda, actionItems, questions, bestOutcome, redLines, structureRoles, overview, gaps, standupSince,
         standupToday, standupBlockers, standupWaiting, interviewCandidate, interviewRole, objections, competitors,
-        stakeholders, mutualPlan]
+        stakeholders, mutualPlan, verbatim]
 }
 
 public struct FactStatus: SheetValue {
@@ -220,10 +222,46 @@ public struct SheetBlock: Codable, Equatable, Identifiable {
     public var method: String?            // the qualification method (rules/sales.yaml key), qualification blocks only
     public var facts: [SheetFact]
     public var editedByUser: Bool
+    /// PB-102: a Verbatim block's settings and its copy (verbatim blocks only)
+    public var verbatim: SheetVerbatim? = nil
     enum CodingKeys: String, CodingKey, CaseIterable {
-        case id, type, title, visible, order, method, facts
+        case id, type, title, visible, order, method, facts, verbatim
         case onlyIfData = "only_if_data", editedByUser = "edited_by_user"
     }
+}
+
+/// PB-102: what a Verbatim block copies (a file or pasted text, optionally sections "1-4") and the copy the build made
+/// and checked against the source. status "failed" = no text to show, `error` says why.
+public struct SheetVerbatim: Codable, Equatable {
+    public struct Source: Codable, Equatable {
+        public var kind: String              // "file" or "text"
+        public var path: String?
+        public var text: String?
+        public init(kind: String, path: String? = nil, text: String? = nil) { self.kind = kind; self.path = path; self.text = text }
+    }
+    public var source: Source?
+    public var sections: String?
+    public var text: String?
+    public var status: String?
+    public var error: String?
+    public var sha256: String?
+    public var checkedAt: String?
+    enum CodingKeys: String, CodingKey { case source, sections, text, status, error, sha256, checkedAt = "checked_at" }
+    public init(source: Source?, sections: String? = nil) { self.source = source; self.sections = sections }
+    /// Review round 3: a source without a kind (`{}` from older builds) reads as no source, so one unset block never
+    /// makes the whole sheet unreadable.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        source = (try? c.decodeIfPresent(Source.self, forKey: .source)) ?? nil
+        sections = try c.decodeIfPresent(String.self, forKey: .sections)
+        text = try c.decodeIfPresent(String.self, forKey: .text)
+        status = try c.decodeIfPresent(String.self, forKey: .status)
+        error = try c.decodeIfPresent(String.self, forKey: .error)
+        sha256 = try c.decodeIfPresent(String.self, forKey: .sha256)
+        checkedAt = try c.decodeIfPresent(String.self, forKey: .checkedAt)
+    }
+    /// The copy passed its check and has something to show.
+    public var ok: Bool { status == "ok" && !(text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 }
 
 public extension SheetBlock {

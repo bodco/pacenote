@@ -428,10 +428,30 @@ def test_call_starting_during_a_slow_request_cancels_it(env):
     assert ledger and all(x["job"] == "evidence" for x in ledger)
 
 
+def call_file_when(ready, timeout=30.0):
+    """Starts the call once ready() holds (the child request is really running), not after a fixed delay that a loaded
+    machine can outrun. Returns a list that gets the monotonic time the call file was written; it stays empty when
+    ready() never held within the timeout (then no call file is written)."""
+    fired = []
+    target = Path(os.environ["LT_AI_STATE"]).with_name("call-active.json")   # this test's state, never a later one's
+
+    def go():
+        end = time.monotonic() + timeout
+        while not ready():
+            if time.monotonic() > end:
+                return
+            time.sleep(0.02)
+        fired.append(time.monotonic())
+        target.write_text(json.dumps({"started_at": "2026-11-24T10:00:00Z", "pid": os.getpid()}))
+    threading.Thread(target=go, daemon=True).start()
+    return fired
+
+
 class SlowOllama(http.server.BaseHTTPRequestHandler):
     """A fake Ollama on loopback: /api/tags answers (so nothing starts Ollama), /api/chat streams one token a second
     and records when its client goes away."""
     gone = threading.Event()
+    posted = threading.Event()
 
     def log_message(self, *a):
         pass
@@ -443,6 +463,7 @@ class SlowOllama(http.server.BaseHTTPRequestHandler):
 
     def do_POST(self):
         self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        SlowOllama.posted.set()
         self.send_response(200)
         self.end_headers()
         try:
@@ -463,11 +484,12 @@ def test_abort_closes_the_connection_of_a_real_child_request(env, monkeypatch):
     st = open_store(root)
     ingest(st, root)
     SlowOllama.gone.clear()
-    threading.Timer(1.0, call_file).start()
-    t0 = time.monotonic()
+    SlowOllama.posted.clear()
+    fired = call_file_when(SlowOllama.posted.is_set)
     res = run_pass(st, root, None, route="local")
-    took = time.monotonic() - t0
-    assert res["status"] == "paused_call" and took < 3.5
+    assert SlowOllama.posted.is_set() and fired, "the request never reached the fake provider"
+    took = time.monotonic() - fired[0]
+    assert res["status"] == "paused_call" and took < 2.5, (res, took)
     assert SlowOllama.gone.wait(3.0), "the fake provider never saw the disconnect"
     srv.shutdown()
 
@@ -484,11 +506,11 @@ def test_abort_kills_the_cli_process_group(env, tmp_path, monkeypatch):
     put(root, "docs/a.md", "# A\nAlpha line one is here.\n")
     st = open_store(root)
     ingest(st, root)
-    threading.Timer(1.5, call_file).start()
-    t0 = time.monotonic()
+    fired = call_file_when(lambda: pidfile.exists() and pidfile.read_text().strip().isdigit())
     res = run_pass(st, root, None, route="codex")
     errs = [dict(r) for r in st.q("SELECT status, error FROM run_item")]
-    assert res["status"] == "paused_call" and time.monotonic() - t0 < 4.0, (res, errs)
+    assert pidfile.exists() and fired, ("the fake codex never started", res, errs)
+    assert res["status"] == "paused_call" and time.monotonic() - fired[0] < 2.5, (res, errs)
     pid = int(pidfile.read_text().strip())
     for _ in range(40):
         try:

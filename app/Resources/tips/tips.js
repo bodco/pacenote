@@ -43,6 +43,7 @@
       ask: 'Ask about this project', help: 'Help',
       card: { rec: 'Recording', help: 'Help now', expand: 'Expand to the tips window', prev: '‹ Previous tip', latest: 'Latest tip ›', of: (p) => `Tip ${p.i} of ${p.n}`, fresh: 'new', problem: 'Recording problem', open: 'Open the window' },
       tabs: { transcript: 'Transcript', onme: (n) => `On me · ${n}`, brief: 'Brief' },
+      vb: { show: 'Show text', hide: 'Hide text', failed: (w) => `Not copied: ${w}`, aria: (t) => `${t}, verbatim text` },   // PB-102
       newVoice: 'New voice:', name: 'Name', client: 'Client', team: 'Team', speakersH: 'Speakers', spkCount: (o) => o.u ? `${o.n}, ${o.u} to name` : `${o.n}`, spkShow: 'Show the speakers', spkHide: 'Hide the speakers', namedOf: (o) => `${o.n} of ${o.m} named`, notNamed: 'not named yet',
       toName: 'to name', mins: (o) => o.m < 1 ? '<1 min' : `${o.m} min`, secsSpoken: (o) => `${o.s} s of speech`, noClip: 'No clip to play: Pacenote never keeps the call audio. The last line helps tell who it is.', soundsLike: (o) => `${o.name} · sounds like ${o.p}%`,
       whoGroups: { voice: 'Sounds like', call: 'On this call', invited: 'Invited to this call', project: 'Project people', library: 'Voice library' }, whoMore: (o) => `${o.n} more from your voice library`, whoWhy: 'Why these names: the voice match, who is on this call, the invitation, then the project and your voice library.',
@@ -135,6 +136,7 @@
       ask: 'Запитай про проєкт', help: 'Допоможи',
       card: { rec: 'Запис', help: 'Допоможи', expand: 'Розгорнути у вікно підказок', prev: '‹ Попередня', latest: 'Остання ›', of: (p) => `Підказка ${p.i} з ${p.n}`, fresh: 'нова', problem: 'Проблема із записом', open: 'Відкрити вікно' },
       tabs: { transcript: 'Транскрипт', onme: (n) => `На мені · ${n}`, brief: 'Бриф' },
+      vb: { show: 'Показати текст', hide: 'Сховати текст', failed: (w) => `Не скопійовано: ${w}`, aria: (t) => `${t}, дослівний текст` },   // PB-102
       newVoice: 'Новий голос:', name: 'Назвати', client: 'Клієнт', team: 'Команда', speakersH: 'Спікери', spkCount: (o) => o.u ? `${o.n}, ${o.u} без імені` : `${o.n}`, spkShow: 'Показати спікерів', spkHide: 'Сховати спікерів', namedOf: (o) => `названо ${o.n} з ${o.m}`, notNamed: 'ще без імені',
       toName: 'назвати', mins: (o) => o.m < 1 ? '<1 хв' : `${o.m} хв`, secsSpoken: (o) => `${o.s} с мовлення`, noClip: 'Кліпу немає: Pacenote не зберігає звук дзвінка. Остання фраза допомагає зрозуміти, хто це.', soundsLike: (o) => `${o.name} · схоже на ${o.p}%`,
       whoGroups: { voice: 'Схожий голос', call: 'Уже на цьому дзвінку', invited: 'Запрошені на дзвінок', project: 'Люди проєкту', library: 'Бібліотека голосів' }, whoMore: (o) => `Ще ${o.n} з бібліотеки голосів`, whoWhy: 'Звідки ці імена: схожість голосу, хто вже на дзвінку, запрошення, потім проєкт і ваша бібліотека голосів.',
@@ -205,13 +207,13 @@
     view: PREFS.view === 'card' ? 'card' : 'window',     // theme pass stage 4: the app puts 'card' in the prefs for the compact card
     call: { title: '', state: 'live', startedAt: null, paused: false, micOff: false, minutesLeft: null, mode: 'normal', recap: '', briefLine: '', alert: null },
     agenda: [], questions: [], cards: [], onMe: [], next: null, deal: null,
-    transcript: [], speakers: {}, brief: null, briefText: '', steps: [], toast: null,
+    transcript: [], speakers: {}, brief: null, briefText: '', verbatim: [], steps: [], toast: null,
     keys: { help: '⌃⌥H', pause: '⌃⌥P', mute: '⌃⌥M', present: '⌃⌥S', prev: '⌃⌥←', next: '⌃⌥→', add30: '⌃⌥=', transcript: '⌘⇧T' },
     rec: { state: 'off', kind: 'video', elapsed: 0, source: '', note: '' },
     pres: { slide: null, slideRx: 0, timeline: null, moveAsk: null, follow: null }, thumbs: {}, syncA: null, extra: {}, after: null, sys: null, meetEnd: null, notice: null, ask: null, rosterSide: {}, roster: [], knownNames: [], knownSrc: {}, tipsLang: null, callLangSeed: null,
     openItems: [], notionItems: [], notionProject: '', hubspotItems: [], hubspotProject: '', minePending: [], mineN: 0, spkPrompt: 15,
     ui: { spkOpen: null, spkCard: null, spkSnooze: {}, spkCollapsed: PREFS.spk_collapsed !== '0',   // 0.10.0: collapsed by default, remembered
-          lineWho: {}, lineDel: {}, delArm: null, openPts: {}, heroMin: {}, paneTab: 'transcript', sheet: null, menuOpen: false, langMenu: false, langPending: null, pendingTr: false, heroOverride: null, follow: true, editing: null, rateOpen: null, briefEdit: false,
+          lineWho: {}, lineDel: {}, delArm: null, openPts: {}, vbOpen: {}, vbScroll: {}, heroMin: {}, paneTab: 'transcript', sheet: null, menuOpen: false, langMenu: false, langPending: null, pendingTr: false, heroOverride: null, follow: true, editing: null, rateOpen: null, briefEdit: false,
           present: { index: 0, running: false, stepStart: 0 }, presentForced: null }
   };
   const T = () => STR[S.lang] || STR.en;
@@ -1364,17 +1366,31 @@
   }
   function draftNow() { const s = $('afSubject'), b = $('afBody'); return b ? { subject: s ? s.value : '', body: b.value } : {}; }
 
+  /** PB-102: the sheet's Verbatim blocks on top of the Brief tab, each folded; Show text opens it to read and scroll like
+   *  a teleprompter. A block that failed its copy check says why and shows no text. */
+  function renderVerbatim() {
+    const t = T(), list = S.verbatim || [];
+    if (!list.length) return '';
+    const md = window.PacenoteVerbatimHtml || ((x) => `<p>${esc(x)}</p>`);
+    return `<div class="vb-list">${list.map((v) => {
+      if (!v.ok) return `<div class="vb failed"><div class="vb-head"><span class="vb-title">${esc(v.title)}</span></div><p class="meta vb-err">${esc(t.vb.failed(v.error || ''))}</p></div>`;
+      const open = !!S.ui.vbOpen[v.id];
+      return `<div class="vb"><div class="vb-head"><span class="vb-title">${esc(v.title)}</span><button class="link" type="button" data-act="vb-toggle" data-id="${esc(v.id)}" aria-expanded="${open}">${esc(open ? t.vb.hide : t.vb.show)}</button></div>`
+        + (open ? `<div class="vb-text" data-vb="${esc(v.id)}" tabindex="0" role="region" aria-label="${esc(t.vb.aria(v.title))}">${md(v.text)}</div>` : '') + '</div>';
+    }).join('')}</div>`;
+  }
+
   function renderBrief() {
     const t = T(), b = S.brief;
     if (S.ui.briefEdit) {
       return `<textarea class="briefedit" id="briefEdit" spellcheck="false">${esc(S.briefText)}</textarea>
         <div class="ctl"><button class="btn1" type="button" data-act="brief-save">${esc(t.save)}</button><button class="btn2" type="button" data-act="brief-cancel">${esc(t.cancel)}</button></div>`;
     }
-    if (!b) return `<p class="meta">${esc(t.noBriefYet)}</p>`;
+    if (!b) return renderVerbatim() || `<p class="meta">${esc(t.noBriefYet)}</p>`;
     const sections = S.ui.briefFull ? b.sections : (b.sections || []).filter((s) => /live essentials|needs confirmation|увага|розбіжність|ключове|checklist|red lines|червон/i.test(s.title));
     const selected = sections.length ? sections : (b.sections || []).slice(0, 2);
     const toggle = `<button class="link" type="button" data-act="brief-full">${S.lang === 'uk' ? (S.ui.briefFull ? 'Короткий бриф' : 'Повний бриф і джерела') : (S.ui.briefFull ? 'Live essentials' : 'Full brief and sources')}</button>`;
-    return toggle + `<div class="brief">${b.goal ? `<p><b>${esc(b.goal)}</b></p>` : ''}${selected.map((s) => `<h3>${esc(s.title)}</h3><ul>${(S.ui.briefFull ? s.items : s.items.slice(0, 5)).map((i, k) => (s.fulls || [])[k]
+    return renderVerbatim() + toggle + `<div class="brief">${b.goal ? `<p><b>${esc(b.goal)}</b></p>` : ''}${selected.map((s) => `<h3>${esc(s.title)}</h3><ul>${(S.ui.briefFull ? s.items : s.items.slice(0, 5)).map((i, k) => (s.fulls || [])[k]
       ? `<li class="pt"><details data-pt="${esc('brief:' + s.title + ':' + k)}"${S.ui.openPts['brief:' + s.title + ':' + k] ? ' open' : ''}><summary>${esc(i)}</summary><p>${esc(s.fulls[k])}</p></details></li>`
       : `<li>${esc(i)}</li>`).join('')}</ul>`).join('')}</div>
       ${S.briefText ? `<div><button class="link" type="button" data-act="brief-edit">${esc(t.edit)}</button></div>` : ''}`;
@@ -1472,7 +1488,12 @@
       <div class="tabs" role="tablist" style="margin-right:48px">${tabs.map((k) => `<button class="tab" role="tab" type="button" aria-selected="${k === tab}" data-act="${isSheet ? 'sheet-tab' : 'pane-tab'}" data-tab="${k}">${esc(k === 'onme' ? t.tabs.onme(openN) : k === 'deal' ? t.deal.tab : t.tabs[k])}</button>`).join('')}</div>
       <div class="panebody">${body}</div>
       ${tab === 'transcript' ? `<div class="panefoot"><span>${esc(t.legend)}</span>${S.ui.follow ? `<span>${esc(t.following)}</span>` : `<button class="link" type="button" data-act="follow">${esc(t.jump)}</button>`}</div>` : ''}`;
-    if (root.dataset.html !== paneHTML) { root.innerHTML = paneHTML; root.dataset.html = paneHTML; }
+    if (root.dataset.html !== paneHTML) {
+      // PB-102: an open Verbatim text keeps where the PM was reading when the pane is drawn again
+      root.querySelectorAll('.vb-text[data-vb]').forEach((el) => { S.ui.vbScroll[el.dataset.vb] = el.scrollTop; });
+      root.innerHTML = paneHTML; root.dataset.html = paneHTML;
+      root.querySelectorAll('.vb-text[data-vb]').forEach((el) => { el.scrollTop = S.ui.vbScroll[el.dataset.vb] || 0; });
+    }
     const pb = root.querySelector('.panebody');
     if (tab === 'transcript' && S.ui.follow) pb.scrollTop = pb.scrollHeight; else pb.scrollTop = top;
   }
@@ -1750,6 +1771,7 @@
         showToast({ text: S.lang === 'uk' ? 'Напиши, з ким дзвінок, його мету та потрібний документ. Enter оновить підготовку.' : 'Enter the participant, goal and source document. Press Enter to update preparation.', kind: 'info', at: Date.now() });
         return;
       case 'brief-full': S.ui.briefFull = !S.ui.briefFull; render(); return;
+      case 'vb-toggle': { const id = b.dataset.id; if (S.ui.vbOpen[id]) delete S.ui.vbOpen[id]; else S.ui.vbOpen[id] = true; render(); return; }   // PB-102
       case 'liveprep': post('liveprep', { a: 'open' }); return;   // 0.10.1 (A4): opens the Meeting Sheet in live mode
       case 'liveprep-cancel': post('liveprep', { a: 'cancel' }); return;
       case 'said':

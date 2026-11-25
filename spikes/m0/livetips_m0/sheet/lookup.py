@@ -381,8 +381,24 @@ def scope_docs(scope: Optional[dict], docs: List[dict], sheet=None) -> List[dict
     return out
 
 
+def _sheet_text(pp: Path, max_bytes: int) -> Optional[str]:
+    """PB-102 (review round 2): an earlier Meeting Sheet file is searched without its Verbatim copies. None: not such a
+    file or no copy in it (read as before); "" when it cannot be cleaned (skipped, never read raw)."""
+    try:
+        from . import verbatim as V
+        text = V.sheet_file_text(str(pp))
+    except Exception:  # noqa: BLE001
+        return ""
+    if text is None:
+        return None
+    return (_jsonl_text(text) if pp.suffix.lower() == ".json" else text)[:max_bytes]
+
+
 def _text_of(pp: Path, max_bytes: int, scope: Optional[dict] = None) -> str:
     """A text file as is; a pdf, pptx, xlsx or docx of a folder source through the shared readers."""
+    clean = _sheet_text(pp, max_bytes)
+    if clean is not None:
+        return clean
     if pp.suffix.lower() in TEXT_EXT or pp.name.endswith(".jsonl"):
         text = _register_scoped(pp, _read(pp, max_bytes), scope)
         if pp.suffix.lower() in (".json", ".jsonl") or pp.name.endswith(".jsonl"):
@@ -407,9 +423,11 @@ def collect(question: str, sheet=None, roots=(), max_files: int = 4000, max_byte
     seen = set()
     for pp, n, title in sheet_source_paths(sheet):
         seen.add(str(pp.resolve()))
-        text = _read(pp, max_bytes)
-        if pp.suffix.lower() in (".json", ".jsonl"):
-            text = _jsonl_text(text)
+        text = _sheet_text(pp, max_bytes)
+        if text is None:
+            text = _read(pp, max_bytes)
+            if pp.suffix.lower() in (".json", ".jsonl"):
+                text = _jsonl_text(text)
         for head, body in chunks(text):
             docs.append({"src": "[{}] {}".format(n, title) if n is not None else title, "path": str(pp),
                          "date": _date_of(pp, pp.name), "head": head, "text": body, "n": n})
