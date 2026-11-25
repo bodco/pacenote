@@ -76,7 +76,7 @@ not object storage), billing for storage (B10).
 |---|---|---|---|
 | Call metadata, summary, decisions, tasks, risks, Meeting Sheet JSON, numbers | yes (Postgres, [enc]) | unchanged | Postgres |
 | Transcript `<stem>.md`, `<stem>.app.md` | no (link to Drive copy only) | yes | object, `content` bucket |
-| Call notes `.notes.md`, brief `.brief.md`, `.sheet.md` | notes as summary only | yes (files) | object, `content` |
+| Call notes `.notes.md` and `.app.notes.md`, brief `.brief.md` and `.app.brief.md`, `.sheet.md` | notes as summary only | yes (files) | object, `content` |
 | `.work/` sidecars: `.tips.jsonl`, `.inbox.jsonl`, `.speakers.json`, `.sheet.json`, `.sheet.request.json`, cards, facts, the HubSpot snapshot and the rest of the 2.4 table | no | yes, one archive per call, **stripped**, only the files listed in 2.4 (default deny): `.speakers.json` by a field allowlist without voice vectors (`centroid`, `embs`, `lib_added`), Verbatim blocks and lines removed, `.voices.json`, semantic vectors, model logs and `<stem>.judge/` left out | object, `content` |
 | `.work/web/<host>` stored site pages, `live/google/` picked copies | no | yes, owner only (`docs/en/live-tips.md:2612-2613` says researched pages never reach the server; decision 18) | object, `content` |
 | Project register `live/commitments.jsonl`, `live/lessons.md`, `live/sources/` | register items only (D40, org projects) | yes (files) | object, `content` |
@@ -141,7 +141,7 @@ New Postgres table `objects` (RLS like `calls`, ADR 7.3):
 |---|---|
 | id, org_id, owner_id | UUID; `org_id` and `owner_id` from the session, never from the request |
 | call_id or project_id | exactly one |
-| kind | `transcript`, `transcript_app`, `notes`, `brief`, `sheet_md`, `work_archive`, `web_pages`, `google_copy`, `register`, `lessons`, `recording`, `recording_meta`, `project_file`, `evidence_snapshot` |
+| kind | `transcript` (`<stem>.md`), `transcript_app` (`<stem>.app.md`), `notes` (`.notes.md`), `notes_app` (`.app.notes.md`), `brief` (`.brief.md`), `brief_app` (`.app.brief.md`), `sheet_md`, `work_archive`, `web_pages`, `google_copy`, `register`, `lessons`, `recording`, `recording_meta`, `project_file`, `evidence_snapshot` |
 | rel_path **[enc]** | the path inside the project folder, so the Mac can restore the file at the same place (the content is exact except for stripped files, 2.4) |
 | rev, current | a new revision for every change; `current` marks the live one. Each revision is its own row with its own `object_id` (a new object key; an object key is never overwritten, so S3 versioning only holds deleted objects). A revision that is no longer current is kept 30 days after it was replaced (so a bad release or a wrong edit can be undone), then the nightly sweep deletes it like a deleted object (2.2); the current revision is kept until the call or the account is deleted or a retention rule removes it (4.5, decision 11) |
 | bytes, sha256_cipher | for verify and dedup on upload |
@@ -150,7 +150,7 @@ New Postgres table `objects` (RLS like `calls`, ADR 7.3):
 | verified_at, backup_verified_at | when the server confirmed the checksum (3.1), and when the nightly copy job confirmed the object in `pn-prod-backup` (same `sha256_cipher`); both are eviction conditions (4.2) |
 | wrapped_key, key_version | the object's data key, wrapped (section 3) |
 | bucket, created_at, deleted_at | |
-| visibility_class | `owner_only`, `call` (follows the call's visibility), `project_shared` (D40 items) |
+| visibility_class | `owner_only`, `call` (follows the call's visibility), `project_shared` (D40 items). The project register files (`register`, `lessons`, `live/sources/` as `register`) are `owner_only` (3.2) |
 
 `call_assets` (ADR 6.2) keeps its Drive links for history; a new `kind = server_object` row points to `objects`.
 
@@ -233,7 +233,9 @@ the entry names are a subset of the table above, the marker appears in no entry 
 (`sheet_md`), no number list appears in `.speakers.json`, the unknown file and keys are absent, `.facts.json` is dropped and logged by
 the content check, and building twice gives the same bytes. A second test lists the sidecar suffixes the code writes (the grep above) and fails when one
 is not named in any row of the table (the default-deny row does not count), so a new file gets a rule before it
-ships.
+ships. The visible call files outside `.work/` (`VISIBLE_CALL` and `VISIBLE_PREP` in `recorder/src/call_layout.py:13-14`:
+`.md`, `.app.md`, `.notes.md`, `.app.notes.md`, `.brief.md`, `.app.brief.md`, `.sheet.md`) are not archive entries:
+the test takes them from those two sets and checks that each has its own kind in 2.3 instead.
 
 ## 3. Encryption and access
 
@@ -276,10 +278,11 @@ The roles are unchanged: owner, admin, member (org); lead (team, D37); C-level (
 | Kind | Call owner | Lead of the owner's team, C-level | Org project member (D40) | Admin | Staff |
 |---|---|---|---|---|---|
 | Metadata, summary, decisions, tasks, risks, sheet (Postgres) | yes | yes (as today) | decisions, tasks, risks of non-private calls of the project (as today) | metadata counts only | metadata counts only |
-| Transcript, notes, brief | yes | **policy `share_transcripts`** (decision 4); the brief only if it carries no researched-page text (to check in phase 1 design, decision 18), otherwise owner only | no | no | no |
+| Transcript, notes, brief (and their `.app.` variants) | yes | **policy `share_transcripts`** (decision 4); the brief only if it carries no researched-page text (to check in phase 1 design, decision 18), otherwise owner only | no | no | no |
 | Recording | yes | **policy `share_recordings`** (decision 4) | no | no | no |
 | `.work` archive (the files of the 2.4 table: tips text, inbox, speakers, cards, facts, HubSpot snapshot) | yes | no | no | no | no |
 | `.sheet.md` file, stored web pages (`web_pages`), Google copies (`google_copy`) | yes | no (leads see the sheet copy in Postgres, which call sync already sends without researched pages) | no | no | no |
+| Project register files (`register`: `live/commitments.jsonl`; `lessons`: `live/lessons.md`; `live/sources/`) | yes | no | no: the file can hold items from private calls; members keep seeing the register items of non-private calls in Postgres (D40, as today) | no | no |
 | Project files | yes | no | org project files: members of the org project (D40, decision 6) | no | no |
 | Evidence store snapshot | yes | no | no | no | no |
 | Private call (any kind) | yes | fact and length only (D37) | no | no | no |
@@ -459,7 +462,7 @@ file and the summary row describe the same notes; the summary row stays the one 
 | Phase | What | Prerequisites | Can be rolled back by |
 |---|---|---|---|
 | 0 | Requirements before any upload: Postgres backups kept off the API server, nightly incremental bucket copy (new and changed objects only) to `pn-prod-backup` in a second location that sets `backup_verified_at`, a monthly restore test that includes a sample of objects, two offline copies of the master key; buckets created, `objects` table and API behind a flag | none | not needed |
-| 1 | Upload only: new calls and Upload history copy to the server; nothing evicted; owner-only access | phase 0 green; the archive tests of 2.4 (marker and vectors absent from the plaintext entries, every written suffix has a rule) pass | flag off; delete server objects (crypto-delete) |
+| 1 | Upload only: new calls and Upload history copy to the server; nothing evicted; owner-only access | phase 0 green; the archive tests of 2.4 (marker and vectors absent from the plaintext entries, every written suffix has a rule) pass; the section 10 acceptance grep is clean (also before phases 2 and 3) | flag off; delete server objects (crypto-delete) |
 | 2 | Lead and C-level access to transcripts and recordings by policy (decision 4); call page opens from the server; Drive upload optional | phase 1 on the owner's own calls for 2 weeks with zero checksum mismatches | policy off; nothing is evicted in phase 2, so every file is still on the owner's Mac, and Drive upload keeps today's setting until phase 3 is stable (6.2), so leads keep Drive links where the person shares them |
 | 3 | Eviction of recordings under the per-file rule of 4.2 (app media folder, 4.3); deletion offers (4.5); Settings > Storage | a restore of a sample of recordings from `pn-prod-backup` passed; the copy job sets `backup_verified_at` reliably for 2 weeks | eviction off and **Restore all to this Mac** (re-download) |
 | 4 | Optional text eviction (decision 7) with the G2 location flag (4.4), store snapshot (decision 8) | phase 3 stable for a month | same as 3 |
@@ -555,16 +558,18 @@ verbatim from `PRIVACY.md` and `TERMS.md` on main (line numbers of 25.11); the U
   Pacenote server, encrypted, when sync is on for the project (below); without recording, no audio leaves your Mac."
 - `PRIVACY.md:8`, "Call recording": "saves ... as a file in the project's `video/` folder on your Mac" and "It goes to
   Google Drive only when you upload it". Name the Pacenote server (encrypted, when sync is on) as the default second
-  place and Drive as optional, and say that from phase 3 older recordings can be removed from the Mac and opened
-  again from the server.
+  place and Drive as optional, and say that from phase 3 new recordings are saved in the app's own folder on the Mac
+  (not in `video/`, 4.3) and older recordings can be removed from the Mac and opened again from the server.
 - `PRIVACY.md:9`: "**Transcripts, voice prints, settings and logs** stay in your project folders, the app's folder and
   the macOS Keychain." Replace with: "**Your calls on the Pacenote server.** For each project where sync is on, the
   app also sends the call's transcript, notes, brief, Meeting Sheet, the call's working files (including the text of
-  the live tips and the web pages researched for it, seen only by you) and, if you record, the recording. They are
+  the live tips, seen only by you) and, if you record, the recording. They are
   encrypted on your Mac before they leave it, with a key of their own that is protected by your content key; the
   storage (Hetzner Object Storage, EU) holds only encrypted files. Your Mac keeps what your next calls need; older
   recordings can be removed from the Mac and opened again from the server. Voice prints (also the voice data in a
-  call's speaker list), settings, keys and the local usage log stay on your Mac."
+  call's speaker list), settings, keys and the local usage log stay on your Mac." With decision 18(a) add after "the
+  text of the live tips": "and the web pages researched for it"; with 18(b) the researched pages stay on the Mac
+  and the sentence stays as written.
 - `PRIVACY.md:13`, "Google": "Copies of the documents stay in the project folder on your Mac" becomes: "Copies of the
   documents read for a preparation stay in the project folder on your Mac and are stored with the call on the
   Pacenote server, encrypted, used only for your preparations."
@@ -637,16 +642,113 @@ Docs and README lines to update in the same release (EN and UK together; line nu
 
 | EN | UK | Today | Change |
 |---|---|---|---|
+| `README.md:7-8` | `README.uk.md:7-8` | "Audio is transcribed on the Mac and never leaves it" | audio is transcribed on the Mac and never sent to an AI; a recording you turn on is kept on the Pacenote server, encrypted, when sync is on |
+| `README.md:44` | `README.uk.md:44` | "saved on your Mac for watching a call again" and "Upload to your own Google Drive by a click or after every call, to share it." | kept with the call on the Pacenote server, encrypted, when sync is on; from phase 3 older recordings may leave the Mac (4.2); Drive stays optional for sharing |
 | `README.md:111` | `README.uk.md:112` | "your audio stays on your Mac (a call recording, if you turn it on, too, unless you upload it to your own Google Drive)" | audio is never sent to an AI; a recording goes to the Pacenote server encrypted when sync is on, and to Drive if you upload it |
 | `docs/en/live-tips.md:2879` | `docs/uk/live-tips.md:2896` | "Audio and transcripts stay on your Mac." | transcripts and recordings go to the Pacenote server encrypted for projects with sync on; voice prints stay on the Mac |
-| `docs/en/live-tips.md:2300` | `docs/uk/live-tips.md:2322` | "The recording stays on the Mac" | stays until it is evicted (phase 3, 4.2), then opens from the server |
+| `docs/en/live-tips.md:2300` | `docs/uk/live-tips.md:2322` | "The recording stays on the Mac" | from phase 3 new recordings are saved in the app media folder, not `video/` (4.3); a recording stays on the Mac until it is evicted (4.2), then opens from the server |
 | `docs/en/live-tips.md:2612-2613` | `docs/uk/live-tips.md:2631-2632` | "nothing goes to Pacenote servers" and "their titles, addresses and quotes stay on this Mac (only the site name goes, so a token in a page link is never sent)" | with 18(a) the stored pages and the full `.sheet.md` go with the call's files, encrypted, owner only; the sheet copy that others may see still leaves them out. With 18(b) the line stays |
 | `docs/en/live-tips.md:2909` | `docs/uk/live-tips.md:2925` | "Participants' names are not sent yet, their emails never." | as the PRIVACY lines above (decision 17) |
+| `docs/team/README.md:5-7` | `docs/team/README.uk.md:5-7` | "in Stage 1 transcripts stay with the person (on the Mac and, if they choose, in their Google Drive)" | with this spec transcripts go to the server, encrypted, for projects with sync on |
+| `docs/team/README.md:14` | `docs/team/README.uk.md:15` | "Recording, speech recognition, live tips and voice prints stay on each person's Mac." | speech recognition, live tips during the call and voice prints stay on the Mac; recordings and the tips text after the call go to the server, encrypted |
+| `docs/team/README.md:77-79` | `docs/team/README.uk.md:79-81` | "Transcripts stay in the project's `live/` folder in Drive" | transcripts are on the Pacenote server; the Drive copy is optional |
+| `docs/team/README.md:130` | `docs/team/README.uk.md:133` | "The Mac stays the source of truth for its own calls; the server holds a copy." | the server is the copy of record; the Mac is a cache (section 12) |
 | `docs/team/README.md:17` | `docs/team/README.uk.md:18` | "Audio never leaves the Mac. That is the privacy promise" | audio never goes to an AI; recordings go to the team's server encrypted, by policy (decision 4) |
 | `docs/team/README.md:121-125` | `docs/team/README.uk.md:124-128` | table "What goes to the server, and what never does": audio **never**, video and transcript only the link, live tips never | audio and video: the recording, encrypted, when sync is on; transcript: yes, encrypted; live tips: the text in the owner-only `.work` archive; voice prints: still never |
 | `docs/en/live-tips.md` sync section | `docs/uk/live-tips.md` | the list of what call sync sends | add the files of section 2.1 |
 
 `docs/en/live-tips.md:1165` ("the voice library stays on the Mac") stays true.
+
+**App text (EN and UK together).** The app makes the same promises in its own text strings, which users see at sign-in,
+in Settings and on the call page. They change in the release of the phase that makes them false, in
+`app/Resources/i18n/en.json` and `uk.json` (same keys), the tips window `app/Resources/tips/tips.js` (EN and UK tables)
+and the macOS permission text `app/Resources/InfoPlist/{en,uk}.lproj/InfoPlist.strings`. Keys and fragments are
+verbatim as of 25.11 (EN, then UK); the new wording follows PRIVACY above and is written EN and UK together.
+
+| Phase | Key | Today (EN / UK fragment) | Change |
+|---|---|---|---|
+| 1 | `gate.intro` (sign-in screen) | "Audio and transcripts stay on this Mac" / "Аудіо й транскрипти лишаються на цьому Маці" | audio is never sent to an AI; for projects with sync on, transcripts, the call's files and recordings are kept on the server, encrypted |
+| 1 | `account.what.never` (Settings > Account) | "Never: audio, video, transcripts, voice prints or the text of live tips." / "Ніколи: аудіо, відео, транскрипти, голосові відбитки і тексти живих підказок." | never: voice prints (also inside the speaker list), settings, keys, the local usage log |
+| 1 | `account.what.goes` | "links to your recording and transcript in Google Drive" and "Participants' names do not go yet; their email addresses never do." / "Імена учасників поки не надсилаються, їхні адреси не надсилаються ніколи." | add the files of 2.1 (transcript, notes, brief, sheet file, the call's working files with the tips text, the recording), encrypted; names and emails as `PRIVACY.md:14` (decision 17); researched pages only with decision 18(a) |
+| 1 | `settings.about.dataBody` | "Audio stays on this Mac. Transcripts, voice prints, settings and logs stay in your folders and the Keychain." / "Аудіо лишається на цьому Mac. Транскрипти, голосові відбитки, налаштування і логи лишаються у ваших папках і Keychain." | as `PRIVACY.md:7` and `:9` above |
+| 1 | `wiz.folder.sub` (new project) | "Nothing in it goes to the server." / "Нічого з неї не йде на сервер." | the calls in it go to the server, encrypted, when sync is on; other files of the folder only with decision 6 |
+| 1 | `page.has.note` (call page) | "The transcript and the audio stay on this Mac." / "Транскрипт і аудіо лишаються на цьому Маці." | say where this call is: on this Mac and on the Pacenote server, or on this Mac only (sync off or call left out) |
+| 1 | `onb.calls.rec.sound.sub` | "Stays on this Mac." / "Лишається на цьому Маку." | kept with the call; on the server, encrypted, when sync is on |
+| 1 | `page.rec.driveManual` | "Stays on this Mac; upload from the call page" / "Лишається на цьому Маці; завантаження зі сторінки дзвінка" | this line is the Drive status: "Not in Drive; upload from the call page" |
+| 1 | `rec.set.drive.sub` | "The recording stays on this Mac." / "Запис лишається на цьому Mac." | the Drive copy is for sharing; the recording is kept with the call (on the server when sync is on; from phase 3 it may leave this Mac, 4.2) |
+| 1 | `tracker.localBanner`, `tracker.kept` | "Everything here is kept in Pacenote on this Mac." and "Kept on this Mac" / "Усе тут зберігається в Pacenote на цьому Маку." and "Зберігається на цьому Маку" | the project register goes to the server as a file, owner only (2.1, 3.2): "kept in Pacenote on this Mac and, encrypted, on the Pacenote server" |
+| 1 | `tr.privacy`, `tr.nothingSent` (Transcribe window), and the rule text `rules/transcribe.yaml:15` | "Nothing leaves it until you click Add to Notion." and "Nothing is sent without a click." / "Нічого не виходить назовні, поки ви не натиснете Додати в Notion." and "Без кліку нічого не надсилається." | with a project chosen the transcript joins that project's `live/` folder as a call (`TranscribeWindow.swift:377`), so with sync on it also goes to the server, encrypted, without another click; say so |
+| 1 | the rule text `rules/google.yaml:42` | "kept on this Mac" (the Google copy) | as `PRIVACY.md:13`: also stored with the call on the server, encrypted, owner only (3.2) |
+| 1 | `sync.call.delete.m` | "Its notes, decisions, tasks, Meeting Sheet and Drive links are removed from the server" and "The files on this Mac and in Google Drive stay." / "Файли на цьому Маці і в Google Drive лишаються." | add the call's files, removed from the storage and its backups within 30 days (as `PRIVACY.md:14`); from phase 3 the download offer of 4.5 |
+| 1 | `account.export.sub` | "export.json with every call and part, and a readable Markdown file per call" / "export.json з кожним дзвінком і його частинами" | add the call's files in the folder layout (TERMS above) |
+| 1 | Audio promises: `onb.welcome.audio`, `home.welcome.body`, `how.12`, `setup.step.recorder.why`, `set.audioAndVoicePrints`, `page.transcript.local`, `tips.js` `onDevice` (EN line 101, UK line 192), `NSMicrophoneUsageDescription` (both `InfoPlist.strings`) | EN: "Audio stays on this Mac.", "The sound stays on this Mac", "Audio never leaves the Mac", "audio never leaves the Mac", "Audio and voice prints never leave the Mac", "Audio stayed on this Mac.", 'Audio stays on this Mac', "Audio never leaves it." / UK: "Аудіо лишається на цьому Маку.", "Звук лишається на цьому Маці", "Аудіо ніколи не залишає Mac", "аудіо ніколи не залишає Mac", "Аудіо й голосові відбитки ніколи не залишають Mac", "Аудіо лишилось на цьому Маку.", 'Аудіо лишається на цьому Mac', "Аудіо його не залишає." | false for a recorded call with sync on. New core: "Speech is recognised on this Mac; audio is never sent to an AI", plus, where the text has room, "a recording you turn on is kept on the Pacenote server, encrypted, when sync is on". Voice prints keep "never leave the Mac". The tips window footer `onDevice` becomes "Transcribed on this Mac" / "Розпізнається на цьому Mac" |
+| 2 | `team.mark.rec`, `team.drive.rec`, `team.drive.transcript` (lead's team list) | "Has a recording in Drive", "Open the recording in Drive", "Open the transcript in Drive" / "Є запис у Drive", "Відкрити запис у Drive", "Відкрити транскрипт у Drive" | with `share_recordings` or `share_transcripts` on (decision 4), new labels that open from the server; the Drive labels stay for calls that only have a Drive link |
+| 2 | `rec.saved.notify`, `rec.set.folder.sub` | "Upload it to Google Drive from the call page." and "To keep recordings on a shared drive or show them to your lead, move or share this folder in Google Drive." / "Вивантажити в Google Drive можна зі сторінки дзвінка." and "Щоб записи лежали на спільному диску або їх бачив керівник" | Drive becomes optional (6.2): the lead sees recordings through the server by policy; the Drive upload stays as an option |
+| 3 | `rec.set.where`, `call.record.help`, `su.opt.record.sub`, `tips.js` recording `hint` (EN line 21, UK line 114) | "Saved on this Mac in <project>/video/", "Saved on this Mac in the project's video folder.", "Saved on this Mac.", 'Saved on this Mac in the project' / "Зберігається на цьому Mac у <проєкт>/video/", "Зберігається на цьому Mac у папці video проєкту.", "Зберігається на цьому Маку.", 'Зберігається на цьому Mac у папці video проєкту' | new recordings go to the app media folder (4.3) and older ones may be removed from this Mac and open from the server; "Never sent to an AI" stays |
+| 3 | `account.delete.sub`, `account.delete.m1`, `account.notice.deleted` | "Calls on this Mac and files in your Google Drive stay.", "Calls on this Mac and files in Google Drive are not touched." and "Calls on this Mac and files in Google Drive stay." / "Дзвінки на цьому Маці і файли у вашому Google Drive лишаються.", "Дзвінки на цьому Маці і файли в Google Drive не зачіпаються." and "Дзвінки на цьому Маці і файли в Google Drive лишаються." | files that exist only on the server are shown first with Download to this Mac (4.5) |
+| 3 | `plans.local`, `proj.remove.keepSub`, `set.removesAProjectOr` | "Everything on your Mac: tips, Meeting Sheet, recording and the rest.", "The folder {path} stays on your Mac with its calls and notes.", "The folders stay on your Mac" / "Усе на вашому Маці: підказки, Meeting Sheet, запис та інше.", "Папка {path} лишається на вашому Маці з дзвінками і нотатками.", "Папки лишаються на Mac" | add that recordings removed from this Mac (4.2) stay on the server and open from there |
+| decision 3 | `account.syncLater` | "Off by default" / "За замовчуванням вимкнено" | with 3(a): on for new projects; with 3(c): stays |
+
+Stay true, no change (with the reason): `setup.step.voices.why`, `lai.voicesOn`, `set.removesThisPersonS` (voice
+prints stay on the Mac, decision 9); `set.builtInBgeM3`, `mem.consent.local`, `ai.group.sub.mac` (the local model
+and search, no server embeddings, section 5, D57); `usage.toggle.sub` (the local usage log is not uploaded);
+`htask.footer`, `int.hubspot.sync.autoFooter`, `crm.deal.evidence`, `crm.unverified` (HubSpot, not the Pacenote
+server); `ntset.autoAdd.i`, `ntset.autoAddRow.tasks.i`, `nlc.body` (Notion and the local Notion copy, `PRIVACY.md:12`
+stays); `account.optional` (without signing in nothing is uploaded); `account.notice.out`,
+`account.notice.outEverywhere`, `account.everywhere.m` (signing out deletes nothing, on the Mac or the server);
+`sync.page.deleted`, `sync.page.removed`, `sync.line.deleted`, `sync.line.removed` ("not sent again" holds);
+`wiz.card.sub`, `wiz.card.shared`, `proj.sample.sub` (the project card and the sample project are not call files);
+`orgsetup.projects.sub` (calls move with their files, D36); `onboarding.permissions.body`, `feat.transcribe.what`,
+`module.transcribe.what`, `home.transcriptSaved`, `settings.pane.recording` (recognition and recording happen on the
+Mac); `module.drive.what`, `rec.drive.done`, `rec.set.transcript`, `rec.page.transcriptInDrive` (the optional Drive
+copy); `proj.leaves`, `gen.group.sub.data` (headings); `after.draftTo`, `orgsetup.invite.failed`,
+`call.whatMatters.info`, `ai.chain.footer` (not about where call files live); `rules/whatsnew.yaml:154` and `:155` (a past
+release note). Strings that only say text goes to an AI (`onb.claude.without`) are not affected.
+Also hit by the grep below and true after this spec: `how.10`, `how.32` (nothing is sent during the call or to the
+client; uploads run after the call); `tracker.foot.local`, `dec.footnote`, `page.trackerNote`, `mem.useAI.off`
+(decisions and the Tracker stay on the call page or go to Notion); keys and tokens in the Keychain:
+`settings.pane.keys`, `keys.claude.hint`, `int.hubspot.keyFooter`, `int.keysNote`, `ntauth.hint`, `google.intro`,
+`onb.tools.foot`, `rules/crm.yaml:3`, `rules/google.yaml:2`; nothing is mailed or posted for the person:
+`after.neverSends`, `onb.calls.consent.on`, `feat.followup.what`, `crm.row.email`, `sheet.ui.export.nothingSent`,
+`page.fu.reviewHelp`, `orgsetup.invite.sub`, `tips.js` `draftTo` and `neverSends`; recording status lines:
+`menubar.status.audioFailing`, `tips.noAudio.title`, `sys.notRecording` and their `tips.js` twins; unrelated wording:
+`pm.left`, `local.fallback.help`, `economy.what.jobs`, `sheet.ui.s4.reserve`, `rec.set.folder.defaultAsk.sub`,
+`crm.log.unreadable`, `set.activeOfferedInStart`, `again.workingHint`, `modules.tracker.sub`,
+`account.methods.disconnect.m`, `org.join.defaultSub` (personal space, D36), `rules/voices.yaml:47` (the voice
+library); `tw.endInfo` (the transcript and tips stay in the project folder; text eviction is
+phase 4 with decision 7 only, and then this line changes with it); `team.private.page` (a private call stays
+private, 3.2); rules and skill lines about Notion, HubSpot and the local model (`rules/ai.yaml:61`,
+`rules/usage.yaml:13`, `rules/analytics.yaml:61`, `rules/notion-tasks.yaml:67`, `rules/hubspot-tasks.yaml:4`, `:52`
+and `:96`, `rules/commitments.yaml:102`, `rules/whatsnew.yaml:7`, `skill/SKILL.md:104` and `:359`). `rules/generated/`
+follows its sources and is not edited by hand.
+
+Not user facing, updated with the code of the phase (no promise to users): `recorder/README.md:98` and `:175`
+("Everything stays on this Mac", about the recorder's network use), and the code comments `DriveRecordings.swift:4`,
+`Projects.swift:30` and `CallSyncCore.swift:349` (PB-37, decision 18). The existing checks that pin related strings
+stay valid: `EvidenceChecks.swift:347` (`mem.consent.local`) and `main.swift:2716` (the Verbatim block); a check that
+pins a changed key is updated with it.
+
+**Acceptance grep (each phase release, closes the class).** Before the release of phases 1, 2 and 3, run over
+`PRIVACY*.md`, `TERMS*.md`, `README*.md`, `docs/`, `app/Resources/i18n`, `app/Resources/tips`,
+`app/Resources/InfoPlist`, `rules/` and `skill/`:
+
+```
+grep -rniE "(stay(s|ed)?|kept|saved|lives?) (on|in) (this|your|the) Mac|stay(s)? in your|never (leave|leaves|go|goes|sent)|(leave|leaves) (this|the) Mac|not sent|not touched|nothing (in it )?(goes|leaves)|only the link|transcripts?.{0,80}server|\*\*never\*\*"
+grep -rniE "лиша(є|ю)ться (на|в|у) (цьому|вашому|ваших|папці|папках|Mac|Мак)|лиша(є|ю)ться\.|лишилось на|залиша(є|ють)|не покида|не надсила|не йде|не виходить|не зачіпа|лише посилання|\*\*ніколи\*\*"
+```
+
+The step has two parts:
+
+1. **Every key and line in the tables of this section is changed** in the release of its phase. This part carries the
+   label rows the grep does not catch (the Drive labels, `account.export.sub`, `plans.local`, `account.syncLater`).
+2. **Every grep hit is triaged**: changed in that release, or named in the stay-true list with its reason; a hit in
+   neither fails the release. The pull request lists the hits and their status.
+
+Exempt as whole files: `rules/whatsnew.yaml` (past release notes) and `rules/generated/` (follows its sources). UK
+files follow their EN line (the same change). For the app text (i18n, tips window, InfoPlist) the tables above are the
+full list as of 25.11. For PRIVACY, TERMS, the READMEs and `docs/team` the hits of 25.11 are in the tables or stay true
+(`PRIVACY.md:18`, the local usage log). `docs/en` and `docs/uk` (32 and 51 hit lines on 25.11)
+are not fully triaged here: the docs table above is the baseline and the phase 1 pull request triages the rest.
 
 Lawyer questions this adds to ADR 14.5: storing transcripts and recordings makes Pacenote a processor of call content
 for organizations (DPA needed before the first paying team, decision 13); employer client data (ADR 18 question 7,
