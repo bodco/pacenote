@@ -691,6 +691,8 @@ final class StartCallModel: ObservableObject {
     /// H2 (PB-58, fix round 7): the file the PM picked in the picker. Start call also fills chosenPrep by title and
     /// time, so only this says the choice was the PM's (crm_chosen).
     var pickedPrep: String?
+    /// PB-89: where the PM pressed Start (call_started.from, a start_from value); "" = a place with no value, not sent.
+    var startFrom = ""
     /// "default" | "builtin" | "uid:<UID>" (same values as the recorder's mic_device and the window's Mic menu).
     @Published var micDevice = UserDefaults.standard.string(forKey: "micDevice") ?? "default" {
         didSet { UserDefaults.standard.set(micDevice, forKey: "micDevice") }
@@ -985,6 +987,8 @@ extension AppDelegate {
         }
         let before = CallEngine.shared.currentCallID
         CallEngine.shared.currentCallID = model.id
+        CallEngine.shared.startFrom = model.startFrom          // PB-89: call_started.from, once (a kept model starts again
+        model.startFrom = ""                                     // elsewhere without it)
         let err = CallEngine.shared.start(request: req, apiAllowed: model.project?.apiAllowed ?? true) { [weak self] st in
             self?.openTips(for: CallFiles(tips: st.tipsFile ?? "", inbox: st.inboxFile ?? "",
                                           status: CallEngine.shared.statusPath,

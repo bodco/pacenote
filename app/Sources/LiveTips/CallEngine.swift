@@ -39,6 +39,10 @@ final class CallEngine {
     var lastLines = 0
     // 0.24.1 (F6, F7): the readiness answer of the call being started, End call time, the model load at the start
     var startReady = true
+    /// PB-89: where the PM pressed Start (call_started.from, a start_from value; "" = not sent) and whether a
+    /// preparation finished during this call joined it (call_ended.brief = late).
+    var startFrom = ""
+    private var lateBrief = false
     private var stopAt: Date?
     private var loadingSince: Date?
     private var sawLoading = false, sawRecording = false
@@ -168,7 +172,7 @@ final class CallEngine {
     func start(request: [String: Any], apiAllowed: Bool, onReady: @escaping (EngineStatus) -> Void) -> String? {
         UsageLog.log("call_started", ["type": String(((request["call_type"] as? String) ?? "auto").prefix(20)),
                                       "sales": ((request["sales"] as? [String: Any])?["enabled"] as? Bool) ?? false,
-                                      "has_brief": !((request["brief"] as? String) ?? "").isEmpty])
+                                      "has_brief": CallBriefSignal.chosen(request)])     // PB-89: was always false
         usageStart = Date()
         EditLog.callType = String(((request["call_type"] as? String) ?? "").prefix(20))   // 0.9.4: kept with every correction
         if isRunning { return "A call is already running" }
@@ -187,8 +191,9 @@ final class CallEngine {
         writeTranslateConfig(allowed: translateRoute)
         callContext = (request["context"] as? String) ?? ""
         callRequest = request
-        let tipsRoute = config.ai.tips
-        AnalyticsTracker.onMain { AnalyticsTracker.shared.callStarted(request: request, tipsRoute: tipsRoute) }     // 0.19.0 (S4): v2 call_started
+        lateBrief = false
+        let tipsRoute = config.ai.tips, from = startFrom
+        AnalyticsTracker.onMain { AnalyticsTracker.shared.callStarted(request: request, tipsRoute: tipsRoute, from: from) }     // 0.19.0 (S4): v2 call_started
         sidecarRestarts = 0
         projectRoot = (request["project_dir"] as? String) ?? ""
         projectConfig = (request["project_config"] as? String) ?? ""
@@ -328,6 +333,7 @@ final class CallEngine {
         // H2: the HubSpot link from Refresh, when the call has none. Fix round 6: only one saved for this call's calendar
         // occurrence; a late preparation also joins by title and day, which never proves whose call it is.
         CRMLinkCarry.carry(from: base, to: stem, occurrence: callRequest["crm_event"] as? String ?? "", chosen: false)
+        lateBrief = true                     // PB-89: call_ended.brief = late
         notify(L("eng.prepLoaded"))
         // the tips engine reloads now instead of at its next fifth line
         if let inbox = EngineStatus.load(path: statusPath).inboxFile, let h = FileHandle(forWritingAtPath: inbox) {
@@ -1023,7 +1029,9 @@ final class CallEngine {
         if let s = usageStart {
             let mins = Int(Date().timeIntervalSince(s) / 60)
             UsageLog.log("call_ended", ["minutes": mins]); usageStart = nil
-            AnalyticsTracker.onMain { AnalyticsTracker.shared.callEnded(minutes: mins, recorded: CallRecorder.shared.state != "off", lines: lines, stopMs: stopMs) }
+            // PB-89: read now, before the hop to the main thread (an Up next switch may start the next call meanwhile)
+            let brief = CallBriefSignal.atEnd(transcript: file, chosen: CallBriefSignal.chosen(callRequest), late: lateBrief)
+            AnalyticsTracker.onMain { AnalyticsTracker.shared.callEnded(minutes: mins, recorded: CallRecorder.shared.state != "off", lines: lines, stopMs: stopMs, brief: brief) }
         }
         AppLog.app("call: ended, \(lines) lines" + (stopMs.map { ", \($0) ms after End call" } ?? ""))
         if lines == 0, let f = file {

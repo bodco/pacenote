@@ -53,6 +53,8 @@ enums:
   perf_what: [app_ready, prep_build, sheet_open, first_tip, answer_tip, transcribe_minute, rec_start, notes_after,
               search, sync_push, sync_pull, index_build, console_open, team_list, team_search]
   update_how: [prompt, background, manual]
+  # PB-89: the call's preparation at its end (none; chosen at the start; picked up by the engine; finished during it)
+  brief_kind: [none, chosen, auto, late]
 
 # --- screens (scr) and their parts (sub) -------------------------------------------------------------------------------
 # screen_view {scr, sub, from}. `from` is the previous scr of the session (or `launch`). A screen not in this list is
@@ -161,10 +163,13 @@ events:
   screen_view: {scr: screen, sub: screen_sub, from: screen}
   action: {scr: screen, name: action}
   # 4. features (schema 1 events, with sharper parameters)
+  # PB-89: has_brief = a preparation was chosen at the start (prep_file); before this release it was always false.
+  # sheet and from are sent since PB-89 (from only where the start point has a start_from value).
   call_started: {type: call_type, sales: bool, has_brief: bool, sheet: sheet_mode, from: start_from, provider: provider,
                  org: org_kind, recording: bool, consent: bool, ready: bool}
   call_ended: {minutes: minutes, tips: count, rated: count, asks: count, cpu_peak: bucket_pct, recorded: bool,
-               lines: count, stop_ms: ms}               # 0.24.1 (F7): lines 0 = nothing was recorded; End call to the end
+               lines: count, stop_ms: ms,           # 0.24.1 (F7): lines 0 = nothing was recorded; End call to the end
+               brief: brief_kind}                   # PB-89: from the call's sidecar files at its end
   # 0.24.1 (F6, F7): a start refused by the readiness check, and the recorder's model load at the start of a call
   call_blocked: {reason: code, from: start_from}
   rec_model_load: {seconds: seconds, ok: bool}

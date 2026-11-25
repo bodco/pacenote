@@ -5413,10 +5413,59 @@ func emailAuthB13() {
     expect(S.gate(sessionKnown: true, signedIn: true, onboarded: true, callLive: false) == .home, "b13: Home")
 }
 
+/// PB-89 (owner 25.11): has_brief was always false (it read a "brief" key no request has). Now call_started.has_brief
+/// follows prep_file, call_started sends sheet and from, and call_ended.brief comes from the call's sidecar files.
+func briefSignalPB89() {
+    typealias S = CallBriefSignal
+    typealias A = Analytics
+    let fm = FileManager.default
+    let tmp = fm.temporaryDirectory.appendingPathComponent("pb89-\(UUID().uuidString)").path
+    let live = tmp + "/live"
+    try? fm.createDirectory(atPath: live, withIntermediateDirectories: true)
+    defer { try? fm.removeItem(atPath: tmp) }
+    // the start: a chosen preparation is has_brief true; no prep_file (the old code's only input was "brief") is false
+    let prep = live + "/prep-2026-11-25-1000-acme-sync"
+    fm.createFile(atPath: prep + ".brief.md", contents: Data("# Live Brief: Acme sync\n".utf8))
+    expect(S.chosen(["prep_file": prep + ".brief.md"]) && !S.chosen([:]) && !S.chosen(["prep_file": ""])
+           && !S.chosen(["brief": "old key"]), "pb89: has_brief follows prep_file")
+    // sheet: none without a sheet, the sheet's own mode with one, none for a mode outside quick/expert
+    expect(S.sheet(["prep_file": prep + ".brief.md"]) == "none" && S.sheet([:]) == "none", "pb89: no sheet is none")
+    fm.createFile(atPath: prep + ".sheet.json", contents: Data(#"{"mode": "expert", "title": "Acme sync"}"#.utf8))
+    expect(S.sheet(["prep_file": prep + ".brief.md"]) == "expert" && S.sheet(["prep_file": prep + ".sheet.json"]) == "expert",
+           "pb89: the chosen sheet's mode")
+    fm.createFile(atPath: prep + ".sheet.json", contents: Data(#"{"mode": "Acme"}"#.utf8))
+    expect(S.sheet(["prep_file": prep + ".sheet.json"]) == "none", "pb89: an unknown mode is none")
+    // the end: from the call's sidecar files next to its transcript (<stem>.app.md -> <stem>.app.brief.md)
+    let call = live + "/2026-11-25-1000-acme-sync.app.md"
+    fm.createFile(atPath: call, contents: Data("Mike: hello\n".utf8))
+    expect(S.atEnd(transcript: call, chosen: true, late: false) == "none" && S.atEnd(transcript: nil, chosen: true, late: true) == "none",
+           "pb89: no sidecar is none, even when one was chosen")
+    fm.createFile(atPath: live + "/2026-11-25-1000-acme-sync.app.brief.md", contents: Data("b".utf8))
+    expect(S.atEnd(transcript: call, chosen: true, late: false) == "chosen" && S.atEnd(transcript: call, chosen: false, late: false) == "auto"
+           && S.atEnd(transcript: call, chosen: true, late: true) == "late" && S.atEnd(transcript: call, chosen: false, late: true) == "late",
+           "pb89: chosen, auto, late")
+    try? fm.removeItem(atPath: live + "/2026-11-25-1000-acme-sync.app.brief.md")
+    fm.createFile(atPath: live + "/2026-11-25-1000-acme-sync.app.sheet.json", contents: Data("{}".utf8))
+    expect(S.atEnd(transcript: call, chosen: false, late: false) == "auto", "pb89: a sheet alone counts as a preparation")
+    // the catalog takes every value and sends sheet, from and brief; anything else is dropped
+    for v in ["none", "chosen", "auto", "late"] { expect(A.valid("call_ended", "brief", "brief_kind", v, scr: nil), "pb89: brief \(v)") }
+    expect(!A.valid("call_ended", "brief", "brief_kind", "Acme brief", scr: nil), "pb89: brief is a closed list")
+    let st = A.clean("call_started", ["type": "sales", "has_brief": true, "sheet": "expert", "from": "upcoming_page"], scr: nil)
+    expect(st?.p["has_brief"] as? Bool == true && st?.p["sheet"] as? String == "expert" && st?.p["from"] as? String == "upcoming_page"
+           && st?.dropped == 0, "pb89: call_started keeps has_brief, sheet and from")
+    let en = A.clean("call_ended", ["minutes": 30, "brief": "late"], scr: nil)
+    expect(en?.p["brief"] as? String == "late" && en?.dropped == 0, "pb89: call_ended keeps brief")
+    // every from the app sets is a start_from value
+    for f in ["home", "menu_bar", "upcoming_page", "notification", "sheet"] {
+        expect(A.valid("call_started", "from", "start_from", f, scr: nil), "pb89: from \(f)")
+    }
+}
+
 teamCallsB9()
 entitlementsB3()
 entitlementsB3UI()
 analyticsS4()
+briefSignalPB89()
 selfServe0190()
 consolePlatform0190()
 componentsD3()

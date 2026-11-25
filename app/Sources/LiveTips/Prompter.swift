@@ -819,6 +819,7 @@ final class PrompterController: NSObject, NSWindowDelegate, WKScriptMessageHandl
             guard let app = NSApp.delegate as? AppDelegate else { return }
             if CallEngine.shared.isRunning { window.close(); return }    // the next call is already starting (Up next switch)
             if let n = UpNext.shared.first {
+                n.startFrom = ""            // PB-89: the tips window has no start_from value
                 if let e = app.launch(n) { app.notifySwitchFailed(e, n) }
             } else {
                 window.close()
@@ -1124,7 +1125,8 @@ extension PrompterController {
             case "switch-call":
                 MainActor.assumeIsolated {
                     guard let app = NSApp.delegate as? AppDelegate else { return }
-                    if let n = UpNext.shared.first { app.confirmSwitch(to: n, on: window) } else { StartCallWindow.show(delegate: app, planOnly: true) }
+                    // PB-89: the tips window has no start_from value
+                    if let n = UpNext.shared.first { n.startFrom = ""; app.confirmSwitch(to: n, on: window) } else { StartCallWindow.show(delegate: app, planOnly: true) }
                 }
             default: break
             }

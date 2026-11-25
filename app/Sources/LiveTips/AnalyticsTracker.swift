@@ -316,7 +316,7 @@ final class AnalyticsTracker {
         return o.isEmpty ? nil : o
     }
 
-    func callStarted(request: [String: Any], tipsRoute: String) {
+    func callStarted(request: [String: Any], tipsRoute: String, from: String = "") {
         let me = PacenoteAccount.shared.me
         let dir = (request["project_dir"] as? String) ?? ""
         let proj = dir.isEmpty ? nil : ProjectRegistry.load(from: AppPaths.projects).projects.first { $0.root == dir }
@@ -325,16 +325,18 @@ final class AnalyticsTracker {
         let rec = AppConfig.load(from: AppPaths.config).recording.auto
         var p: [String: Any] = ["type": Analytics.callType(request["call_type"] as? String),
                                 "sales": ((request["sales"] as? [String: Any])?["enabled"] as? Bool) ?? false,
-                                "has_brief": !((request["brief"] as? String) ?? "").isEmpty,
+                                "has_brief": CallBriefSignal.chosen(request), "sheet": CallBriefSignal.sheet(request),   // PB-89
                                 "provider": callProvider, "recording": rec, "ready": CallEngine.shared.startReady]
+        if !from.isEmpty { p["from"] = from }          // PB-89: a value outside start_from is dropped by clean()
         if let o = callOrg, let org = me?.org(o) { p["org"] = org.isPersonal ? "personal" : "team" }
         track("call_started", p, o: callOrg)
         begin("first_tip")
     }
 
-    func callEnded(minutes: Int, recorded: Bool, lines: Int? = nil, stopMs: Int? = nil) {
+    func callEnded(minutes: Int, recorded: Bool, lines: Int? = nil, stopMs: Int? = nil, brief: String? = nil) {
         var p: [String: Any] = ["minutes": min(max(minutes, 0), 1440), "tips": callCounts.tips, "rated": callCounts.rated,
                                 "asks": callCounts.asks, "recorded": recorded]
+        if let b = brief { p["brief"] = b }                                  // PB-89: none, chosen, auto, late
         if let l = lines { p["lines"] = min(max(l, 0), 100_000) }            // 0.24.1 (F7): 0 = nothing was recorded
         if let s = stopMs { p["stop_ms"] = min(max(s, 0), 3_600_000) }
         track("call_ended", p, o: callOrg)
