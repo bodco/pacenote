@@ -298,6 +298,29 @@ def out_reason(route: str, err: Optional[str]) -> Optional[str]:
     return None
 
 
+# PB-97 (owner 25.11): a rejected API key. A key route out for "auth" (401 or 403) carries "rejected": <status> (0 when
+# the error names none); the mark stays through any other outage and goes only with mark_up. The app disables the
+# route in every AI picker, never assigns it and shows an alert (LiveTipsCore AIKeyRejected, same rules).
+KEY_ROUTES = ("api", "openai", "gemini")
+
+
+def rejected_status(err: Optional[str]) -> Optional[int]:
+    """401 or 403 named in an error text, else None."""
+    import re
+    m = re.search(r"(?<!\d)(401|403)(?!\d)", err or "")
+    return int(m.group(1)) if m else None
+
+
+def rejected_mark(route: str, reason: str, err: Optional[str], previous) -> Optional[int]:
+    if route not in KEY_ROUTES:
+        return None
+    prev = previous if isinstance(previous, int) and not isinstance(previous, bool) else None
+    if reason == "auth":
+        s = rejected_status(err)
+        return s if s is not None else (prev if prev is not None else 0)
+    return prev
+
+
 class RouteState:
     """The shared state file: {"api": {"down": bool, "reason", "since", "checked"}, "code": {...}}."""
 
@@ -333,7 +356,7 @@ class RouteState:
         checked = cur.get("checked")
         return checked is None or time.time() - float(checked) >= every_s
 
-    def mark_down(self, route: str, reason: str, until: Optional[float] = None) -> None:
+    def mark_down(self, route: str, reason: str, until: Optional[float] = None, error: Optional[str] = None) -> None:
         with self.lock:
             d = self.read()
             cur = d.get(route) or {}
@@ -342,6 +365,9 @@ class RouteState:
                         "checked": now}
             if until and until > now:
                 d[route]["until"] = float(until)        # 0.10.0 (AI chain): out until the limit resets
+            rej = rejected_mark(route, reason, error, cur.get("rejected"))
+            if rej is not None:
+                d[route]["rejected"] = rej              # PB-97: a rejected key, kept until mark_up
             self._write(d)
 
     def mark_up(self, route: str) -> None:
@@ -615,7 +641,7 @@ class RoutedProvider(Provider):
                     if r != self.preferred:
                         c.switched_from = self.preferred
                 return c
-            self.state.mark_down(r, reason, c.reset_at or reset_time(c.error))
+            self.state.mark_down(r, reason, c.reset_at or reset_time(c.error), error=c.error)
             nxt = next((x for x in order if x not in tried and self._try_now(x)), None)
             if nxt is None:
                 return c
@@ -668,7 +694,7 @@ class RoutedProvider(Provider):
                          cache_ttl=None, extra=None)
         note_account_usage(route, c.account_usage, self.state.path)
         if c.error:
-            self.state.mark_down(route, out_reason(route, c.error) or "error", c.reset_at or reset_time(c.error))
+            self.state.mark_down(route, out_reason(route, c.error) or "error", c.reset_at or reset_time(c.error), error=c.error)
             return False
         self.state.mark_up(route)
         return True
@@ -729,13 +755,13 @@ class RoutedProvider(Provider):
             if not c.error:
                 self.state.mark_up(r)
             return c
-        self.state.mark_down(r, reason)
+        self.state.mark_down(r, reason, error=c.error)
         o = other(r)
         if self.auto and self.usable(o) and not self.state.is_down(o):
             c2 = self._run(o, **kw)
             r2 = out_reason(o, c2.error)
             if r2:
-                self.state.mark_down(o, r2)
+                self.state.mark_down(o, r2, error=c2.error)
             if not c2.error:
                 c2.switched_from = r
                 return c2
@@ -750,7 +776,7 @@ class RoutedProvider(Provider):
             g = self._run(b, **kw)
             why = out_reason(b, g.error)
             if why:
-                self.state.mark_down(b, why)
+                self.state.mark_down(b, why, error=g.error)
             if not g.error:
                 g.switched_from = route
                 return g

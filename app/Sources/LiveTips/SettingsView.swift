@@ -19,7 +19,8 @@ enum KeyState: Equatable {
 
 /// Checks a key with one cheap read-only request. Never logs the key.
 enum KeyTester {
-    static func claude(key: String, workspace: String?) async -> (Bool, String, [String]) {
+    /// PB-97: the HTTP status comes back too (0 when there was no answer), so a 401 or 403 marks the key rejected.
+    static func claude(key: String, workspace: String?) async -> (Bool, String, [String], Int) {
         var req = URLRequest(url: URL(string: "https://api.anthropic.com/v1/models?limit=100")!)
         req.setValue(key, forHTTPHeaderField: "x-api-key")
         req.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
@@ -31,12 +32,12 @@ enum KeyTester {
             let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
             if code == 200 {
                 let ids = ((obj?["data"] as? [[String: Any]]) ?? []).compactMap { $0["id"] as? String }
-                return (true, "Works, \(ids.count) models available", ids)
+                return (true, "Works, \(ids.count) models available", ids, code)
             }
             let msg = ((obj?["error"] as? [String: Any])?["message"] as? String) ?? "HTTP \(code)"
-            return (false, msg, [])
+            return (false, msg, [], code)
         } catch {
-            return (false, error.localizedDescription, [])
+            return (false, error.localizedDescription, [], 0)
         }
     }
 
@@ -317,6 +318,14 @@ final class SettingsModel: ObservableObject {
 
     func removeProject(_ slug: String) { registry.projects.removeAll { $0.slug == slug } }
 
+    /// PB-97: the status of KeyTester's "HTTP 401" message; 0 for anything else (offline, a timeout).
+    static func httpStatus(_ msg: String) -> Int { msg.hasPrefix("HTTP ") ? Int(msg.dropFirst(5)) ?? 0 : 0 }
+
+    /// PB-97: the AI route of an AI key.
+    static func keyRoute(_ k: SecretStore.Key) -> String? {
+        k == .claudeAPIKey ? AIRoute.api : k == .openaiAPIKey ? AIRoute.openai : k == .geminiAPIKey ? AIRoute.gemini : nil
+    }
+
     static func friendly(_ msg: String) -> String {
         let m = msg.lowercased()
         if m.contains("401") || m.contains("invalid x-api-key") || m.contains("authentication") || m.contains("unauthorized") {
@@ -362,6 +371,7 @@ final class SettingsModel: ObservableObject {
     func remove(_ key: SecretStore.Key) {
         store.remove(key)
         keyState[key] = .notSet
+        if let r = Self.keyRoute(key) { AIRoute.forgetRejected(r) }      // PB-97: no mark left for a removed key
         refreshMasks()
         AIRoute.autoAssign()        // 0.24.1 (F3): the jobs move to an AI that is still connected
     }
@@ -382,14 +392,17 @@ final class SettingsModel: ObservableObject {
             } else if key == .openaiAPIKey {
                 let (ok, msg) = await KeyTester.openai(key: v)
                 keyState[key] = ok ? .ok(msg) : .failed(msg)
+                AIRoute.noteKeyCheck(AIRoute.openai, ok: ok, status: Self.httpStatus(msg))     // PB-97
                 if ok { ModelCatalogStore.shared.refresh(.openai, force: true) }
             } else if key == .geminiAPIKey {
                 let (ok, msg) = await KeyTester.gemini(key: v)
                 keyState[key] = ok ? .ok(msg) : .failed(msg)
+                AIRoute.noteKeyCheck(AIRoute.gemini, ok: ok, status: Self.httpStatus(msg))     // PB-97
                 if ok { ModelCatalogStore.shared.refresh(.gemini, force: true) }
             } else if key == .claudeAPIKey {
-                let (ok, msg, ids) = await KeyTester.claude(key: v, workspace: nil)
+                let (ok, msg, ids, code) = await KeyTester.claude(key: v, workspace: nil)
                 keyState[key] = ok ? .ok(msg) : .failed(SettingsModel.friendly(msg))
+                AIRoute.noteKeyCheck(AIRoute.api, ok: ok, status: code)                         // PB-97
                 if ok, !ids.isEmpty { config.knownModels = ids }
                 if ok { ModelCatalogStore.shared.refresh(.claude, force: true) }
             } else {
@@ -718,6 +731,7 @@ struct RoutePicker: View {
         return r
     }
     private func label(_ r: String, best: String?, on: Bool) -> String {
+        if st.rejected[r] != nil { return AIRoute.name(r) + AIRoute.rejectedNote(r, st.rejected) }   // PB-97
         guard on else { return AIRoute.name(r) + L("ai.route.notConnected") }
         let mark: String = r == (best ?? recommended) ? L("ai.route.recommended") : (r == discouraged ? L("ai.route.notRecommended") : "")
         return AIRoute.name(r) + mark
@@ -725,6 +739,7 @@ struct RoutePicker: View {
     var withLocal = false          // 0.8.5: the preparation can also run on this Mac (Ollama)
     @ObservedObject var oc = OptionalComponents.shared
     @ObservedObject var llm = LocalLLM.shared
+    @ObservedObject var st = AIStatusModel.shared      // PB-97: a rejected key is disabled with its reason
     var body: some View {
         // 0.8.6 (E > dependants): "On this Mac" needs Ollama and the model; without them it is disabled, with Install next to it
         let localOK = oc.isInstalled("ollama") && oc.isInstalled("local_model")
@@ -996,6 +1011,7 @@ struct SettingsView: View {
 
     var aiForm: some View {
         Form {
+            KeyRejectedSection()          // PB-97: a rejected API key, on top, with Fix
             AIUsesSection(model: model)
             AIProviderCard(provider: "claude", model: model)
             AIProviderCard(provider: "chatgpt", model: model)
@@ -2042,6 +2058,7 @@ struct PersonNamesSheet: View {
 /// on this Mac. For other jobs, the model on this Mac is always the last step. The status of every AI is below.
 struct AIChainSection: View {
     @ObservedObject var model: SettingsModel
+    @ObservedObject private var st = AIStatusModel.shared      // PB-97
     @Binding var checking: Bool
     @Binding var tick: Int
 
@@ -2059,7 +2076,8 @@ struct AIChainSection: View {
                     })) {
                         VStack(alignment: .leading, spacing: 1) {
                             Text(AIRoute.name(e.route))
-                            Text(note(e.route, connected: connected.contains(e.route))).font(PN.Font.caption).foregroundStyle(PN.C.text3)
+                            Text(note(e.route, connected: connected.contains(e.route))).font(PN.Font.caption)
+                                .foregroundStyle(st.rejected[e.route] != nil ? PN.C.recText : PN.C.text3)
                         }
                     }
                     .toggleStyle(.pnCheckbox)
@@ -2088,6 +2106,7 @@ struct AIChainSection: View {
     }
 
     private func note(_ r: String, connected: Bool) -> String {
+        if let s = AIRoute.rejectedState(r, st.rejected) { return s + ", " + L("ai.chain.skipped") }   // PB-97
         var parts: [String] = [L(connected ? "ai.chain.connected" : "ai.chain.notConnected")]
         if r == AIRoute.local { parts.append(L("ai.chain.localNote")) }
         return parts.joined(separator: " · ")

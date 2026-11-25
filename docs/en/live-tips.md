@@ -2756,6 +2756,15 @@ page only Claude would have opened is named as skipped).
 **Never silent.** Every switch is written down: the tips window and Home list the switches of the last hour, a switch
 outside a call is a notification, the Meeting Sheet build shows it in its line and in the sheet's report.
 
+**A rejected API key (PB-97).** When the provider rejects a Claude API, OpenAI API or Gemini API key (HTTP 401 or 403),
+in the key's check in Settings or in a real run, Pacenote stops offering that AI until the key passes a check. Every AI
+picker shows it disabled with the reason ("OpenAI API · key rejected (401)"), and the jobs on it move to the next
+connected AI, the same way as when a key is removed. You see it without opening the key: a red banner on Home and on
+top of Settings > AI, a red line in the menu bar panel and a red dot on the menu bar icon, each with **Fix**, which
+opens the key in Settings > AI. A timeout or a lost connection does not clear the mark and does not set it. Paste the
+key again (or a new one): once it passes its check, or a job on it answers again, the mark and the alerts go. The jobs
+stay on the AI they moved to; choose the key's AI again in Settings > AI if you want it back.
+
 **The status icon.** On Home (top bar, next to the setup pill) and in the tips window header:
 
 | Icon | When |

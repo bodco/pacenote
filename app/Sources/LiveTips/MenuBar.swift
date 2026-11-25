@@ -308,7 +308,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let dot: NoticeLevel? = MainActor.assumeIsolated {
             let unread = NoticeCenter.shared.unread
             let muted: NoticeLevel? = mutedNotice.map { NoticeCenter.shared.isOpen($0) } == true ? .warning : nil
-            return [unread, muted].compactMap { $0 }.max { $0.rank < $1.rank }
+            // PB-97: a rejected API key keeps a red dot until the key passes its check (the engine marks it out of
+            // process, so the file is read on every tick and the status follows a change at once)
+            let s = AIStatusModel.shared
+            if AIStatusModel.shot == nil && AIRoute.rejected() != s.rejected { s.refresh(force: true) }
+            let rejected: NoticeLevel? = s.rejected.isEmpty ? nil : .error
+            return [unread, muted, rejected].compactMap { $0 }.max { $0.rank < $1.rank }
         }
         item?.button?.image = Brand.menuBarImage(icon, notice: dot)
         item?.button?.contentTintColor = nil

@@ -183,7 +183,12 @@ chain: |
   A plain short rate limit (429 rate_limit_exceeded) or a timeout never switches. The out AI is marked in
   state/ai-routes.json with "until" when the error names a reset time ("try again at 12:48 PM", "resets 9am", "try
   again in 2 hours", Claude Code's "limit reached|<unix time>"), else it is checked again every 15 minutes; the job
-  goes back to the chosen AI once it answers. Never silent: every switch is a line in state/ai-switches.jsonl
+  goes back to the chosen AI once it answers. PB-97: a key route (api, openai, gemini) out for a bad key also gets
+  "rejected": <401|403, 0 unknown> (routing.RouteState.mark_down, AIRoute.markDown; the key check in Settings writes it
+  too); the mark survives any other outage and goes only when the route answers or the key passes its check. The app
+  never assigns a rejected key (AIRoute.confirmed, AIRoute.effective), disables it in every AI picker and shows it on
+  Home, on top of Settings > AI, in the menu bar panel and as a red dot on the menu bar icon, with Fix (LiveTipsCore
+  AIKeyRejected). Never silent: every switch is a line in state/ai-switches.jsonl
   {at, job, from, to, reason}; Home's AI status icon and the tips window list the switches of the last hour, a
   switch outside a call is a notification, the Meeting Sheet build shows it in its views (SheetRunner.switchNotice)
   and in the report (notes, sheet route_switches). The Meeting Sheet build moves a failed pass to the next AI inside

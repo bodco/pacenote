@@ -46,7 +46,10 @@ struct ProjectMemorySection: View {
             Picker(L("mem.route"), selection: Binding(get: { model.config.ai.evidence ?? "" },
                                                       set: { model.config.ai.evidence = $0.isEmpty ? nil : $0 })) {
                 Text(L("mem.route.same")).tag("")
-                ForEach(AIChain.defaultOrder, id: \.self) { r in Text(AIRoute.name(r)).tag(r) }
+                ForEach(AIChain.defaultOrder, id: \.self) { r in      // PB-97: a rejected key cannot be chosen
+                    let rej = AIRoute.rejected()
+                    Text(AIRoute.name(r) + AIRoute.rejectedNote(r, rej)).tag(r).selectionDisabled(rej[r] != nil)
+                }
             }
             ceilings
             Picker(L("mem.topics"), selection: prefs.topicsEager) {

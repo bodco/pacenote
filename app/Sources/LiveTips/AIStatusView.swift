@@ -28,6 +28,9 @@ final class AIStatusModel: ObservableObject {
     @Published private(set) var level: AIStatus.Level = .ok
     @Published private(set) var rows: [RowText] = []
     @Published private(set) var recent: [String] = []          // switches of the last hour, newest first
+    /// PB-97: the API keys that were rejected (401 or 403) and the status (0: unknown). Home, Settings > AI and the
+    /// menu bar icon show them; a change moves the jobs off a rejected key (AIRoute.autoAssign).
+    @Published private(set) var rejected: [String: Int] = [:]
     private var lastRefresh = Date.distantPast
     private var codexCache: (at: Date, usage: AIAccountUsage.Usage?)?
     static var shot: (level: AIStatus.Level, rows: [RowText], recent: [String])?   // offscreen pictures only
@@ -55,9 +58,14 @@ final class AIStatusModel: ObservableObject {
     }
 
     func refresh(force: Bool = false) {
-        if let s = Self.shot { level = s.level; rows = s.rows; recent = s.recent; return }
+        if let s = Self.shot { level = s.level; rows = s.rows; recent = s.recent; rejected = [:]; return }
         guard force || Date().timeIntervalSince(lastRefresh) >= 4 else { return }
         lastRefresh = Date()
+        let rej = AIRoute.rejected()
+        if rej != rejected {
+            rejected = rej
+            AIRoute.autoAssign()        // PB-97: the jobs leave a rejected key
+        }
         let c = AIRoute.effective(AppConfig.load(from: AppPaths.config))
         let connectedSet = AIRoute.connected()
         let connected = AIChain.normalized(c.ai.chain).map { $0.route }.filter { connectedSet.contains($0) }

@@ -137,7 +137,7 @@ class Asker:
         st = self._state()
         if st is not None:
             from ..routing import reset_time
-            st.mark_down(self.route, reason, reset_time(error))
+            st.mark_down(self.route, reason, reset_time(error), error=error)
         st_ok = None
         for r in self.chain:
             if r in self.tried:

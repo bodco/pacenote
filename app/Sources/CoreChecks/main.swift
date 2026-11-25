@@ -6589,5 +6589,53 @@ func mutedMicNoticePB104() {
     expect(OpenAsks.questions([["what": "a", "type": "question"]]) == ["a"], "PB-104: no mute, no change")
 }
 mutedMicNoticePB104()
+
+/// PB-97 (owner 25.11): an API key rejected with 401 or 403 (in its check or a real run) is never assigned, is
+/// disabled in the pickers and stays marked through other outages until the key passes a check.
+func keyRejectedPB97() {
+    typealias K = AIKeyRejected
+    // The status of the error text
+    expect(K.status("HTTP 401") == 401 && K.status("Error code: 403 - permission denied") == 403, "PB-97: 401 and 403 found in the error")
+    expect(K.status("HTTP 429") == nil && K.status("timed out after 4011 ms") == nil && K.status("") == nil, "PB-97: other errors name no rejected status")
+    // The mark: an auth outage of a key route only; kept through another outage
+    expect(K.mark(route: "openai", reason: "auth", text: "HTTP 401", previous: nil) == 401, "PB-97: a 401 marks the OpenAI key")
+    expect(K.mark(route: "api", reason: "auth", text: "invalid x-api-key", previous: nil) == 0, "PB-97: an auth error without a status marks it with 0")
+    expect(K.mark(route: "gemini", reason: "auth", text: "authentication", previous: NSNumber(value: 403)) == 403, "PB-97: an auth error without a status keeps the status it had")
+    expect(K.mark(route: "openai", reason: "error", text: "timed out", previous: NSNumber(value: 401)) == 401, "PB-97: a timeout on a recheck keeps the mark")
+    expect(K.mark(route: "openai", reason: "credit", text: "insufficient_quota", previous: nil) == nil, "PB-97: no credit is not a rejected key")
+    expect(K.mark(route: "code", reason: "auth", text: "HTTP 401", previous: nil) == nil && K.mark(route: "codex", reason: "auth", text: "not logged in", previous: nil) == nil,
+           "PB-97: a signed-out account is not a rejected key")
+    // The state file: the mark, an older auth outage of a key route, never an account
+    let st: [String: Any] = ["openai": ["down": true, "reason": "error", "rejected": 401],
+                             "gemini": ["down": true, "reason": "auth"],
+                             "api": ["down": true, "reason": "credit"],
+                             "code": ["down": true, "reason": "auth"]]
+    expect(K.parse(st) == ["openai": 401, "gemini": 0], "PB-97: the rejected keys of the state file (\(K.parse(st)))")
+    expect(K.parse([:]).isEmpty && K.parse(["openai": ["down": false, "back_at": 1.0]]).isEmpty, "PB-97: an answering key is not rejected")
+    // The mark clears when the key passes its check: an auth outage ends, another outage stays without the mark
+    let up = K.cleared(["down": true, "reason": "auth", "rejected": 401, "since": 1.0], now: 9)
+    expect((up?["down"] as? Bool) == false && up?["rejected"] == nil, "PB-97: a passed check ends the auth outage")
+    let other = K.cleared(["down": true, "reason": "credit", "rejected": 401], now: 9)
+    expect((other?["down"] as? Bool) == true && (other?["reason"] as? String) == "credit" && other?["rejected"] == nil,
+           "PB-97: a passed check keeps a credit outage, only the mark goes")
+    expect(K.cleared(["down": true, "reason": "limit"], now: 9) == nil && K.cleared(nil, now: 9) == nil, "PB-97: nothing to clear, nothing written")
+    expect(K.parse(["openai": up ?? [:]]).isEmpty, "PB-97: after a passed check the route is offered again")
+    // autoAssign (AIDefaults.apply over AIRoute.confirmed) and the runtime choice never take a rejected key.
+    // Before PB-97 confirmed() had every saved key, so the tips stayed on the rejected OpenAI key.
+    let saved: Set<String> = ["openai", "gemini", "code"]
+    let usable = K.usable(saved, rejected: K.parse(["openai": ["down": true, "reason": "auth", "rejected": 401]]))
+    expect(usable == ["gemini", "code"], "PB-97: the rejected key is not usable (\(usable))")
+    var r = AppConfig.AIRoutes()
+    r.tips = "openai"; r.prep = "openai"; r.after = "openai"; r.seen = ["openai", "gemini", "code"]
+    let a = AIDefaults.apply(r, connected: usable)
+    expect(a.tips != "openai" && a.prep != "openai" && a.after != "openai", "PB-97: autoAssign moves every job off the rejected key (\(a.tips), \(a.prep), \(a.after))")
+    expect(a.tips == "gemini" && a.prep == "code", "PB-97: the jobs go to the next connected AI by preference")
+    let rt = AIDefaults.runtime(r, connected: usable, holdIndexing: false)
+    expect(rt.tips != "openai" && rt.prep != "openai", "PB-97: a job never starts on the rejected key")
+    for job in AIChain.jobs { expect(AIDefaults.pick(job: job, chosen: "openai", connected: usable) != "openai", "PB-97: pick never takes it (\(job))") }
+    // Once the key passes, the key is usable again
+    expect(K.usable(saved, rejected: [:]) == saved, "PB-97: a key that passed is usable again")
+}
+keyRejectedPB97()
 print("core checks: \(passed) passed, \(failures) failed")
 exit(failures == 0 ? 0 : 1)

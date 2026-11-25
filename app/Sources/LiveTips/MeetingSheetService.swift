@@ -417,6 +417,7 @@ enum SheetRoutes {
         case AIRoute.codex: if CodexAccount.cliPath == nil { return L("sheet.ui.route.notSet", ["route": AIRoute.name(r)]) }
         default: break
         }
+        if let s = AIRoute.rejectedState(r, AIRoute.rejected()) { return AIRoute.name(r) + ": " + s }   // PB-97
         if AIRoute.isDown(r) { return L("sheet.ui.route.down", ["route": AIRoute.name(r)]) }
         return nil
     }

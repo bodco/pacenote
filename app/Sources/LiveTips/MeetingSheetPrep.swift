@@ -1660,7 +1660,10 @@ struct SheetSizeStep: View {
                 PrepFieldLabel(text: L("sheet.ui.s4.runsOn"))
                 Picker("", selection: $draft.route) {
                     ForEach(SheetRoutes.all, id: \.self) { r in
-                        Text(AIRoute.name(r) + (SheetRoutes.ready(r) ? "" : " · " + L("sheet.ui.route.out"))).tag(r)
+                        // PB-97: a rejected key says so and cannot be chosen
+                        let rej = AIRoute.rejected()
+                        Text(AIRoute.name(r) + (rej[r] != nil ? AIRoute.rejectedNote(r, rej) : SheetRoutes.ready(r) ? "" : " · " + L("sheet.ui.route.out"))).tag(r)
+                            .selectionDisabled(rej[r] != nil)
                     }
                 }
                 .labelsHidden().fixedSize()
