@@ -1022,12 +1022,17 @@ All of this is pure code and runs the same for every route.
   or the request's label), before any scoring, and a sentence of another client's topic never passes, even when it
   cites only shared facts. A request whose scope is stale (the live reader cannot relabel, section 5.3) sees no topic
   sentence. A request with no scope sees every topic, as before. This is the one access check that reads a stored
-  label: a topic's partition is fixed when it is detected.
+  label: a topic's partition is fixed when it is detected. The stored label can miss a client the scope names (a
+  folder that is not a hinted label, or one a relabel just added), so a scoped request also gets no sentence of a
+  topic whose summary request held a fact (cited or not, `topic_input`) with an evidence row on another client's side
+  for that scope, by the same side rule as search (section 11.2 step 1). A summary with no recorded input passes no
+  sentence to a scoped request.
 - **Superseded.** A sentence citing a claim of an entity the PM superseded (at `as_of`) is not returned, as the
   timeline leaves out that entity's claims: a superseded decision is never returned as current. A sentence citing
-  only an edge of that entity still passes (the timeline keeps such edges too). A relabel (section 5.2) does not yet
-  mark topics pending: a topic summarised before a new label existed keeps its `client_set` until the next detect
-  (follow-up).
+  only an edge of that entity still passes (the timeline keeps such edges too).
+- **Relabel.** A relabel (section 5.2) drops, in the same transaction, the summary of every topic that read a
+  relabelled revision's source (`topic_source`, or an input or cited fact with a row there) and sets it `pending`:
+  none of its sentences is returned until it is detected and summarised again.
 - **Staleness on state change.** When a source changes state (excluded, hidden, deleted, revoked, or back to
   active), every topic with a sentence citing a claim or edge that has evidence on that source is marked `stale`
   (`topic_cite_target` index), and the next pass re-summarises it; until then the per-sentence filter above keeps it
@@ -2128,6 +2133,11 @@ Implementation notes (S4, PB-87):
   a cited claim or edge has a row on a deleted source or on one in the request's `exclude` that the summary read.
   This is what makes the S4 acceptance line hold: after a file is deleted the sentence is hidden; the re-summarise no
   longer reads that file, so its new sentence returns even though the claim keeps its (ignored) row there.
+- `topic_input` (review round 2) keeps every claim and edge of the summary request, cited or not. With a scope,
+  `prepare_topics` passes no sentence of a topic with an input row on another client's side for that scope (`_toth`:
+  the side rule of `prepare` evaluated on those rows only, so the search path's `_snip` is unchanged, and not the
+  `denied` class, so excluded, revoked and hidden sources stay per sentence). The
+  relabel calls `store.invalidate_topics` for each revision it re-marks or splits, before the old snippets go.
 - Staleness is one SQLite trigger, `source_state_topics`: any change of `source.state`, on every path (state-only
   pass, deletion in a pass, the Tracker, vacuum, the bench), marks `ready` topics that cite the source or read it
   `stale` in the same transaction. A source back to active is not cited by a summary written without it; that topic
@@ -2157,12 +2167,14 @@ Implementation notes (S4, PB-87):
   detected and summarised, then each state row comes back and the trigger marks the cited topics stale. A global row
   is judged on `ask_global`'s answer alone (its passing sentences and timeline, the recall of section 14.3); the other
   S4 rows add that answer to C's search items. A control (`fixture.topics.control` in the results) asks each of those
-  rows through `ask_global` before the state change and lists the excluded facts its sentences held then. **On this
-  data it lists none**: none of the four excluded facts is in any topic (the hidden call's "teal palette" decision is a
-  lone entity, one fact and no edge, and a lone entity is not a topic), so x5 and t7 pass without reaching the
-  per-sentence filter. The filter is proven by the unit tests (excluded, revoked, hidden, request exclude, a pending
-  hide, deleted then re-summarised); a G0 row that exercises it needs the hidden decision linked to a topic (an
-  extracted `decided_in` edge or a call rule), a GraphRAG follow-up. `judge`: a fact is dated by claims and edges, never by a summary sentence, and `order_ok` is the order of
+  rows through `ask_global` before the state change and lists the excluded facts its sentences held then. Review
+  round 2 linked the hidden call's "teal palette" decision to a topic in the authored extraction fixture (the call
+  entity "Acme design review", alias "design review", with its own `decided` claim on the same transcript line), so
+  on the small set x5's control holds "teal palette" and its 0 excluded leaks are the per-sentence filter's work;
+  `s4_gate` fails when that control is empty. On the scale set the noise documents' topics outrank it for x5's
+  question (`review*` in many of their sentences), so the control there is empty and not gated (ranking: a GraphRAG
+  follow-up). t7 and g1 still list none. The filter is also proven by the unit tests (excluded, revoked, hidden,
+  request exclude, a pending hide, deleted then re-summarised). `judge`: a fact is dated by claims and edges, never by a summary sentence, and `order_ok` is the order of
   the facts returned (at least two, each dated); a row still passes only with every fact found. A and B are
   unchanged by both. `fixtures/topics` is outside `fixture_sha` like the other v2 folders.
 - Two corrections to S3's C, both kept because no S3 column moved: the authored extraction answer of

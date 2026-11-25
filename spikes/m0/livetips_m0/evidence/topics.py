@@ -273,6 +273,7 @@ def drop_sentences(store: S.Store, topic_id: int) -> None:
             store.conn.execute("INSERT INTO topic_fts(topic_fts, rowid, text) VALUES ('delete', ?, ?)", (r["id"], r["text"]))
     store.conn.execute("DELETE FROM topic_sentence WHERE topic_id=?", (topic_id,))
     store.conn.execute("DELETE FROM topic_source WHERE topic_id=?", (topic_id,))
+    store.conn.execute("DELETE FROM topic_input WHERE topic_id=?", (topic_id,))
 
 
 # ---------------------------------------------------------------- the summary request
@@ -361,8 +362,9 @@ def validate(obj: dict, refs: Dict[str, Tuple[str, int]], max_sentences: int = M
 
 
 def write(store: S.Store, topic_id: int, sentences: List[dict], sources: List[int], at: Optional[str] = None,
-          run_id: Optional[int] = None) -> None:
-    """Replace the topic's summary: one row per sentence, its cites, topic_fts, the sources it was written from."""
+          run_id: Optional[int] = None, inputs: Optional[List[Tuple[str, int]]] = None) -> None:
+    """Replace the topic's summary: one row per sentence, its cites, topic_fts, the sources it was written from and
+    every fact of the request (topic_input, cited or not: the access check of a scoped request reads it)."""
     with store.conn:
         drop_sentences(store, topic_id)
         for i, s in enumerate(sentences):
@@ -374,6 +376,8 @@ def write(store: S.Store, topic_id: int, sentences: List[dict], sources: List[in
                 store.conn.execute("INSERT INTO topic_fts(rowid, text) VALUES (?,?)", (sid, s["text"]))
         store.conn.executemany("INSERT OR IGNORE INTO topic_source(topic_id, source_id) VALUES (?,?)",
                                [(topic_id, x) for x in sources])
+        store.conn.executemany("INSERT OR IGNORE INTO topic_input(topic_id, target, target_id) VALUES (?,?,?)",
+                               [(topic_id, t, int(x)) for t, x in (inputs or [])])
         store.conn.execute("UPDATE topic SET summary_at=?, summary_run=?, state=? WHERE id=?",
                            (at or S.now_utc(), run_id, "ready" if sentences else "empty", topic_id))
 
@@ -426,7 +430,7 @@ def summarise(store: S.Store, ask: Callable[[str, int], dict], rules: dict, *, a
             rep["invalid"] += 1
             continue
         sents, dropped = validate(obj, refs, most)
-        write(store, tid, sents, sources, at, run_id)
+        write(store, tid, sents, sources, at, run_id, inputs=list(refs.values()))
         rep["summarised"] += 1
         rep["sentences"] += len(sents)
         rep["dropped"] += dropped

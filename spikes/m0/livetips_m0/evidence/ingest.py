@@ -1075,8 +1075,9 @@ def relabel(store: S.Store, universe: set, added: List[str]) -> dict:
     """Split stored snippets where the invariant now asks for a cut, from snippet.text alone (superseded revisions
     included): new rows with ord renumbered, their marks, and every evidence row re-anchored by its offset inside the
     old snippet to the new piece that holds the whole quote. A quote that crosses a new cut is dropped. Claims, edges
-    and pm_override rows keep their natural keys. No model, network or embed request."""
-    rep = {"added": list(added), "revisions": 0, "split": 0, "dropped_quotes": 0}
+    and pm_override rows keep their natural keys. In the same transaction, every topic that read a relabelled
+    revision's source loses its summary and goes `pending` (S4, section 8.7). No model, network or embed request."""
+    rep = {"added": list(added), "revisions": 0, "split": 0, "dropped_quotes": 0, "topics_invalidated": 0}
     add = set(added)
     revs = [r[0] for r in store.q(
         "SELECT DISTINCT sn.revision_id FROM snippet sn JOIN revision rv ON rv.id=sn.revision_id JOIN source s"
@@ -1089,6 +1090,8 @@ def relabel(store: S.Store, universe: set, added: List[str]) -> dict:
         src = store.one("SELECT s.uri FROM source s JOIN revision rv ON rv.source_id=s.id WHERE rv.id=?", (rid,))[0]
         pmarks = path_marks(src) if not src.startswith("/") else set()
         with store.conn:
+            sid = store.one("SELECT source_id FROM revision WHERE id=?", (rid,))[0]
+            rep["topics_invalidated"] += S.invalidate_topics(store.conn, [sid])
             plan = []
             for r in rows:
                 loc = json.loads(r["locator"])

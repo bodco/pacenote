@@ -394,3 +394,16 @@ def test_query_vec_adds_allowed_snippets_by_cosine_only(tmp_path, monkeypatch):
     with pytest.raises(ValueError):
         SE.search(st, "approval", mode="live", query_vec=[1.0, 0.0])
     st.close()
+
+
+def test_s4_gate_fails_when_x5_never_reaches_a_topic_sentence(bench):
+    """PB-87 review round 2: "excluded leaks 0" on row x5 counts only when its control (the sentences before the
+    hide) held the hidden fact; an empty control fails the S4 gate."""
+    def res(control):
+        small = {"rows_not_evaluated": 0, "timeline_recall": 75.0, "timeline_order": True,
+                 "fixture": {"topics": {"misses": 0, "control": control}}}
+        return {"variant": "C", "v2": {"ready": ["S2", "S3", "S4"], "sets": {"small": {"no_vectors": small}}}}
+    ok = bench.s4_gate(res({"x5-hidden-topic": ["teal palette"]}))
+    assert ok and all(ok.values())
+    bad = bench.s4_gate(res({"x5-hidden-topic": []}))
+    assert bad["small x5_control_not_empty"] is False

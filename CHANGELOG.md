@@ -16,11 +16,14 @@ Pacenote. Earlier versions are described in the commit messages and in
   that lost access, a deleted file or a file skipped for one preparation hides the sentences written from it (the
   other sentences of the topic stay) until the topic is summarised again, and a replay of an earlier call never
   sees a summary written after it. A call for one client never gets another client's topic, not even a sentence
-  that names only shared facts, and a sentence that states a fact of a decision the PM marked as replaced is not
-  shown. New commands for the app and the skill: `evidence topics` (summarise now) and
+  that names only shared facts, nor a summary written from a line about another client of that call (also when
+  that client got its folder after the summary was written: the new folder clears the summaries that read those
+  files until they are written again), and a sentence that states a fact of a decision the PM marked as replaced is
+  not shown. New commands for the app and the skill: `evidence topics` (summarise now) and
   `evidence global` (a topic's summary and its dated timeline; never during a call). The benchmark now evaluates
   every gold row: the timeline of "What happened with SSO since October?" finds 3 of its 4 facts in order (the
-  fourth is said on a call with no link to SSO), and no hidden, revoked, deleted or future fact leaks.
+  fourth is said on a call with no link to SSO); no future, client or excluded fact leaks, and on the small set a
+  summary sentence written before a call was hidden is filtered out at question time.
 - **Project memory, step 3b: which AI reads the sources and how much it may spend (GraphRAG G2 S3b, PB-103).**
   Nothing changes for the PM: the evidence store stays behind the flag `evidence_store` (off by default), no setting
   is shown and no AI is asked while the flag is off. With the flag on, indexing is its own AI job (`evidence`): the

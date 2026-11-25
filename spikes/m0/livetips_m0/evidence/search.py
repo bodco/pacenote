@@ -11,7 +11,8 @@ scope), `ignored` (source deleted, or in the request's `exclude`) or `pass`. A c
 exists and no denied row does; every returned field comes from the passing rows only. No access query reads
 `client_set` or `entity.client`: the side is decided from `source.uri`, `snippet_mark` and `entity_mark` against the
 request's scope. The one exception is S4's topics (prepare_topics): a topic summary was written from all of its
-topic's facts, so a scoped request sees only shared topics and its own client's, by `topic.client_set`.
+topic's facts, so a scoped request sees only shared topics and its own client's, by `topic.client_set`, and then no
+sentence of a topic whose summary input has a row on another client's side for the scope (topic_input).
 """
 from __future__ import annotations
 
@@ -65,7 +66,7 @@ def prepare(store: S.Store, scope: Optional[dict], as_of: Optional[str], exclude
     _src(id, cls) for sources, _ent(id) for visible entities."""
     c = store.conn
     for t in ("_others", "_ownf", "_othf", "_deny", "_excl", "_eside", "_snip", "_src", "_rev", "_ent", "_claim", "_edge",
-              "_tsent", "_ttop"):
+              "_tsent", "_ttop", "_toth"):
         c.execute("DROP TABLE IF EXISTS temp.{}".format(t))
     c.execute("CREATE TEMP TABLE _others(name TEXT PRIMARY KEY)")
     c.execute("CREATE TEMP TABLE _ownf(rel TEXT)")
@@ -153,6 +154,7 @@ def prepare(store: S.Store, scope: Optional[dict], as_of: Optional[str], exclude
         tok += " AND coalesce(sn.said_at, rv.valid_from)>=:w0 AND coalesce(sn.said_at, rv.valid_from)<=:w1"
     params = {"client": client, "as_of": as_of or "", "w0": (window or ("", ""))[0] or "",
               "w1": (window or ("", "9999"))[1] or "9999"}
+    store._side = (side, {"client": client})     # prepare_topics reuses the side rule on summary inputs only (S4)
     c.execute("CREATE TEMP TABLE _snip AS SELECT sn.id AS sid, s.id AS src, s.origin AS origin,"
               " CASE WHEN s.state IN ('excluded','revoked') OR s.id IN (SELECT id FROM _deny) OR ({side})='other'"
               " THEN 'denied' WHEN s.state='deleted' OR s.id IN (SELECT id FROM _excl) THEN 'ignored' ELSE 'pass' END AS cls,"
@@ -566,6 +568,10 @@ def prepare_topics(store: S.Store, as_of: Optional[str], scope: Optional[dict] =
     sentence's text was written from all of its topic's facts, so a sentence citing only shared facts of another
     client's topic could still carry that client's words (the one access check here that reads a stored label; the
     topic's partition is fixed at detect, section 8.7). A stale scope (the live reader cannot relabel) passes no topic.
+    The stored label can miss a client the scope names (a label outside the hinted ones, or one a relabel added), so a
+    scoped request also passes no sentence of a topic whose summary input (topic_input, every fact of the request)
+    has a row on another client's side for this scope (_toth: prepare()'s side rule on those rows only, not a
+    `denied` class, so excluded, revoked and hidden sources stay per sentence), nor of one with no recorded input.
     A sentence passes when its topic passes; its summary was written at or before as_of; it has at least one cite and
     every cited claim or edge passes (in _claim/_edge: a passing row valid at as_of and no denied row); and no cited
     target has an ignored row (a deleted source, or one in this request's exclude) on a source the summary was written
@@ -574,7 +580,7 @@ def prepare_topics(store: S.Store, as_of: Optional[str], scope: Optional[dict] =
     c = store.conn
     c.execute("DROP TABLE IF EXISTS temp._tsent")
     c.execute("DROP TABLE IF EXISTS temp._ttop")
-    if not c.execute("SELECT 1 FROM sqlite_master WHERE name='topic_source'").fetchone():
+    if not c.execute("SELECT 1 FROM sqlite_master WHERE name='topic_input'").fetchone():
         c.execute("CREATE TEMP TABLE _ttop(id INTEGER PRIMARY KEY)")
         c.execute("CREATE TEMP TABLE _tsent(id INTEGER, topic_id INTEGER)")     # a store written before S4
         return
@@ -586,6 +592,17 @@ def prepare_topics(store: S.Store, as_of: Optional[str], scope: Optional[dict] =
     else:
         c.execute("CREATE TEMP TABLE _ttop AS SELECT id FROM topic")
     c.execute("CREATE INDEX temp._ttop_i ON _ttop(id)")
+    c.execute("DROP TABLE IF EXISTS temp._toth")
+    if sp and not stale:
+        # topics whose summary input has a row on another client's side for this scope: the side rule of prepare(),
+        # evaluated only on the evidence of those inputs (the search path's _snip stays as it was)
+        side, params = getattr(store, "_side", ("'shared'", {}))
+        c.execute("CREATE TEMP TABLE _toth AS SELECT DISTINCT ti.topic_id AS id FROM topic_input ti JOIN _ttop tt"
+                  " ON tt.id=ti.topic_id JOIN evidence ev ON ev.target=ti.target AND ev.target_id=ti.target_id"
+                  " JOIN snippet sn ON sn.id=ev.snippet_id JOIN revision rv ON rv.id=sn.revision_id"
+                  " JOIN source s ON s.id=rv.source_id WHERE ({})='other'".format(side), params)
+    else:
+        c.execute("CREATE TEMP TABLE _toth(id INTEGER PRIMARY KEY)")
     c.execute("CREATE TEMP TABLE _tsent AS SELECT ts.id AS id, ts.topic_id AS topic_id FROM topic_sentence ts"
               " JOIN topic t ON t.id=ts.topic_id JOIN _ttop tt ON tt.id=t.id"
               " WHERE t.summary_at IS NOT NULL AND (?1='' OR t.summary_at<=?1)"
@@ -595,7 +612,10 @@ def prepare_topics(store: S.Store, as_of: Optional[str], scope: Optional[dict] =
               " OR (tc.target='edge' AND tc.target_id IN (SELECT id FROM _edge))))"
               " AND NOT EXISTS (SELECT 1 FROM topic_cite tc JOIN evidence ev ON ev.target=tc.target"
               " AND ev.target_id=tc.target_id JOIN _snip x ON x.sid=ev.snippet_id AND x.cls='ignored'"
-              " JOIN topic_source tsrc ON tsrc.topic_id=ts.topic_id AND tsrc.source_id=x.src WHERE tc.sentence_id=ts.id)",
+              " JOIN topic_source tsrc ON tsrc.topic_id=ts.topic_id AND tsrc.source_id=x.src WHERE tc.sentence_id=ts.id)"
+              + ("" if not sp else
+                 " AND EXISTS (SELECT 1 FROM topic_input ti WHERE ti.topic_id=ts.topic_id)"
+                 " AND ts.topic_id NOT IN (SELECT id FROM _toth)"),
               (as_of or "",))
     c.execute("CREATE INDEX temp._tsent_i ON _tsent(id)")
     if c.in_transaction:

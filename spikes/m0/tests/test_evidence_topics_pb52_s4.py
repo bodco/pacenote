@@ -609,3 +609,90 @@ def test_pm_reject_hides_the_sentence_and_marks_the_topic_pending(env):
         ["Mike owns the SSO integration."]
     T.detect(st)
     assert st.one("SELECT state FROM topic WHERE id=?", (tid,))[0] in ("pending", "stale")
+
+
+# ---------------------------------------------------------------- review round 2: another client's words after a relabel
+
+def _blend(blended):
+    """A summary model that writes one sentence from the "reviews" fact and the Initech one, citing only "reviews"."""
+    def answer(user):
+        refs = {}
+        for ln in user.split("\n"):
+            if ln.startswith("f") and " | " in ln:
+                ref, _d, what = [x.strip() for x in ln.split(" | ")[:3]]
+                refs[what] = ref
+        rev = [r for w, r in refs.items() if "-> reviews -> Okta" in w][:1]
+        wants = [r for w, r in refs.items() if "-> wants -> Okta" in w]
+        if rev and wants:
+            return json.dumps({"sentences": [{"text": blended, "cites": rev}]})
+        return json.dumps({"sentences": [{"text": "Fact: " + w, "cites": [r]} for w, r in refs.items()]})
+    return answer
+
+
+def _vendors(st, root):
+    put(root, "docs/vendors.md", "# Vendors\nMike reviews the Okta tenant.\nInitech wants the Okta tenant early.\n",
+        mtime=ts("2026-11-08T09:00:00Z"))
+    ingest(st, root)
+    extract(st, "docs/vendors.md", [("Mike", "person"), "Okta tenant", ("Initech", "client")],
+            rels=[("Mike", "reviews", "Okta tenant", "Mike reviews the Okta tenant"),
+                  ("Initech", "wants", "Okta tenant", "Initech wants the Okta tenant early")])
+
+
+def _initech_scope(root):
+    sc = acme_scope(root)
+    return dict(sc, others=list(sc["others"]) + ["initech"],
+                folders=dict(sc.get("folders") or {}, initech=["docs/initech"]))
+
+
+BLENDED = "Mike reviews Okta; Initech wants the Okta tenant early."
+
+
+def test_relabel_never_returns_a_sentence_written_with_another_clients_words(env):
+    """A shared file names Initech before Initech has a folder; a sentence citing only a shared fact was written with
+    the Initech line. After docs/initech/ appears and the relabel runs, an Acme request that names Initech as another
+    client gets none of it, on both topic search paths, before and after a detect and a re-summarise."""
+    root = env
+    st = world(root)
+    _vendors(st, root)
+    T.detect(st)
+    T.summarise(st, Ask(_blend(BLENDED)), RULES, at="2026-11-20T12:00:00Z")
+    assert st.q("SELECT 1 FROM topic_sentence WHERE text=?", (BLENDED,))
+    assert BLENDED in texts(SE.ask_global(st, "Okta tenant", scope=acme_scope(root)))     # control: before Initech
+    (root / "docs" / "initech").mkdir()
+    put(root, "docs/initech/readme.md", "# Initech\nInitech kickoff.\n", mtime=ts("2026-11-09T09:00:00Z"))
+    sc = _initech_scope(root)
+    res = SE.ask_global(st, "Okta tenant", scope=sc)
+    assert res["relabel"] and not res["scope_stale"]
+    assert BLENDED not in texts(res) and "Initech" not in json.dumps(res["topics"])
+    assert BLENDED not in texts(SE.ask_global(st, "What does Mike review?", scope=sc))      # the alias path
+    # the relabel invalidated every topic that read the relabelled file: no sentence of it until re-summarised
+    vend = st.one("SELECT id FROM source WHERE uri='docs/vendors.md'")[0]
+    hit = [r[0] for r in st.q("SELECT topic_id FROM topic_source WHERE source_id=?", (vend,))]
+    assert not hit and not st.q("SELECT 1 FROM topic_sentence WHERE text=?", (BLENDED,))
+    assert st.q("SELECT 1 FROM topic WHERE state='pending'")
+    T.detect(st)
+    T.summarise(st, Ask(_blend(BLENDED)), RULES, at="2026-11-22T12:00:00Z")
+    res = SE.ask_global(st, "Okta tenant", scope=sc)
+    assert BLENDED not in texts(res) and "Initech" not in json.dumps(res["topics"])
+    assert BLENDED in texts(SE.ask_global(st, "Okta tenant"))          # without a scope nothing is hidden
+
+
+def test_scope_naming_a_client_the_store_never_labelled_gets_no_sentence_with_its_words(env):
+    """No relabel at all: docs/initech/ exists from the first pass, but Initech is not a hinted label, so the stored
+    client_set of the Initech line is shared. A request whose scope names Initech as another client still gets no
+    sentence written from that line; the topics that never read it and the timeline stay."""
+    root = env
+    (root / "docs" / "initech").mkdir(parents=True)
+    put(root, "docs/initech/readme.md", "# Initech\nInitech kickoff.\n", mtime=ts("2026-11-02T09:00:00Z"))
+    st = world(root)
+    _vendors(st, root)
+    assert "initech" not in (st.meta_json("labels", []) or [])
+    T.detect(st)
+    T.summarise(st, Ask(_blend(BLENDED)), RULES, at="2026-11-20T12:00:00Z")
+    sc = _initech_scope(root)
+    res = SE.ask_global(st, "Okta tenant", scope=sc)
+    assert not res["scope_stale"] and not res["relabel"]
+    assert BLENDED not in texts(res) and "Initech" not in json.dumps(res["topics"])
+    assert BLENDED in texts(SE.ask_global(st, "Okta tenant", scope=acme_scope(root)))   # Initech not another client
+    acme = SE.ask_global(st, "Acme SSO integration", scope=sc)
+    assert texts(acme) and acme["timeline"]           # topics that never read the Initech line are untouched

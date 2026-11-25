@@ -1453,7 +1453,10 @@ def s4_gate(res: dict) -> Optional[dict]:
     """The S4 G0 gate (spec section 17, S4) for C once S3 is ready: every gold v2 row evaluated (no not_evaluated
     left, so a missing or stale topic fixture fails here), global timeline recall at least 75% with the returned facts
     in order on the small set without vectors, topic fixture misses 0 there; future and excluded leaks 0 (topic
-    sentences included) are the S2 checks on the same runs, and the S3 checks stay (the caller merges all three)."""
+    sentences included) are the S2 checks on the same runs, and the S3 checks stay (the caller merges all three).
+    Row x5 must reach the per-sentence filter on the small set: its negative control (the sentences before the hide)
+    holds the hidden fact, so "excluded leaks 0" there is the filter's work, not empty data. On the scale set the
+    noise documents' topics outrank it for that question (reported in the control, not gated)."""
     if res["variant"] != "C" or "S3" not in res.get("v2", {}).get("ready", []):
         return None
     checks: Dict[str, Optional[bool]] = {}
@@ -1465,7 +1468,9 @@ def s4_gate(res: dict) -> Optional[dict]:
     if small and "skipped" not in small:
         checks["small timeline_recall_ge_75"] = (small["timeline_recall"] or 0) >= 75.0
         checks["small timeline_order"] = small["timeline_order"] is True
-        checks["small topic_fixture_misses_0"] = ((small.get("fixture") or {}).get("topics") or {}).get("misses") == 0
+        topics = (small.get("fixture") or {}).get("topics") or {}
+        checks["small topic_fixture_misses_0"] = topics.get("misses") == 0
+        checks["small x5_control_not_empty"] = bool((topics.get("control") or {}).get("x5-hidden-topic"))
     return checks
 
 
