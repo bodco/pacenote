@@ -257,6 +257,7 @@ def auto_questions(sheet: dict, rules: dict, today: DateLike = None, settings: O
     day = _date(today) or _dt.date.today()
     added, removed = [], []
     all_ids = {f["id"] for _, f in _facts(sheet)}
+    all_ids |= {x for x in sheet.get("deleted_facts") or [] if isinstance(x, str)}   # PB-100: deleted by the user
     for aq in sett.get("auto_questions") or []:
         qual = _block(sheet, "qualification")
         if qual is None or qual.get("visible", True) is False:     # 0.10.0 (hardening): hidden = not asked about

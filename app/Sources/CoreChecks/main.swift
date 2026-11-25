@@ -2876,6 +2876,63 @@ func meetingSheetUI0100() {
     expect(SheetEdit.block(&b, id: second, .hide) && !b.shownBlocks.contains { $0.id == second }, "block: hide")
     expect(SheetEdit.block(&b, id: second, .show) && b.shownBlocks.contains { $0.id == second }, "block: show")
     expect(SheetEdit.block(&b, id: second, .delete) && !b.blocks.contains { $0.id == second }, "block: delete")
+    // PB-100: every fact can be deleted where it is edited; the delete is kept like an edit and Undo puts it back
+    var del = base
+    let qn = del.block(.questions)?.facts.count ?? 0
+    let dq = SheetEdit.deleteFact(&del, factID: "q-reports")
+    expect(dq != nil && del.fact(id: "q-reports") == nil && (del.block(.questions)?.facts.count ?? 0) == qn - 1, "delete: a question leaves the sheet")
+    expect(del.block(.questions)?.editedByUser == true && del.deletedFacts == ["q-reports"], "delete: block marked edited_by_user, id kept in deleted_facts")
+    let df = SheetEdit.deleteFact(&del, factID: "f-industry")
+    expect(df?.index == 2 && df?.blockWasEdited == false && del.block(.company)?.editedByUser == true, "delete: a card fact (model) leaves, its place kept for Undo")
+    expect(SheetEdit.deleteFact(&del, factID: "nope") == nil && SheetEdit.deleteFact(&del, factID: "q-reports") == nil, "delete: unknown or already deleted")
+    if let df { expect(SheetEdit.restoreFact(&del, df) && del.block(.company)?.facts.map(\.id) == base.block(.company)?.facts.map(\.id)
+                       && del.block(.company)?.editedByUser == false && del.deletedFacts == ["q-reports"], "undo: the fact is back at its place, block mark as it was")
+                expect(!SheetEdit.restoreFact(&del, df), "undo: twice does nothing") }
+    if let dq { expect(SheetEdit.restoreFact(&del, dq) && del == base, "undo: the sheet is as it was (deleted_facts cleared)") }
+    // a deleted id is never given to a new typed fact
+    var dn = base
+    let added = SheetEdit.addFact(&dn, blockType: .agenda, text: "Pricing", now: "n")
+    if let added { _ = SheetEdit.deleteFact(&dn, factID: added) }
+    let again = SheetEdit.addFact(&dn, blockType: .agenda, text: "Next steps", now: "n")
+    expect(added != nil && again != nil && again != added && dn.block(.agenda)?.facts.count == 1, "delete: an agenda point; a new one gets a fresh id")
+    // one side of a conflict deleted: the other is no longer a conflict, Undo restores the pair
+    var dc = base
+    let dcf = SheetEdit.deleteFact(&dc, factID: "f-size-site")
+    expect(dc.fact(id: "f-size-li")?.status == .needsCheck && dc.fact(id: "f-size-li")?.conflictWith == nil && dcf?.partners.map(\.id) == ["f-size-li"],
+           "delete: a conflict partner left alone becomes needs_check")
+    if let dcf { expect(SheetEdit.restoreFact(&dc, dcf) && dc == base, "undo: the conflict pair is back") }
+    // saved and read again: deleted_facts goes to the file for Refresh
+    let delPath = NSTemporaryDirectory() + "pb100-\(UUID().uuidString).sheet.json"
+    var dsv = base
+    _ = SheetEdit.deleteFact(&dsv, factID: "q-reports")
+    if (try? MeetingSheetIO.save(dsv, to: delPath)) != nil, let back = try? MeetingSheetIO.load(delPath) {
+        expect(back.deletedFacts == ["q-reports"] && back.fact(id: "q-reports") == nil, "delete: deleted_facts saved in the file")
+    } else { expect(false, "delete: save and load") }
+    try? FileManager.default.removeItem(atPath: delPath)
+    // Undo through the file (as SheetDoc does it): keys the app does not model (a question's keywords) come back
+    func rawFact(_ path: String, _ id: String) -> [String: Any]? {
+        guard let d = FileManager.default.contents(atPath: path), let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { return nil }
+        return ((o["blocks"] as? [[String: Any]]) ?? []).flatMap { ($0["facts"] as? [[String: Any]]) ?? [] }.first { $0["id"] as? String == id }
+    }
+    let undoPath = NSTemporaryDirectory() + "pb100-undo-\(UUID().uuidString).sheet.json"
+    if var o = try? JSONSerialization.jsonObject(with: Data(contentsOf: dir.appendingPathComponent("sales-intro-lumenfield.sheet.json"))) as? [String: Any],
+       var bl = o["blocks"] as? [[String: Any]], let qi = bl.firstIndex(where: { $0["id"] as? String == "b-questions" }),
+       var fs = bl[qi]["facts"] as? [[String: Any]], !fs.isEmpty {
+        fs[0]["keywords"] = ["reports", "monthly"]; bl[qi]["facts"] = fs; o["blocks"] = bl; o["tracker"] = ["k": "v"]
+        FileManager.default.createFile(atPath: undoPath, contents: try? JSONSerialization.data(withJSONObject: o))
+        if var u = try? MeetingSheetIO.load(undoPath), let before = FileManager.default.contents(atPath: undoPath),
+           let d = SheetEdit.deleteFact(&u, factID: "q-reports"), (try? MeetingSheetIO.save(u, to: undoPath)) != nil {
+            expect(rawFact(undoPath, "q-reports") == nil, "undo file: the fact is gone from the file")
+            _ = SheetEdit.restoreFact(&u, d)
+            try? MeetingSheetIO.save(u, to: undoPath)
+            expect(rawFact(undoPath, "q-reports")?["keywords"] == nil, "undo file: without lay back the keywords are lost")
+            try? MeetingSheetIO.layBack(before, to: undoPath)
+            let back = try? MeetingSheetIO.load(undoPath)
+            expect((rawFact(undoPath, "q-reports")?["keywords"] as? [String]) == ["reports", "monthly"] && back?.deletedFacts == nil
+                   && back?.fact(id: "q-reports") != nil, "undo file: lay back restores the keywords, deleted_facts stays cleared")
+        } else { expect(false, "undo file: load, delete, save") }
+    } else { expect(false, "undo file: fixture") }
+    try? FileManager.default.removeItem(atPath: undoPath)
     // conflict
     var k = base
     expect(SheetEdit.settle(&k, factID: "f-size-site", .use("f-size-li"), now: "n") && k.fact(id: "f-size-site") == nil && k.fact(id: "f-size-li")?.status == .edited, "conflict: use B")

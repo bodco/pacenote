@@ -5,6 +5,11 @@ Pacenote. Earlier versions are described in the commit messages and in
 
 ## Unreleased
 
+- **Meeting Sheet: delete a fact, an agenda point or a question (PB-100).** Every item you can edit on the sheet page
+  now has a trash button next to the pencil (also in the cards, My focus and a conflict on the Readiness tab). There
+  is no confirm dialog: a line with Undo stays in its block for 10 seconds. A delete is kept like an edit:
+  Refresh never brings the item back, and an automatic question you deleted (such as the budget question) is not
+  added again.
 - **Meeting Sheet: a Verbatim block for text that must stay word for word (PB-102).** + Add a block now offers
   Verbatim, as often as you need it in one call. In its Settings you give it a title, a source (a file of the call,
   any file, or pasted text) and, if you want only part of a Markdown file, sections such as 1-4 by heading. The

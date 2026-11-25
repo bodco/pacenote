@@ -70,7 +70,8 @@ for the same sheet fact get `"sheet_fact": "<fact id>"`, so the recorder shows t
   `python -m livetips_m0.sheet readiness --sheet <file>` in the app's engine folder fills it). The app computes it
   on open.
 - **Refresh and prepare during the call.** Read the existing sheet first. Keep every fact with `status: edited` or
-  `origin: user` and every block with `edited_by_user: true` exactly as they are. Write the previous file as
+  `origin: user` and every block with `edited_by_user: true` exactly as they are. Keep `deleted_facts` and never
+  write a fact whose id is in it (the person deleted it). Write the previous file as
   `<name>.sheet.v<N>.json`, add a `versions` entry and `refreshed_at`; during a call add the transcript so far as a
   source of type `transcript`. Write the new sheet to `<name>.sheet.new.json` and rename it over the current one in
   the same step as the brief (`sweep.md`, "Prepare during the call"); a failed run leaves the current sheet as it was.

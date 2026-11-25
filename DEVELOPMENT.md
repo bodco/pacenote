@@ -265,7 +265,8 @@ pages from the Pacenote browser to `live/sources/`. After a call: `<stem>.sheet-
 
 **Schema v1** (`"schema": "pacenote.sheet/1"`): `sheet` {id, title, meeting_ref, mode quick|expert, preset, language,
 route, project, call_type, audience, participants, goal, blocks[], sources[], size_report, readiness, versions[],
-built_at, refreshed_at, diff}; `block` {id, type, title, visible, only_if_data, order, method, facts[],
+built_at, refreshed_at, diff, deleted_facts[] (PB-100: ids the person deleted; Refresh and auto questions keep them
+out)}; `block` {id, type, title, visible, only_if_data, order, method, facts[],
 edited_by_user}; `fact` {id, label, text, source_ids[], locator {quote, line, page, url, slide, cell}, checked_at,
 status found|not_found|needs_check|conflict|stale|edited, conflict_with[], origin model|user|readiness, value {level,
 key, owner, due}, diff}; `source` {id, n, type, uri|path, title, size_tokens, chars, access ok|denied|unsupported|

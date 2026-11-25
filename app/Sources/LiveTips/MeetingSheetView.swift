@@ -19,11 +19,44 @@ final class SheetDoc: ObservableObject {
 
     func reload() { sheet = SheetCache.shared.load(path) }
 
+    /// PB-100: the last deleted fact while its Undo is offered (until the next change, or 10 seconds).
+    @Published var undo: SheetEdit.DeletedFact?
+    private var undoToken = 0
+    private var undoFile: Data?           // the file before the delete: Undo lays back the keys the app does not model
+
     /// Apply a change, save it, then let the sidecar compute readiness again (auto questions, old facts).
     func change(_ f: (inout MeetingSheet) -> Bool) {
+        undo = nil
+        apply(f)
+    }
+
+    /// PB-100: delete a fact with Undo instead of a confirm dialog; the delete is kept on Refresh like an edit.
+    func delete(factID: String) {
+        var gone: SheetEdit.DeletedFact?
+        undo = nil
+        let before = try? Data(contentsOf: URL(fileURLWithPath: (path as NSString).expandingTildeInPath))
+        apply { s in gone = SheetEdit.deleteFact(&s, factID: factID); return gone != nil }
+        guard let gone else { return }
+        undo = gone
+        undoFile = before
+        undoToken += 1
+        let t = undoToken
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in
+            MainActor.assumeIsolated { if let self, self.undoToken == t { self.undo = nil } }
+        }
+    }
+
+    func undoDelete() {
+        guard let d = undo else { return }
+        undo = nil
+        apply(layBack: undoFile) { SheetEdit.restoreFact(&$0, d) }
+    }
+
+    private func apply(layBack raw: Data? = nil, _ f: (inout MeetingSheet) -> Bool) {
         guard var s = sheet, f(&s) else { return }
         sheet = s
         guard SheetCache.shared.save(s, to: path) else { note = L("sheet.ui.err.save"); return }
+        if let raw { try? MeetingSheetIO.layBack(raw, to: path) }      // PB-100: e.g. a question's keywords
         recheck()
     }
 
@@ -59,6 +92,10 @@ struct MeetingSheetTab: View {
                         let d = SheetDiffCounts.of(s)
                         if !d.isEmpty { diffBanner(s, d) }
                         if !doc.note.isEmpty { Text(doc.note).font(PN.Font.caption).foregroundStyle(PN.C.pending) }
+                        // PB-100: the last fact of a block deleted and the block is no longer shown: Undo stays here
+                        if let u = doc.undo, !(u.blockID == s.block(.myFocus)?.id ? myFocusShown(s) : s.shownBlocks.contains(where: { $0.id == u.blockID })) {
+                            PageCard(spacing: 4) { SheetUndoRow(doc: doc, undo: u) }
+                        }
                         myFocus(s).id("sheet-block-" + (s.block(.myFocus)?.id ?? "my_focus"))
                         ForEach(s.shownBlocks.filter { $0.type != .myFocus }) { b in
                             SheetBlockCard(doc: doc, block: b, onRefresh: onRefresh).id("sheet-block-" + b.id)
@@ -140,6 +177,7 @@ struct MeetingSheetTab: View {
                     }
                 }
                 ForEach(extra) { f in SheetFactRow(doc: doc, fact: f) }
+                if let u = doc.undo, u.blockID == b.id { SheetUndoRow(doc: doc, undo: u) }   // PB-100
             }
         }
     }
@@ -279,6 +317,7 @@ struct SheetBlockCard: View {
             }
             // 0.10.0 (Meeting Sheet, round 2): a value replaced by a newer one shows as "was X" under the newer fact
             ForEach(shownFacts) { f in SheetFactRow(doc: doc, fact: f) }
+            if let u = doc.undo, u.blockID == block.id { SheetUndoRow(doc: doc, undo: u) }   // PB-100
             if adding {
                 HStack(spacing: 8) {
                     TextField(L("sheet.ui.fact.addPh"), text: $newText).textFieldStyle(.roundedBorder).onSubmit(add)
@@ -392,7 +431,24 @@ enum SheetVerbatimText {
     }
 }
 
-/// One fact: label, text, source numbers, status chip, diff mark, inline edit, the conflict choice.
+/// PB-100: the line left where a fact was deleted: its text and Undo (gone after 10 seconds or the next change).
+struct SheetUndoRow: View {
+    @ObservedObject var doc: SheetDoc
+    let undo: SheetEdit.DeletedFact
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Image(systemName: "trash").foregroundStyle(PN.C.text3)
+            Text(L("sheet.ui.fact.deleted", ["v": undo.fact.label.map { $0 + ": " + undo.fact.text } ?? undo.fact.text]))
+                .font(PN.Font.caption).foregroundStyle(PN.C.text3).lineLimit(1).truncationMode(.tail)
+            Spacer(minLength: 4)
+            Button(L("sheet.ui.fact.undo")) { doc.undoDelete() }.buttonStyle(.pnTertiary)
+        }
+        .padding(.vertical, 4)
+    }
+}
+
+/// One fact: label, text, source numbers, status chip, diff mark, inline edit, delete with Undo, the conflict choice.
 struct SheetFactRow: View {
     @ObservedObject var doc: SheetDoc
     let fact: SheetFact
@@ -443,6 +499,9 @@ struct SheetFactRow: View {
             Spacer(minLength: 4)
             Button { start() } label: { Image(systemName: "pencil").foregroundStyle(PN.C.text3) }
                 .buttonStyle(.plain).help(L("sheet.ui.fact.edit")).accessibilityLabel(L("sheet.ui.fact.edit"))
+            // PB-100: delete next to edit, with Undo instead of a confirm dialog
+            Button { doc.delete(factID: fact.id) } label: { Image(systemName: "trash").foregroundStyle(PN.C.text3) }
+                .buttonStyle(.plain).help(L("sheet.ui.fact.delete")).accessibilityLabel(L("sheet.ui.fact.delete"))
         }
     }
 
@@ -549,6 +608,7 @@ struct SheetReadinessTab: View {
                     Text(summary(b)).font(PN.Font.body).foregroundStyle(PN.C.text2).fixedSize(horizontal: false, vertical: true)
                     Text(L("sheet.ui.ready.rules", ["preset": lib.preset(s.preset)?.name ?? s.preset])).font(PN.Font.caption).foregroundStyle(PN.C.text3)
                 }
+                if let u = doc.undo { PageCard(spacing: 4) { SheetUndoRow(doc: doc, undo: u) } }   // PB-100: a conflict fact deleted here
                 if !gaps.isEmpty {
                     PageCard(spacing: 4) {
                         PageLabel(text: L("sheet.ui.ready.gaps"))

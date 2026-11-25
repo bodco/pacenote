@@ -177,12 +177,13 @@ public struct MeetingSheet: Codable, Equatable {
     public var builtAt: String?
     public var refreshedAt: String?
     public var diff: SheetDiff?
+    public var deletedFacts: [String]?    // PB-100: ids of facts the person deleted; Refresh never brings them back
 
     enum CodingKeys: String, CodingKey, CaseIterable {
         case schema, id, title, mode, preset, language, route, project, audience, participants, goal, blocks, sources,
              readiness, versions, diff
         case meetingRef = "meeting_ref", callType = "call_type", sizeReport = "size_report", builtAt = "built_at",
-             refreshedAt = "refreshed_at"
+             refreshedAt = "refreshed_at", deletedFacts = "deleted_facts"
     }
 }
 
@@ -510,6 +511,13 @@ public enum MeetingSheetIO {
         var data = try encode(sheet)
         if let old = try? Data(contentsOf: url), let merged = try? patched(original: old, new: data) { data = merged }
         try data.write(to: url, options: .atomic)
+    }
+
+    /// PB-100: after Undo of a delete, the keys the app does not model (a question's keywords, a fact's pass) come
+    /// back from the copy of the file made before the delete, matched by id; what the file has now wins.
+    public static func layBack(_ original: Data, to path: String) throws {
+        let url = URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
+        try patched(original: original, new: try Data(contentsOf: url)).write(to: url, options: .atomic)
     }
 
     /// The keys each level of the sheet knows; anything else in the file is kept on save.
