@@ -326,7 +326,7 @@ class LangShare:
         """PB-72: (seconds per language of the whole call, the language spoken most). The language is None when no
         speech was counted or the call is still inside the warm-up: a short call is not labelled by the set's first
         language."""
-        secs = {k: v for k, v in self.total.items() if v > 0}
+        secs = {k: v for k, v in dict(self.total).items() if v > 0}   # a copy: the ASR thread may still add
         if not secs or self.call_t0 is None or t - self.call_t0 < self.warmup_s:
             return secs, None
         return secs, max(secs, key=lambda l: (secs[l], l))
@@ -4111,13 +4111,17 @@ def apply_line_edits(path: Path, dropped: list | None = None) -> int:
 def uncount_dropped(share: LangShare, credits: list, dropped: list) -> int:
     """PB-72: take the seconds of the deleted rows out of the call's language totals. `credits` holds
     (time, text, language, seconds) per written line; a deleted row (time, text) matches a line of the same second,
-    by its first words when several share it (a translated row has other words: then the first of that second)."""
+    by its first words when several share it. A translated row has other words: it matches only when it is the one line
+    of that second; with several and no word match nothing is taken out (a stale count beats a wrong language)."""
     n = 0
     for hms, body in dropped:
         same = [c for c in credits if c[0] == hms]
         if not same:
             continue
-        c = next((c for c in same if body.startswith(c[1].strip()[:30]) or c[1].startswith(body.strip()[:30])), same[0])
+        c = next((c for c in same if body.startswith(c[1].strip()[:30]) or c[1].startswith(body.strip()[:30])),
+                 same[0] if len(same) == 1 else None)
+        if c is None:
+            continue
         credits.remove(c)
         share.uncount(c[2], c[3])
         n += 1
@@ -4128,8 +4132,8 @@ def save_call_languages(transcript: Path, share: LangShare, t: float) -> bool:
     """PB-72: the call's measured languages into its recording metadata (call_layout.save_spoken): seconds of speech
     per language for the whole call and the dominant one (None in the first minute or with no speech). Called when the
     recording ends and again after the end-of-call edits; a failed write is logged and never stops the shutdown."""
-    secs, dominant = share.spoken(t)
     try:
+        secs, dominant = share.spoken(t)
         if not secs and not call_layout.recording_meta(transcript).exists():
             return False                            # no speech and no recording: no file just for empty counts
         call_layout.save_spoken(transcript, secs, dominant)
@@ -6179,7 +6183,8 @@ def main() -> int:
         # PB-104: a call that ends muted closes its muted span, so the transcript and the notes show where it ends
         writer.marker(L("мікрофон вимкнено до кінця дзвінка", "microphone muted until the end of the call"))
     writer.close(f"\n--- {L('кінець запису', 'end of recording')} {hhmmss(now())} ---\n")
-    save_call_languages(out, lang_share, now())     # PB-72: the measured languages, for the output language
+    call_end = now()                         # PB-72: one end time for both saves, the summary below can take a while
+    save_call_languages(out, lang_share, call_end)  # PB-72: the measured languages, for the output language
     sheet_live.save_state(out)               # 0.10.0 (Meeting Sheet, phase 7): for the after-call check
     if spk["worker"] is not None:
         spk["worker"].stop()
@@ -6195,9 +6200,8 @@ def main() -> int:
         n_edits = apply_line_edits(out, dropped)
         if n_edits:
             log(f"transcript edits applied: {n_edits}")
-        if n_edits:
             uncount_dropped(lang_share, lang_credits, dropped)
-            save_call_languages(out, lang_share, now())     # PB-72: deleted lines no longer count
+            save_call_languages(out, lang_share, call_end)  # PB-72: deleted lines no longer count
     except Exception as e:  # noqa: BLE001
         log(f"transcript edits failed ({e!r})")
     if tracker is not None and spk["ready"]:

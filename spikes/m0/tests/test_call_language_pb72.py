@@ -142,3 +142,43 @@ def test_a_failed_write_is_logged_and_does_not_raise(T, tmp_path, monkeypatch):
     s = T.LangShare(["uk"])
     s.add("uk", 5.0)
     assert T.save_call_languages(_call(tmp_path), s, T0) is False
+
+
+def test_a_deleted_translated_row_sharing_its_second_with_another_language_takes_nothing_out(T):
+    s = T.LangShare(["uk", "en"])
+    s.add("uk", 50.0)
+    s.add("en", 30.0)
+    credits = [("10:00:05", "Добрий день", "uk", 50.0), ("10:00:05", "Hello there", "en", 30.0)]
+    assert T.uncount_dropped(s, credits, [("10:00:05", "Good afternoon (← uk)")]) == 0
+    assert s.total == {"uk": 50.0, "en": 30.0} and len(credits) == 2       # a stale count, not the wrong language
+    assert T.uncount_dropped(s, credits, [("10:00:05", "Hello there")]) == 1   # a word match still works
+    assert s.total == {"uk": 50.0, "en": 0.0}
+
+
+def test_a_failing_read_of_the_totals_is_logged_and_does_not_stop_the_shutdown(T, tmp_path, monkeypatch):
+    s = T.LangShare(["uk"])
+    s.add("uk", 5.0)
+
+    def boom(t):
+        raise RuntimeError("dictionary changed size during iteration")
+    monkeypatch.setattr(s, "spoken", boom)
+    assert T.save_call_languages(_call(tmp_path), s, T0) is False
+
+
+def test_the_recorder_path_starts_the_call_clock_for_the_warm_up(T):
+    w = make(T, ["uk", "en"], says={"en": "Sure, go ahead"}, probs={"uk": 0.05, "en": 0.9})
+    _, share = run(T, w, seg_of(T, 0.05, 1.0), last="uk")
+    assert share.call_t0 is not None                  # set by asr_segment itself, not only by the tests
+
+
+def test_main_saves_the_languages_after_the_recording_ends_and_again_after_the_edits():
+    src = SRC.read_text(encoding="utf-8")
+    main = src[src.index("\ndef main() -> int:"):]
+    assert main.index("lang_credits.append(") < main.index("writer.add(line_obj)")
+    close = main.index("L('кінець запису', 'end of recording')")
+    end = main.index("call_end = now()")
+    first = main.index("save_call_languages(out, lang_share, call_end)")
+    assert close < end < first < main.index("sheet_live.save_state(out)")
+    edits = main.index("apply_line_edits(out, dropped)")
+    unc = main.index("uncount_dropped(lang_share, lang_credits, dropped)", edits)
+    assert first < edits < unc < main.index("save_call_languages(out, lang_share, call_end)", unc)   # same end time

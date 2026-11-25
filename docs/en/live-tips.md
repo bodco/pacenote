@@ -1415,7 +1415,7 @@ The skill and the app follow the same rules, in `rules/agenda.yaml`, `rules/comm
   menu and **Regenerate** under the status lines. The default is the dominant language of the call. It is measured:
   the recorder counts seconds of speech per language over the whole call (a language switch in the tips window keeps
   the count) and saves them in `<stem>.recording.json` when the call ends and again after lines deleted in the
-  transcript pane; a call shorter than a minute has no dominant language, then the language with the most seconds is
+  transcript pane; a call that ends within a minute of its first speech has no dominant language, then the language with the most seconds is
   used. Choosing another
   only remembers it for this call; nothing is rewritten until you press Regenerate, which writes the notes, Summary,
   Recap and an existing follow-up draft again in that language and rewrites the Summary, Recap and meeting notes on the
