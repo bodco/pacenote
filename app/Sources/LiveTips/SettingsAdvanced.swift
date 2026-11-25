@@ -225,14 +225,16 @@ struct AIProviderCard: View {
     @ObservedObject var model: SettingsModel
     @ObservedObject private var runner = PrepRunner.shared
     @ObservedObject private var codex = CodexAccount.shared
+    @ObservedObject private var watch = AccountWatch.shared
     @State private var open = false
 
     private var key: SecretStore.Key { provider == "claude" ? .claudeAPIKey : provider == "chatgpt" ? .openaiAPIKey : .geminiAPIKey }
     private var name: String { provider == "claude" ? "Claude" : provider == "chatgpt" ? "ChatGPT" : "Gemini" }
+    /// PB-98: a session the last request found signed out is not shown as a connected account.
     private var accountOn: Bool {
         switch provider {
-        case "claude": return PrepRunner.claudePath != nil && runner.loggedIn == true
-        case "chatgpt": return CodexAccount.cliPath != nil && codex.signedIn == true
+        case "claude": return watch.state("claude") == .signedIn
+        case "chatgpt": return watch.state("codex") == .signedIn
         default: return false
         }
     }
@@ -267,28 +269,10 @@ struct AIProviderCard: View {
             if open {
                 switch provider {
                 case "claude":
-                LabeledContent(L("ai.access.account")) {
-                    HStack(spacing: 8) {
-                        if PrepRunner.claudePath == nil {
-                            Text(L("set.cc.notInstalled")).foregroundStyle(PN.C.text3)
-                            Button(L("acct.connect")) { AccountLogin.shared.connect("claude") }       // 0.24.1 (F1): installs Claude Code, then signs in
-                        } else {
-                            Image(systemName: runner.loggedIn == true ? "checkmark.circle.fill" : (runner.loggedIn == false ? "exclamationmark.triangle.fill" : "circle.dotted"))
-                                .foregroundStyle(runner.loggedIn == true ? PN.C.turn : (runner.loggedIn == false ? PN.C.onMe : PN.C.text3))
-                            Text(runner.loggedIn == true ? L("set.cc.signedIn") + (runner.authInfo.isEmpty ? "" : " (\(runner.authInfo))")
-                                 : runner.loggedIn == false ? L("set.cc.notSignedIn") : L("set.cc.checking"))
-                                .foregroundStyle(PN.C.text3)
-                            if runner.loggedIn == false { Button(L("set.logIn")) { runner.openLogin() } }
-                            Button(L("set.check")) { runner.refreshAuth() }
-                        }
-                    }
-                }
-                .help(L("ai.access.accountHelp"))
-                    .help(L("ai.access.accountHelp"))
-                    AccountLoginStatus(kind: "claude")
+                    AIAccountRow(kind: "claude")          // PB-98: Sign in / Sign out, Signed out in red, a live Check
                     KeyRow(title: L("keys.claude.title"), hint: L("keys.claude.hint"), key: .claudeAPIKey, model: model)
                 case "chatgpt":
-                    CodexAccountRow()
+                    AIAccountRow(kind: "codex")
                     KeyRow(title: L("keys.openai.title"), hint: L("keys.openai.hint"), key: .openaiAPIKey, model: model)
                 default:
                     KeyRow(title: L("keys.gemini.title"), hint: L("keys.gemini.hint"), key: .geminiAPIKey, model: model)

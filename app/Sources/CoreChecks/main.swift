@@ -6589,5 +6589,6 @@ func mutedMicNoticePB104() {
     expect(OpenAsks.questions([["what": "a", "type": "question"]]) == ["a"], "PB-104: no mute, no change")
 }
 mutedMicNoticePB104()
+accountAuthPB98()
 print("core checks: \(passed) passed, \(failures) failed")
 exit(failures == 0 ? 0 : 1)

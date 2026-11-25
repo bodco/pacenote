@@ -3172,6 +3172,19 @@ Pacenote installs Claude Code with Anthropic's installer, then runs its sign-in 
 if the program asks for a code, paste it in the field Pacenote shows. A ChatGPT account installs OpenAI's Codex
 release for this Mac (pinned version and hash) the same way. With an API key, the preparation and the Meeting Sheet talk to the API directly.
 
+**Sign in, Sign out, Check (PB-98).** Settings > AI > Claude (Manage) and ChatGPT (Manage) show each account as
+Signed in (with **Sign out**) or **Signed out** in red (with **Sign in**). Sign out runs the tool's own sign-out
+(`claude auth logout`, `codex logout`) after a confirmation, so Claude Code or Codex in Terminal on this Mac signs out
+too. The row says Signed out also when the local sign-in file still looks fine but the last real request was refused
+(a revoked session); it never says signed in then, and the provider card drops "Account". A sign-in made elsewhere,
+for example `claude auth login` in Terminal, shows when the app gets focus or within 2 minutes, with no restart, and
+clears the "signed out" mark: at once when the tool had said signed out, otherwise after one tiny live request (on
+focus at most once a minute; in the background every 3 minutes in the first hour after the mark, then every 15
+minutes). **Check** reads the local sign-in and sends one
+tiny live request through the tips engine ("Reply with OK", the smallest model), then shows "Live check HH:MM: the
+account answers" or the reason it did not. Without the tips engine set up it says that only the sign-in on this Mac
+was checked.
+
 **Readiness of a call.** One check decides for every start (Home, the call page, the menu bar, the hot key, Up next):
 
 | Missing | The call |

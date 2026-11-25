@@ -52,6 +52,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 .sink { _ in MainActor.assumeIsolated { AIRoute.autoAssign() } }
             PrepRunner.shared.refreshAuth()
             CodexAccount.shared.refresh()
+            AccountWatch.shared.start()     // PB-98: a sign-in or sign-out made in Terminal shows without a restart
         }
         installMainMenu()
         NSApp.setActivationPolicy(config.showInDock ? .regular : .accessory)
