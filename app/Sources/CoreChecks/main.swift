@@ -5473,8 +5473,12 @@ func emailAuthB13() {
     expect(S.gate(sessionKnown: true, signedIn: true, onboarded: true, callLive: false) == .home, "b13: Home")
 }
 
-/// PB-110 (owner 25.11): the four password flows end to end, app side. The server side (mails, sessions, the console)
-/// is pinned by the server's pytest (test_emailauth.py, test_console_password.py).
+/// PB-110 (owner 25.11): the four password flows end to end, app side. Server side, in the server repo's pytest:
+/// test_emailauth.py pins the reset, method_added and password_changed mails, old sessions signed out after a reset
+/// or a change, and Google reaching the same address after a link; test_console_password.py pins the console reset
+/// (/login/forgot: code mail, password_changed mail, the other console window signed out).
+/// Not pinned there yet: a second Forgot cancelling the first code, and console /login with a password added to a
+/// Google account. Not built yet: the console's own /me page listing the account's sign-in methods.
 func passwordFlowsPB110() {
     typealias S = PacenoteServer
     func obj(_ d: Data) -> [String: Any] { ((try? JSONSerialization.jsonObject(with: d)) as? [String: Any]) ?? [:] }
