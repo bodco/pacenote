@@ -60,8 +60,8 @@ Goals:
   that the owner decides (decision 4).
 - G3. The Mac keeps a bounded cache and works fully offline for calls and preparation of pinned calls.
 - G4. Migration of existing local and Drive data without loss, verified by checksums, reversible. The one planned
-  difference: files uploaded with the Verbatim text removed (2.4) are verified against their stripped bytes, and the
-  Mac keeps the full local file (it is never evicted).
+  difference: files uploaded stripped (Verbatim text or voice vectors removed, 2.4) are verified against their
+  stripped bytes, and the Mac keeps the full local file (it is never evicted).
 - G5. Rollback at every phase.
 
 Non-goals (this spec): server-side AI (preparation on the server stays B11), a web or phone client (B11 PWA), a team
@@ -77,15 +77,15 @@ not object storage), billing for storage (B10).
 | Call metadata, summary, decisions, tasks, risks, Meeting Sheet JSON, numbers | yes (Postgres, [enc]) | unchanged | Postgres |
 | Transcript `<stem>.md`, `<stem>.app.md` | no (link to Drive copy only) | yes | object, `content` bucket |
 | Call notes `.notes.md`, brief `.brief.md`, `.sheet.md` | notes as summary only | yes (files) | object, `content` |
-| `.work/` sidecars: `.tips.jsonl`, `.inbox.jsonl`, `.speakers.json`, sheet request, sources, judge | no | yes, one archive per call | object, `content` |
-| `.work/web/<host>` stored site pages, `live/google/` picked copies | no | yes | object, `content` |
+| `.work/` sidecars: `.tips.jsonl`, `.inbox.jsonl`, `.speakers.json`, sheet request, sources, judge | no | yes, one archive per call, **stripped** (2.4): `.speakers.json` goes without its voice vectors (`centroid`, `embs`), `.voices.json` is left out | object, `content` |
+| `.work/web/<host>` stored site pages, `live/google/` picked copies | no | yes, owner only (`docs/en/live-tips.md:2612-2613` says researched pages never reach the server; decision 18) | object, `content` |
 | Project register `live/commitments.jsonl`, `live/lessons.md`, `live/sources/` | register items only (D40, org projects) | yes (files) | object, `content` |
 | Recording `video/<stem>.recording*.mp4` or `.m4a`, `.recording.json` | Drive link only | yes | object, `media` bucket |
 | Project folder files the app reads (docs, PDFs, notes in the folder) | no (D40 file index: name, date, 600-char description, vector, org projects only) | optional, per project (decision 6) | object, `content` |
-| Voice prints `.work/<stem>.voices.json`, voice library | no | **no, stays on the Mac** (biometric data, decision 9) | Mac |
+| Voice prints `.work/<stem>.voices.json`, the voice vectors inside `.speakers.json` (`centroid` and up to 10 `embs`, written by `recorder/src/fromfile.py` for calls from a file or recording), voice library | no | **no, stays on the Mac** (biometric data, decision 9); removed from the uploaded archive (2.4) | Mac |
 | Keys, tokens, settings, local usage log | no | no | Mac, Keychain |
 | Local evidence store `evidence/<uid>.sqlite` (G2) | no | optional encrypted snapshot (decision 8) | object, `content` |
-| Meeting Sheet Verbatim block text (PB-102, Unreleased: "stays on this Mac, call sync does not send it") | no | **no**: the sheet files and the `.work` archive are uploaded with the Verbatim text removed, as call sync does today, unless the owner changes that promise (decision 15); such files are never evicted (2.4) | Mac |
+| Meeting Sheet Verbatim block text (PB-102, Unreleased: "The block stays on this Mac: call sync does not send it") | no | **no**: the sheet files and the `.work` archive are uploaded with the Verbatim text removed, as call sync does today, unless the owner changes that promise (decision 15); such files are never evicted (2.4) | Mac |
 | HubSpot snapshot next to the brief | no | yes, inside the `.work` archive, owner only | object, `content` |
 | Live tip text | no (counts only) | in `.tips.jsonl` archive, owner only (decision 4) | object, `content` |
 
@@ -98,15 +98,32 @@ Hetzner Object Storage has three locations (Falkenstein, Nuremberg, Helsinki); t
 
 | Bucket | Location | Holds | Settings |
 |---|---|---|---|
-| `pn-prod-content` | Helsinki (same as API) | text artifacts, archives, project files, store snapshots | private, versioning on, lifecycle: noncurrent versions deleted after 30 days |
+| `pn-prod-content` | Helsinki (same as API) | text artifacts, archives, project files, store snapshots | private, versioning on, lifecycle: noncurrent versions and expired delete markers removed after 28 days (a deletion is gone within 30 days, below) |
 | `pn-prod-media` | Helsinki | recordings | private, versioning on, lifecycle per prefix for retention (SX13 later) |
-| `pn-prod-backup` | another location (Falkenstein or Nuremberg) | nightly incremental copy of both buckets (new and changed objects; the job sets `backup_verified_at`) (already encrypted objects) and the encrypted Postgres dump | private, write-only credentials for the copy job, object lock if available (to verify), with a retention of at most 30 days (3.1) |
+| `pn-prod-backup` | another location (Falkenstein or Nuremberg) | nightly incremental copy of both buckets (new and changed objects, already encrypted) and the encrypted Postgres dump | private, versioning on; the copy job's credentials allow put, list, head and get but **no delete** (scoped credentials on Hetzner: to verify); object lock if available (to verify), with a retention of at most 30 days (3.1) |
 | `pn-staging-*` | any | the same for staging | never real data |
+
+The backup copy, step by step:
+
+- **Verify.** After each PUT the copy job reads the object back with HEAD (size, and the S3 checksum if Hetzner
+  returns it, to verify) and compares it with `bytes` and `sha256_cipher` of the `objects` row; without a checksum it
+  reads the object once and hashes it. Only then does it set `backup_verified_at`. List, head and get are read
+  rights plus put; the job never needs delete.
+- **Deletions.** The copy job cannot delete. Deletions reach the backup through the server's deletion sweep (the
+  same one that clears `pn-prod-content` and `pn-prod-media`, 3.1), which uses a separate delete-only credential for
+  `pn-prod-backup` and writes a delete marker for each deleted object. The sweep runs nightly, so a deleted object is
+  marked in all three buckets within a day; a lifecycle rule on each bucket then removes noncurrent versions and
+  expired delete markers after 28 days, so the bytes are gone everywhere within 30 days (if Hetzner lifecycle rules do
+  not support this, to verify, the sweep deletes the versions itself). Never a blanket 30-day expiry of current
+  objects: that would delete live backups.
+- **Leftovers.** If the sweep misses an object, crypto-delete still makes it unreadable once the last dump with the
+  wrapped key expires (3.1); the monthly restore test also lists backup objects without a live `objects` row.
 
 One bucket per kind, not per organization: bucket names are global and limited per project, and access is enforced
 by the API, not by bucket policy. No bucket is public; the bucket credentials (`PN_S3_ACCESS_KEY`,
-`PN_S3_SECRET_KEY`, `PN_S3_BACKUP_ACCESS_KEY`, `PN_S3_BACKUP_SECRET_KEY`) live only in the server `.env` and the
-owner's secrets file. The Mac never holds bucket credentials.
+`PN_S3_SECRET_KEY`, `PN_S3_BACKUP_ACCESS_KEY`, `PN_S3_BACKUP_SECRET_KEY` for the copy job,
+`PN_S3_BACKUP_DELETE_ACCESS_KEY`, `PN_S3_BACKUP_DELETE_SECRET_KEY` for the deletion sweep) live only in the server
+`.env` and the owner's secrets file. The Mac never holds bucket credentials.
 
 ### 2.3 Object keys and the `objects` table
 
@@ -128,8 +145,8 @@ New Postgres table `objects` (RLS like `calls`, ADR 7.3):
 | rel_path **[enc]** | the path inside the project folder, so the Mac can restore the file at the same place (the content is exact except for stripped files, 2.4) |
 | rev, current | a new revision for every change; `current` marks the live one |
 | bytes, sha256_cipher | for verify and dedup on upload |
-| hmac_plain | HMAC-SHA256, with the person's **dedup key**, of the plaintext bytes **as uploaded** (for a stripped file, after the Verbatim text is removed, 2.4): lets a Mac skip unchanged files without sending the plaintext or a plain hash. It is not hidden from the server itself: the server stores the dedup key wrapped and can unwrap it, like every other key (3.1, not end-to-end). The dedup key is a new random per-person key (not the DEK), stored wrapped in `user_keys` and handed to that person's signed-in devices, kept in the Keychain; it never reaches leads |
-| stripped | true when the uploaded bytes differ from the local file on purpose (Verbatim text removed, 2.4) |
+| hmac_plain | HMAC-SHA256, with the person's **dedup key**, of the plaintext bytes **as uploaded** (for a stripped file, after the strip, 2.4): lets a Mac skip unchanged files without sending the plaintext or a plain hash. It is not hidden from the server itself: the server stores the dedup key wrapped and can unwrap it, like every other key (3.1, not end-to-end). The dedup key is a new random per-person key (not the DEK), stored wrapped in `user_keys` and handed to that person's signed-in devices, kept in the Keychain; it never reaches leads |
+| stripped | true when the uploaded bytes differ from the local file on purpose (Verbatim text or voice vectors removed, 2.4) |
 | verified_at, backup_verified_at | when the server confirmed the checksum (3.1), and when the nightly copy job confirmed the object in `pn-prod-backup` (same `sha256_cipher`); both are eviction conditions (4.2) |
 | wrapped_key, key_version | the object's data key, wrapped (section 3) |
 | bucket, created_at, deleted_at | |
@@ -137,21 +154,35 @@ New Postgres table `objects` (RLS like `calls`, ADR 7.3):
 
 `call_assets` (ADR 6.2) keeps its Drive links for history; a new `kind = server_object` row points to `objects`.
 
-### 2.4 Files uploaded without the Verbatim text
+### 2.4 Files uploaded stripped (Verbatim text, voice vectors)
 
-The Meeting Sheet Verbatim text (PB-102) stays on the Mac (decision 15). So `.sheet.md`, the Meeting Sheet files and
-the `.work` archive (which holds the sheet request) are uploaded **stripped**: the app removes the Verbatim block
-text with one deterministic function before encryption and marks the row `stripped`. Rules:
+Two things stay on the Mac and are removed from the files that carry them before encryption:
+
+- the Meeting Sheet Verbatim text (PB-102, decision 15), in `.sheet.md`, the Meeting Sheet files and the sheet
+  request inside the `.work` archive;
+- voice prints (decision 9): the archive leaves out `.voices.json` and the voice library, and its `.speakers.json` is
+  rebuilt from an **allowlist** of fields per speaker (today `name`, `side`, `seconds`, `sample`, `first_quote`,
+  `last_quote`, `suggestions`); every other field is dropped, which today means the vectors `centroid` and `embs`. Without this,
+  phase 1 would upload the voice vectors that `recorder/src/fromfile.py` writes for calls transcribed from a file or
+  recording (and that `CallSpeakers.swift` reads). An allowlist, not a denylist, so a vector field added later is not
+  uploaded by accident.
+
+Such files are uploaded **stripped**: one deterministic strip function per kind, the row marked `stripped`. The
+`.work` archive is always stripped. It is built deterministically (entries sorted by path, fixed timestamps and
+permissions, no compression metadata that changes between runs), so the same local files always give the same bytes
+and the same `hmac_plain`. Rules:
 
 - `hmac_plain` and `sha256_cipher` describe the stripped bytes. To compare a local file with the server, the Mac runs
-  the same strip function on the local file first and computes `hmac_plain` over the result. This holds for the
+  the same strip function (for the `.work` archive: the same deterministic build) on the local files first and
+  computes `hmac_plain` over the result. This holds for the
   folder-sync dedup (4.3) and the location flag (4.4).
 - A stripped file is **never evicted** from the Mac, whatever the phase or the cache budget, and text eviction
   (decision 7b, phase 4) skips it. The Mac copy is the only full copy.
 - What a new or lost Mac gets: the sheets come back without the Verbatim text. A Verbatim block whose source is a file is
   filled again on the next Refresh if that file is on the new Mac; pasted Verbatim text cannot be re-created
   (CHANGELOG, PB-102). Settings
-  > Storage and the restore screen say so. Keeping a full copy would need decision 15(b).
+  > Storage and the restore screen say so. Keeping a full copy would need decision 15(b). A restored
+  `.speakers.json` has no voice vectors: the names stay, and a new Mac re-learns voices (decision 9).
 
 ## 3. Encryption and access
 
@@ -186,9 +217,10 @@ The roles are unchanged: owner, admin, member (org); lead (team, D37); C-level (
 | Kind | Call owner | Lead of the owner's team, C-level | Org project member (D40) | Admin | Staff |
 |---|---|---|---|---|---|
 | Metadata, summary, decisions, tasks, risks, sheet (Postgres) | yes | yes (as today) | decisions, tasks, risks of non-private calls of the project (as today) | metadata counts only | metadata counts only |
-| Transcript, notes, brief | yes | **policy `share_transcripts`** (decision 4) | no | no | no |
+| Transcript, notes, brief | yes | **policy `share_transcripts`** (decision 4); the brief only if it carries no researched-page text (to check in phase 1 design, decision 18), otherwise owner only | no | no | no |
 | Recording | yes | **policy `share_recordings`** (decision 4) | no | no | no |
 | `.work` archive (tips text, inbox, sources) | yes | no | no | no | no |
+| `.sheet.md` file, stored web pages (`web_pages`), Google copies (`google_copy`) | yes | no (leads see the sheet copy in Postgres, which call sync already sends without researched pages) | no | no | no |
 | Project files | yes | no | org project files: members of the org project (D40, decision 6) | no | no |
 | Evidence store snapshot | yes | no | no | no | no |
 | Private call (any kind) | yes | fact and length only (D37) | no | no | no |
@@ -202,6 +234,8 @@ The roles are unchanged: owner, admin, member (org); lead (team, D37); C-level (
   `share_transcripts` is off. With `share_transcripts` on, a lead can open the whole transcript anyway.
 - The team list stays uncached on the lead's disk (D47): a lead's Mac downloads other people's transcripts and
   recordings into memory or a temporary file removed when the call page closes, never into the cache of section 4.
+  Those temporary files live in one app temp folder that is also emptied at every app start, so a crash leaves them
+  at most until the next launch.
 
 ## 4. What the Mac caches and when it is evicted
 
@@ -238,7 +272,7 @@ be verified and backed up").
 |---|---|---|
 | Recordings | always (oldest first) | on from phase 3 |
 | Text of calls (transcripts, notes, brief) | older than 90 days | **off by default** (decision 7): text is about 50 MB per heavy user per month, eviction saves little and costs offline reach |
-| Stripped files (sheets, `.work` archive with the sheet request) | never (2.4) | |
+| Stripped files (sheets, every `.work` archive) | never (2.4) | |
 | Project files | never evicted by Pacenote; they are the person's folder | |
 
 Cache budget: Settings > Storage shows the size on this Mac and on the server and a budget (default 20 GB or 10% of
@@ -448,55 +482,101 @@ set for summaries and sheets only. With video one heavy user adds about 23 GB a 
 
 ## 10. PRIVACY and TERMS changes (draft EN; UK text is written with the release, mirrored)
 
-PRIVACY.md lines to replace or add, in the release that ships phase 1 (and the site pages with them):
+PRIVACY.md lines to replace or add, in the release that ships phase 1 (and the site pages with them). Quotes are
+verbatim from `PRIVACY.md` and `TERMS.md` on main (line numbers of 25.11); the UK files get the same changes.
 
-- Replace "Transcripts, voice prints, settings and logs stay in your project folders..." with: "**Your calls on the
-  Pacenote server.** For each project where sync is on, the app also sends the call's transcript, notes, brief,
-  Meeting Sheet, the call's working files (including the text of the live tips, seen only by you) and, if you record,
-  the recording. They are encrypted on your Mac before they leave it, with a key of their own that is protected by
-  your content key; the storage (Hetzner Object Storage, EU) holds only encrypted files. Your Mac keeps what your next
-  calls need; older recordings can be removed from the Mac and opened again from the server. Voice prints, settings,
-  keys and the local usage log stay on your Mac."
-- In "Pacenote account and server", remove "Audio, video, transcripts, voice prints and the text of live tips never
-  go to the Pacenote server" and say instead which of them go (above) and that voice prints never do.
-- In "Organizations", add: "If your organization turns it on, your team lead (and C-level on Enterprise) can also open
-  the transcripts and recordings of your calls that are not private. Each opening is recorded and you see it in Who
-  viewed my calls. Admins and Pacenote staff never open them."
-- In "Google", add: "Copies of Google documents read for a preparation are stored with the call on the Pacenote
-  server, encrypted, and are used only for your preparations."
-- In "Call recording", change "It goes to Google Drive only when you upload it" to name the Pacenote server as the
-  default place and Drive as optional.
-- Deletion: deleting a call or your data removes the files from the storage too, old versions and backups within 30
-  days. Today's line "your content key is destroyed at once" stays true for the live database, but the files become
-  unreadable everywhere only within 30 days, when the last backup that holds the wrapped key expires (3.1); say that.
-  Where PRIVACY says deleting server data leaves the Mac copy, say instead: Pacenote shows what exists only on the
-  server and offers to download it first (4.5).
-- "Participants' names, whether they are from your company and how long each one spoke are not sent yet": this
-  becomes false, because transcripts carry speaker names and the `.work` archive carries `.speakers.json`. Replace
-  with: "Participants' names and how long each one spoke are sent inside the call's files, encrypted, visible only to
-  the people who may open those files."
-- "Sync to Pacenote server ... off by default" and "Signing in alone sends nothing from your calls: calls go to the
-  server only for projects where you turned Sync on": with decision 3(a) sync is on by default for new projects.
-  Replace with: "Sync is on for new projects; you can turn it off per project or leave one call out. Signing in alone
-  sends nothing from projects where Sync is off." With 3(c) both lines stay.
-- "The server and its backups are in the EU (Hetzner, Finland)": the backup bucket is in Germany (2.2). Replace with
-  "in the EU (Hetzner, Finland, with backups in Germany)".
-- "Participants' email addresses are never sent": transcripts, briefs, sheets and the HubSpot snapshot can contain
-  attendee names and email addresses from the calendar invitation and the CRM. Either the line changes to "are sent
-  only inside the call's files, encrypted, visible to the people who may open those files" or the upload removes
-  email addresses from the files (decision 17).
-- HubSpot: "a local snapshot next to the brief" becomes "a snapshot stored with the call, on your Mac and, encrypted,
-  on the Pacenote server".
+- `PRIVACY.md:7`, the first promise: "**Audio stays on your Mac.** Speech is recognised locally with Whisper; audio is
+  not sent to any AI service." Phase 1 breaks the first sentence for recorded calls. Replace with: "**Audio is never
+  sent to an AI.** Speech is recognised locally with Whisper. If you record a call, the recording also goes to the
+  Pacenote server, encrypted, when sync is on for the project (below); without recording, no audio leaves your Mac."
+- `PRIVACY.md:8`, "Call recording": "saves ... as a file in the project's `video/` folder on your Mac" and "It goes to
+  Google Drive only when you upload it". Name the Pacenote server (encrypted, when sync is on) as the default second
+  place and Drive as optional, and say that from phase 3 older recordings can be removed from the Mac and opened
+  again from the server.
+- `PRIVACY.md:9`: "**Transcripts, voice prints, settings and logs** stay in your project folders, the app's folder and
+  the macOS Keychain." Replace with: "**Your calls on the Pacenote server.** For each project where sync is on, the
+  app also sends the call's transcript, notes, brief, Meeting Sheet, the call's working files (including the text of
+  the live tips and the web pages researched for it, seen only by you) and, if you record, the recording. They are
+  encrypted on your Mac before they leave it, with a key of their own that is protected by your content key; the
+  storage (Hetzner Object Storage, EU) holds only encrypted files. Your Mac keeps what your next calls need; older
+  recordings can be removed from the Mac and opened again from the server. Voice prints (also the voice data in a
+  call's speaker list), settings, keys and the local usage log stay on your Mac."
+- `PRIVACY.md:13`, "Google": "Copies of the documents stay in the project folder on your Mac" becomes: "Copies of the
+  documents read for a preparation stay in the project folder on your Mac and are stored with the call on the
+  Pacenote server, encrypted, used only for your preparations."
+- `PRIVACY.md:14`, "Pacenote account and server":
+  - Remove "Audio, video, transcripts, voice prints and the text of live tips never go to the Pacenote server" and
+    point to the new paragraph above; say that voice prints never go.
+  - "Participants' names, whether they are from your company and how long each one spoke are not sent yet; this
+    policy will say so before they are." This becomes false: transcripts carry speaker names and the `.work` archive
+    carries `.speakers.json` (without voice vectors, 2.4). Replace with: "Participants' names and how long each one
+    spoke are sent inside the call's files, encrypted, visible only to the people who may open those files."
+  - "Participants' email addresses are never sent." Transcripts, briefs, sheets and the HubSpot snapshot can contain
+    attendee email addresses from the calendar invitation and the CRM. Either the line changes to "are sent only
+    inside the call's files, encrypted, visible to the people who may open those files" or the upload removes email
+    addresses from the files (decision 17).
+  - "Sync to Pacenote server (Settings > Projects > the project's menu; off by default)" and "Signing in alone sends
+    nothing from your calls: calls go to the server only for projects where you turned Sync on." With decision 3(a)
+    sync is on by default for new projects. Replace with: "Sync is on for new projects; you can turn it off per
+    project or leave one call out. Signing in alone sends nothing from projects where Sync is off." With 3(c) both
+    lines stay.
+  - "The server and its backups are in the EU (Hetzner, Finland)": the backup bucket is in Germany (2.2). Replace with
+    "in the EU (Hetzner, Finland, with backups in Germany)".
+  - Deletion. Today: "deleting all your data: your content key is destroyed at once and the rest is removed within
+    30 days, also from backups." The key is still destroyed at once in the live database, but the wrapped key stays
+    in database backups for up to 30 days (3.1), so add: "The files of your calls are removed from the storage and its
+    backups within 30 days, and cannot be read by anyone once the last backup expires." Where PRIVACY says deleting
+    server data leaves the Mac copy, say instead: Pacenote shows what exists only on the server and offers to
+    download it first (4.5).
+- `PRIVACY.md:11`, HubSpot: "a local snapshot next to the brief" becomes "a snapshot stored with the call, on your Mac
+  and, encrypted, on the Pacenote server".
+- `PRIVACY.md:16`, "Organizations":
+  - Add: "If your organization turns it on, your team lead (and C-level on Enterprise) can also open the transcripts
+    and recordings of your calls that are not private. Each opening is recorded and you see it in Who viewed my calls.
+    Admins and Pacenote staff never open them."
+  - "the files themselves never go to the Pacenote server" (the project file index) stays true for project folder
+    files with decision 6(a); add "except the copies a preparation read (Google, above)". With 6(b) or 6(c) it
+    changes.
+  - "(not the calls, summaries, Meeting Sheets or transcripts)" for project members stays true (3.2).
+- `PRIVACY.md:14`, "(never the text of tips)" in the list of numbers sent: stays true for those numbers, but the
+  text of live tips now goes inside the call's working files, encrypted, seen only by you. Say so next to it.
+- `PRIVACY.md:10`, "**Text leaves the Mac only to services you set up with your own keys or accounts:**": add "and
+  to the Pacenote server, encrypted, for projects with sync on (below)".
+- `PRIVACY.md:12`, Notion: "the read-only local copy of Notion if you turn it on (files in your work folder, never
+  sent anywhere)" stays true: the local Notion copy is not a call file and is not uploaded (it is a project folder
+  file only if it sits in a project folder, then decision 6 applies; with 6(a) it stays).
+- `PRIVACY.md:20`, "**Otherwise nothing is sent to the author** (apart from the Pacenote account, the service emails
+  and the product analytics above)": stays true; the account paragraph now names the files.
+- `PRIVACY.md:21`: "Summaries and Meeting Sheets can hold confidential or personal information about them and your
+  clients" becomes "Summaries, Meeting Sheets, transcripts and recordings can hold ...".
 - The Verbatim block (PB-102) stays off the server, so its line in CHANGELOG and docs stays true (decision 15).
 
-TERMS.md:
+TERMS.md (`TERMS.md:12`):
 
 - Replace "keep your own copies, your calls stay on your Mac" with: "The server keeps the copy of record of your calls
   for projects with sync on. It is in beta without an uptime promise: export your data regularly (Settings > Account
   > Export)."
-- Add to the organization paragraph: the organization decides whether leads open transcripts and recordings, and is
+- "including confidential and personal information in summaries, Meeting Sheets and (with organizations) shared
+  project cards, project state and file descriptions": add transcripts, recordings and the call's files.
+- Add to the organization part: the organization decides whether leads open transcripts and recordings, and is
   responsible for telling its people.
-- Ending: at least 30 days to export, now including files (export becomes a zip with the folder layout).
+- "if the service ends, you get at least 30 days to export": stays, now including files (export becomes a zip with
+  the folder layout).
+
+Docs and README lines to update in the same release (EN and UK together; line numbers of 25.11):
+
+| EN | UK | Today | Change |
+|---|---|---|---|
+| `README.md:111` | `README.uk.md:112` | "your audio stays on your Mac (a call recording, if you turn it on, too, unless you upload it to your own Google Drive)" | audio is never sent to an AI; a recording goes to the Pacenote server encrypted when sync is on, and to Drive if you upload it |
+| `docs/en/live-tips.md:2879` | `docs/uk/live-tips.md:2896` | "Audio and transcripts stay on your Mac." | transcripts and recordings go to the Pacenote server encrypted for projects with sync on; voice prints stay on the Mac |
+| `docs/en/live-tips.md:2300` | `docs/uk/live-tips.md:2322` | "The recording stays on the Mac" | stays until it is evicted (phase 3, 4.2), then opens from the server |
+| `docs/en/live-tips.md:2612-2613` | `docs/uk/live-tips.md:2631-2632` | "nothing goes to Pacenote servers" and "their titles, addresses and quotes stay on this Mac (only the site name goes, so a token in a page link is never sent)" | with 18(a) the stored pages and the full `.sheet.md` go with the call's files, encrypted, owner only; the sheet copy that others may see still leaves them out. With 18(b) the line stays |
+| `docs/en/live-tips.md:2909` | `docs/uk/live-tips.md:2925` | "Participants' names are not sent yet, their emails never." | as the PRIVACY lines above (decision 17) |
+| `docs/team/README.md:17` | `docs/team/README.uk.md:18` | "Audio never leaves the Mac. That is the privacy promise" | audio never goes to an AI; recordings go to the team's server encrypted, by policy (decision 4) |
+| `docs/team/README.md:121-125` | `docs/team/README.uk.md:124-128` | table "What goes to the server, and what never does": audio **never**, video and transcript only the link, live tips never | audio and video: the recording, encrypted, when sync is on; transcript: yes, encrypted; live tips: the text in the owner-only `.work` archive; voice prints: still never |
+| `docs/en/live-tips.md` sync section | `docs/uk/live-tips.md` | the list of what call sync sends | add the files of section 2.1 |
+
+`docs/en/live-tips.md:1165` ("the voice library stays on the Mac") stays true.
 
 Lawyer questions this adds to ADR 14.5: storing transcripts and recordings makes Pacenote a processor of call content
 for organizations (DPA needed before the first paying team, decision 13); employer client data (ADR 18 question 7,
@@ -611,3 +691,12 @@ Act employee evaluation rules.
     PRIVACY line; (b) remove email addresses from transcripts, briefs and sheets on upload. Recommendation: (a): the
     files are encrypted and seen only by the owner and, by policy, the lead; (b) would make a restored file differ
     from the original.
+18. **Researched web pages on the server.** Docs promise that researched pages, their titles, addresses and quotes
+    stay on the Mac (`docs/en/live-tips.md:2612-2613`), and the pages may hold a token in a link. Options: (a) upload
+    `.work/web/<host>`, the full `.sheet.md` and the brief as owner-only objects (encrypted; leads keep seeing only
+    the Postgres sheet copy without researched pages, and the brief only if it carries no researched-page text), and
+    change the docs line; (b) keep the promise: leave `.work/web` out of the archive and strip researched-page text
+    from uploaded sheet and brief files like the Verbatim text (2.4), so those files are never evicted and a new Mac
+    gets them without it. Recommendation: (a): the pages are public text, the person is the only reader, and (b) adds a
+    second strip function with the same restore loss as decision 15; links are uploaded inside the encrypted archive
+    only, never into Postgres or logs.
