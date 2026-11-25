@@ -5,6 +5,14 @@ Pacenote. Earlier versions are described in the commit messages and in
 
 ## Unreleased
 
+- **Regenerate leaves no second copy on the Notion page when a Notion error and a failed save meet (PB-63).** When
+  Pacenote could not save which Notion blocks it wrote and Notion also refused to take them off again, those blocks
+  stayed on the page looking like your own text, and the next Regenerate wrote the section once more beside them.
+  Before each write Pacenote now keeps a small recovery note naming the blocks it is about to add; the next Regenerate
+  removes the blocks left behind first and, until they are all gone, fails with a message and writes nothing new.
+  It finds them by the ids Notion returned or, when even those could not be saved, by their exact text at the very
+  place it wrote them, so a copy you made of that text elsewhere on the page and the old blocks of a page written by an
+  older version stay.
 - **Meeting Sheet: a Verbatim block for text that must stay word for word (PB-102).** + Add a block now offers
   Verbatim, as often as you need it in one call. In its Settings you give it a title, a source (a file of the call,
   any file, or pasted text) and, if you want only part of a Markdown file, sections such as 1-4 by heading. The
