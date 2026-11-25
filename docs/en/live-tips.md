@@ -2547,7 +2547,8 @@ suggestions come last. What can go in:
   The preparation and the search during the call then leave out the other clients' files and calls, their Tracker
   items, and their lines and sections in the decisions and the Current State page. A Tracker item belongs to the
   client it was written with (during the call or from the after-call notes, PB-73), else to the client its meeting
-  series, call name or text names. Items without a client stay. A
+  series, call name or text names. Items without a client stay. When both clients have a task with the same text,
+  each call's Tracker still shows its own client's one. A
   file or folder you add by hand is always read. When the client is not clear (no client named, two clients named, one
   client folder only, the scope switched off), nothing is hidden, and the search during the call follows the
   preparation's decision. Not yet scoped: the tools of the optional call agent (commitments, decisions, project

@@ -14,7 +14,8 @@ the Current State page, its notes in the folder search.
   follows it; it decides by itself only for a call without a sheet.
 - Left out: a file or a call of another client (by its path), a register item of another client (by the client it
   was written with, PB-73, else its series, call name or text), a passage or a line of a shared file (decisions,
-  Current State) that names only another client, with its section. Items without a client stay. A source the PM added by hand for this call is never left out (sheet/build.py, lookup.py).
+  Current State) that names only another client, with its section. Items without a client stay. A source the PM
+  added by hand for this call is never left out (sheet/build.py, lookup.py).
 
     decide(root, title, companies, call="") -> scope or None
     side(scope, path) / series_side(scope, series) / text_side(scope, text) -> "own" | "other" | None

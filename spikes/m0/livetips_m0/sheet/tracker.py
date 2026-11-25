@@ -108,13 +108,16 @@ def collect(req: dict, today: Optional[_dt.date] = None) -> dict:
         for i in got:
             if i.get("status") != "open" or not str(i.get("text") or "").strip():
                 continue
-            twin = (CM.norm_text(i.get("text", "")), (i.get("owner") or "me").lower())
-            if i.get("id") in seen or twin in seen:
+            if i.get("id") in seen:
                 continue                   # the same item in two registers (a folder added twice) once
-            seen.update({i.get("id"), twin})
+            seen.add(i.get("id"))
             if scope and CS.item_side(scope, i) == "other":
-                other += 1
+                other += 1                 # PB-73: before the twin check, so it never hides this client's own twin
                 continue
+            twin = (CM.norm_text(i.get("text", "")), (i.get("owner") or "me").lower())
+            if twin in seen:
+                continue
+            seen.add(twin)
             created = _day(i.get("created")) or today
             d = due_date(str(i.get("due") or ""), created)
             state = "none" if not d else ("overdue" if d < today else "today" if d == today else "dated")

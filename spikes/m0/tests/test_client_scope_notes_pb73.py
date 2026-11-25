@@ -146,3 +146,17 @@ def test_notes_items_stay_out_of_the_other_client_tracker(tmp_path):
     mine, _ = _tracker(tmp_path, _scope(tmp_path, "acme", "globex"))
     theirs, hidden = _tracker(tmp_path, _scope(tmp_path, "globex", "acme"))
     assert len(mine) == 2 and theirs == [] and hidden == 2
+
+
+def test_same_task_of_two_clients_stays_in_each_own_tracker(tmp_path):
+    """Two clients each have "send the pilot user list" in the shared series. The other client's item is
+    hidden first and must not hide the call's own one as a twin of the same text and owner."""
+    live = tmp_path / "live"
+    live.mkdir()
+    reg = [_add("c-gggggggggg", "send the pilot user list", "globex"),
+           _add("c-aaaaaaaaaa", "send the pilot user list", "acme", call="2026-11-12-1000-weekly-sync.md")]
+    (live / "commitments.jsonl").write_text("\n".join(json.dumps(e) for e in reg) + "\n", encoding="utf-8")
+    assert len(C.load(live)) == 2                                         # two calls: two items, one per client
+    assert _tracker(tmp_path, _scope(tmp_path, "acme", "globex")) == (["send the pilot user list"], 1)
+    assert _tracker(tmp_path, _scope(tmp_path, "globex", "acme")) == (["send the pilot user list"], 1)
+    assert _tracker(tmp_path, None) == (["send the pilot user list"], 0)     # no scope: one line, as before
