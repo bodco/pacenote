@@ -5,6 +5,19 @@ Pacenote. Earlier versions are described in the commit messages and in
 
 ## Unreleased
 
+- **Two-factor sign-in, the app part (PB-12).** Settings > Account > Two-factor sign-in: Turn on shows a QR code and
+  the key as text for any authenticator app (Google Authenticator, Microsoft Authenticator, Authy, Apple Passwords,
+  1Password; TOTP, SHA-1, 6 digits, 30 s) and is on only after the first good code. Then 10 recovery codes are shown
+  once with Download and Copy; New recovery codes, Replace phone or app (the old phone works until the new one is
+  confirmed) and Turn off each ask for a current code or a recovery code. Signing in with email and password asks for
+  the code after the password (or a recovery code); wrong codes lock like wrong passwords; Google sign-in is not asked.
+  The code prompt and the settings say what to do without the phone (a recovery code, or desk@bodco.pm for a support
+  reset). After a support reset, or when an organization requires it, Pacenote opens Settings > Account with the setup
+  (required: it cannot be turned off). Optional: Touch ID or the Mac password when Pacenote starts with a saved sign-in
+  (switch in the Keychain, never sent). **Needs the server part:** the routes in DEVELOPMENT.md "Two-factor sign-in";
+  with a server that does not have them nothing changes except the new Touch ID switch. The staff Reset 2FA, the
+  organization policy, the email notice and the console sign-in are server and console work.
+
 - **Meeting Sheet: a Verbatim block for text that must stay word for word (PB-102).** + Add a block now offers
   Verbatim, as often as you need it in one call. In its Settings you give it a title, a source (a file of the call,
   any file, or pasted text) and, if you want only part of a Markdown file, sections such as 1-4 by heading. The

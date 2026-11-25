@@ -13,6 +13,7 @@ struct AccountSettingsPane: View {
     @State private var confirmEverywhere = false
     @State private var exporting = false          // 0.12.1 (B8): Export server data
     @State private var exportNote = ""
+    @State private var twoFactorLatched = false   // PB-12: the section stays where it came up while the pane is open
 
     @AppStorage(SettingsSearch.advancedKey("account")) private var adv = "0"      // 0.25 (R5)
 
@@ -22,6 +23,9 @@ struct AccountSettingsPane: View {
         }
         .formStyle(.grouped).toggleStyle(.pnSwitch)
         .onAppear { if acct.signedIn { Task { await acct.refreshInfo() } } }
+        .onChange(of: acct.me?.auth?.twoFactor, initial: true) { _, st in
+            if TwoFactor.prompt(st) != .none { twoFactorLatched = true }
+        }
         .alert(L("account.delete.q1"), isPresented: $confirmDelete) {
             Button(L("account.delete.continue"), role: .destructive) { confirmDeleteAgain = true }
             Button(L("common.cancel"), role: .cancel) {}
@@ -74,10 +78,15 @@ struct AccountSettingsPane: View {
         AccountPlanSection()       // 0.18.0 (B3): the plan of each organization, the beta mark, trial, limits
         // 0.25 (R5, item 5): an invite waiting for an answer brings the organizations up from Advanced, once.
         if !acct.invites.isEmpty { AccountOrgsSection() }
+        // PB-12: two-factor sign-in comes up from Advanced while it is offered (support reset) or required
+        // (latched: turning it on must not move the section, its sheet still shows the recovery codes)
+        let twoFactorUp = twoFactorLatched || TwoFactor.prompt(acct.me?.auth?.twoFactor) != .none
+        if twoFactorUp { TwoFactorSection() }
         SettingsAdvancedHeader("account", summary: L("adv.sum.account"))
         if adv == "1" {
         Group {
         AccountSignInMethodsSection()   // 0.22.0 (B13): Google and the password, add, change, remove
+        if !twoFactorUp { TwoFactorSection() }   // PB-12: two-factor sign-in, Touch ID or the Mac password
         if acct.invites.isEmpty { AccountOrgsSection() }   // 0.17.0 (B6b): organizations, where new calls go, invites, Manage organization
         AccountUsageSection()      // 0.19.0: my own use (GET /v1/me/usage), also on Solo
         AccountCallViewsSection()  // 0.20.0 (B9, D47.7): who opened my calls, when a lead or C-level sees them

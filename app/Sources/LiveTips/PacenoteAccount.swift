@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import LiveTipsCore
+import LocalAuthentication
 
 // B7 (server ADR 5.1, 2026-11-15): Settings > Account. Signing in to Pacenote with Google: the system browser, a
 // one-shot server on 127.0.0.1 and PKCE, like the Google accounts, but with `openid email profile` only and no Google
@@ -54,6 +55,16 @@ final class PacenoteAccount: ObservableObject {
     /// 409 `link_required` from Continue with Google: the address has a password account; its password joins the two.
     struct PendingLink: Equatable { var id: String; var email: String; var expires: Date }
     @Published var pendingLink: PendingLink?
+    /// PB-12: the password was right and the account has two-factor sign-in: the code comes next.
+    @Published var pendingTwoFactor: TwoFactor.Challenge?
+    /// PB-12: offer (support reset) or require (organization policy) enrolment; Settings > Account opens it once.
+    @Published var twoFactorAsk: TwoFactor.Prompt = .none
+    private var twoFactorAsked = false
+    /// PB-12 (acceptance 9): the saved session waits for Touch ID or the Mac password before it is used. The switch is
+    /// in the Keychain and never sent; `lockedSession` is the session read at start until it is unlocked.
+    @Published private(set) var signInLock = false
+    @Published private(set) var lockedSession: PacenoteServer.Session?
+    @Published var unlockProblem: String?
     static let sessionChanged = Notification.Name("PacenoteSessionChanged")
     var base: URL { PacenoteServer.baseURL(override: UserDefaults.standard.string(forKey: "pacenoteServerURL")) }
     var store: SecretStore { SecretStore(service: Bundle.main.bundleIdentifier ?? "io.github.example.livetips") }
@@ -73,14 +84,25 @@ final class PacenoteAccount: ObservableObject {
         let st = store
         DispatchQueue.global(qos: .userInitiated).async {
             let s = st.has(.pacenoteSession) ? PacenoteServer.Session.decode(st.get(.pacenoteSession)) : nil
-            DispatchQueue.main.async { MainActor.assumeIsolated { PacenoteAccount.shared.loaded(s) } }
+            let lock = st.has(.signInLock) && st.get(.signInLock) == "1"
+            DispatchQueue.main.async { MainActor.assumeIsolated { PacenoteAccount.shared.loaded(s, lock: lock) } }
         }
     }
 
-    private func loaded(_ s: PacenoteServer.Session?) {
+    private func loaded(_ s: PacenoteServer.Session?, lock: Bool = false) {
         defer { if !sessionKnown { sessionKnown = true; NotificationCenter.default.post(name: Self.sessionChanged, object: nil) } }
+        signInLock = lock
         guard session == nil, let s else { return }
+        // PB-12: with the lock on, the sign-in screen offers Unlock first; nothing reaches the server till then
+        if lock { lockedSession = s; return }
+        start(s)
+    }
+
+    private var watchingActive = false
+    private func start(_ s: PacenoteServer.Session) {
         session = s
+        guard !watchingActive else { Task { await refreshInfo() }; return }
+        watchingActive = true
         Task { await refreshInfo() }
         // smoke 16.11 (0.17.0): an invite made while the app runs showed only after a restart or a visit to Settings >
         // Account. Coming back to the app reads /v1/me again, at most every 10 minutes.
@@ -239,6 +261,7 @@ final class PacenoteAccount: ObservableObject {
             EntitlementsStore.shared.meLoaded(m)        // 0.18.0 (B3): a changed entitlements_etag asks again
             if let b = before, b != Set(m.orgs.map(\.id)) { NotificationCenter.default.post(name: Self.orgsChanged, object: nil) }
             if m.pendingInvites > 0 { await loadInvites() } else { invites = [] }
+            askTwoFactorIfNeeded(m)
             if var s = session, s.name != m.name || (s.email != m.email && !m.email.isEmpty) {
                 s.name = m.name; s.email = m.email; session = s; _ = store.set(.pacenoteSession, s.encoded())
             }
@@ -383,6 +406,7 @@ final class PacenoteAccount: ObservableObject {
     private func forget() {
         refreshing?.cancel(); refreshing = nil
         access = nil; session = nil; me = nil; devices = []; problem = nil; invites = []; orgProjects = [:]
+        pendingTwoFactor = nil; lockedSession = nil; twoFactorAsk = .none; twoFactorAsked = false
         _ = store.remove(.pacenoteSession)
         EntitlementsStore.shared.signedOut()
         NotificationCenter.default.post(name: Self.sessionChanged, object: nil)     // 0.22.0 (D50): back to the sign-in screen
@@ -441,7 +465,7 @@ final class PacenoteAccount: ObservableObject {
         session = s
         access = (t.access, t.accessExpires)
         noteIdentity(t.access)
-        signIn = .idle; problem = nil; notice = nil; pendingLink = nil
+        signIn = .idle; problem = nil; notice = nil; pendingLink = nil; pendingTwoFactor = nil; lockedSession = nil
         NotificationCenter.default.post(name: Self.sessionChanged, object: nil)
         await refreshInfo()
         var ev: [String: Any] = ["method": method]
@@ -451,6 +475,11 @@ final class PacenoteAccount: ObservableObject {
     }
     private func adoptAnswer(_ r: (Data, Int, [String: String]), email: String, method: String, newAccount: Bool = false,
                              ctx: PacenoteServer.AuthContext) async throws {
+        // PB-12: the password was right, the account wants its second step (any password route: sign-in, reset, link)
+        if let c = TwoFactor.challenge(r.0, status: r.1, email: email) {
+            pendingTwoFactor = c; twoFactorMethod = method
+            throw AuthFailure(problem: PacenoteServer.AuthProblem(status: r.1, type: "two_factor_required"), text: "")
+        }
         guard r.1 == 200, let t = PacenoteServer.tokens(json(r.0)) else { throw failure(problemOf(r), ctx, email: email) }
         try await adopt(t, email: PacenoteServer.cleanEmail(email), method: method, newAccount: newAccount)
     }
@@ -509,6 +538,131 @@ final class PacenoteAccount: ObservableObject {
     }
 
     func cancelLink() { pendingLink = nil }
+
+    // MARK: PB-12: two-factor sign-in
+
+    private var twoFactorMethod = "password"
+
+    /// The text for a two-factor answer: its own texts first, then the general sign-in ones.
+    func twoFactorFailure(_ p: PacenoteServer.AuthProblem, _ ctx: PacenoteServer.AuthContext) -> AuthFailure {
+        if let k = TwoFactor.messageKey(p) {
+            AnalyticsTracker.shared.track("signin_failed", ["reason": PacenoteServer.failureCode(p)])
+            return AuthFailure(problem: p, text: L(k, ["n": String(p.attemptsLeft ?? 0)]))
+        }
+        return failure(p, ctx, email: session?.email ?? pendingTwoFactor?.email ?? "")
+    }
+
+    /// POST /v1/auth/two-factor/verify: the code from the app or a recovery code finishes the sign-in. Same limits as
+    /// the password (the server counts both); a challenge that ran out sends the person back to the password.
+    func verifyTwoFactor(_ proof: TwoFactor.Proof) async throws {
+        guard let c = pendingTwoFactor, c.expires > Date() else {
+            pendingTwoFactor = nil
+            throw AuthFailure(problem: PacenoteServer.AuthProblem(status: 410, type: "challenge_expired"), text: L("auth.2fa.err.expired"))
+        }
+        let r = try await authCall("POST", TwoFactor.verifyPath, body: TwoFactor.verifyBody(challengeID: c.id, proof: proof))
+        guard r.1 == 200, let t = PacenoteServer.tokens(json(r.0)) else {
+            let p = problemOf(r)
+            // a challenge that ran out, or whose attempts are spent, needs the password again
+            if ["code_expired", "challenge_expired"].contains(p.type) || r.1 == 410
+                || (p.type == "invalid_code" && (p.attemptsLeft ?? 1) <= 0) { pendingTwoFactor = nil }
+            throw twoFactorFailure(p, .code)
+        }
+        try await adopt(t, email: c.email, method: twoFactorMethod)
+    }
+
+    func cancelTwoFactor() { pendingTwoFactor = nil }
+
+    /// An authorized two-factor call: the JSON answer, or the server's problem as an AuthFailure.
+    private func twoFactorCall(_ method: String, _ path: String, body: Data?) async throws -> [String: Any] {
+        let r: (Data, Int)
+        do { r = try await call(method, path, body: body) }
+        catch PacenoteAccountError.notSignedIn { throw AuthFailure(problem: nil, text: L("account.err.notSignedIn")) }
+        catch { throw AuthFailure(problem: nil, text: error.localizedDescription) }
+        guard r.1 == 200 || r.1 == 201 || r.1 == 204 else { throw twoFactorFailure(PacenoteServer.authProblem(r.0, status: r.1), .methods) }
+        return json(r.0)
+    }
+
+    /// A new secret: the first time without proof, a replacement with a current code or a recovery code. The old
+    /// secret keeps working until the new one is confirmed (the server swaps them on confirm).
+    func twoFactorSetup(proof: TwoFactor.Proof?) async throws -> TwoFactor.Setup {
+        let o = try await twoFactorCall("POST", TwoFactor.setupPath, body: proof.map(TwoFactor.proofBody) ?? Data("{}".utf8))
+        guard let s = TwoFactor.setup(o, account: session?.email ?? me?.email ?? "") else {
+            throw AuthFailure(problem: nil, text: L("account.err.server", ["code": "200", "msg": "setup"]))
+        }
+        return s
+    }
+
+    /// The first good code from the new secret: two-factor is on (or the new phone replaces the old one). The
+    /// recovery codes come back the first time only.
+    func twoFactorConfirm(setupID: String, code: String) async throws -> [String] {
+        let o = try await twoFactorCall("POST", TwoFactor.confirmPath, body: TwoFactor.confirmBody(setupID: setupID, code: code))
+        twoFactorAsk = .none
+        await refreshInfo()
+        return TwoFactor.recoveryCodes(o)
+    }
+
+    /// A new set of 10 recovery codes; the old set stops working.
+    func twoFactorRegenerate(proof: TwoFactor.Proof) async throws -> [String] {
+        let o = try await twoFactorCall("POST", TwoFactor.recoveryPath, body: TwoFactor.proofBody(proof))
+        await refreshInfo()
+        return TwoFactor.recoveryCodes(o)
+    }
+
+    /// Turns two-factor sign-in off (a current code or a recovery code; not while an organization requires it).
+    func twoFactorDisable(proof: TwoFactor.Proof) async throws {
+        _ = try await twoFactorCall("DELETE", TwoFactor.disablePath, body: TwoFactor.proofBody(proof))
+        await refreshInfo()
+    }
+
+    /// After a /v1/me read: an offer after a support reset, or the organization's requirement, opens Settings >
+    /// Account once per launch (the section keeps saying it is required; the server enforces it). Never during a call.
+    private func askTwoFactorIfNeeded(_ m: PacenoteServer.Me) {
+        let p = TwoFactor.prompt(m.auth?.twoFactor)
+        guard p != .none else { twoFactorAsk = .none; return }
+        guard !CallEngine.shared.isRunning, !twoFactorAsked else { return }
+        twoFactorAsked = true
+        twoFactorAsk = p
+        SettingsWindow.show(tab: "account")
+    }
+
+    // MARK: PB-12 (acceptance 9): Touch ID or the Mac password before the saved session is used
+
+    /// Unlocks the session read at start. Cancel keeps the sign-in screen (signing in again always works).
+    func unlock() {
+        guard let s = lockedSession else { return }
+        unlockProblem = nil
+        let ctx = LAContext()
+        ctx.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: L("auth.lock.reason")) { ok, err in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    let a = PacenoteAccount.shared
+                    guard a.lockedSession == s else { return }
+                    guard ok else {
+                        let cancelled = (err as? LAError)?.code == .userCancel || (err as? LAError)?.code == .appCancel
+                        a.unlockProblem = cancelled ? nil : (err?.localizedDescription ?? "")
+                        return
+                    }
+                    a.lockedSession = nil
+                    a.start(s)
+                    NotificationCenter.default.post(name: Self.sessionChanged, object: nil)
+                }
+            }
+        }
+    }
+
+    /// Turns the lock on or off after Touch ID or the Mac password confirms it is the owner of this Mac.
+    func setSignInLock(_ on: Bool) async -> String? {
+        let ctx = LAContext()
+        var err: NSError?
+        guard ctx.canEvaluatePolicy(.deviceOwnerAuthentication, error: &err) else { return err?.localizedDescription ?? L("account.lock.unavailable") }
+        do { _ = try await ctx.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: L("auth.lock.reason")) }
+        catch { return (error as? LAError)?.code == .userCancel ? nil : error.localizedDescription }
+        let st = store
+        let ok = await Task.detached { on ? st.set(.signInLock, "1") : st.remove(.signInLock) }.value
+        guard ok else { return L("account.err.keychain") }
+        signInLock = on
+        return nil
+    }
 
     // Sign-in methods in Settings > Account (signed in). A wrong current password is 403, not 401: the session stays.
 

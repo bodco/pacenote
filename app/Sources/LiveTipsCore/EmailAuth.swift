@@ -26,8 +26,10 @@ extension PacenoteServer {
         public var google: Bool
         public var password: Bool
         public var passwordChangedAt: Date?
-        public init(google: Bool, password: Bool, passwordChangedAt: Date? = nil) {
-            self.google = google; self.password = password; self.passwordChangedAt = passwordChangedAt
+        /// PB-12: two-factor sign-in; nil from a server without it.
+        public var twoFactor: TwoFactor.State?
+        public init(google: Bool, password: Bool, passwordChangedAt: Date? = nil, twoFactor: TwoFactor.State? = nil) {
+            self.google = google; self.password = password; self.passwordChangedAt = passwordChangedAt; self.twoFactor = twoFactor
         }
         /// Removing one way needs the other one (the server answers `last_method` otherwise).
         public var canRemovePassword: Bool { password && google }
@@ -36,7 +38,7 @@ extension PacenoteServer {
     public static func authInfo(_ o: Any?) -> AuthInfo? {
         guard let a = o as? [String: Any] else { return nil }
         return AuthInfo(google: (a["google"] as? Bool) == true, password: (a["password"] as? Bool) == true,
-                        passwordChangedAt: isoDate(a["password_changed_at"]))
+                        passwordChangedAt: isoDate(a["password_changed_at"]), twoFactor: TwoFactor.state(a["two_factor"]))
     }
 
     // MARK: request bodies (the server rejects unknown fields)
