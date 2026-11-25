@@ -21,10 +21,12 @@ calls a month for one heavy user, ADR section 15).
 
 ## 0. Summary
 
-- **What changes.** Every artifact of a call and of a project (transcripts, notes, Meeting Sheets, briefs, tips logs,
-  recordings, project files the app reads) gets its copy of record on the Pacenote server: small structured data in
-  Postgres as today, files in Hetzner Object Storage (S3-compatible), encrypted by the app layer before they reach the
-  bucket. The Mac becomes a cache that keeps what the next calls need.
+- **What changes.** Every artifact of a call and the project register (transcripts, notes, Meeting Sheets, briefs,
+  tips logs, recordings, `commitments.jsonl`, `lessons.md`, `sources/`) gets its copy of record on the Pacenote
+  server: small structured data in Postgres as today, files in Hetzner Object Storage (S3-compatible), encrypted by
+  the app layer before they reach the bucket. Other project folder files go only if the owner chooses so (decision 6,
+  recommended: not now). Two exceptions stay on the Mac only: voice prints and the Meeting Sheet Verbatim text
+  (decision 15). The Mac becomes a cache that keeps what the next calls need.
 - **What stays.** Live calls never depend on the server (zero new network calls on the tip path, offline works).
   Preparation and live search keep running on the local evidence store (G2, G3). Voice prints, keys and settings stay
   on the Mac. Admins and Pacenote staff never read content. Private calls stay private.
@@ -32,7 +34,8 @@ calls a month for one heavy user, ADR section 15).
   9 "the Mac is the source of truth", 13 "nothing in AI on the server" stays). Section 12 lists every decision as
   overridden, amended or still valid.
 - **How it ships.** Five phases. Phase 1 only copies (nothing leaves the Mac's disk); eviction starts in phase 3,
-  after off-server backups, a restore test and a 30-day dual-keep window. Rollback before phase 3 loses nothing.
+  after off-server backups and a restore test, and then only file by file under one rule (4.2): verified on the
+  server, at least 30 days since that, and present in the backup bucket. Rollback before phase 3 loses nothing.
 - **Cost.** Text alone is tiny (about 50 MB per heavy user per month). Recordings dominate: about 0.57 GB per hour of
   standard video. For 50 users who record every call, storage grows by about 1.1 TB a month without a retention rule
   (section 9).
@@ -50,11 +53,15 @@ The sales pilot (one rep for a month, then a team) needs three things the curren
 
 Goals:
 
-- G1. A copy of record on the server for every call and project artifact listed in section 2.
+- G1. A copy of record on the server for every call artifact and the project register listed in section 2.1, except
+  voice prints and the Verbatim text (decision 15). Project folder files only if decision 6 says so; with the
+  recommended 6(a) they are not covered by G1 and stay in the person's folder or the shared Drive folder.
 - G2. Access to it by the same roles as today (D36, D37, D40, D47), with one extra rule for transcripts and recordings
   that the owner decides (decision 4).
 - G3. The Mac keeps a bounded cache and works fully offline for calls and preparation of pinned calls.
-- G4. Migration of existing local and Drive data without loss, verified by checksums, reversible.
+- G4. Migration of existing local and Drive data without loss, verified by checksums, reversible. The one planned
+  difference: files uploaded with the Verbatim text removed (2.4) are verified against their stripped bytes, and the
+  Mac keeps the full local file (it is never evicted).
 - G5. Rollback at every phase.
 
 Non-goals (this spec): server-side AI (preparation on the server stays B11), a web or phone client (B11 PWA), a team
@@ -78,7 +85,7 @@ not object storage), billing for storage (B10).
 | Voice prints `.work/<stem>.voices.json`, voice library | no | **no, stays on the Mac** (biometric data, decision 9) | Mac |
 | Keys, tokens, settings, local usage log | no | no | Mac, Keychain |
 | Local evidence store `evidence/<uid>.sqlite` (G2) | no | optional encrypted snapshot (decision 8) | object, `content` |
-| Meeting Sheet Verbatim block text (PB-102, Unreleased: "stays on this Mac, call sync does not send it") | no | **no**: the sheet files and the `.work` archive are uploaded with the Verbatim text removed, as call sync does today, unless the owner changes that promise (decision 15) | Mac |
+| Meeting Sheet Verbatim block text (PB-102, Unreleased: "stays on this Mac, call sync does not send it") | no | **no**: the sheet files and the `.work` archive are uploaded with the Verbatim text removed, as call sync does today, unless the owner changes that promise (decision 15); such files are never evicted (2.4) | Mac |
 | HubSpot snapshot next to the brief | no | yes, inside the `.work` archive, owner only | object, `content` |
 | Live tip text | no (counts only) | in `.tips.jsonl` archive, owner only (decision 4) | object, `content` |
 
@@ -93,7 +100,7 @@ Hetzner Object Storage has three locations (Falkenstein, Nuremberg, Helsinki); t
 |---|---|---|---|
 | `pn-prod-content` | Helsinki (same as API) | text artifacts, archives, project files, store snapshots | private, versioning on, lifecycle: noncurrent versions deleted after 30 days |
 | `pn-prod-media` | Helsinki | recordings | private, versioning on, lifecycle per prefix for retention (SX13 later) |
-| `pn-prod-backup` | another location (Falkenstein or Nuremberg) | nightly copy of both buckets (already encrypted objects) and the encrypted Postgres dump | private, write-only credentials for the copy job, object lock if available (to verify) |
+| `pn-prod-backup` | another location (Falkenstein or Nuremberg) | nightly incremental copy of both buckets (new and changed objects; the job sets `backup_verified_at`) (already encrypted objects) and the encrypted Postgres dump | private, write-only credentials for the copy job, object lock if available (to verify), with a retention of at most 30 days (3.1) |
 | `pn-staging-*` | any | the same for staging | never real data |
 
 One bucket per kind, not per organization: bucket names are global and limited per project, and access is enforced
@@ -118,15 +125,33 @@ New Postgres table `objects` (RLS like `calls`, ADR 7.3):
 | id, org_id, owner_id | UUID; `org_id` and `owner_id` from the session, never from the request |
 | call_id or project_id | exactly one |
 | kind | `transcript`, `transcript_app`, `notes`, `brief`, `sheet_md`, `work_archive`, `web_pages`, `google_copy`, `register`, `lessons`, `recording`, `recording_meta`, `project_file`, `evidence_snapshot` |
-| rel_path **[enc]** | the path inside the project folder, so the Mac can restore it exactly |
+| rel_path **[enc]** | the path inside the project folder, so the Mac can restore the file at the same place (the content is exact except for stripped files, 2.4) |
 | rev, current | a new revision for every change; `current` marks the live one |
 | bytes, sha256_cipher | for verify and dedup on upload |
-| hmac_plain | HMAC-SHA256 of the plaintext with the person's **dedup key**: lets a Mac skip unchanged files without telling the server anything about the content. The dedup key is a new random per-person key (not the DEK), stored wrapped in `user_keys` and handed to that person's signed-in devices, kept in the Keychain; it never reaches leads |
+| hmac_plain | HMAC-SHA256, with the person's **dedup key**, of the plaintext bytes **as uploaded** (for a stripped file, after the Verbatim text is removed, 2.4): lets a Mac skip unchanged files without sending the plaintext or a plain hash. It is not hidden from the server itself: the server stores the dedup key wrapped and can unwrap it, like every other key (3.1, not end-to-end). The dedup key is a new random per-person key (not the DEK), stored wrapped in `user_keys` and handed to that person's signed-in devices, kept in the Keychain; it never reaches leads |
+| stripped | true when the uploaded bytes differ from the local file on purpose (Verbatim text removed, 2.4) |
+| verified_at, backup_verified_at | when the server confirmed the checksum (3.1), and when the nightly copy job confirmed the object in `pn-prod-backup` (same `sha256_cipher`); both are eviction conditions (4.2) |
 | wrapped_key, key_version | the object's data key, wrapped (section 3) |
 | bucket, created_at, deleted_at | |
 | visibility_class | `owner_only`, `call` (follows the call's visibility), `project_shared` (D40 items) |
 
 `call_assets` (ADR 6.2) keeps its Drive links for history; a new `kind = server_object` row points to `objects`.
+
+### 2.4 Files uploaded without the Verbatim text
+
+The Meeting Sheet Verbatim text (PB-102) stays on the Mac (decision 15). So `.sheet.md`, the Meeting Sheet files and
+the `.work` archive (which holds the sheet request) are uploaded **stripped**: the app removes the Verbatim block
+text with one deterministic function before encryption and marks the row `stripped`. Rules:
+
+- `hmac_plain` and `sha256_cipher` describe the stripped bytes. To compare a local file with the server, the Mac runs
+  the same strip function on the local file first and computes `hmac_plain` over the result. This holds for the
+  folder-sync dedup (4.3) and the location flag (4.4).
+- A stripped file is **never evicted** from the Mac, whatever the phase or the cache budget, and text eviction
+  (decision 7b, phase 4) skips it. The Mac copy is the only full copy.
+- What a new or lost Mac gets: the sheets come back without the Verbatim text. A Verbatim block whose source is a file is
+  filled again on the next Refresh if that file is on the new Mac; pasted Verbatim text cannot be re-created
+  (CHANGELOG, PB-102). Settings
+  > Storage and the restore screen say so. Keeping a full copy would need decision 15(b).
 
 ## 3. Encryption and access
 
@@ -142,8 +167,11 @@ New Postgres table `objects` (RLS like `calls`, ADR 7.3):
   `synced`. Nothing is evicted before that check.
 - Download: the API checks access (3.2), returns a presigned GET URL (5 minutes) and the object key unwrapped for this
   viewer over TLS. The app decrypts locally. Large recordings never pass through the API server.
-- Deleting a person still destroys their DEK (crypto-delete): their objects become unreadable in the bucket, in old
-  versions and in backups. The bucket objects themselves are removed within 30 days by a sweep.
+- Deleting a person still destroys their DEK (crypto-delete) in the live database at once. The wrapped DEK still
+  exists in the Postgres dumps, which are kept 30 days, so the objects become unreadable everywhere only when the last
+  dump that holds it expires, within 30 days. Object lock on `pn-prod-backup` must therefore keep objects no longer
+  than the dumps (30 days), or it extends this window. The bucket objects themselves are removed within 30 days by a
+  sweep. PRIVACY must say "within 30 days", not "at once" (section 10).
 - `PN_MASTER_KEY` loss would now lose transcripts and recordings, not only summaries. Before phase 3 (eviction):
   two offline copies of the master key in different places and a written recovery procedure (decision 12).
 - What the server can read: like today, the API can unwrap keys (it does for leads), so this is protection against a
@@ -190,12 +218,27 @@ Support (never in the Drive-synced folder) that records, per object, `local | up
 - Files with local edits not yet uploaded.
 - Everything the person marks **Keep on this Mac** (project or call).
 
-### 4.2 Evicted (oldest first, only after `synced` and the phase allows it)
+### 4.2 Evicted (one per-file rule)
 
-| Kind | When | Default |
+A file may leave the Mac only when **all** of these hold. This is the only eviction rule; section 6.1 and the phase
+table (section 8) refer to it.
+
+1. The phase allows its kind (recordings from phase 3, text from phase 4 and only with decision 7b).
+2. It is not pinned (4.1) and not stripped (2.4).
+3. Its current revision is `synced` and verified on the server (`verified_at` set, 3.1), and the local file still has
+   the same `hmac_plain` (no local change since the upload).
+4. At least `N` days have passed since `verified_at` (dual-keep, `N` = 30 by default).
+5. The object is present in `pn-prod-backup` (`backup_verified_at` set by the nightly copy job).
+
+Being over the cache budget never skips a condition: it only picks the oldest eligible files first. If nothing is
+eligible, eviction pauses and Settings > Storage warns ("Over the storage budget: N GB wait for their server copy to
+be verified and backed up").
+
+| Kind | Eligible when the rule above holds and | Default |
 |---|---|---|
-| Recordings | 14 days after `synced`, or at once when the cache is over its budget | phase 3 |
-| Text of calls (transcripts, notes, sheets, `.work`) | not pinned and older than 90 days | **off by default** (decision 7): text is about 50 MB per heavy user per month, eviction saves little and costs offline reach |
+| Recordings | always (oldest first) | on from phase 3 |
+| Text of calls (transcripts, notes, brief) | older than 90 days | **off by default** (decision 7): text is about 50 MB per heavy user per month, eviction saves little and costs offline reach |
+| Stripped files (sheets, `.work` archive with the sheet request) | never (2.4) | |
 | Project files | never evicted by Pacenote; they are the person's folder | |
 
 Cache budget: Settings > Storage shows the size on this Mac and on the server and a budget (default 20 GB or 10% of
@@ -228,6 +271,7 @@ without the items of any source that leaves `active`. So eviction must not chang
 - Snippets, claims, edges and G3 snapshot items of an evicted source stay searchable (the store keeps snippet text).
   The G2 vacuum (section 13.4) purges only revoked, superseded and purged rows, so it never touches an evicted source.
 - A downloaded file with the same `hmac_plain` sets the flag back to `local`: no new revision, no model cost.
+  Stripped files (2.4) are never evicted, so their flag stays `local`.
 - A file the person deletes for real (not evicted) is still `deleted`, as today.
 - This is a small G2 change (one column, one input list) in phase 3; no eviction of text (decision 7) before it
   ships. Recordings are not store sources, so recording eviction does not need it.
@@ -249,7 +293,7 @@ Mac copy (ADR 12.2, PRIVACY). After eviction the server copy can be the only one
 | Need | Where it runs | Why |
 |---|---|---|
 | Preparation context (G3), live lookup (G4), after-call links (G5) | **Mac, local G2 store** (unchanged, D57) | zero network during a call, works offline, cost and route chosen by the person, already measured on G0 |
-| A person's own search over all their calls, including evicted ones | Mac store (it keeps snippet text of evicted sources, 4.3) | no server change needed |
+| A person's own search over all their calls, including evicted ones | Mac store (it keeps snippet text of evicted sources, 4.4) | no server change needed |
 | Lead or C-level search over the team's calls (B9) | server, as today: decrypt within the visible set (summaries, decisions, tasks, risks; 90 days, cap 2000 calls) | unchanged in phases 1 to 4 |
 | Lead search over the team's **transcripts** | not in this spec's phases 1 to 4 (decision 10) | decrypting 2000 transcripts (about 120 MB) per query does not scale on the current server |
 | Team graph (G7) | later, on the server objects of org projects (D40) | out of scope |
@@ -277,8 +321,8 @@ encrypted weekly snapshot of the store file in `pn-prod-content`, owner only, le
 2. Order: newest calls first, text before recordings, so the most useful part is on the server first.
 3. Per file: encrypt, presigned PUT, confirm with `sha256_cipher`, the server verifies, the manifest marks `synced`.
    A restart resumes from the manifest. Never during a call; paused on battery under 20% and on a metered network.
-4. Nothing is evicted by the migration. Eviction starts only in phase 3 and only for files `synced` at least 30 days
-   earlier (dual-keep window).
+4. Nothing is evicted by the migration. Eviction starts only in phase 3 and only under the per-file rule of 4.2
+   (verified, `N` = 30 days of dual-keep since verification, present in `pn-prod-backup`).
 5. A second Mac of the same person: `GET /v1/sync?since=` (ADR 8) lists objects; the Mac downloads pinned ones and
    shows the rest as "On the Pacenote server". Dedup by `hmac_plain` stops two Macs from uploading the same file
    twice.
@@ -289,8 +333,9 @@ encrypted weekly snapshot of the store file in `pn-prod-content`, owner only, le
   The Mac uploads its **local** copy when it still has one; only when the local file is gone does it download from
   Drive (the call's `recording.json` has the file id) and then upload. The server never gets Drive tokens (ADR 3.5
   stays).
-- Drive files are not deleted. After migration, "Upload recordings to Google Drive" becomes optional (decision 5);
-  the default for new calls is off once phase 2 ships, so leads have one place.
+- Drive files are not deleted. "Upload recordings to Google Drive" becomes optional (decision 5): it keeps today's
+  setting through phases 1 and 2, so a rollback of phase 2 still has Drive links for new calls, and its default for
+  new calls turns off only once phase 3 is stable (section 11), so leads then have one place.
 - Google Docs copies in `live/google/` and stored site pages go to the server as files. The Google Limited Use line
   allows storage that serves a user-facing feature of the app; PRIVACY must say these copies are stored on the
   Pacenote server (section 10).
@@ -318,10 +363,10 @@ file and the summary row describe the same notes; the summary row stays the one 
 
 | Phase | What | Prerequisites | Can be rolled back by |
 |---|---|---|---|
-| 0 | Requirements before any upload: Postgres backups kept off the API server, nightly bucket copy to `pn-prod-backup` in a second location, a monthly restore test that includes a sample of objects, two offline copies of the master key; buckets created, `objects` table and API behind a flag | none | not needed |
+| 0 | Requirements before any upload: Postgres backups kept off the API server, nightly incremental bucket copy (new and changed objects only) to `pn-prod-backup` in a second location that sets `backup_verified_at`, a monthly restore test that includes a sample of objects, two offline copies of the master key; buckets created, `objects` table and API behind a flag | none | not needed |
 | 1 | Upload only: new calls and Upload history copy to the server; nothing evicted; owner-only access | phase 0 green | flag off; delete server objects (crypto-delete) |
-| 2 | Lead and C-level access to transcripts and recordings by policy (decision 4); call page opens from the server; Drive upload optional | phase 1 on the owner's own calls for 2 weeks with zero checksum mismatches | policy off; Drive links still work |
-| 3 | Eviction of recordings (app media folder, 4.3); deletion offers (4.5); Settings > Storage | 30 days of dual-keep; one restore of evicted recordings from `pn-prod-backup` | eviction off and **Restore all to this Mac** (re-download) |
+| 2 | Lead and C-level access to transcripts and recordings by policy (decision 4); call page opens from the server; Drive upload optional | phase 1 on the owner's own calls for 2 weeks with zero checksum mismatches | policy off; nothing is evicted in phase 2, so every file is still on the owner's Mac, and Drive upload keeps today's setting until phase 3 is stable (6.2), so leads keep Drive links where the person shares them |
+| 3 | Eviction of recordings under the per-file rule of 4.2 (app media folder, 4.3); deletion offers (4.5); Settings > Storage | a restore of a sample of recordings from `pn-prod-backup` passed; the copy job sets `backup_verified_at` reliably for 2 weeks | eviction off and **Restore all to this Mac** (re-download) |
 | 4 | Optional text eviction (decision 7) with the G2 location flag (4.4), store snapshot (decision 8) | phase 3 stable for a month | same as 3 |
 | 5 | Team transcript search (decision 10), G7 | owner decision | flag off |
 
@@ -359,8 +404,20 @@ bucket, add one `P_base` per extra bucket (not verified).
 | 50 users, video for every call | about 1.1 TB | about 13.7 TB | about EUR 137 |
 | 50 users, video for every call, recordings kept 90 days (SX13) | about 1.1 TB | about 3.4 TB (steady) | about EUR 34 |
 
-With H = 20 every number halves. Egress: a lead watching 10 hours of recordings a month is about 6 GB; Mac downloads
-of text are small; 1 TB included egress covers both sizes.
+With H = 20 every number halves.
+
+Egress (not in the table above):
+
+- The nightly copy to `pn-prod-backup` must be incremental (new and changed objects only); a full copy of up to
+  13.7 TB every night is not possible. Incremental, it moves about one month's growth a month: about 114 GB for 5
+  users with video, about 1.1 TB for 50 users with video for every call. Whether traffic between two Hetzner
+  locations counts as egress is not verified; if it does, the backup copy alone uses or exceeds the included 1 TB at
+  50 users.
+- Reads: a lead watching 10 hours of recordings a month is about 6 GB; Mac downloads of text are small.
+- Restores: **Restore all to this Mac** and a new or second Mac downloading recordings can be large (a heavy user
+  with a year of video is about 270 GB). Budget them as rare events at `P_egress` per extra TB.
+- So: for 5 users the included 1 TB covers egress; for 50 users with video plan about 1 to 2 TB of egress a month,
+  that is up to about EUR 1 over the included TB at the example `P_egress`, more in a month with several restores.
 
 ### 9.3 Compute
 
@@ -409,9 +466,21 @@ PRIVACY.md lines to replace or add, in the release that ships phase 1 (and the s
   server, encrypted, and are used only for your preparations."
 - In "Call recording", change "It goes to Google Drive only when you upload it" to name the Pacenote server as the
   default place and Drive as optional.
-- Deletion: deleting a call or your data removes the files from the storage too; old versions and backups within 30
-  days; destroying your key makes them unreadable at once. Where PRIVACY says deleting server data leaves the Mac copy, say instead:
-  Pacenote shows what exists only on the server and offers to download it first (4.5).
+- Deletion: deleting a call or your data removes the files from the storage too, old versions and backups within 30
+  days. Today's line "your content key is destroyed at once" stays true for the live database, but the files become
+  unreadable everywhere only within 30 days, when the last backup that holds the wrapped key expires (3.1); say that.
+  Where PRIVACY says deleting server data leaves the Mac copy, say instead: Pacenote shows what exists only on the
+  server and offers to download it first (4.5).
+- "Participants' names, whether they are from your company and how long each one spoke are not sent yet": this
+  becomes false, because transcripts carry speaker names and the `.work` archive carries `.speakers.json`. Replace
+  with: "Participants' names and how long each one spoke are sent inside the call's files, encrypted, visible only to
+  the people who may open those files."
+- "Sync to Pacenote server ... off by default" and "Signing in alone sends nothing from your calls: calls go to the
+  server only for projects where you turned Sync on": with decision 3(a) sync is on by default for new projects.
+  Replace with: "Sync is on for new projects; you can turn it off per project or leave one call out. Signing in alone
+  sends nothing from projects where Sync is off." With 3(c) both lines stay.
+- "The server and its backups are in the EU (Hetzner, Finland)": the backup bucket is in Germany (2.2). Replace with
+  "in the EU (Hetzner, Finland, with backups in Germany)".
 - "Participants' email addresses are never sent": transcripts, briefs, sheets and the HubSpot snapshot can contain
   attendee names and email addresses from the calendar invitation and the CRM. Either the line changes to "are sent
   only inside the call's files, encrypted, visible to the people who may open those files" or the upload removes
@@ -469,8 +538,8 @@ Act employee evaluation rules.
 | ADR 10, D35, D41 (plan storage quotas, `history_months`) | amended | section 9.4, decision 16 |
 | ADR 12.2 and PRIVACY ("Delete my server data" leaves the Mac and Drive copies) | amended | section 4.5: offer to download first |
 | D44 (auto-delete of inactive accounts with data after 365 days) | still valid, wider effect | now deletes files too; the emails say so |
-| PB-102 (Verbatim block stays on the Mac) | still valid | removed from uploaded sheet files |
-| D57 (GraphRAG fully local, nothing new leaves the Mac) | still valid for the store | the store adds a `remote` state; its optional snapshot is decision 8 |
+| PB-102 (Verbatim block stays on the Mac) | still valid | removed from uploaded sheet files; those files are never evicted (2.4) |
+| D57 (GraphRAG fully local, nothing new leaves the Mac) | still valid for the store | G2 adds a location flag (`local` or `server`) on the source row, not a new state (4.4); its optional snapshot is decision 8 |
 | PRIVACY and TERMS | to change | section 10 |
 
 ## 13. Risks
@@ -481,7 +550,8 @@ Act employee evaluation rules.
 | Master key loss now loses everything not on a Mac | two offline copies, eviction only from phase 3 |
 | A lead sees more than people expect | organization policy (decision 4), never for private calls or the personal organization, a visible "Visible to your team lead" line on the call page, Who viewed my calls |
 | Storage cost grows with video | retention rules (SX13), sound-only by default for sales calls, cost shown in the console |
-| Eviction breaks preparation or the evidence store | pinning (4.1), G2 `remote` state before text eviction, text eviction off by default |
+| Eviction breaks preparation or the evidence store | pinning (4.1), the G2 location flag (4.4) before text eviction, text eviction off by default |
+| The only copy of a file is in one bucket in one location | per-file eviction rule (4.2): verified, 30 days of dual-keep, present in `pn-prod-backup`; over budget only warns |
 | Employer client data on the server | per project sync off stays available (decision 3), lawyer answer before work projects are synced |
 | Upload eats bandwidth on calls | never during a call, resumable, paused on metered networks |
 
@@ -499,11 +569,13 @@ Act employee evaluation rules.
    `share_recordings`, default on for Team and Enterprise, never for private calls, always logged; (b) default off;
    (c) never, leads see summaries and 20-word quotes only. Recommendation: (a) for the sales pilot, because reviewing
    calls is the point of the pilot; the person sees the line on every call page.
-5. **Google Drive upload of recordings after phase 2.** Options: (a) optional, off by default for new calls;
-   (b) keep on by default as a second copy; (c) remove. Recommendation: (a).
+5. **Google Drive upload of recordings.** Options: (a) optional, today's setting kept through phase 2 (the phase 2
+   rollback relies on it), off by default for new calls once phase 3 is stable; (b) keep on by default as a second
+   copy; (c) remove. Recommendation: (a).
 6. **Project folder files on the server.** Options: (a) no, only call artifacts and the register (files stay in the
    person's folder or the shared Drive folder of D40); (b) yes, for org projects only; (c) yes, for every synced
-   project. Recommendation: (a) now, (b) with G7.
+   project. Recommendation: (a) now, (b) with G7. With (a), goal G1 does not cover project folder files: a lost Mac
+   loses them unless the folder is in Google Drive or iCloud or backed up otherwise.
 7. **What the Mac evicts.** Options: (a) recordings only, text never by default; (b) recordings and text older than
    90 days not pinned; (c) nothing evicted automatically, only by the person. Recommendation: (a); text is about 50 MB
    per heavy user per month and keeps preparation and offline full.
@@ -527,7 +599,9 @@ Act employee evaluation rules.
     projects until the lawyer answers; (b) sync them. Recommendation: (a).
 15. **Verbatim block (PB-102) on the server.** Options: (a) keep the promise: uploaded sheet files leave it out;
     (b) upload it like the rest and change the CHANGELOG and docs line. Recommendation: (a); it is usually a script
-    or a legal text the person already has.
+    or a legal text the person already has. Consequence of (a) (2.4): stripped files are never evicted, and a new or
+    lost Mac gets sheets without the Verbatim text; a file-based block fills again on Refresh if the file is there,
+    pasted Verbatim text is lost with the Mac.
 16. **Storage quotas per plan.** Options: (a) count text only against today's `storage_mb` and give recordings a
     separate quota in hours (for example 20 hours stored on Solo, 100 hours per seat on Team, kept by the retention
     rule); (b) raise `storage_mb` to cover video (for example 25 GB per seat on Team); (c) keep today's numbers.
