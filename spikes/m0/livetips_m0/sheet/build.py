@@ -640,7 +640,7 @@ def tidy(blocks: List[dict], only: Optional[List[dict]] = None) -> int:
             continue
         if C.is_custom(b):
             continue        # PB-101: the PM asked for these points here; they neither lose nor take others' facts
-        change =(only is None or b in only) and b.get("type") not in NO_DEDUP and not b.get("edited_by_user")
+        change = (only is None or b in only) and b.get("type") not in NO_DEDUP and not b.get("edited_by_user")
         keep = []
         for f in b.get("facts") or []:
             t = (f.get("label") or "") + " " + (f.get("text") or "")
