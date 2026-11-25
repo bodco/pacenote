@@ -10,7 +10,8 @@ Pacenote. Earlier versions are described in the commit messages and in
   any file, or pasted text) and, if you want only part of a Markdown file, sections such as 1-4 by heading. The
   preparation copies the text unchanged, never through the AI, and checks the copy against the source after the sheet
   is written: if they differ (or the file is gone, or the sections are not there) the block says "Not copied" with
-  the reason instead of showing text. The block moves like any other (for example first after My focus), keeps its
+  the reason instead of showing text; a block with no source chosen yet says so, and the rest of the sheet still
+  opens. The block moves like any other (for example first after My focus), keeps its
   place and settings on Refresh and takes the new text when the file changed. During the call it sits at the top of
   the Brief tab in the tips window, folded; Show text opens it as a large scrollable teleprompter that keeps its place
   while tips arrive. Headings, lists and emphasis are kept on the sheet page, in the tips window and in the exports.

@@ -2502,7 +2502,8 @@ as a file you add to another call or a file in a folder source, by the search du
 memory), it is read without its Verbatim blocks. After the sheet
 is written, each copy is compared with its source once more (the same sections, character for character); if they
 differ, the file is gone, it is not UTF-8 text or the sections are not there, the block says "Not copied" with the
-reason and shows no text. Drag it like any block (for example first after My focus); the eye hides it for this
+reason and shows no text; a block with no source chosen yet says "Not copied: no source chosen", and the rest of
+the sheet opens as usual. Drag it like any block (for example first after My focus); the eye hides it for this
 meeting, Remove block in its Settings takes it out. Refresh keeps every Verbatim block with its place and settings
 and reads the file again, so a changed file gives the new text (its block menu has no Regenerate: Refresh of the
 sheet does it). On the sheet page the block shows where it is copied from and the text with its headings, lists and

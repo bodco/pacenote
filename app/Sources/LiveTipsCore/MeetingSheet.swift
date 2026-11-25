@@ -248,6 +248,18 @@ public struct SheetVerbatim: Codable, Equatable {
     public var checkedAt: String?
     enum CodingKeys: String, CodingKey { case source, sections, text, status, error, sha256, checkedAt = "checked_at" }
     public init(source: Source?, sections: String? = nil) { self.source = source; self.sections = sections }
+    /// Review round 3: a source without a kind (`{}` from older builds) reads as no source, so one unset block never
+    /// makes the whole sheet unreadable.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        source = (try? c.decodeIfPresent(Source.self, forKey: .source)) ?? nil
+        sections = try c.decodeIfPresent(String.self, forKey: .sections)
+        text = try c.decodeIfPresent(String.self, forKey: .text)
+        status = try c.decodeIfPresent(String.self, forKey: .status)
+        error = try c.decodeIfPresent(String.self, forKey: .error)
+        sha256 = try c.decodeIfPresent(String.self, forKey: .sha256)
+        checkedAt = try c.decodeIfPresent(String.self, forKey: .checkedAt)
+    }
     /// The copy passed its check and has something to show.
     public var ok: Bool { status == "ok" && !(text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 }

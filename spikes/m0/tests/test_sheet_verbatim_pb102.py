@@ -274,6 +274,31 @@ def test_missing_file_bad_range_and_empty_paste_fail_with_a_reason(tmp_path):
     assert S.validate(sheet) == []
 
 
+def test_a_block_with_no_source_is_written_without_a_source_key_on_build_and_refresh(tmp_path):
+    # review round 3: the app sent "source": {} for a block with no source yet and the sheet kept it; the app cannot
+    # read a source without a kind, so the whole sheet failed to load. No source = no key, also for an old sheet.
+    root, script = _project(tmp_path)
+    bl = ["header", "my_focus", {"type": "verbatim", "id": "b-verbatim-cc33", "title": "Unset",
+                                 "verbatim": {"source": {}, "sections": ""}}]
+    req = _req(root, bl)
+    res = B.build(req, emit=quiet, responder=lambda s, u: json.dumps(ANSWER))
+    assert res.get("done"), res
+    (u,) = _vb(_sheet(res))
+    assert "source" not in u["verbatim"] and u["verbatim"]["status"] == "failed" and u["verbatim"]["error"] == "no source chosen"
+    assert V.check(u) is None and V.settings_of({"verbatim": {"source": {"kind": "file"}}}) == {"sections": ""}
+    # an older sheet on disk that still holds "source": {} comes back through Refresh without the key
+    old = _sheet(res)
+    _vb(old)[0]["verbatim"]["source"] = {}
+    Path(res["sheet"]).write_text(json.dumps(old), encoding="utf-8")
+    again = {k: v for k, v in req.items() if k != "blocks"}
+    res2 = B.build(again, refresh=True, emit=quiet, responder=lambda s, u: json.dumps(ANSWER))
+    assert res2.get("done"), res2
+    sheet = _sheet(res2)
+    (u2,) = _vb(sheet)
+    assert u2["id"] == "b-verbatim-cc33" and "source" not in u2["verbatim"] and u2["verbatim"]["status"] == "failed"
+    assert S.validate(sheet) == []
+
+
 def test_non_utf8_markdown_fails_instead_of_guessing(tmp_path):
     p = tmp_path / "latin.md"
     p.write_bytes("café".encode("latin-1"))

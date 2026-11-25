@@ -6,7 +6,7 @@ Optionally only some sections are taken: "3" or "1-4", counted by the Markdown h
 
 The block keeps its settings and its copy in `block["verbatim"]` (never as facts, so Refresh, the clean-up and the
 readiness rules leave it alone):
-    {"source": {"kind": "file", "path": "..."} | {"kind": "text", "text": "..."},
+    {"source": {"kind": "file", "path": "..."} | {"kind": "text", "text": "..."} (no key while none is chosen),
      "sections": "1-4" | "",
      "text": the copy, "status": "ok" | "failed", "error": why it failed, "sha256": of the copy, "checked_at": ...}
 
@@ -41,16 +41,16 @@ def is_verbatim(b: dict) -> bool:
 
 
 def settings_of(d: dict) -> dict:
-    """The block's settings from a request block or an old sheet block: source and sections (nothing else)."""
+    """The block's settings from a request block or an old sheet block: source and sections (nothing else).
+    No source chosen = no "source" key (review round 3: the app cannot read a source without a kind)."""
     v = d.get("verbatim") if isinstance(d.get("verbatim"), dict) else {}
     src = v.get("source") if isinstance(v.get("source"), dict) else {}
+    out = {"sections": str(v.get("sections") or "").strip()}
     if src.get("kind") == "text":
-        source = {"kind": "text", "text": str(src.get("text") or "")}
+        out["source"] = {"kind": "text", "text": str(src.get("text") or "")}
     elif src.get("path"):
-        source = {"kind": "file", "path": str(src["path"])}
-    else:
-        source = {}
-    return {"source": source, "sections": str(v.get("sections") or "").strip()}
+        out["source"] = {"kind": "file", "path": str(src["path"])}
+    return out
 
 
 def read_source(source: dict) -> Tuple[Optional[str], Optional[str]]:
@@ -162,7 +162,7 @@ def fill(block: dict, checked_at: str) -> None:
     st = settings_of(block)
     block["verbatim"] = dict(st)
     block["facts"] = []
-    if not st["source"]:
+    if not st.get("source"):
         return _fail(block, "no source chosen", checked_at)
     src, why = read_source(st["source"])
     if src is None:
@@ -182,7 +182,7 @@ def check(block: dict) -> Optional[str]:
     if v.get("status") != "ok":
         return None                      # already failed with its reason
     st = settings_of(block)
-    src, why = read_source(st["source"])
+    src, why = read_source(st.get("source") or {})
     if src is None:
         return why or "cannot read the source"
     want, why = pick(src, st["sections"])

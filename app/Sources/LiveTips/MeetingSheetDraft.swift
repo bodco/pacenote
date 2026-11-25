@@ -23,14 +23,15 @@ struct DraftBlock: Identifiable, Equatable {
                    verbatim: SheetVerbatim(source: nil))
     }
 
-    /// The request's form of a Verbatim block's settings (sheet/verbatim.py settings_of).
+    /// The request's form of a Verbatim block's settings (sheet/verbatim.py settings_of). No source chosen = no key.
     var verbatimRequest: [String: Any] {
-        var src: [String: Any] = [:]
+        var out: [String: Any] = ["sections": (verbatim?.sections ?? "").trimmingCharacters(in: .whitespaces)]
         if let s = verbatim?.source {
-            src["kind"] = s.kind
+            var src: [String: Any] = ["kind": s.kind]
             if s.kind == "text" { src["text"] = s.text ?? "" } else if let p = s.path { src["path"] = p }
+            out["source"] = src
         }
-        return ["source": src, "sections": (verbatim?.sections ?? "").trimmingCharacters(in: .whitespaces)]
+        return out
     }
 }
 

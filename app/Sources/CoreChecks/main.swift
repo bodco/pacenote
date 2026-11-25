@@ -2721,6 +2721,21 @@ func verbatimPB102() {
     expect(html.contains("Exports run **every** night.") && html.contains("Not copied: file not found: gone.md"), "verbatim: HTML export")
     let empty = SheetVerbatim(source: .init(kind: "text", text: "x"))
     expect(!empty.ok, "verbatim: not ok before a build")
+    // review round 3: a block saved with no source (older builds wrote "source":{}) never makes the whole sheet unreadable
+    let noSrc = """
+    {"schema":"pacenote.sheet/1","id":"s-ns","title":"Orbit demo","meeting_ref":{"start":"2026-11-26T10:00:00Z"},"mode":"quick","preset":"blank","language":"en","sources":[],
+     "blocks":[{"id":"b-my_focus","type":"my_focus","title":"My focus","visible":true,"only_if_data":false,"order":0,"edited_by_user":false,"facts":[]},
+       {"id":"b-verbatim-cc33","type":"verbatim","title":"Unset","visible":true,"only_if_data":false,"order":1,"edited_by_user":false,"facts":[],
+        "verbatim":{"source":{},"sections":"","text":"","status":"failed","error":"no source chosen","checked_at":"2026-11-25T10:00:00Z"}},
+       {"id":"b-verbatim-dd44","type":"verbatim","title":"Null","visible":true,"only_if_data":false,"order":2,"edited_by_user":false,"facts":[],
+        "verbatim":{"source":null,"text":"","status":"failed","error":"no source chosen"}}]}
+    """
+    if let ns = try? MeetingSheetIO.decode(Data(noSrc.utf8)), ns.blocks.count == 3 {
+        let u = ns.blocks[1].verbatim
+        expect(ns.blocks[0].id == "b-my_focus" && u?.source == nil && u?.status == "failed" && u?.error == "no source chosen"
+               && u?.checkedAt == "2026-11-25T10:00:00Z" && u?.sections == "" && ns.blocks[2].verbatim?.source == nil,
+               "verbatim: a block with an empty source decodes, its source is none and the sheet survives")
+    } else { expect(false, "verbatim: a sheet with an empty Verbatim source decodes") }
 }
 
 // 0.10.0 (Meeting Sheet, phase 6): the Pacenote browser's pure logic: page kinds, the capture plan, the pause, the
