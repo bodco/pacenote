@@ -3067,7 +3067,7 @@ teams, organization projects and invites are managed in the Pacenote console, no
   open in your browser. **Open in browser** shows the console there: sign in with Google or with your email and
   password, and Forgot password? sets a new one with a code from the email (server 0.16.0). A password session opens
   the organization and your own pages only. The Platform zone for Pacenote staff always asks for Google in the
-  browser, never in the app.
+  browser; since 0.19.0 it also opens in the Console tab (14.1z10).
 - **Current state.** A project linked to an organization project shows **Current state** on its page in Settings >
   Projects: what is true now, the same for everyone on the project (markdown, up to 8 KB). **Edit...** opens the text;
   **Review changes** shows exactly which lines change before anything is sent, then **Send**. If someone saved
