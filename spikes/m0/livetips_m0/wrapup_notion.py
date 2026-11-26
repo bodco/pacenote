@@ -764,9 +764,135 @@ def _record_first_write(md: Path, page_id: str, ids) -> None:
             pass
 
 
+def _pending_path(md: Path) -> Path:
+    return call_layout.sidecar_of(call_language._named_to_md(md), ".notion-blocks.pending.json")
+
+
+def _fingerprint(block: dict) -> str:
+    return (block.get("type") or "") + "\x1f" + _plain(block)
+
+
+def read_pending(md: Path, page_id: str):
+    """PB-63: the recovery record of a Regenerate append that was never recorded as Pacenote's: {"ids", "fps"}, or None."""
+    try:
+        d = json.loads(_pending_path(md).read_text("utf-8"))
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError) as e:
+        raise RuntimeError(f"the recovery record of Pacenote's Notion blocks cannot be read ({e})") from e
+    return d if isinstance(d, dict) and d.get("page_id") == page_id else None
+
+
+_UNKNOWN = "?"      # a neighbour id that is not known: the content match is off
+
+
+def _write_pending(md: Path, page_id: str, ids, fps, prev=None, nxt=None) -> None:
+    """Atomic, like set_owned; raises OSError. Written before each append (fingerprints of the blocks about to go in and
+    the ids of the blocks on either side of the place they go: prev, nxt; None is the start or the end of the page) and
+    again after it (the ids Notion returned), so blocks a failed run could not take off the page again stay known."""
+    p = _pending_path(md)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_name(p.name + ".tmp")
+    tmp.write_text(json.dumps({"page_id": page_id, "ids": list(ids), "fps": list(fps), "prev": prev, "nxt": nxt}),
+                   "utf-8")
+    os.replace(tmp, p)
+
+
+def _stray_by_content(children: list, pend: dict, owned: set) -> list:
+    """The blocks of an append whose ids were never saved: only those between the recorded neighbours, in the order
+    written, aligned as a longest common subsequence (a block the PM typed or copied in between is skipped, and so is a
+    written block already taken off by a partial rollback or reconcile). Nothing landed (the neighbours are next to each
+    other) or a neighbour is gone: none."""
+    prev, nxt, fps = pend.get("prev"), pend.get("nxt"), list(pend.get("fps") or ())
+    pos = {b.get("id"): k for k, b in enumerate(children)}
+    if _UNKNOWN in (prev, nxt) or (prev is not None and prev not in pos) or (nxt is not None and nxt not in pos):
+        return []
+    lo = 0 if prev is None else pos[prev] + 1
+    hi = len(children) if nxt is None else pos[nxt]
+    cand = [b for b in children[lo:hi] if b.get("id") not in owned]
+    got = [_fingerprint(b) for b in cand]
+    n, m = len(got), len(fps)
+    suf = [[0] * (m + 1) for _ in range(n + 1)]     # longest common subsequence of got[i:] and fps[j:]
+    for i in range(n - 1, -1, -1):
+        for j in range(m - 1, -1, -1):
+            suf[i][j] = suf[i + 1][j + 1] + 1 if got[i] == fps[j] else max(suf[i + 1][j], suf[i][j + 1])
+    out, i, j = [], 0, 0
+    while i < n and j < m:                          # the earliest blocks of a longest alignment: the run wrote them together
+        if got[i] == fps[j] and suf[i][j] == suf[i + 1][j + 1] + 1:
+            out.append(cand[i]["id"])
+            i, j = i + 1, j + 1
+        elif suf[i + 1][j] >= suf[i][j + 1]:
+            i += 1
+        else:
+            j += 1
+    return out
+
+
+def _clear_pending(md: Path) -> None:
+    try:
+        _pending_path(md).unlink()
+    except FileNotFoundError:
+        pass
+
+
+def _reconcile_pending(md: Path, page_id: str) -> None:
+    """PB-63: before Regenerate writes anything, archive the blocks an earlier run appended but could neither record nor
+    remove. By id when the recovery record has them, else by content at the recorded place only, never a block recorded
+    as Pacenote's current text. Until every one of them is gone the run fails and writes nothing."""
+    pend = read_pending(md, page_id)
+    if pend is None:
+        return
+    owned = read_owned(md, page_id) or set()
+    children = _children(page_id)
+    ids = set(pend.get("ids") or ())
+    if ids:
+        stray = [b["id"] for b in children if b.get("id") in ids and b.get("id") not in owned]
+    else:
+        stray = _stray_by_content(children, pend, owned)
+    left = 0
+    for bid in stray:
+        try:
+            notion("DELETE", f"/blocks/{bid}")
+        except Exception:  # noqa: BLE001
+            left += 1
+    if left:
+        raise RuntimeError(f"Pacenote blocks left on the Notion page by an earlier failed Regenerate are not reconciled "
+                           f"({left} could not be removed); nothing new was written, retry")
+    try:
+        _clear_pending(md)
+    except OSError as e:
+        raise RuntimeError(f"Pacenote blocks left by an earlier failed Regenerate are not reconciled: the recovery record "
+                           f"could not be cleared ({e}); nothing new was written, retry") from e
+
+
+def _append_tracked(md: Path, page_id: str, chunk: list, after, written: list, record, prev, nxt) -> list:
+    """Regenerate: one append with a recovery record written before it; then the ids go into the block record (or the
+    run's blocks come off the page again, see _record_or_undo). No recovery record, no append. prev and nxt are the
+    blocks the chunk goes between. Returns the ids Notion gave the chunk."""
+    fps = [_fingerprint(b) for b in chunk]
+    try:
+        _write_pending(md, page_id, [], fps, prev, nxt)
+    except OSError as e:
+        raise RuntimeError(f"the recovery record of Pacenote's Notion blocks could not be written ({e}); "
+                           "nothing more was written to the page") from e
+    body = {"children": chunk}
+    if after:
+        body["after"] = after
+    r = notion("PATCH", f"/blocks/{page_id}/children", body) or {}
+    got = [b.get("id") for b in r.get("results") or [] if b.get("id")]
+    written += got
+    try:
+        _write_pending(md, page_id, got, fps, prev, nxt)
+    except OSError:
+        pass                                    # the fingerprints and neighbours written before the append still find these blocks
+    record(written)
+    return got
+
+
 def _record_or_undo(md: Path, page_id: str, ids, legacy, written: list) -> None:
     """Regenerate: record the ids, or archive the blocks this run wrote and fail. Blocks that are on the page but not in
-    the record would be taken for the PM's by the next run and stay as a second copy."""
+    the record would be taken for the PM's by the next run and stay as a second copy. Blocks that cannot be archived
+    either stay named in the recovery record, and the next run removes them before it writes (PB-63)."""
     try:
         set_owned(md, page_id, ids, legacy)
     except OSError as e:
@@ -776,8 +902,18 @@ def _record_or_undo(md: Path, page_id: str, ids, legacy, written: list) -> None:
                 notion("DELETE", f"/blocks/{bid}")
             except Exception:  # noqa: BLE001
                 left += 1
+        if not left:
+            try:
+                _clear_pending(md)
+            except OSError:
+                pass                            # a stale record finds nothing left to archive
         raise RuntimeError(f"the record of Pacenote's Notion blocks could not be saved ({e}); "
-                           + (f"{left} new blocks could not be removed again" if left else "the new text was removed again")) from e
+                           + (f"{left} new blocks could not be removed again, the next Regenerate removes them first"
+                              if left else "the new text was removed again")) from e
+    try:
+        _clear_pending(md)
+    except OSError:
+        pass                                    # recorded as Pacenote's: a stale recovery record never archives these
 
 
 def regenerate_page(page: dict, sc, ids, a, w, blocks, lang) -> dict:
@@ -785,6 +921,7 @@ def regenerate_page(page: dict, sc, ids, a, w, blocks, lang) -> dict:
     place. Blocks outside the section (the PM's own, the transcript sub-page, the footer) stay; the transcript is never
     uploaded again. New blocks go in first, the old ones are archived after, so a failure in between leaves text, not a hole."""
     pid = page["id"]
+    _reconcile_pending(a.md, pid)       # PB-63: an earlier run's stranded blocks go first, or the run fails here
     upd = link_props(sc, ids, page.get("properties", {}), a.project_name, getattr(a, "workspace_value", ""))
     if sc["summary"] and w.get("summary"):      # PB-127: a line about notes not ready never blanks the Summary property
         upd[sc["summary"]] = {"rich_text": rt(w["summary"])}
@@ -802,10 +939,11 @@ def regenerate_page(page: dict, sc, ids, a, w, blocks, lang) -> dict:
     if sec is None:             # the section was removed by hand: write it again, still without a transcript
         out = {"ok": True, "url": page.get("url"), "page_id": pid}
         items, written = [h(2, TXT[lang]["summary"])] + new, []
+        prev = children[-1]["id"] if children else None      # appended at the end of the page
         for k in range(0, len(items), 90):
-            r = notion("PATCH", f"/blocks/{pid}/children", {"children": items[k:k + 90]}) or {}
-            written += [b.get("id") for b in r.get("results") or [] if b.get("id")]
-            _record_or_undo(a.md, pid, written, legacy, written)
+            got = _append_tracked(a.md, pid, items[k:k + 90], None, written,
+                                  lambda w: _record_or_undo(a.md, pid, w, legacy, w), prev, None)
+            prev = got[-1] if got else _UNKNOWN
         if legacy:
             out["legacy_blocks"] = len(legacy)
         return out
@@ -823,12 +961,14 @@ def regenerate_page(page: dict, sc, ids, a, w, blocks, lang) -> dict:
     chunks = [new[k:k + 90] for k in range(0, len(new), 90)]
     written = []                            # ids Notion returned for our own writes: a block the PM adds meanwhile is not among them
     keep = set(owned or ())                 # the old ids stay recorded until the cleanup below is complete
+    nxt = children[i + 1]["id"] if i + 1 < len(children) else None
     for chunk in reversed(chunks):          # each chunk goes right after the heading, so the last one inserted ends up first
-        r = notion("PATCH", f"/blocks/{pid}/children", {"children": chunk, "after": start["id"]}) or {}
-        written += [b.get("id") for b in r.get("results") or [] if b.get("id")]
         # recorded as each batch succeeds: a failure later cannot leave an untracked copy; a record that cannot be saved
         # takes this run's blocks off the page again and fails the run
-        _record_or_undo(a.md, pid, keep | {start["id"]} | set(written), legacy, written)
+        got = _append_tracked(a.md, pid, chunk, start["id"], written,
+                              lambda w: _record_or_undo(a.md, pid, keep | {start["id"]} | set(w), legacy, w),
+                              start["id"], nxt)
+        nxt = got[0] if got else _UNKNOWN
     for b in old:
         notion("DELETE", f"/blocks/{b['id']}")      # a failure here keeps old and new ids recorded; the next run archives both and writes once
     set_owned(a.md, pid, [start["id"]] + written, legacy)   # cleanup done: only the current section is ours (a failure leaves the superset above: safe, the run fails)

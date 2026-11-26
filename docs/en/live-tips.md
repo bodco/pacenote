@@ -1423,7 +1423,9 @@ The skill and the app follow the same rules, in `rules/agenda.yaml`, `rules/comm
   client’s language is not marked. The transcript never changes. A one-language call shows no control. Regenerate does
   not start while a call is recording, and a call you start during Regenerate stops it: what was not written again
   stays out of date, press Regenerate after the call. On a Notion page written by an older version the old blocks stay
-  next to the new text and the page stays out of date until you delete them.
+  next to the new text and the page stays out of date until you delete them. If a Notion error leaves new blocks on the
+  page that Pacenote could neither record nor take off again, the next Regenerate removes them first and fails, writing
+  nothing new, until they are gone, so the page never gets a second copy.
 - **Follow-up email.** The draft uses the call's output language. If the project's client language differs,
   the Follow-up tab and inspector offer it before the first draft. Choosing the client’s language keeps the
   follow-up current even if you change the call’s output language. Write again asks before replacing your draft.
