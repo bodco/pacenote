@@ -202,8 +202,8 @@ def resolve(situations: List[dict], notes: Optional[str], mn: Optional[dict] = N
     e = pm_edit("decisions")
     if e is not None:
         out["decision_items"], out["decisions_from"] = decision_items(e.get("decisions"), e.get("decision_owners")), "pm"
-    elif mn and decision_items(mn["decisions"]):
-        out["decision_items"], out["decisions_from"] = decision_items(mn["decisions"]), "notes"
+    elif mn and decision_items(mn.get("decisions") or []):
+        out["decision_items"], out["decisions_from"] = decision_items(mn.get("decisions") or []), "notes"
     elif live is not None and decision_items(live.get("decisions")):
         out["decision_items"], out["decisions_from"] = decision_items(live.get("decisions")), "live"
     elif notes is not None and clean(legacy(notes, ["decisions", "рішення"])):
@@ -219,7 +219,7 @@ def resolve(situations: List[dict], notes: Optional[str], mn: Optional[dict] = N
         out["risk_items"], out["risks_from"] = [{"t": "", "text": x} for x in clean(_whats(live.get("risks")))], "live"
     out["risks"] = [i["text"] for i in out["risk_items"]]
 
-    nt = dedup([x for x in (task(i["text"], i.get("t", "")) for i in (mn["actions"] if mn else [])) if x])
+    nt = dedup([x for x in (task(i["text"], i.get("t", "")) for i in ((mn.get("actions") or []) if mn else [])) if x])
     lt = live_tasks(live) if live is not None else []
     gt = dedup([x for x in (task(l) for l in legacy(notes, ["action items", "задачі", "завдання"])) if x]) if notes is not None else []
     for name, ts in (("notes", nt), ("live", lt), ("legacy", gt)):
