@@ -5645,6 +5645,99 @@ func emailAuthB13() {
     expect(S.gate(sessionKnown: true, signedIn: true, onboarded: true, callLive: false) == .home, "b13: Home")
 }
 
+/// PB-110 (owner 25.11): the four password flows end to end, app side. Server side, in the server repo's pytest:
+/// test_emailauth.py pins the reset, method_added and password_changed mails, old sessions signed out after a reset
+/// or a change, and Google reaching the same address after a link; test_console_password.py pins the console reset
+/// (/login/forgot: code mail, password_changed mail, the other console window signed out).
+/// Not pinned there yet: a second Forgot cancelling the first code, and console /login with a password added to a
+/// Google account. Not built yet: the console's own /me page listing the account's sign-in methods.
+func passwordFlowsPB110() {
+    typealias S = PacenoteServer
+    func obj(_ d: Data) -> [String: Any] { ((try? JSONSerialization.jsonObject(with: d)) as? [String: Any]) ?? [:] }
+    func pj(_ o: [String: Any]) -> Data { (try? JSONSerialization.data(withJSONObject: o)) ?? Data() }
+    func auth(_ g: Bool, _ p: Bool) -> S.AuthInfo? {
+        S.me(["user": ["id": "u", "email": "emily@example.com"], "organizations": [],
+              "auth": ["google": g, "password": p, "password_changed_at": p ? "2026-11-25T09:00:00Z" as Any : NSNull()]])?.auth
+    }
+    let dev = S.deviceInfo(deviceName: "Emily's Mac", appVersion: "0.27.2")
+    // a text counts only when it is there, not empty, in both en.json and uk.json
+    func texts(_ lang: String) -> Set<String> {
+        let f = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Resources/i18n/\(lang).json")
+        let o = (try? JSONSerialization.jsonObject(with: (try? Data(contentsOf: f)) ?? Data())) as? [String: Any]
+        return Set((o ?? [:]).compactMap { k, v in ((v as? String) ?? "").isEmpty ? nil : k })
+    }
+    let enKeys = texts("en"), ukKeys = texts("uk")
+    expect(enKeys.count > 100 && ukKeys.count > 100, "pb110: en.json and uk.json are read")
+    let keys = enKeys.intersection(ukKeys)
+
+    // 1) Forgot password: the reset id of the forgot answer travels with the code (that the server cancels the earlier
+    //    reset of the address is server SQL, app.reset_start)
+    let started = S.codeStarted(["reset_id": "r2", "expires_in": 900, "resend_in": 60])
+    expect(started == S.CodeStarted(id: "r2", expiresIn: 900, resendIn: 60), "pb110: the forgot answer is read")
+    let rb = obj(S.resetBody(resetID: started?.id ?? "", code: "Your code: 8765 4321", newPassword: "a long new password", device: dev))
+    expect(rb["reset_id"] as? String == "r2" && rb["code"] as? String == "87654321" && rb["new_password"] as? String == "a long new password",
+           "pb110: reset sends the latest id, the code digits and the new password")
+    for (t, k) in [("invalid_code", "auth.err.code"), ("code_expired", "auth.err.codeExpired"), ("code_limit", "auth.err.codeLimit")] {
+        let m = S.authMessage(S.authProblem(pj(["type": t, "attempts_left": 2]), status: t == "code_expired" ? 410 : 400), context: .reset)
+        expect(m?.key == k && keys.contains(k), "pb110: reset answer \(t) has its text")
+    }
+    expect(keys.contains("auth.reset.done"), "pb110: after a reset the app says other devices are signed out")
+
+    // 2) Change password: current + new, a wrong current one is 403 and keeps the session
+    expect(S.MethodAction.change.needsCurrent && S.MethodAction.change.needsNew, "pb110: Change password asks for the current and a new one")
+    expect(Set(obj(S.setPasswordBody(current: "the old password", new: "a long new password")).keys) == ["current_password", "new_password"],
+           "pb110: change body")
+    expect(S.authMessage(S.AuthProblem(status: 403, type: "invalid_credentials"), context: .methods)?.key == "account.methods.wrongPassword"
+           && keys.contains("account.methods.wrongPassword"),
+           "pb110: wrong current password reads as such, not as a failed sign-in")
+    expect(keys.contains("account.methods.changed"), "pb110: change notice text")
+
+    // 3) A Google account sets a password without a current one; then it has both ways, either can go
+    let googleOnly = auth(true, false)
+    expect(googleOnly?.google == true && googleOnly?.password == false && googleOnly?.canDisconnectGoogle == false,
+           "pb110: Google only, Google cannot be removed")
+    expect(!S.MethodAction.set.needsCurrent && S.MethodAction.set.needsNew, "pb110: Set a password asks only for the new one")
+    expect(Set(obj(S.setPasswordBody(current: nil, new: "a long new password")).keys) == ["new_password"]
+           && Set(obj(S.setPasswordBody(current: "", new: "a long new password")).keys) == ["new_password"],
+           "pb110: no current_password is sent when setting the first password")
+    expect(S.authMessage(S.AuthProblem(status: 409, type: "google_reauth"), context: .methods)?.key == "account.methods.confirmGoogle"
+           && keys.contains("account.methods.confirmGoogle"),
+           "pb110: the server asking for Google again says so")
+    let both = auth(true, true)
+    expect(both?.canRemovePassword == true && both?.canDisconnectGoogle == true && both?.passwordChangedAt != nil,
+           "pb110: Google and a password, either can be removed")
+    let lb = obj(S.loginBody(email: " emily@example.com ", password: "a long new password", device: dev))
+    expect(lb["email"] as? String == "emily@example.com" && Set(lb.keys) == ["email", "password", "device"],
+           "pb110: the Google address signs in with the password like any password account")
+
+    // 4) A password account connects Google with the same email (current password + Google), or meets it at sign-in
+    let passwordOnly = auth(false, true)
+    expect(passwordOnly?.google == false && passwordOnly?.canRemovePassword == false, "pb110: password only, it cannot be removed")
+    expect(S.MethodAction.connectGoogle.needsCurrent && !S.MethodAction.connectGoogle.needsNew
+           && S.MethodAction.disconnectGoogle.needsCurrent && !S.MethodAction.disconnectGoogle.needsNew,
+           "pb110: Connect and Disconnect Google ask for the current password only")
+    expect(Set(obj(S.connectGoogleBody(idToken: "t", currentPassword: "pw")).keys) == ["id_token", "current_password"], "pb110: connect body")
+    let link = S.authProblem(pj(["type": "link_required", "link_id": "l1", "expires_in": 600]), status: 409)
+    expect(link.type == "link_required" && link.linkID == "l1"
+           && Set(obj(S.linkBody(linkID: link.linkID, password: "pw", device: dev)).keys) == ["link_id", "password", "device"],
+           "pb110: Continue with Google on a password address joins with the password")
+    for t in ["email_mismatch", "google_taken", "last_method"] {
+        let k = S.authMessage(S.AuthProblem(status: 409, type: t), context: .methods)?.key ?? ""
+        expect(keys.contains(k), "pb110: \(t) has its text (\(k))")
+    }
+
+    // 5) Settings > Account shows the methods from /v1/me auth; an old server without auth shows no section
+    for k in ["account.methods.head", "account.methods.google.on", "account.methods.google.off", "account.methods.password.on",
+              "account.methods.password.onNoDate", "account.methods.password.off", "account.methods.password.set",
+              "account.methods.password.change", "account.methods.google.connect", "account.methods.google.remove"] {
+        expect(keys.contains(k), "pb110: methods text \(k)")
+    }
+    expect(auth(false, false)?.canRemovePassword == false && S.me(["user": ["email": "emily@example.com"], "organizations": []])?.auth == nil,
+           "pb110: no auth block, no methods section")
+    expect(Set(S.MethodAction.allCases.map(\.id)) == ["change", "set", "connectGoogle", "disconnectGoogle"], "pb110: four sheets")
+}
+
 /// PB-89 (owner 25.11): has_brief was always false (it read a "brief" key no request has). Now call_started.has_brief
 /// follows prep_file, call_started sends sheet and from, and call_ended.brief comes from the call's sidecar files.
 func briefSignalPB89() {
@@ -5918,6 +6011,7 @@ console0170()
 orgContext0170()
 salesBlocksS1()
 emailAuthB13()
+passwordFlowsPB110()
 appearanceStyleR1()
 prepEstimateTP1()
 updatePromptR()
