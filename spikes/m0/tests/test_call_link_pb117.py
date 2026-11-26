@@ -44,4 +44,4 @@ def test_meeting_and_wrapup_pages_carry_the_link(tmp_path):
     url = "pacenote://call/2026-11-25-1455-acme-demo"
     m = {"tldr": "Mike and Emily agreed on the pilot."}
     assert any(url in t for t in _texts(W.meeting_blocks(m, md, {}, False, "en")))
-    assert any(url in t for t in _texts(W.wrapup_blocks({"decisions": ["ship"]}, {}, md, False, "uk")))
+    # the wrap-up page of a call is written by PB-127 (ready notes by plain API); its link is the Pacenote section above
