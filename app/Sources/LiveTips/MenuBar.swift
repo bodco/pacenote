@@ -901,7 +901,7 @@ final class StartCallModel: ObservableObject {
                                   workspaceRoot: (ws?.root == root) ? "" : (ws?.root ?? ""), folders: folders,
                                   useProjectFolder: useProjectFolder && workspace?.name != ProjectRegistry.defaultWorkspaceName, callID: id,   // 0.9.0: never read the app folder
                                   deck: callType == "presentation" && deck.info != nil ? deck : nil,
-                                  salesMethod: salesActive ? (salesMethod.isEmpty ? "general" : salesMethod) : nil,
+                                  salesMethod: SalesMethod.forCall(enabled: salesActive, chosen: salesMethod),     // PB-111
                                   company: project?.crmCompanyName ?? "")
     }
 
@@ -993,8 +993,9 @@ final class StartCallModel: ObservableObject {
                 "recording": recording,
                 "folders": folders,
                 "sales": { () -> [String: Any] in
-                    if !title.isEmpty { UserDefaults.standard.set(salesEnabled ? (salesMethod.isEmpty ? "general" : salesMethod) : "off", forKey: "sales." + EditLog.seriesKey(title)) }
-                    return ["enabled": salesActive, "method": salesMethod.isEmpty ? "general" : salesMethod] }(),
+                    // PB-111: the call's one method (SalesMethod), the same value the prep and the sheet get
+                    if !title.isEmpty { UserDefaults.standard.set(SalesMethod.forCall(enabled: salesEnabled, chosen: salesMethod) ?? "off", forKey: "sales." + EditLog.seriesKey(title)) }
+                    return ["enabled": salesActive, "method": SalesMethod.forCall(enabled: true, chosen: salesMethod) ?? SalesMethod.defaultKey] }(),
                 "workspace_root": { let ws = workspace ?? registry.workspaces.first { w in w.projects.contains(project?.slug ?? "\u{0}") }; return (ws?.root == root) ? "" : (ws?.root ?? "") }()]
     }
 

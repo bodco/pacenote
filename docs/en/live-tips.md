@@ -1719,12 +1719,13 @@ you or On them, Change owner, Set due, Delete) and a checkbox. The first change 
 as added on the call page) and applies it there, so a deleted task stays deleted. The call's other older tasks stay on
 the page next to it, also after "+ Add".
 
-**Sales methods.** Sales is an option on top of any call type (Start call > the call type section > Sales mode), remembered for the
-series; the default per project is in Settings > Projects. The methods live in `rules/sales.yaml`, a new one is data:
+**Sales methods.** Sales is an option on top of any call type (Get ready > Sales call switch, in both the page and the
+compact setup), remembered for the series; the default per project is in Settings > Projects. The methods live in
+`rules/sales.yaml`, a new one is data:
 
 | Method | What Pacenote follows |
 |---|---|
-| General sales (default) | the client's pain, the value for them, objections, a next step with a date |
+| Essentials (default, called General sales before PB-111) | the client's pain, the value for them, objections, a next step with a date |
 | BANT | Budget, Authority, Need, Timeline |
 | SPICED | Situation, Pain, Impact, Critical event, Decision |
 | MEDDIC | Metrics, Economic buyer, Decision criteria, Decision process, Identify pain, Champion |
@@ -1734,12 +1735,23 @@ series; the default per project is in Settings > Projects. The methods live in `
 | Sandler pain funnel (questioning) | Surface problem, Specifics, History, Cost, Personal impact, Commitment, from the top down |
 | Challenger (approach) | Teach, Tailor, Take control: what you do as the seller, not what the client tells |
 
-The pickers group the methods into Qualification, Questioning and Approach (0.21.0). A questioning method suggests
+**One method per call (PB-111).** When the Sales call switch is on, the method picker sits right below it. Its main
+list has four methods: Essentials, SPICED (with a Recommended badge, for discovery calls), BANT and MEDDPICC; the
+others are under More methods. Each method has a one-line "when to use" (shown in the menu and under the picker for
+the chosen one); the (i) button shows its criteria. The method you pick is the one value of the call: the
+preparation (the Meeting Sheet Qualification block), the live tips and the after-call summary all use it, unchanged
+(before, a General sales call was prepared with BANT). Picking a method in the Qualification block header (while you
+get ready or on the prepared sheet) changes the call's method too, before the call starts; during the call the method
+is shown read only, because the live tips keep the method they started with. If you change the method in Get ready
+after the sheet is prepared, the Qualification block says "Prepared with BANT; the call uses SPICED" with Refresh.
+One default for the call and the sheet: Essentials. With the switch off nothing of this applies and the call runs as before.
+
+A questioning method suggests
 the next question of its sequence. Challenger tracks your own moves: a step counts as done when you made it and the
 client reacted, and the tip says "Not done yet: Teach"; it is never a score of the seller.
 
 During the call the Deal tab shows each criterion as unknown, partly or known with what was said; a click changes
-the state. For every method except General sales a chip like "BANT 2/4" sits in the header. Sales tips: objection, qualify,
+the state. For every method except Essentials a chip like "BANT 2/4" sits in the header. Sales tips: objection, qualify,
 pain, next step (5 minutes before the end without a dated step), competitor, buying signal, stakeholder, price limit. Answer cards are short
 ready answers per project in `<project>/pacenote/answer-cards.md` ("## question", then the answer), edited in
 Settings > Projects. The preparation adds Company (a web search with the company's name or domain only; switch it off
@@ -2101,7 +2113,7 @@ Private). The tabs: Summary, What was discussed, Decisions, Next steps (Tasks be
 in Sales mode. Summary puts In short and Topics next to Decisions, On you, On them and Risks; a time is a link into the
 transcript. Follow-up is the follow-up email as a tab (Option-Command-I opens it from anywhere on the page). A call
 with no notes says what it has (transcript, recording) and writes the notes with Make meeting notes. On an upcoming
-call, Setup has The call (project, name, when, kind of call, audience, language, Sales mode), People (from the
+call, Setup has The call (project, name, when, kind of call, audience, language, the Sales call switch with its method), People (from the
 invite), Preparation (what Get ready uses, "Anything special today?", Quick prep and Expert prep) and More settings;
 Meeting Sheet without a sheet offers Quick prep and the five steps of Expert prep side by side.
 Setup also says where the call opens (the meeting app and the browser profile or app), shows Our side and Their side
@@ -2727,6 +2739,10 @@ is added to it.
 The block menu adds a fact, regenerates the
 block, hides it, moves it up or down, or removes it. The qualification block has its method in the header (BANT by
 default, or any method of Sales, shown by name). **Refresh** rebuilds the sheet from the sources again and **never touches what you
+**Editing and Refresh.** Click a fact to edit it; it becomes Edited. The block menu adds a fact, regenerates the
+block, hides it, moves it up or down, or removes it. The qualification block has its method in the header (the
+call's Sales method, Essentials by default, shown by name; since PB-111 it is changed for the whole call, not on the
+sheet alone, before the call starts; read only during the call). **Refresh** rebuilds the sheet from the sources again and **never touches what you
 edited**. A banner then says how many facts are new, changed and gone, with Accept all and Compare with version N.
 **Versions** keeps every earlier sheet; Open shows one read-only, **Use this version** makes it current again (the
 current one is kept as a version, nothing is deleted).

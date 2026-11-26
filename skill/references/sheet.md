@@ -38,7 +38,7 @@ for the same sheet fact get `"sheet_fact": "<fact id>"`, so the recorder shows t
 - **Preset and blocks.** Pick the preset by the call: Sales intro (`sales_intro`), Upsell, Repeat call, Client sync,
   Internal or presentation, Stand-up, Interview, Blank (ids and block lists in `rules/meeting-sheet.yaml >
   presets`). Use the block types of `rules/meeting-sheet.yaml > blocks` only (header, my_focus, company, signals,
-  tech_stack, fit, contact, qualification with `method` bant by default, history, project_context, agenda,
+  tech_stack, fit, contact, qualification with `method` = the call's sales method (`general`, Essentials, by default; PB-111), history, project_context, agenda,
   action_items, questions, best_outcome, red_lines, structure_roles, overview, gaps, the standup_* and interview_*
   blocks). A block with `only_if_data: true` and nothing found is left out. A `verbatim` block (PB-102) is the app's
   word for word copy of a file or pasted text: never write, shorten or rewrite its `verbatim.text`; keep such a block

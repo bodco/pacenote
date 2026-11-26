@@ -514,7 +514,7 @@ struct StatsScreen: View {
         if let l = longest, (l.minutes ?? 0) > 0 { facts.append((L("stats.longest"), l.title + ", " + HomeView.hm(l.minutes ?? 0))) }
         if !sales.isEmpty {
             let s = salesKnown(sales)
-            facts.append((L("stats.salesOnly"), "\(sales.count)" + (s.map { " · " + L("stats.salesKnown", ["method": $0.method.isEmpty ? "BANT" : $0.method, "k": "\($0.known)", "n": "\($0.total)"]) } ?? "")))
+            facts.append((L("stats.salesOnly"), "\(sales.count)" + (s.map { " · " + L("stats.salesKnown", ["method": $0.method.isEmpty ? SalesMethods.shared.label(SalesMethod.defaultKey) : $0.method, "k": "\($0.known)", "n": "\($0.total)"]) } ?? "")))
         }
         let k = day != nil || period == "today" ? "day" : period == "week" || period == "lastweek" ? "week" : period == "month" ? "month" : "period"
         return VStack(alignment: .leading, spacing: 0) {

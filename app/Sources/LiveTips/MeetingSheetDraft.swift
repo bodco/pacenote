@@ -214,9 +214,27 @@ final class SheetDraft: ObservableObject {
         let verbatim = blocks.filter(\.isOwn)    // PB-102, PB-101: Verbatim and custom blocks kept when the preset changes
         blocks = p.blocks.map { t in
             DraftBlock(type: t, title: lib.title(t), visible: true, onlyIfData: ["signals", "tech_stack", "fit"].contains(t),
-                       method: t == "qualification" ? (p.method ?? model.salesMethod.nilIfEmpty ?? "bant") : nil)
+                       method: t == "qualification" ? qualificationMethod(preset: p.method) : nil)
         } + verbatim
     }
+
+    /// PB-111 (SX4): with Sales on the Qualification block shows the call's method (a preset does not beat it);
+    /// with Sales off the preset's method, else the project's saved method (as before), else the one default.
+    func qualificationMethod(preset: String? = nil) -> String {
+        SalesMethod.forBlock(call: SalesMethod.forCall(enabled: model.salesActive, chosen: model.salesMethod),
+                             preset: preset ?? model.salesMethod.nilIfEmpty)
+    }
+
+    /// PB-111: a method picked in the Qualification block header is the call's method too while Sales is on and the
+    /// call has not started (during the call the header is read only, see methodLocked).
+    func setQualificationMethod(_ m: String, block id: String) {
+        guard !methodLocked else { return }
+        if let i = blocks.firstIndex(where: { $0.id == id }) { blocks[i].method = m }
+        if SalesMethod.pickChangesCall(salesOn: model.salesActive, live: model.isLiveCall) { model.salesMethod = m; model.salesTouched = true }
+    }
+
+    /// PB-111: the running call with Sales on keeps the method it started with; the wizard shows it, read only.
+    var methodLocked: Bool { !SalesMethod.headerPickable(salesOn: model.salesActive, live: model.isLiveCall) }
 
     var preset: SheetPresetInfo? { SheetLibrary.shared.preset(presetID) }
 

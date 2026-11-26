@@ -115,7 +115,7 @@ def _level(block: dict, key: str) -> Tuple[str, Optional[dict]]:
 
 
 def _method(rules: dict, block: dict) -> str:
-    return block.get("method") or (rules.get("qualification") or {}).get("default_method", "bant")
+    return block.get("method") or (rules.get("qualification") or {}).get("default_method", "general")
 
 
 def _asked(sheet: dict, key: str) -> bool:

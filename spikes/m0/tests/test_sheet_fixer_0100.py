@@ -212,7 +212,10 @@ def test_control_file_skip_and_retry(tmp_path):
     lines = []
 
     def later():
-        time.sleep(0.8)
+        # PB-111: wait until the build reports s3 as waiting (a fixed 0.8 s sleep raced the rules parse)
+        end = time.time() + 5
+        while time.time() < end and not any(x.get("waiting") == ["s3"] for x in list(lines)):
+            time.sleep(0.05)
         missing.write_text("Budget: the CFO set aside $70k.\n", encoding="utf-8")
         acts = json.loads(ctl.read_text(encoding="utf-8"))["actions"] + [{"action": "retry", "source_id": "s3"}]
         ctl.write_text(json.dumps({"actions": acts}), encoding="utf-8")

@@ -975,10 +975,19 @@ struct SheetBlocksStep: View {
                     }
             }
             if b.wrappedValue.type == "qualification" {
-                PrepMenuField(value: SalesMethods.shared.label(b.wrappedValue.method ?? "bant")) {
-                    ForEach(lib.methods, id: \.self) { k in Button(SalesMethods.shared.label(k)) { b.wrappedValue.method = k } }   // S1: names, not keys
+                // PB-111: the call's method while Sales is on (also after a later change in the Sales picker); a pick
+                // here changes it for the whole call
+                if draft.methodLocked {     // PB-111: during the call the method stays the one the tips started with
+                    Text(SalesMethods.shared.label(draft.qualificationMethod(preset: b.wrappedValue.method)))
+                        .font(th.homeText(13)).foregroundStyle(PN.C.text2).fixedSize()
+                        .help(L("sheet.ui.method.live"))
+                        .onAppear { SalesMethods.shared.load() }
+                } else {
+                    PrepMenuField(value: SalesMethods.shared.label(draft.qualificationMethod(preset: b.wrappedValue.method))) {
+                        ForEach(lib.methods, id: \.self) { k in Button(SalesMethods.shared.label(k)) { draft.setQualificationMethod(k, block: b.wrappedValue.id) } }   // S1: names, not keys
+                    }
+                    .onAppear { SalesMethods.shared.load() }
                 }
-                .onAppear { SalesMethods.shared.load() }
             }
             if !b.wrappedValue.isOwn {     // PB-102: a copy is never "only if there is data"; PB-101: a custom block neither
                 Toggle(L("sheet.ui.s2.onlyIfData"), isOn: b.onlyIfData).toggleStyle(.pnCheckbox).font(th.homeText(13)).foregroundStyle(PN.C.text2)
@@ -1124,7 +1133,7 @@ struct SheetBlocksStep: View {
                                     DispatchQueue.main.async { editingVerbatim = b.id }
                                     return
                                 }
-                                draft.blocks.append(DraftBlock(type: t, title: lib.title(t), method: t == "qualification" ? "bant" : nil))
+                                draft.blocks.append(DraftBlock(type: t, title: lib.title(t), method: t == "qualification" ? draft.qualificationMethod() : nil))   // PB-111
                                 adding = false
                             } label: {
                                 VStack(alignment: .leading, spacing: 3) {
@@ -1197,7 +1206,7 @@ struct SheetBlocksStep: View {
                                   "hidden": kept.filter { !$0.visible }.map(\.type),
                                   "only_if_data": draft.blocks.filter(\.onlyIfData).map(\.type),
                                   "mode": draft.mode.rawValue, "readiness": draft.preset?.readiness ?? [], "base": draft.presetID,
-                                  "method": draft.blocks.first { $0.type == "qualification" }?.method ?? "bant",
+                                  "method": draft.qualificationMethod(preset: draft.blocks.first { $0.type == "qualification" }?.method),   // PB-111
                                   "suggest_new_domains": suggestNew]
         saveNote = ""; saved = ""
         lib.change(req) { e in

@@ -287,7 +287,8 @@ def _req(root, a, b, **kw):
          "participants": {"ours": [{"name": "Mike Carter"}], "theirs": [{"name": "Emily Parker", "company": "Lumenfield"}]},
          "project": {"slug": "lumenfield", "root": str(root)}, "today": "2026-11-12",
          "sources": [{"id": "s1", "path": str(a)}, {"id": "s2", "path": str(b)}],
-         "base": str(root / "live" / "prep-2026-11-13-1600-lumenfield-intro")}
+         "base": str(root / "live" / "prep-2026-11-13-1600-lumenfield-intro"),
+         "method": "bant"}      # PB-111: the call's method is said (the sheet default is Essentials, without budget)
     r.update(kw)
     return r
 
@@ -341,6 +342,46 @@ def test_build_contract_conflicts_report_and_derive(tmp_path):
     items = AG.full_items(brief)
     assert ("Reporting pain: Walk through the monthly report (lead: Mike Carter)", False) in items
     assert AG.IDENTITY.search(brief) and chr(0x2014) not in brief
+
+
+def test_build_with_essentials_keeps_the_calls_method(tmp_path):
+    # PB-111 (SX4): a call on Essentials (key general) is prepared with Essentials, not BANT
+    root, a, b = _project(tmp_path)
+    seen = {}
+    def responder(system, user):
+        seen["user"] = system + user
+        return "```json\n" + json.dumps(ANSWER) + "\n```"
+    res = B.build(_req(root, a, b, method="general"), emit=quiet, responder=responder)
+    assert res.get("done"), res
+    sheet = json.loads(Path(res["sheet"]).read_text(encoding="utf-8"))
+    assert S.validate(sheet) == []
+    assert next(x for x in sheet["blocks"] if x["type"] == "qualification")["method"] == "general"
+    assert "Method general:" in seen["user"] and "Method bant:" not in seen["user"]
+    qs = next(x for x in sheet["blocks"] if x["type"] == "questions")["facts"]
+    assert not any(f["id"] == "q-readiness-budget" for f in qs)                       # no BANT question on Essentials
+    assert sheet["readiness"]["state"] in ("ready", "almost", "not_ready")
+
+
+def test_refresh_of_the_block_after_the_method_changed(tmp_path):
+    # PB-111 round 1: prepared with BANT, the call moved to SPICED, Refresh of the Qualification block (the note's
+    # button) prepares it with SPICED and the block then says SPICED, so the note goes away
+    root, a, b = _project(tmp_path)
+    req = _req(root, a, b, method="bant")
+    assert B.build(req, emit=quiet, responder=lambda s, u: json.dumps(ANSWER)).get("done")
+    path = Path(req["base"] + ".sheet.json")
+    first = json.loads(path.read_text(encoding="utf-8"))
+    qb = next(x for x in first["blocks"] if x["type"] == "qualification")
+    assert qb["method"] == "bant"
+    seen = {}
+    def responder(system, user):
+        seen["user"] = system + user
+        return json.dumps(ANSWER)
+    res = B.build(_req(root, a, b, method="spiced", options={"blocks": [qb["id"]]}), refresh=True, emit=quiet, responder=responder)
+    assert res.get("done"), res
+    new = json.loads(path.read_text(encoding="utf-8"))
+    assert next(x for x in new["blocks"] if x["type"] == "qualification")["method"] == "spiced"
+    assert "Method spiced:" in seen["user"] and "Method bant:" not in seen["user"]
+    assert S.validate(new) == []
 
 
 def test_too_much_needs_a_choice_and_passes_merge(tmp_path, monkeypatch):

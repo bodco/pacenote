@@ -7193,5 +7193,34 @@ func keyRejectedPB97() {
 keyRejectedPB97()
 accountAuthPB98()
 callSeriesPB109()
+/// PB-111 (SX4): the method chosen in Get ready reaches the preparation, the Qualification block and the live
+/// request (which also feeds the after-call summary) unchanged; Sales off gives no method.
+func salesMethodEverywherePB111() {
+    for m in ["general", "spiced", "bant", "meddpicc", "meddic", "gpctba", "spin", "sandler", "challenger"] {
+        let call = SalesMethod.forCall(enabled: true, chosen: m)
+        expect(call == m, "PB-111: live and summary get \(m) (\(call ?? "nil"))")
+        expect(SalesMethod.forPrep(call: call, wizard: nil) == m, "PB-111: prep gets \(m), not another method (\(SalesMethod.forPrep(call: call, wizard: nil) ?? "nil"))")
+        expect(SalesMethod.forPrep(call: call, wizard: "bant") == m, "PB-111: an older wizard choice does not beat the call's \(m)")
+        expect(SalesMethod.forBlock(call: call, preset: "bant") == m, "PB-111: the Qualification block shows \(m), not the preset's")
+    }
+    expect(SalesMethod.forCall(enabled: true, chosen: "") == SalesMethod.defaultKey, "PB-111: nothing chosen is the default")
+    expect(SalesMethod.defaultKey == "general", "PB-111: one default, Essentials (key general)")
+    // Sales off: no method for the call, the prep keeps the wizard's (or no) method, a preset block keeps its own
+    expect(SalesMethod.forCall(enabled: false, chosen: "spiced") == nil, "PB-111: Sales off, no method")
+    expect(SalesMethod.forPrep(call: nil, wizard: nil) == nil && SalesMethod.forPrep(call: nil, wizard: "meddic") == "meddic", "PB-111: Sales off, prep unchanged")
+    expect(SalesMethod.forBlock(call: nil, preset: "meddic") == "meddic" && SalesMethod.forBlock(call: nil, preset: nil) == "general", "PB-111: Sales off, block keeps the preset's")
+    // Round 1: a header pick changes the call only before it starts (the live tips read the method once, at start)
+    expect(SalesMethod.pickChangesCall(salesOn: true, live: false), "PB-111: pick before the call changes the call")
+    expect(!SalesMethod.pickChangesCall(salesOn: true, live: true), "PB-111: pick during the call does not split the call")
+    expect(!SalesMethod.pickChangesCall(salesOn: false, live: false), "PB-111: Sales off, a pick never changes the call")
+    expect(!SalesMethod.headerPickable(salesOn: true, live: true), "PB-111: live with Sales on, header read only")
+    expect(SalesMethod.headerPickable(salesOn: false, live: true) && SalesMethod.headerPickable(salesOn: true, live: false), "PB-111: Sales off or before the call, header pick stays")
+    // A sheet prepared with BANT after the call moved to SPICED says so (and offers Refresh)
+    expect(SalesMethod.staleBlock(call: "spiced", block: "bant") == "spiced", "PB-111: block on BANT, call on SPICED, stale")
+    expect(SalesMethod.staleBlock(call: "spiced", block: "spiced") == nil, "PB-111: same method, no note")
+    expect(SalesMethod.staleBlock(call: "general", block: nil) == nil && SalesMethod.staleBlock(call: "spiced", block: nil) == "spiced", "PB-111: a block without a method is the default")
+    expect(SalesMethod.staleBlock(call: nil, block: "bant") == nil, "PB-111: Sales off, no note")
+}
+salesMethodEverywherePB111()
 print("core checks: \(passed) passed, \(failures) failed")
 exit(failures == 0 ? 0 : 1)

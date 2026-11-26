@@ -93,7 +93,7 @@ def test_new_sheet_has_the_preset_blocks_in_order(rules):
                     {"ours": [{"name": "Mike Carter"}], "theirs": [{"name": "Emily Parker", "domain": "lumenfield.example"}]})
     assert [b["type"] for b in s["blocks"]] == rules["presets"]["sales_intro"]["blocks"]
     assert [b["order"] for b in s["blocks"]] == list(range(len(s["blocks"])))
-    assert block(s, "qualification")["method"] == "bant"
+    assert block(s, "qualification")["method"] == "general"      # PB-111: the one default (Essentials), not bant
     assert block(s, "company")["only_if_data"] is True and block(s, "contact")["only_if_data"] is False
     assert s["title"] == "Meeting Sheet: Emily Parker" and s["mode"] == "expert"
     assert S.validate(s, P.method_names(rules)) == []

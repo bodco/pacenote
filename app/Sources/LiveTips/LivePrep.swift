@@ -26,6 +26,10 @@ enum LivePrep {
         m.audience = (ce.callRequest["audience"] as? String) ?? m.audience
         m.hiringRole = (ce.callRequest["hiring_role"] as? String) ?? m.hiringRole
         m.language = (ce.callRequest["langs"] as? [String])?.first ?? m.language
+        if let s = ce.callRequest["sales"] as? [String: Any] {     // PB-111: the call's one method, as it started
+            m.salesEnabled = (s["enabled"] as? Bool) == true
+            m.salesMethod = (s["method"] as? String) ?? ""
+        }
         m.useDefaultTargetIfEmpty()
         if let id = ce.currentCallID { m.id = id } else { ce.currentCallID = m.id }
         return m
