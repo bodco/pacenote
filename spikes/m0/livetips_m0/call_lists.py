@@ -181,13 +181,13 @@ def task_line(t: dict) -> str:
     return (t["owner"] + ": " if t["owner"] else "") + t["text"] + (" (due: " + t["due"] + ")" if t["due"] else "")
 
 
-def resolve(situations: List[dict], notes: Optional[str]) -> Dict:
-    """CallLists.resolve: `situations` every situation line of the call in file order, `notes` the notes text."""
+def resolve(situations: List[dict], notes: Optional[str], mn: Optional[dict] = None) -> Dict:
+    """CallLists.resolve: `situations` every situation line of the call in file order, `notes` the notes text.
+    PB-127: `mn` the Meeting notes already parsed (the Notion page), used when `notes` is not given."""
     out = {"decisions": [], "decision_items": [], "tasks": [], "risks": [], "risk_items": [],
            "decisions_from": "none", "tasks_from": "none", "risks_from": "none"}
     edits = [s for s in situations if s.get("source") == "call_page"]
     live = next((s for s in reversed(situations) if s.get("source") != "call_page"), None)
-    mn = None
     if notes is not None:
         from .callnotes import parse_meeting
         mn = parse_meeting(notes)

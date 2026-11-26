@@ -25,12 +25,19 @@ enum PyTool {
         if needsAI && !notion && !AIRoute.canRun(job: "after", config: c) { done(["ok": false, "error": L("prep.err.noKey")]); return }
         let p = Process()
         p.executableURL = URL(fileURLWithPath: c.engine.sidecarPython)
-        p.arguments = ["-m", "livetips_m0." + module] + args
+        // PB-127 (review 3): every Notion page run (fill, Regenerate, a move) has the call page's own task lines
+        let full = NotionPageRun.withActions(module: module, args: args) {
+            guard let i = args.firstIndex(of: "--md"), i + 1 < args.count else { return [] }
+            return CallEngine.actionsArg(args[i + 1])
+        }
+        p.arguments = ["-m", "livetips_m0." + module] + full
         p.currentDirectoryURL = URL(fileURLWithPath: c.engine.sidecarDir)
         var env = AIRoute.env(job: "after", config: c)
+        if notion && !needsAI { env = NotionPageRun.withoutAI(env) }   // PB-127: no model request there, so no AI keys
         if let t = notionToken { env["NOTION_TOKEN"] = t }
         env["LT_LEDGER"] = SpendLedger.defaultPath
         env["LT_AI_STAGE"] = "after_" + module
+        if let t = CallTag.of(args: args) { env["LT_CALL"] = t }     // PB-127: the call's tag in the spend ledger
         env["PYTHONDONTWRITEBYTECODE"] = "1"
         p.environment = env
         let out = Pipe()

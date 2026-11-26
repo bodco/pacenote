@@ -35,12 +35,25 @@ meeting_notes: |
   ### Risks (schema 3, 0.12.2: conditional threats as in rules/risks.yaml > model_rule, at most 5), ### Topics (4-8, "#### Title [HH:MM:SS]", "Outcome: one line", 2-4 points), ### Unclear (doubtful names or facts,
   never "heard" in the text; PB-104: plus one line per span the PM's mic was muted in Pacenote, added without the model). Every item starts with its transcript time "[HH:MM:SS]"; on the call page a time opens
   the transcript there. Readers: the app (MeetingNotes.parse, the Summary tab, Copy, Export) and the Notion meeting
-  page (wrapup_notion.meeting_blocks, which waits for the notes up to 10 minutes when the app started both).
+  page (wrapup_notion.meeting_blocks). PB-127 (owner 25.11): the Notion page makes no model request; it is written at
+  once, with "The meeting notes are being written" until the notes are ready (then `wrapup_notion --page --fill`
+  replaces that line and adds the notes' topic to the title), or with "were not written" when they failed (Make
+  meeting notes on the call page then updates the page). Its Decisions and Risks are the CallLists below; its Action
+  items are the call page's own lines from the commitments register (the app passes them), else the CallLists tasks.
+  The decisions auto-add (rules/decisions.yaml > auto_add) waits for notes still being written.
   Make meeting notes on an older call: `callnotes --meeting` (only this section when the notes exist, about $0.05 to $0.10).
   The preparation still reads the whole notes file.
   0.12.2 (L1-L3): the call page, Summary, Home, Export, follow-up, CRM and the server read Decisions, Tasks and Risks
   by one rule (LiveTipsCore CallLists): the PM's edit on the call page, else these Meeting notes, else the live call
   picture, else the older notes sections. Notes of schema 2 have no ### Risks: their risks come from the live picture.
+  PB-127: ### Decision register (last, after ### Unclear, in the model's answer only): one JSON line per decision for
+  the Notion Decisions register, {"decision", "area", "door", "context", "replaces"}, written in the same request from
+  AREAS (.decision-areas.json beside the snapshot) and the numbered ACTIVE DECISIONS of <project>/pacenote/decisions.md
+  (rules/decisions.yaml > snapshot); the model's numbers are turned into the decision's text and the replaced
+  decision's title. The lines then leave the notes for <stem>.decision-register.json (the call's .work/), written each
+  time the Meeting notes are (an empty list when there are no decisions), so the notes file never carries them (the
+  call page, an edit of it, the preparation, the evidence and the server copy read plain notes) and an edit of the
+  Meeting notes keeps them. Older calls have no such file.
 rewrite: |
   0.26.2 (owner: "the notes are always written again by AI, a speaker change only marks them stale"). After a speaker
   change on the call page (edited_at in speakers.json newer than the notes) the Transcript and Meeting notes tabs show

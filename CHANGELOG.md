@@ -82,6 +82,30 @@ Pacenote. Earlier versions are described in the commit messages and in
   commitments first, on every preparation route (Claude, Codex, OpenAI, Gemini, local, API). A call you took out is
   no longer read by the preparation as a previous call of the meeting and its people are no longer offered. Old series
   and the series of existing commitments keep working unchanged.
+- **Notion after a call: the call's own notes, no AI request (PB-127).** Sending a call to Notion no longer asks the
+  AI for a separate summary, so it costs nothing and the Notion step adds 0 to the call's cost. The meeting page
+  carries the call's Meeting notes: Summary, What happened, decisions, action items, risks and topics, and its
+  decisions, action items and risks are the call page's own lists, word for word (your edits there included). The
+  title is the meeting's name plus the topic from the notes ("Weekly sync: Release plan"). The page no longer waits up
+  to 10 minutes for the notes: it is written at once with the transcript and "The meeting notes are being written",
+  and the notes take that line's place when they are ready (if the app quits or updates first, or Notion refuses that
+  write, it tries again after the next launch). Regenerate and a new page after a move to another project write the
+  same action items as the call page too. When the notes fail, the page says so; Make meeting notes
+  on the call page writes them and updates the page. The page needs only the Notion token now, no AI set for After
+  the call. Decisions sent to the Notion Decisions database get Area, Door and
+  Context from the same request that writes the notes, which also checks them against the project's active decisions
+  for "Replaces ...?"; the write itself is plain Notion API (the automatic add after a call now waits for the notes,
+  so it has them, also after Rewrite notes). Area is picked from the database's own options, kept beside the decisions
+  snapshot; these register fields live in a file of their own, so editing the Meeting notes keeps them. Decisions
+  from older notes get empty Area, Door and
+  Context, and Trade-off, Alternatives rejected and Review trigger are no longer filled in. Model requests per call:
+  one fewer for the meeting page (two when its reply needed a JSON repair) and one or two fewer for each decision added
+  to the register (the spend ledger shows no
+  `after_notion` or `after_decision_notion` rows any more). To see the count for one call: each after-call AI
+  request in the spend ledger now carries the call's tag (a short hash, never its name), and once the notes are on the
+  page, `logs/app.log` says how many AI requests the call made after it ended, by step (for example
+  `ai_calls=3 (after_notes 3)` for a short call: its notes in one part, their merge and the Meeting notes). This count
+  stays on the Mac; it is not sent with the usage statistics.
 - **Meeting Sheet: a Verbatim block for text that must stay word for word (PB-102).** + Add a block now offers
   Verbatim, as often as you need it in one call. In its Settings you give it a title, a source (a file of the call,
   any file, or pasted text) and, if you want only part of a Markdown file, sections such as 1-4 by heading. The

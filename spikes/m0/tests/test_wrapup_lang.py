@@ -1,6 +1,5 @@
 """PB-32 S2 (FB2, D56): the Notion meeting page is written in the call's output language."""
 import json
-import types
 
 from livetips_m0 import call_language as CL
 from livetips_m0 import wrapup_notion as W
@@ -12,10 +11,15 @@ def _retag(call, tag, header="Me = en, allowed = en"):
                        + "".join("[10:00:0%d] Me (%s): line\n" % (i, tag) for i in range(5)))
 
 
+def _heads(call, kind="heading_2"):
+    return [b[kind]["rich_text"][0]["text"]["content"] for c in call.calls if c[0] == "PATCH" and c[1].endswith("/children")
+            for b in c[2]["children"] if b["type"] == kind]
+
+
 def test_language_follows_the_call_not_the_header_first_language(call, capsys):
     _retag(call, "uk")                      # header says en, the lines are Ukrainian
     assert W.main(call.base + ["--when", "2026-10-01T09:30:00+00:00"]) == 0
-    assert call.seen["lang"] == "uk"
+    assert _heads(call) == ["Підсумок", "Теми", "Транскрипт"]
     assert CL.read_sidecar(call.md)["artifacts"] == {"notion": "uk"}
 
 
@@ -23,28 +27,14 @@ def test_explicit_choice_for_the_call_wins(call, capsys):
     _retag(call, "uk")
     CL.write_sidecar(call.md, output_language="en")
     assert W.main(call.base + ["--when", "2026-10-01T09:30:00+00:00"]) == 0
-    assert call.seen["lang"] == "en"
+    assert _heads(call) == ["Summary", "Topics", "Transcript"]
 
 
 def test_language_without_static_labels_gets_text_in_it_and_english_labels(call, capsys):
     _retag(call, "pl")
     assert W.main(call.base + ["--when", "2026-10-01T09:30:00+00:00"]) == 0
-    assert call.seen["lang"] == "pl"
-    heads = [b["heading_2"]["rich_text"][0]["text"]["content"] for c in call.calls if c[0] == "PATCH" and c[1].endswith("/children")
-             for b in c[2]["children"] if b["type"] == "heading_2"]
-    assert heads == ["Summary", "Transcript"]
-
-
-def test_the_prompt_names_the_language():
-    seen = {}
-
-    class P:
-        def complete(self, model, system, user, max_tokens, cache_ttl=None):
-            seen["system"] = system[0]["text"]
-            return types.SimpleNamespace(text='{"name": "n", "summary": "s"}', error=None, model=model, input_tokens=1,
-                                         cache_write_5m=0, cache_write_1h=0, cache_read=0, output_tokens=1)
-    W.claude_wrapup("t", "", "m", "pl", provider=P())
-    assert "Write in Polish" in seen["system"]
+    assert _heads(call) == ["Summary", "Topics", "Transcript"]
+    assert CL.read_sidecar(call.md)["artifacts"] == {"notion": "pl"}
 
 
 def _with_page(call):

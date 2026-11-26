@@ -46,12 +46,31 @@ enum NotionAutoAdd {
         if CallHistory.shared.records.first(where: { $0.file == file })?.hidden == true { return }
         NotionTasks.shared.afterCall(file: file)                // Tasks: the 0.8.6 switch, same value
         HubSpotTasks.shared.afterCall(file: file)               // PB-17: its own switch; one destination when both are set up
+        // PB-127: decisions take Area, Door and Context from the call notes: while those are still being written, the
+        // decisions wait for them (notesDone); risks go now as before
+        let waitNotes = CallEngine.notesInWork.contains(CallNotes.path(file))
+        if waitNotes { waitingForNotes.insert(file) }
+        add(file: file, kinds: waitNotes ? ["risks"] : ["risks", "decisions"])
+    }
+
+    /// PB-127: calls whose decisions wait for their notes (main thread only).
+    private static var waitingForNotes = Set<String>()
+
+    /// PB-127: the call's notes were written (or failed): the decisions that waited for them are added now.
+    static func notesDone(file: String) {
+        guard waitingForNotes.remove(file) != nil else { return }
+        if CallHistory.shared.records.first(where: { $0.file == file })?.hidden == true { return }
+        add(file: file, kinds: ["decisions"])
+    }
+
+    private static func add(file: String, kinds: Set<String>) {
         let c = AppConfig.load(from: AppPaths.config)
         guard hasToken, let p = PyTool.project(of: file).project else { return }
         let call = CallPageView.title(file)
         let source = CallHistory.shared.records.first { $0.file == file }?.notionURL ?? ""
         for (kind, on, db, module) in [("risks", c.notionRisksAutoAdd, NotionTargets.risksDB(c, p), "risk_notion"),
-                                       ("decisions", c.notionDecisionsAutoAdd, NotionTargets.decisionsDB(c, p), "decision_notion")] where on && !db.isEmpty {
+                                       ("decisions", c.notionDecisionsAutoAdd, NotionTargets.decisionsDB(c, p), "decision_notion")]
+            where kinds.contains(kind) && on && !db.isEmpty {
             let extra = kind == "decisions" && !source.isEmpty ? ["--source", source] : []
             PyTool.run(module, ["--db", db, "--call-file", file, "--from-call", "--call", call] + extra + NotionTargets.projectArgs(c, p, kind: kind),
                        notion: true) { r in

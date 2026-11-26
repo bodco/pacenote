@@ -3,19 +3,23 @@
 schema_version: 1
 database: >-
   Settings > Integrations > Notion > Databases > Decisions (one database for all projects). Properties written:
-  Decision (title), Date, Area (select: one of the database's own options, chosen by the model, else empty),
-  Context (one sentence from the transcript), Source (url of the meeting page, when there is one), Status = Active,
-  Stated by (who said it, text), Project and Workspace (the properties chosen in Settings, any of relation, select,
-  multi-select or text). Trade-off, Alternatives rejected, Review trigger and Door only when said outright on the call;
-  never invented (projects/_standards.md section 9).
+  Decision (title), Date, Area (select: one of the database's own options, else empty), Context (one sentence from
+  the transcript), Source (url of the meeting page, when there is one), Status = Active, Stated by (who said it,
+  text), Project and Workspace (the properties chosen in Settings, any of relation, select, multi-select or text).
+  Door only when said outright on the call; never invented (projects/_standards.md section 9). PB-127 (owner 25.11):
+  the write is plain Notion API, no model request. Area, Door and Context come from the call notes step (the call's
+  <stem>.decision-register.json, rules/notes.yaml), matched by the decision text cut the same way as the title (long
+  dash to "-", at most 200 characters); calls without them leave Area, Door and Context empty.
 after_call: >-
   The call page's Decisions section has "Add to decision register" (hover and the row menu) and "Add all N" above the
   section. Nothing is written without the PM's click unless he turned on the automatic add. After the write the row
   shows a grey "In register" with a link. Without Notion or without a Decisions database the action is greyed out with
   the reason and leads to Settings.
 supersede: >-
-  After a decision is added, the active decisions of the same project are compared with it by the model. When it
-  contradicts one, the page offers "Replaces <old decision, date>?" with a button. Only the PM's click sets the old
+  The notes step compares each decision of the call with the project's active decisions (the snapshot below) in the
+  same request that writes the notes; when one is contradicted, its title is kept in the decision's register line.
+  After the decision is added, that title is matched to the register's active decisions (no model request) and
+  the page offers "Replaces <old decision, date>?" with a button. Only the PM's click sets the old
   page's Status to Superseded and links Supersedes (new) and Superseded By (old). No click, no change.
 auto_add: >-
   Settings > Integrations > Notion > Databases: "Add automatically after each call" under Tasks, Risks and Decisions,
@@ -32,7 +36,9 @@ snapshot:
   content: >-
     The project's active decisions, newest first, at most 30, one line each:
     "- YYYY-MM-DD | <decision> | <stated by> | <area>". The live engine reads only this file and never calls Notion
-    during a call.
+    during a call. PB-127: the database's own Area options are written with it to .decision-areas.json in the same
+    folder (a JSON list, so an option with a comma stays whole; hidden, so no folder walk reads it), which the call notes step reads for its Decision
+    register; the snapshot itself carries only the decisions.
 brief: >-
   The brief has a section "Active decisions": the last 10 active decisions of the project from the snapshot, with
   their dates. No snapshot, no section.

@@ -5693,11 +5693,60 @@ func briefSignalPB89() {
     }
 }
 
+/// PB-127 (owner 25.11): the call's tag in the local spend ledger (LT_CALL): a short hash, never the file name, the same
+/// for the .md and .named.md copy and after a move to another project folder; a tool run gets it from --md or --call-file.
+func callTagPB127() {
+    let a = CallTag.of("/calls/Acme/live/2026-10-01-1000-acme-renewal.md")
+    expect(a.count == 12 && a.allSatisfy { $0.isHexDigit } && !a.contains("acme"), "pb127: the tag is a 12-char hash")
+    expect(CallTag.of("/calls/Acme/live/2026-10-01-1000-acme-renewal.named.md") == a, "pb127: .named.md has the call's tag")
+    expect(CallTag.of("/calls/Other/live/2026-10-01-1000-acme-renewal.md") == a, "pb127: a moved call keeps its tag")
+    expect(CallTag.of("/calls/Acme/live/2026-10-01-1100-acme-renewal.md") != a, "pb127: another call, another tag")
+    expect(CallTag.of(args: ["--db", "x", "--md", "/c/2026-10-01-1000-acme-renewal.md"]) == a, "pb127: a tool run's --md")
+    expect(CallTag.of(args: ["--db", "x", "--call-file", "/c/2026-10-01-1000-acme-renewal.md", "--call", "Acme renewal"]) == a,
+           "pb127: decisions and risks give the call by --call-file")
+    expect(CallTag.of(args: ["--db", "x", "--call", "/c/2026-10-01-1000-acme-renewal.md"]) == nil, "pb127: --call is a title, not a file")
+    expect(CallTag.of(args: ["--db", "x"]) == nil && CallTag.of(args: ["--md"]) == nil, "pb127: no --md, no tag")
+}
+
+/// PB-127 (review 3): every Notion page run gets the call page's task lines; Notion-only runs get no AI keys; a page
+/// written before its notes were ready stays queued for the fill until Notion took it, across a relaunch.
+func notionPageRunPB127() {
+    let acts = ["--actions", "[\"Mike: send the deck (Nov 28)\"]"]
+    let regen = ["--md", "/c/a.md", "--page", "https://notion.so/p1", "--lt", "py", "lt"]
+    expect(NotionPageRun.withActions(module: "wrapup_notion", args: regen) { acts } == regen + acts,
+           "pb127: Regenerate gets the call page's task lines")
+    let move = ["--md", "/c/a.md", "--lt", "py", "lt", "--meetings-db", "db"]
+    expect(NotionPageRun.withActions(module: "wrapup_notion", args: move) { acts } == move + acts,
+           "pb127: a new page after a move gets them too")
+    let given = regen + ["--actions", "[]"]
+    expect(NotionPageRun.withActions(module: "wrapup_notion", args: given) { acts } == given, "pb127: lines a caller gave stay")
+    expect(NotionPageRun.withActions(module: "notion_move", args: move) { acts } == move, "pb127: other modules unchanged")
+    expect(NotionPageRun.withActions(module: "wrapup_notion", args: ["--page", "x"]) { acts } == ["--page", "x"], "pb127: no call, no lines")
+    let env = NotionPageRun.withoutAI(["CLAUDE_API": "k", "OPENAI_API_KEY": "k", "GEMINI_API_KEY": "k", "ANTHROPIC_API_KEY": "k",
+                                       "CLAUDE_WORKSPACE": "w", "NOTION_TOKEN": "t", "LT_CALL": "c"])
+    expect(env == ["NOTION_TOKEN": "t", "LT_CALL": "c"], "pb127: a Notion-only run keeps the Notion token, no AI keys")
+
+    let path = NSTemporaryDirectory() + "pb127-fills-\(UUID().uuidString)/notion-fills.json"
+    defer { try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent) }
+    let q = NotionFillQueue(path: path)
+    expect(q.all().isEmpty, "pb127: no file, nothing waits")
+    q.add("/c/a.md"); q.add("/c/a.md"); q.add("/c/b.md"); q.add("")
+    expect(NotionFillQueue(path: path).all() == ["/c/a.md", "/c/b.md"], "pb127: waiting calls survive a relaunch, once each")
+    q.remove("/c/a.md")
+    expect(q.all() == ["/c/b.md"], "pb127: a filled page leaves the queue")
+    let d = NotionFillQueue.due(["/c/a.md", "/c/b.md", "/c/c.md", "/c/d.md"],
+                                exists: { $0 != "/c/c.md" }, hasPage: { $0 != "/c/d.md" }, inWork: { $0 == "/c/b.md" })
+    expect(d.fill == ["/c/a.md"] && d.drop == ["/c/c.md", "/c/d.md"],
+           "pb127: launch fills the waiting pages, keeps one whose notes are in work, forgets a gone call or page")
+}
+
 teamCallsB9()
 entitlementsB3()
 entitlementsB3UI()
 analyticsS4()
 briefSignalPB89()
+callTagPB127()
+notionPageRunPB127()
 selfServe0190()
 consolePlatform0190()
 componentsD3()

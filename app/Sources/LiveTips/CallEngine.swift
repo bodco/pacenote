@@ -497,8 +497,8 @@ final class CallEngine {
         sidecar = p
     }
 
-    /// After the call: wrap-up by Claude and the Meetings DB page in Notion (existing page of this meeting
-    /// first, a new one otherwise), with the transcript attached as a .md file. Same result as the skill's
+    /// After the call: the Meetings DB page in Notion from the call's notes, no model request (PB-127) (existing page of
+    /// this meeting first, a new one otherwise), with the transcript as a sub-page. Same result as the skill's
     /// wrap-up Step 5. Needs the Notion token (Settings > Keys) and a project with a config.
     /// 0.8.5 (owner): Send last call to Notion works after an app restart too (an update, a failed page):
     /// the call's file, project config, title and time are kept in state/last-notion-call.json.
@@ -541,6 +541,7 @@ final class CallEngine {
         p.currentDirectoryURL = URL(fileURLWithPath: c.engine.sidecarDir)
         var env = AIRoute.env(job: "after", config: c)
         env["LT_AI_STAGE"] = "after_notes"
+        env["LT_CALL"] = CallTag.of(file)        // PB-127: the call's tag in the spend ledger (a hash, never the name)
         env["PYTHONDONTWRITEBYTECODE"] = "1"
         p.environment = env
         AppLog.header("notes.log", "notes", extra: [("call", AppLog.stem(lastFile))] + AppLog.runtimeExtra)     // 0.24.1 (F7): date, versions, call id
@@ -560,10 +561,84 @@ final class CallEngine {
                 AnalyticsTracker.shared.perf("notes_after", ms: ms, provider: actual ?? prov, ok: ok)
                 if !ok { AnalyticsTracker.shared.error("ai", code, provider: prov, fallbackTo: actual) }
             }
+            // PB-127: the call's Notion page (when it is already there) gets the notes, or the line that they failed
+            // and the decisions auto-add that waited for the notes' Area, Door and Context runs now
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { CallEngine.shared.fillNotionNotes(file: file); NotionAutoAdd.notesDone(file: file) }
+            }
         }
         Self.notesInWork.insert(notes)
         do { try p.run() } catch { Self.notesInWork.remove(notes); return false }
         return true
+    }
+
+    /// PB-127: the action item lines the call page shows for this call (its commitments register, as CallPageSync writes
+    /// them to Notion), so the meeting page says the same words; none when the register has no item of the call yet.
+    /// Review 3: a call whose register items were all dropped shows no task on the call page, so it passes an empty list
+    /// (the page then has none too) rather than nothing (the notes' tasks would come back).
+    @MainActor static func actionsArg(_ file: String) -> [String] {
+        let a = CallPageEdit.sections(file: file, ids: ["actions"])["actions"] ?? []
+        let hasItems = !a.isEmpty || Register.shared.items(in: CallLayout.liveFolder(of: file))
+            .contains { CommitmentRegister.callKey($0.call) == CommitmentRegister.callKey(file) }
+        guard hasItems, let d = try? JSONSerialization.data(withJSONObject: a), let s = String(data: d, encoding: .utf8) else { return [] }
+        return ["--actions", s]
+    }
+
+    /// PB-127: notion fills running now, by call file (main thread only), so two never write the same page at once.
+    @MainActor private static var notionFills = Set<String>()
+    /// PB-127 (review 3): a fill asked for while one runs for the same call runs again after it, never dropped.
+    @MainActor private static var notionFillsAgain = Set<String>()
+
+    /// PB-127 (review 3): the calls whose page still waits for the notes fill, kept across an app quit or update.
+    var notionFillQueue: NotionFillQueue { NotionFillQueue(path: (appRoot as NSString).appendingPathComponent("state/notion-fills.json")) }
+
+    /// PB-127 (review 3): at launch, the pages left at "being written" (the app quit, updated or Notion refused the fill)
+    /// get their notes now, or the line that they failed; a call or page that is gone is forgotten.
+    @MainActor func retryNotionFills() {
+        let q = notionFillQueue
+        let d = NotionFillQueue.due(q.all(), exists: { FileManager.default.fileExists(atPath: $0) },
+                                    hasPage: { f in !(CallHistory.shared.records.first(where: { $0.file == f })?.notionURL ?? "").isEmpty },
+                                    inWork: { Self.notesInWork.contains(CallNotes.path($0)) })
+        d.drop.forEach(q.remove)
+        for f in d.fill {
+            AppLog.app("notion: notes fill tried again at launch call=\(AppLog.stem(f))")
+            fillNotionNotes(file: f)
+        }
+    }
+
+    /// PB-127 (owner 25.11): the call's Notion page was written before its notes were ready; now that they are (or failed),
+    /// its generated section is replaced in place by the notes, plain Notion API, no model request (wrapup_notion --page
+    /// --fill). Nothing when the call has no page yet: the page write itself then fills in what is there.
+    @MainActor func fillNotionNotes(file: String) {
+        let c = config
+        guard let url = CallHistory.shared.records.first(where: { $0.file == file })?.notionURL, !url.isEmpty,
+              !c.engine.python.isEmpty else { return }
+        if Self.notionFills.contains(file) { Self.notionFillsAgain.insert(file); return }
+        let (proj, ws) = PyTool.project(of: file)
+        var args = ["--md", file, "--page", url, "--fill", "--notes", "failed",
+                    "--lt", c.engine.python, (appRoot as NSString).appendingPathComponent("bin/lt")]
+        args += proj != nil ? NotionTargets.projectArgs(c, proj) : NotionTargets.workspaceArgs(c, ws, kind: "meetings")
+        if !c.notionMeetingsDB.isEmpty { args += ["--meetings-db", c.notionMeetingsDB] }
+        let title = CallPageView.title(file)
+        if !title.isEmpty { args += ["--title", title] }
+        args += Self.actionsArg(file)
+        Self.notionFills.insert(file)
+        PyTool.run("wrapup_notion", args, notion: true, needsAI: false) { [weak self] r in
+            Self.notionFills.remove(file)
+            let ok = (r["ok"] as? Bool) == true
+            if ok { self?.notionFillQueue.remove(file) }      // a failed fill stays queued: tried again at the next launch
+            AppLog.app("notion: notes \(ok ? "filled in (" + ((r["notes"] as? String) ?? "") + ")" : "not filled in") call=\(AppLog.stem(file))"
+                       + Self.aiCallsNote(r))
+            if Self.notionFillsAgain.remove(file) != nil { self?.fillNotionNotes(file: file) }
+        }
+    }
+
+    /// PB-127: " ai_calls=N (stage n, ...)" for the app log: the call's after-call model requests the page step read from
+    /// the spend ledger once the notes were ready; empty when it did not report them.
+    nonisolated static func aiCallsNote(_ r: [String: Any]) -> String {
+        guard let a = r["ai_calls"] as? [String: Any], let n = a["calls"] as? Int else { return "" }
+        let by = (a["by_stage"] as? [String: Int] ?? [:]).sorted { $0.key < $1.key }.map { "\($0.key) \($0.value)" }
+        return " ai_calls=\(n)" + (by.isEmpty ? "" : " (" + by.joined(separator: ", ") + ")")
     }
 
     /// 0.26.0 (review 2): the .notes.md files being written now (the termination handler runs off the main thread).
@@ -587,6 +662,7 @@ final class CallEngine {
         p.currentDirectoryURL = URL(fileURLWithPath: c.engine.sidecarDir)
         var env = AIRoute.env(job: "after", config: c)
         env["LT_AI_STAGE"] = "after_notes"
+        env["LT_CALL"] = CallTag.of(file)        // PB-127: the call's tag in the spend ledger
         env["PYTHONDONTWRITEBYTECODE"] = "1"
         p.environment = env
         let out = Pipe()
@@ -602,7 +678,10 @@ final class CallEngine {
                     MainActor.assumeIsolated { CallHistory.shared.addCost(file: file, usd) }
                 }
                 let err: String? = (d["ok"] as? Bool) == true ? nil : ((d["error"] as? String) ?? L("page.mn.failed"))
-                MainActor.assumeIsolated { done(err) }
+                MainActor.assumeIsolated {
+                    if err == nil { CallEngine.shared.fillNotionNotes(file: file) }     // PB-127: the Notion page gets the new notes
+                    done(err)
+                }
             }
         }
         do { try p.run() } catch { done(error.localizedDescription) }
@@ -628,6 +707,7 @@ final class CallEngine {
         p.currentDirectoryURL = URL(fileURLWithPath: c.engine.sidecarDir)
         var env = AIRoute.env(job: "after", config: c)
         env["LT_AI_STAGE"] = "after_notes"
+        env["LT_CALL"] = CallTag.of(file)        // PB-127: the call's tag in the spend ledger
         env["PYTHONDONTWRITEBYTECODE"] = "1"
         p.environment = env
         AppLog.header("notes.log", "notes rewrite", extra: [("call", AppLog.stem(file))] + AppLog.runtimeExtra)
@@ -645,6 +725,8 @@ final class CallEngine {
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     Self.notesRewriteProcs[file] = nil
+                    // PB-127 (review): decisions whose auto-add waited while this rewrite held the notes go now
+                    NotionAutoAdd.notesDone(file: file)
                     if let usd = d["cost_usd"] as? Double, usd > 0 {
                         SpendDays.add(usd)
                         CallHistory.shared.addCost(file: file, usd)
@@ -696,11 +778,11 @@ final class CallEngine {
             notionResult = L("notion.tooShort"); notify(notionResult); return
         }
         let store = SecretStore(service: Bundle.main.bundleIdentifier ?? "io.github.example.livetips")
-        let aiOK = AIRoute.canRun(job: "after", config: c)
-        guard aiOK, let notionToken = NotionAuth.token() else {
-            AppLog.app("notion: not written (\(aiOK ? "no token" : "no AI for after the call")) call=\(AppLog.stem(file))")
-            notionResult = L(aiOK ? "notion.err.noToken" : "notion.err.noAI")
-            notify(notionResult, level: .error, settingsTab: aiOK ? "notion" : "ai"); return
+        // PB-127 (review): the page makes no model request, so it needs the Notion token only, not an AI for After the call
+        guard let notionToken = NotionAuth.token() else {
+            AppLog.app("notion: not written (no token) call=\(AppLog.stem(file))")
+            notionResult = L("notion.err.noToken")
+            notify(notionResult, level: .error, settingsTab: "notion"); return
         }
         let hasConfig = !projectConfig.isEmpty && FileManager.default.fileExists(atPath: projectConfig)
         // 0.8.6 (C): a project without a config may send its pages to its own database (Settings > Notion)
@@ -731,11 +813,18 @@ final class CallEngine {
         if !meetingsDB.isEmpty { args += ["--meetings-db", meetingsDB] }
         if let r = renamed { args += ["--title", r] }
         if let w = callRequest["scheduled_at"] as? String { args += ["--when", w] }   // the date and time set in Start call
-        if notesComing { args += ["--wait-notes", "600"] }   // 0.9.5.2: the page carries the Meeting notes being written
+        // PB-127: the page is written at once, with no model request; notes still being written show a line that the
+        // notes fill in when they are ready (fillNotionNotes)
+        if notesComing { args += ["--notes", "pending"] }
+        if Thread.isMainThread { args += MainActor.assumeIsolated { Self.actionsArg(file) } }   // the call page's own task lines
         p.arguments = args
         p.currentDirectoryURL = URL(fileURLWithPath: c.engine.sidecarDir)
-        var env = AIRoute.env(job: "after", config: c)
+        // PB-127 (review): no model request in this child, so it gets no AI keys, only the Notion token
+        var env = ProcessInfo.processInfo.environment
+        for k in ["CLAUDE_API", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "CLAUDE_WORKSPACE"] { env.removeValue(forKey: k) }
         env["LT_AI_STAGE"] = "after_notion"
+        env["LT_CALL"] = CallTag.of(file)        // PB-127: the page reports the call's after-call model requests (ai_calls)
+        env["LT_AI_STATE"] = AIRoute.statePath   // the ledger it reads sits next to this file
         env["NOTION_TOKEN"] = notionToken          // passed to the child only, never written or logged
         env["PYTHONDONTWRITEBYTECODE"] = "1"
         p.environment = env
@@ -758,7 +847,16 @@ final class CallEngine {
                 }
                 if (d["ok"] as? Bool) == true, let url = d["url"] as? String {
                     self.notionResult = url; UsageLog.log("notion_page_written")
-                    MainActor.assumeIsolated { CallHistory.shared.setNotion(file: file, url: url) }
+                    let ai = Self.aiCallsNote(d)
+                    if !ai.isEmpty { AppLog.app("notion: page written call=\(AppLog.stem(file))" + ai) }
+                    MainActor.assumeIsolated {
+                        CallHistory.shared.setNotion(file: file, url: url)
+                        if (d["notes"] as? String) == "pending" {
+                            self.notionFillQueue.add(file)      // PB-127 (review 3): kept until a fill lands, across a relaunch
+                            // PB-127: the notes ended while the page was being written: fill them in now
+                            if !Self.notesInWork.contains(CallNotes.path(file)) { self.fillNotionNotes(file: file) }
+                        }
+                    }
                     // 2026-11-10 (owner): no modal on success; it stole focus after every call. The link is on the call page.
                 } else {
                     self.notionFailed((d["error"] as? String) ?? "", file: file)
@@ -821,6 +919,7 @@ final class CallEngine {
         p.qualityOfService = .background
         var env = AIRoute.env(job: "after", config: c)   // the key to the child only, never written or logged
         env["LT_AI_STAGE"] = "judge"
+        env["LT_CALL"] = CallTag.of(file)        // PB-127: the call's tag in the spend ledger
         env["PYTHONDONTWRITEBYTECODE"] = "1"
         p.environment = env
         let log = FileHandle.forAppending(path: (appRoot as NSString).appendingPathComponent("logs/judge.log"))
